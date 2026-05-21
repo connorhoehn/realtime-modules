@@ -27,6 +27,7 @@
 // install `ws` themselves (peerDep style).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createWsHandler = createWsHandler;
+const transport_1 = require("distributed-core/transport");
 const DEFAULT_PING_INTERVAL_MS = 30_000;
 let _idCounter = 0;
 function defaultGenerateClientId() {
@@ -53,10 +54,8 @@ function createWsHandler(opts) {
     const clients = new Map();
     /** ws -> clientId — for lookups in the 'close' handler. */
     const wsToId = new WeakMap();
-    /** active ping timers keyed by clientId. */
-    const pingTimers = new Map();
-    /** liveness tracking — pongs reset isAlive=true. */
-    const aliveFlags = new Map();
+    /** heartbeat cleanup functions keyed by clientId. */
+    const cleanupFns = new Map();
     const denyUpgrade = (socket, status, reason) => {
         try {
             socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
@@ -98,7 +97,6 @@ function createWsHandler(opts) {
         const clientId = generateClientId();
         clients.set(clientId, { ws, ctx });
         wsToId.set(ws, clientId);
-        aliveFlags.set(clientId, true);
         // Fire optional service-level connect hooks (presence-style).
         for (const [name, svc] of Object.entries(services)) {
             if (typeof svc.onClientConnect === 'function') {
@@ -121,75 +119,39 @@ function createWsHandler(opts) {
         }
         // Send session handshake — matches gateway frontend useWebSocket
         // expectations (sessionToken/clientId fields).
-        try {
-            ws.send(JSON.stringify({
-                type: 'session',
-                status: 'connected',
-                clientId,
-                timestamp: new Date().toISOString(),
-            }));
-        }
-        catch {
-            // swallow
-        }
-        // Keepalive ping loop.
+        (0, transport_1.wsSend)(ws, JSON.stringify({
+            type: 'session',
+            status: 'connected',
+            clientId,
+            timestamp: new Date().toISOString(),
+        }));
+        // Keepalive heartbeat — DC primitive handles pong tracking + zombie detection.
         if (pingIntervalMs > 0) {
-            const timer = setInterval(() => {
-                if (aliveFlags.get(clientId) === false) {
-                    // No pong since last ping — terminate.
-                    try {
-                        ws.terminate();
-                    }
-                    catch {
-                        // swallow
-                    }
-                    return;
-                }
-                aliveFlags.set(clientId, false);
-                try {
-                    ws.ping();
-                }
-                catch {
-                    // swallow
-                }
-            }, pingIntervalMs);
-            pingTimers.set(clientId, timer);
+            const cleanupHeartbeat = (0, transport_1.attachWsHeartbeat)(ws, pingIntervalMs);
+            cleanupFns.set(clientId, cleanupHeartbeat);
         }
-        ws.on('pong', () => {
-            aliveFlags.set(clientId, true);
-        });
         ws.on('message', async (raw) => {
             const msg = safeParse(raw);
             if (!msg) {
-                try {
-                    ws.send(JSON.stringify({
-                        type: 'error',
-                        code: 'INVALID_JSON',
-                        message: 'Could not parse message as JSON',
-                        timestamp: new Date().toISOString(),
-                    }));
-                }
-                catch {
-                    // swallow
-                }
+                (0, transport_1.wsSend)(ws, JSON.stringify({
+                    type: 'error',
+                    code: 'INVALID_JSON',
+                    message: 'Could not parse message as JSON',
+                    timestamp: new Date().toISOString(),
+                }));
                 return;
             }
             const serviceName = typeof msg.service === 'string' ? msg.service : '';
             const action = typeof msg.action === 'string' ? msg.action : '';
             const svc = services[serviceName];
             if (!svc) {
-                try {
-                    ws.send(JSON.stringify({
-                        type: 'error',
-                        code: 'SERVICE_NOT_AVAILABLE',
-                        message: `Service '${serviceName}' not available`,
-                        availableServices: Object.keys(services),
-                        timestamp: new Date().toISOString(),
-                    }));
-                }
-                catch {
-                    // swallow
-                }
+                (0, transport_1.wsSend)(ws, JSON.stringify({
+                    type: 'error',
+                    code: 'SERVICE_NOT_AVAILABLE',
+                    message: `Service '${serviceName}' not available`,
+                    availableServices: Object.keys(services),
+                    timestamp: new Date().toISOString(),
+                }));
                 return;
             }
             // Strip { service, action } from the data payload —
@@ -201,19 +163,14 @@ function createWsHandler(opts) {
                 await svc.handleAction(clientId, action, data);
             }
             catch (err) {
-                try {
-                    ws.send(JSON.stringify({
-                        type: 'error',
-                        code: 'SERVICE_ERROR',
-                        message: err instanceof Error ? err.message : 'Failed to process message',
-                        service: serviceName,
-                        action,
-                        timestamp: new Date().toISOString(),
-                    }));
-                }
-                catch {
-                    // swallow
-                }
+                (0, transport_1.wsSend)(ws, JSON.stringify({
+                    type: 'error',
+                    code: 'SERVICE_ERROR',
+                    message: err instanceof Error ? err.message : 'Failed to process message',
+                    service: serviceName,
+                    action,
+                    timestamp: new Date().toISOString(),
+                }));
             }
         });
         const handleClose = async () => {
@@ -222,11 +179,10 @@ function createWsHandler(opts) {
                 return;
             wsToId.delete(ws);
             clients.delete(id);
-            aliveFlags.delete(id);
-            const timer = pingTimers.get(id);
-            if (timer) {
-                clearInterval(timer);
-                pingTimers.delete(id);
+            const cleanup = cleanupFns.get(id);
+            if (cleanup) {
+                cleanup();
+                cleanupFns.delete(id);
             }
             for (const [name, svc] of Object.entries(services)) {
                 if (typeof svc.onClientDisconnect === 'function') {
@@ -258,13 +214,8 @@ function createWsHandler(opts) {
             const entry = clients.get(clientId);
             if (!entry)
                 return false;
-            try {
-                entry.ws.send(JSON.stringify(frame));
-                return true;
-            }
-            catch {
-                return false;
-            }
+            (0, transport_1.wsSend)(entry.ws, JSON.stringify(frame));
+            return true;
         },
         async dispose() {
             // Remove our upgrade listener (best-effort across http.Server APIs).
@@ -272,10 +223,10 @@ function createWsHandler(opts) {
             if (typeof removeFn === 'function') {
                 removeFn.call(server, 'upgrade', upgradeListener);
             }
-            for (const timer of pingTimers.values()) {
-                clearInterval(timer);
+            for (const cleanup of cleanupFns.values()) {
+                cleanup();
             }
-            pingTimers.clear();
+            cleanupFns.clear();
             for (const { ws } of clients.values()) {
                 try {
                     ws.terminate();
@@ -285,7 +236,6 @@ function createWsHandler(opts) {
                 }
             }
             clients.clear();
-            aliveFlags.clear();
             await new Promise((resolve) => {
                 try {
                     wss.close(() => resolve());
