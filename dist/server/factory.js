@@ -180,6 +180,40 @@ const FEATURE_REGISTRY = {
             historyStore: adapters.activityHistoryStore,
         });
     },
+    social: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { SocialService } = require('../social/SocialService');
+        return new SocialService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+    call: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { CallService } = require('../call/CallService');
+        // LocalMessageRouter does not implement broadcastToAll / getClientsByUserId.
+        // Wrap it with minimal stubs; broadcast and targeted routing degrade
+        // gracefully (no-op) in local/dev mode where there are no other connected
+        // users to route to.
+        const callRouter = {
+            sendToClient: (clientId, msg) => router.sendToClient(clientId, msg),
+            broadcastToAll: async (_msg, _excludeId) => { },
+            getClientsByUserId: (_userIds, _excludeId) => [],
+        };
+        return new CallService({ messageRouter: callRouter, logger: NOOP_LOGGER });
+    },
+    ingest: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { IngestService } = require('../ingest/IngestService');
+        return new IngestService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+    pipeline: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter');
+        return new PipelineWsRouter({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+    'typed-documents': (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { DocumentEventsService } = require('../typed-documents/DocumentEventsService');
+        return new DocumentEventsService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
 };
 /**
  * Wire `features` + `adapters` into a ready-to-use WS handler.

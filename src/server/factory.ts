@@ -228,6 +228,45 @@ const FEATURE_REGISTRY: Record<string, ServiceFactory> = {
             historyStore: adapters.activityHistoryStore,
         });
     },
+
+    social: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { SocialService } = require('../social/SocialService') as typeof import('../social/SocialService');
+        return new SocialService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+
+    call: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { CallService } = require('../call/CallService') as typeof import('../call/CallService');
+        // LocalMessageRouter does not implement broadcastToAll / getClientsByUserId.
+        // Wrap it with minimal stubs; broadcast and targeted routing degrade
+        // gracefully (no-op) in local/dev mode where there are no other connected
+        // users to route to.
+        const callRouter = {
+            sendToClient: (clientId: string, msg: unknown) => router.sendToClient(clientId, msg),
+            broadcastToAll: async (_msg: unknown, _excludeId: string): Promise<void> => { /* local no-op */ },
+            getClientsByUserId: (_userIds: string[], _excludeId: string) => [] as { clientId: string; userId: string }[],
+        };
+        return new CallService({ messageRouter: callRouter, logger: NOOP_LOGGER });
+    },
+
+    ingest: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { IngestService } = require('../ingest/IngestService') as typeof import('../ingest/IngestService');
+        return new IngestService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+
+    pipeline: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter') as typeof import('../pipeline/PipelineWsRouter');
+        return new PipelineWsRouter({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+
+    'typed-documents': (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { DocumentEventsService } = require('../typed-documents/DocumentEventsService') as typeof import('../typed-documents/DocumentEventsService');
+        return new DocumentEventsService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
 };
 
 // ---- createRealtimeServer ----------------------------------------------------

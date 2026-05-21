@@ -63,60 +63,62 @@ callers, and a step-by-step guide to adding your own feature module.
 
 ## Install
 
-The package is **not on npm** and lives inside the `websocket-gateway` repo
-as a subdirectory. Use a `file:` pin pointing at a sibling clone — same
-pattern the gateway uses for its own consumption of this package and for
-its `distributed-core` pin.
+The package is **not on npm** and lives in its own standalone GitHub repo
+at `github:connorhoehn/realtime-modules`. Install via a git tag pin:
 
-**Canonical: `file:` pin (sibling consumers)**
-
-Gateway (in-tree, consumes its own subdirectory):
-
-```json
-{ "dependencies": { "@connorhoehn/realtime-modules": "file:./realtime-modules" } }
-```
-
-OrgIQ / other sibling consumers (parallel clone of `websocket-gateway`):
+**Canonical: GitHub tag pin**
 
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules":
-      "file:../../websocket-gateway/realtime-modules"
+    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.4.3"
   }
 }
 ```
 
-This works because `realtime-modules/package.json` declares the package
-name and entry points; npm resolves directly to the subdirectory and
-respects the `dist/` build output. Run `npm run build` inside
-`realtime-modules/` once after pulling — `file:` consumers see updates on
-next install.
+The repo ships a pre-built `dist/` so no local build step is needed.
+`npm install` resolves the tag, clones the repo root (which is the
+library's own `package.json`), and uses the pre-built output directly.
 
-**Does NOT work: git-tag pin**
+**`file:` pin for local development / sibling checkouts**
+
+If you have a local clone at a known path, a `file:` pin works too:
 
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules":
-      "github:connorhoehn/websocket-gateway#realtime-modules-v0.1.0"
+    "@connorhoehn/realtime-modules": "file:../realtime-modules"
   }
 }
 ```
 
-npm clones the gateway repo root, where `package.json` is the gateway's,
-not the library's. npm has no native subpath-in-git-URL support, so the
-install resolves to the wrong package. **Verified broken by OrgIQ
-adoption 2026-05-19.** The `realtime-modules-v0.1.0` tag exists for
-provenance only; do not use it as an install source.
-
-**Non-sibling consumers** (no parallel `websocket-gateway` checkout
-available) have two options, both out of scope for v0.1.0/v0.2.0:
-1. Git sparse-checkout workaround (manual, not npm-native).
-2. Eventual npm publish (future work — no timeline).
+Run `npm run build` inside the clone once after pulling to refresh `dist/`.
+`file:` consumers pick up changes on the next `npm install`.
 
 Peer-deps (`react`, `express`, `ws`, `yjs`, `y-protocols`, `@tiptap/*`) are
 all **optional** — install only what the subpaths you import require.
+
+## TypeScript requirements
+
+Add the following to your `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "moduleResolution": "bundler"
+  }
+}
+```
+
+- **`skipLibCheck: true`** — required to suppress transitive type conflicts
+  from `yjs` and `lru-cache` that surface under TypeScript 5.x/6.x. Without
+  this, consumers see errors from the library's own type declarations even
+  when they never import those subpaths.
+- **`moduleResolution: "bundler"` (or `"node16"`/`"nodenext"`)** — required
+  for subpath imports (e.g. `@connorhoehn/realtime-modules/client/ws`) to
+  resolve correctly. The classic `"node"` mode does not support package
+  `exports` subpath maps.
 
 ## Subpaths
 
@@ -210,7 +212,7 @@ import { useWebSocket } from '@connorhoehn/realtime-modules/client';
 
 const { state, send, lastMessage } = useWebSocket({
   url: 'wss://gateway.example/ws',
-  token: () => getAuthToken(),
+  authToken: () => getAuthToken(),
 });
 ```
 
@@ -251,7 +253,7 @@ without per-feature glue. See `src/feature-manifest/types.ts`.
 
 ## Versioning + stability
 
-`0.x` is unstable. Pin to exact git tags (`#realtime-modules-v0.1.0`).
+`0.x` is unstable. Pin to exact git tags (e.g. `#v0.4.3`).
 Breaking changes can land in any minor release; storage contracts and WS
 frame shapes count as load-bearing surface. `1.0` will mean stable
 storage contracts and stable WS protocol.

@@ -212,16 +212,16 @@ describe('createRealtimeServer factory', () => {
     });
 
     it('returns SERVICE_NOT_AVAILABLE for an unknown service name', async () => {
-        // An unknown manifest is silently skipped → the handler has no 'social'
+        // An unknown manifest is silently skipped → the handler has no such
         // service → it returns a SERVICE_NOT_AVAILABLE error frame.
-        const unknownManifest = { name: 'social', version: '0.1.0' };
+        const unknownManifest = { name: 'not-a-real-feature', version: '0.1.0' };
         const { port, handle, server } = await startServer([unknownManifest as any]);
         const client = makeQueuedClient(`ws://127.0.0.1:${port}`);
         try {
             await client.open();
             await client.nextMessage(); // session
 
-            client.ws.send(JSON.stringify({ service: 'social', action: 'anything' }));
+            client.ws.send(JSON.stringify({ service: 'not-a-real-feature', action: 'anything' }));
             const frame = await client.nextMessage();
             expect(frame.type).toBe('error');
             expect(frame.code).toBe('SERVICE_NOT_AVAILABLE');
