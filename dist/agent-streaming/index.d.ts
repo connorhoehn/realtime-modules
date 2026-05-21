@@ -8,7 +8,7 @@ export type { AgentStream, AgUiEvent, AgUiEventType, AgUiRole, JsonPatchOp, RunS
 export { AgentStreamImpl, validateJsonPatch } from './AgentStream';
 export type { StreamSink, AgentStreamOptions } from './AgentStream';
 export { createAgentStream, type CreateAgentStreamOptions, } from './createAgentStream';
-export { agentStreamMiddleware, type AgentStreamHandler, type AgentStreamMiddlewareOptions, } from './agentStreamMiddleware';
+export { agentStreamMiddleware, type AgentStreamHandler, type AgentStreamMiddlewareOptions, type BufferedProviderResult, type StreamingProviderResult, type ProviderResult, } from './agentStreamMiddleware';
 export { agentStreamingManifest } from './manifest';
 export { agentStreamingManifest as AgentStreamingManifest } from './manifest';
 //# sourceMappingURL=index.d.ts.map

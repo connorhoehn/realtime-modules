@@ -48,6 +48,7 @@ export declare class AgentStreamImpl implements IAgentStream {
     runStarted(opts: {
         runId: string;
         threadId: string;
+        sessionId?: string;
         source?: string;
     }): void;
     runFinished(opts?: {
@@ -70,7 +71,7 @@ export declare class AgentStreamImpl implements IAgentStream {
     }): void;
     toolCallStart(toolCallId: string, toolCallName: string, parentMessageId?: string): void;
     toolCallArgs(toolCallId: string, delta: string): void;
-    toolCallEnd(toolCallId: string): void;
+    toolCallEnd(toolCallId: string, result?: unknown): void;
     toolCallResult(messageId: string, toolCallId: string, content: unknown, role?: AgUiRole): void;
     toolCallChunk(opts?: {
         toolCallId?: string;

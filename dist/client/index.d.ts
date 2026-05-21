@@ -15,4 +15,6 @@ export type { UseWebSocketOptions, UseWebSocketHookReturn, } from './useWebSocke
 export { useAgentStream } from './useAgentStream';
 export type { UseAgentStreamOptions, UseAgentStreamReturn, Message, ToolCall, BuildBody, } from './useAgentStream';
 export type { ConnectionState, GatewayError, GatewayMessage, UseWebSocketReturn, } from './types';
+export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from './GatewaySocketProvider';
+export type { FeatureName, GatewaySocketProviderProps, } from './GatewaySocketProvider';
 //# sourceMappingURL=index.d.ts.map

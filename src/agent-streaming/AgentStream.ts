@@ -96,26 +96,20 @@ export class AgentStreamImpl implements IAgentStream {
 
   // --- Lifecycle ------------------------------------------------------------
 
-  runStarted(opts: { runId: string; threadId: string; source?: string }): void {
+  runStarted(opts: { runId: string; threadId: string; sessionId?: string; source?: string }): void {
     if (!this.guard('RUN_STARTED', () => {
       if (this.state.runStarted) throw new Error('runStarted: already started');
       if (this.state.runEnded) throw new Error('runStarted: run already ended');
     })) return;
     this.state.runStarted = true;
-    const evt: AgUiEvent = opts.source
-      ? {
-          type: 'RUN_STARTED',
-          threadId: opts.threadId,
-          runId: opts.runId,
-          rawEvent: { source: opts.source },
-          timestamp: this.now(),
-        }
-      : {
-          type: 'RUN_STARTED',
-          threadId: opts.threadId,
-          runId: opts.runId,
-          timestamp: this.now(),
-        };
+    const evt: AgUiEvent = {
+      type: 'RUN_STARTED',
+      threadId: opts.threadId,
+      runId: opts.runId,
+      ...(opts.sessionId !== undefined ? { sessionId: opts.sessionId } : {}),
+      ...(opts.source !== undefined ? { rawEvent: { source: opts.source } } : {}),
+      timestamp: this.now(),
+    };
     this.emit(evt);
   }
 
@@ -245,7 +239,7 @@ export class AgentStreamImpl implements IAgentStream {
     });
   }
 
-  toolCallEnd(toolCallId: string): void {
+  toolCallEnd(toolCallId: string, result?: unknown): void {
     if (!this.guard('TOOL_CALL_END', () => {
       this.requireRunStarted('toolCallEnd');
       if (!this.state.openToolCalls.has(toolCallId)) {
@@ -254,7 +248,12 @@ export class AgentStreamImpl implements IAgentStream {
     })) return;
     this.state.openToolCalls.delete(toolCallId);
     this.state.endedToolCalls.add(toolCallId);
-    this.emit({ type: 'TOOL_CALL_END', toolCallId, timestamp: this.now() });
+    this.emit({
+      type: 'TOOL_CALL_END',
+      toolCallId,
+      ...(result !== undefined ? { result } : {}),
+      timestamp: this.now(),
+    });
   }
 
   toolCallResult(

@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -29,4 +29,12 @@ Object.defineProperty(exports, "useWebSocket", { enumerable: true, get: function
 // spec-gap interop.
 var useAgentStream_1 = require("./useAgentStream");
 Object.defineProperty(exports, "useAgentStream", { enumerable: true, get: function () { return useAgentStream_1.useAgentStream; } });
+// v0.3.x — GatewaySocketProvider + useFeatures for declarative feature activation.
+// Provides the WebSocket context so child hooks (useChat, usePresence, etc.)
+// work without manual wiring. Also exports useGateway() for direct WS access.
+var GatewaySocketProvider_1 = require("./GatewaySocketProvider");
+Object.defineProperty(exports, "GatewaySocketProvider", { enumerable: true, get: function () { return GatewaySocketProvider_1.GatewaySocketProvider; } });
+Object.defineProperty(exports, "GatewayContext", { enumerable: true, get: function () { return GatewaySocketProvider_1.GatewayContext; } });
+Object.defineProperty(exports, "useGateway", { enumerable: true, get: function () { return GatewaySocketProvider_1.useGateway; } });
+Object.defineProperty(exports, "useFeatures", { enumerable: true, get: function () { return GatewaySocketProvider_1.useFeatures; } });
 //# sourceMappingURL=index.js.map

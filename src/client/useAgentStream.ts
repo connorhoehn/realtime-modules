@@ -14,7 +14,7 @@
 //     messages,         // accumulated full Message[]
 //     streamingText,    // in-progress text being assembled from TEXT_MESSAGE_CONTENT deltas
 //     activeToolCalls,  // ToolCall[] in flight (TOOL_CALL_START fired, TOOL_CALL_END not yet)
-//     sessionId,        // captured from CUSTOM `session` event
+//     sessionId,        // captured from RUN_STARTED.sessionId (or CUSTOM `session` for compat)
 //     isStreaming,      // true while a sendMessage() is in flight
 //     error,            // last RUN_ERROR or transport error string, or null
 //     sendMessage,      // POST + read SSE
@@ -23,7 +23,7 @@
 //   }
 //
 // AG-UI v0.1.x event handling:
-//   - RUN_STARTED            → reset streamingText, mark in-progress
+//   - RUN_STARTED            → reset streamingText, capture sessionId if present
 //   - RUN_FINISHED           → finalize the in-progress assistant message into messages[]
 //   - RUN_ERROR              → record error string, mark stream complete
 //   - TEXT_MESSAGE_START     → start a new assistant message
@@ -31,9 +31,10 @@
 //   - TEXT_MESSAGE_END       → finalize the in-progress text
 //   - TOOL_CALL_START        → push to activeToolCalls (reads toolCallName ?? name for compat)
 //   - TOOL_CALL_ARGS         → append delta to the active tool call's args
-//   - TOOL_CALL_END          → mark the tool call complete (no result payload per spec)
-//   - CUSTOM `session`       → capture sessionId from event.value.sessionId
-//   - CUSTOM `tool_call_result` → attach result to matching activeToolCalls[i]
+//   - TOOL_CALL_END          → mark tool call done; if result field present, attach it
+//   - TOOL_CALL_RESULT       → attach result to matching tool call (standard AG-UI post-END event)
+//   - CUSTOM `session`       → backward compat: capture sessionId (superseded by RUN_STARTED.sessionId)
+//   - CUSTOM `tool_call_result` → backward compat: attach result (superseded by TOOL_CALL_RESULT)
 //
 // Transport:
 //   - POST opts.url with JSON body (default { message }) and opts.headers
@@ -161,8 +162,8 @@ export function useAgentStream(
   const handleEvent = useCallback((event: Record<string, unknown>): void => {
     switch (event.type) {
       case 'RUN_STARTED': {
-        // Spec RUN_STARTED carries only runId/threadId — no sessionId field.
-        // Transition-compat: some legacy emitters put it here anyway.
+        // sessionId is now a first-class field on RUN_STARTED (normalised gap fix).
+        // Also accepted here for backward compat with older server versions.
         if (typeof event.sessionId === 'string' && event.sessionId) {
           setSessionId(event.sessionId);
         }
@@ -254,14 +255,24 @@ export function useAgentStream(
         break;
       }
       case 'TOOL_CALL_END': {
-        // Spec: TOOL_CALL_END carries no result payload (a separate
-        // TOOL_CALL_RESULT or CUSTOM `tool_call_result` does). Just mark done.
+        // Mark tool call done. If an inline `result` is present (convenience
+        // extension on the TOOL_CALL_END event), attach it — equivalent to
+        // receiving a follow-up TOOL_CALL_RESULT event.
         const id = event.toolCallId;
         if (typeof id !== 'string') break;
+        const hasResult = 'result' in event;
+        const inlineResult = hasResult ? String(event.result ?? '') : undefined;
         const tcRef = currentMsgRef.current.toolCalls.find((t) => t.id === id);
-        if (tcRef) tcRef.done = true;
+        if (tcRef) {
+          tcRef.done = true;
+          if (inlineResult !== undefined) tcRef.result = inlineResult;
+        }
         setActiveToolCalls((prev) =>
-          prev.map((t) => (t.id === id ? { ...t, done: true } : t)),
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, done: true, ...(inlineResult !== undefined ? { result: inlineResult } : {}) }
+              : t,
+          ),
         );
         break;
       }
@@ -281,9 +292,10 @@ export function useAgentStream(
         break;
       }
       case 'CUSTOM': {
-        // OrgIQ side-channels two payloads via CUSTOM:
-        //   - name: 'session'           → { sessionId } (RUN_STARTED can't carry it per spec)
-        //   - name: 'tool_call_result'  → { toolCallId, result } (TOOL_CALL_END can't carry it)
+        // Backward-compat side-channels from pre-normalization server code:
+        //   - name: 'session'           → { sessionId }; superseded by RUN_STARTED.sessionId
+        //   - name: 'tool_call_result'  → { toolCallId, result }; superseded by TOOL_CALL_RESULT
+        // Both remain handled here so older server versions keep working.
         const name = event.name;
         const value = event.value as Record<string, unknown> | undefined;
         if (name === 'session' && value && typeof value.sessionId === 'string' && value.sessionId) {

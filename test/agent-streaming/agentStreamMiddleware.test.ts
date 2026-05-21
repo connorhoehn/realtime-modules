@@ -287,4 +287,160 @@ describe('agentStreamMiddleware — end-to-end SSE', () => {
       await close();
     }
   });
+
+  // --- New gap-normalization tests -------------------------------------------
+
+  it('emits sessionId on RUN_STARTED when body.sessionId is provided', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post(
+      '/api/agents/test/stream',
+      agentStreamMiddleware(async (_req, stream) => {
+        stream.runFinished();
+      }),
+    );
+
+    const { url, close } = await listen(app);
+    try {
+      const raw = await fetchSse(`${url}/api/agents/test/stream`, {
+        sessionId: 'sess-from-body',
+      });
+      const parsed = parseSse(raw);
+      expect(parsed.events[0]).toMatchObject({
+        type: 'RUN_STARTED',
+        sessionId: 'sess-from-body',
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it('emits sessionId on RUN_STARTED when deriveSessionId option is provided', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post(
+      '/api/agents/test/stream',
+      agentStreamMiddleware(
+        async (_req, stream) => {
+          stream.runFinished();
+        },
+        { deriveSessionId: (req) => (req.body as { sessionId?: string }).sessionId ?? 'derived-id' },
+      ),
+    );
+
+    const { url, close } = await listen(app);
+    try {
+      const raw = await fetchSse(`${url}/api/agents/test/stream`, {});
+      const parsed = parseSse(raw);
+      expect(parsed.events[0]).toMatchObject({
+        type: 'RUN_STARTED',
+        sessionId: 'derived-id',
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it('omits sessionId from RUN_STARTED when none is provided', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post(
+      '/api/agents/test/stream',
+      agentStreamMiddleware(async (_req, stream) => {
+        stream.runFinished();
+      }),
+    );
+
+    const { url, close } = await listen(app);
+    try {
+      const raw = await fetchSse(`${url}/api/agents/test/stream`, {});
+      const parsed = parseSse(raw);
+      expect(parsed.events[0].type).toBe('RUN_STARTED');
+      expect(parsed.events[0].sessionId).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  it('buffered provider result ({ text }) emits TEXT_MESSAGE_* around the text', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post(
+      '/api/agents/test/stream',
+      agentStreamMiddleware(async () => {
+        return { text: 'Hello from provider' };
+      }),
+    );
+
+    const { url, close } = await listen(app);
+    try {
+      const raw = await fetchSse(`${url}/api/agents/test/stream`, {});
+      const parsed = parseSse(raw);
+      const types = parsed.events.map((e) => e.type);
+      expect(types).toContain('TEXT_MESSAGE_START');
+      expect(types).toContain('TEXT_MESSAGE_CONTENT');
+      expect(types).toContain('TEXT_MESSAGE_END');
+      expect(types).toContain('RUN_FINISHED');
+      const content = parsed.events.find((e) => e.type === 'TEXT_MESSAGE_CONTENT');
+      expect(content?.delta).toBe('Hello from provider');
+    } finally {
+      await close();
+    }
+  });
+
+  it('streaming provider result ({ stream }) pipes each chunk as TEXT_MESSAGE_CONTENT', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post(
+      '/api/agents/test/stream',
+      agentStreamMiddleware(async () => {
+        async function* gen(): AsyncIterable<string> {
+          yield 'chunk1';
+          yield ' chunk2';
+          yield ' chunk3';
+        }
+        return { stream: gen() };
+      }),
+    );
+
+    const { url, close } = await listen(app);
+    try {
+      const raw = await fetchSse(`${url}/api/agents/test/stream`, {});
+      const parsed = parseSse(raw);
+      const contentEvents = parsed.events.filter((e) => e.type === 'TEXT_MESSAGE_CONTENT');
+      expect(contentEvents).toHaveLength(3);
+      expect(contentEvents.map((e) => e.delta)).toEqual(['chunk1', ' chunk2', ' chunk3']);
+      // Full lifecycle present
+      const types = parsed.events.map((e) => e.type);
+      expect(types[0]).toBe('RUN_STARTED');
+      expect(types[types.length - 1]).toBe('RUN_FINISHED');
+    } finally {
+      await close();
+    }
+  });
+
+  it('TOOL_CALL_END with inline result emits the result field', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post(
+      '/api/agents/test/stream',
+      agentStreamMiddleware(async (_req, stream) => {
+        stream.toolCallStart('tc-1', 'lookup');
+        stream.toolCallArgs('tc-1', '{}');
+        stream.toolCallEnd('tc-1', { answer: 42 });
+        stream.runFinished();
+      }),
+    );
+
+    const { url, close } = await listen(app);
+    try {
+      const raw = await fetchSse(`${url}/api/agents/test/stream`, {});
+      const parsed = parseSse(raw);
+      const endEvt = parsed.events.find((e) => e.type === 'TOOL_CALL_END');
+      expect(endEvt).toBeDefined();
+      expect(endEvt!.result).toEqual({ answer: 42 });
+    } finally {
+      await close();
+    }
+  });
 });

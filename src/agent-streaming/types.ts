@@ -78,6 +78,13 @@ export interface RunStartedEvent extends BaseEvent {
   threadId: string;
   runId: string;
   parentRunId?: string;
+  /**
+   * Application-level session identifier. Not part of the AG-UI v0.1.x core
+   * spec (which only mandates runId/threadId), but widely needed by consumers
+   * (e.g. OrgIQ) to correlate the run with a persistent chat session.
+   * Normalised here so consumers don't need a custom CUSTOM `session` event.
+   */
+  sessionId?: string;
   input?: unknown;
 }
 
@@ -153,6 +160,13 @@ export interface ToolCallArgsEvent extends BaseEvent {
 export interface ToolCallEndEvent extends BaseEvent {
   type: 'TOOL_CALL_END';
   toolCallId: string;
+  /**
+   * Optional inline result payload. Not in the AG-UI v0.1.x core spec (which
+   * prescribes a separate TOOL_CALL_RESULT event), but accepted here as a
+   * convenience shorthand for runtimes that emit a single end+result frame.
+   * The hook normalises this the same way it handles a TOOL_CALL_RESULT.
+   */
+  result?: unknown;
 }
 
 export interface ToolCallResultEvent extends BaseEvent {
@@ -312,7 +326,7 @@ export type AgUiEvent =
  */
 export interface AgentStream {
   // Lifecycle
-  runStarted(opts: { runId: string; threadId: string; source?: string }): void;
+  runStarted(opts: { runId: string; threadId: string; sessionId?: string; source?: string }): void;
   runFinished(opts?: { outcome?: string; result?: unknown }): void;
   runError(error: { message: string; code?: string }): void;
   stepStarted(stepName: string): void;
@@ -335,7 +349,7 @@ export interface AgentStream {
     parentMessageId?: string,
   ): void;
   toolCallArgs(toolCallId: string, delta: string): void;
-  toolCallEnd(toolCallId: string): void;
+  toolCallEnd(toolCallId: string, result?: unknown): void;
   toolCallResult(
     messageId: string,
     toolCallId: string,

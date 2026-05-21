@@ -56,20 +56,14 @@ class AgentStreamImpl {
         }))
             return;
         this.state.runStarted = true;
-        const evt = opts.source
-            ? {
-                type: 'RUN_STARTED',
-                threadId: opts.threadId,
-                runId: opts.runId,
-                rawEvent: { source: opts.source },
-                timestamp: this.now(),
-            }
-            : {
-                type: 'RUN_STARTED',
-                threadId: opts.threadId,
-                runId: opts.runId,
-                timestamp: this.now(),
-            };
+        const evt = {
+            type: 'RUN_STARTED',
+            threadId: opts.threadId,
+            runId: opts.runId,
+            ...(opts.sessionId !== undefined ? { sessionId: opts.sessionId } : {}),
+            ...(opts.source !== undefined ? { rawEvent: { source: opts.source } } : {}),
+            timestamp: this.now(),
+        };
         this.emit(evt);
     }
     runFinished(opts) {
@@ -192,7 +186,7 @@ class AgentStreamImpl {
             timestamp: this.now(),
         });
     }
-    toolCallEnd(toolCallId) {
+    toolCallEnd(toolCallId, result) {
         if (!this.guard('TOOL_CALL_END', () => {
             this.requireRunStarted('toolCallEnd');
             if (!this.state.openToolCalls.has(toolCallId)) {
@@ -202,7 +196,12 @@ class AgentStreamImpl {
             return;
         this.state.openToolCalls.delete(toolCallId);
         this.state.endedToolCalls.add(toolCallId);
-        this.emit({ type: 'TOOL_CALL_END', toolCallId, timestamp: this.now() });
+        this.emit({
+            type: 'TOOL_CALL_END',
+            toolCallId,
+            ...(result !== undefined ? { result } : {}),
+            timestamp: this.now(),
+        });
     }
     toolCallResult(messageId, toolCallId, content, role) {
         if (!this.guard('TOOL_CALL_RESULT', () => {

@@ -61,6 +61,9 @@ export {
   agentStreamMiddleware,
   type AgentStreamHandler,
   type AgentStreamMiddlewareOptions,
+  type BufferedProviderResult,
+  type StreamingProviderResult,
+  type ProviderResult,
 } from './agentStreamMiddleware';
 
 // FeatureManifest for the agent-streaming feature. Consumers (gateway,
