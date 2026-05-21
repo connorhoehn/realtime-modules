@@ -42,3 +42,11 @@ export * as config from './config';
 
 // FeatureManifest — apps read this to discover env vars + channels.
 export { crdtManifest } from './manifest';
+
+// Zero-config factory — createRealtimeServer + inMemoryAdapters.
+export {
+    createRealtimeServer,
+    inMemoryAdapters,
+    type AdapterMap,
+    type RealtimeServerOptions,
+} from './factory';

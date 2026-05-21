@@ -34,7 +34,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -57,4 +57,8 @@ exports.config = __importStar(require("./config"));
 // FeatureManifest — apps read this to discover env vars + channels.
 var manifest_1 = require("./manifest");
 Object.defineProperty(exports, "crdtManifest", { enumerable: true, get: function () { return manifest_1.crdtManifest; } });
+// Zero-config factory — createRealtimeServer + inMemoryAdapters.
+var factory_1 = require("./factory");
+Object.defineProperty(exports, "createRealtimeServer", { enumerable: true, get: function () { return factory_1.createRealtimeServer; } });
+Object.defineProperty(exports, "inMemoryAdapters", { enumerable: true, get: function () { return factory_1.inMemoryAdapters; } });
 //# sourceMappingURL=index.js.map
