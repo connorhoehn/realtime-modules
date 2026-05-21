@@ -12,5 +12,5 @@ export type { MessageRouterContract } from './stores/MessageRouterContract';
 export { MemoryHotCache, MemoryMetadataStore, MemorySnapshotStore, } from './stores/MemoryStore';
 export * as config from './config';
 export { crdtManifest } from './manifest';
-export { createRealtimeServer, inMemoryAdapters, type AdapterMap, type RealtimeServerOptions, } from './factory';
+export { createRealtimeServer, inMemoryAdapters, type AdapterMap, type AdapterConfig, type PerFeatureAdapters, type FeaturePlugin, type RealtimeServerOptions, } from './factory';
 //# sourceMappingURL=index.d.ts.map

@@ -48,5 +48,8 @@ export {
     createRealtimeServer,
     inMemoryAdapters,
     type AdapterMap,
+    type AdapterConfig,
+    type PerFeatureAdapters,
+    type FeaturePlugin,
     type RealtimeServerOptions,
 } from './factory';
