@@ -26,8 +26,8 @@ exports.CursorManifest = {
         CURSOR_CLEANUP_INTERVAL_MS: {
             required: false,
             default: '10000',
-            description: 'How often (ms) the stale-cursor sweep runs. The sweep is a plain ' +
-                'periodic setInterval today; will swap to DC PeriodicSweep when that ships.',
+            description: 'How often (ms) the stale-cursor sweep runs. The sweep uses DC PeriodicSweep ' +
+                '(overlap-protected, unref\'d).',
         },
     },
     dependencies: [],

@@ -85,7 +85,6 @@ __exportStar(require("./pipeline"), exports);
 // `./cursor` subpath). Lifted from gateway in Wave 2 catch-up. The
 // gateway-side ownership-cleanup-coordinator wiring stays at the gateway
 // (cleanupRoom is exposed publicly so the adapter layer drives it). The
-// periodic TTL sweep is a plain setInterval today; will swap to DC
-// PeriodicSweep when that primitive ships (handoff #299).
+// periodic TTL sweep uses DC PeriodicSweep (overlap-protected, unref'd).
 __exportStar(require("./cursor"), exports);
 //# sourceMappingURL=index.js.map

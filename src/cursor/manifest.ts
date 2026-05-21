@@ -29,8 +29,8 @@ export const CursorManifest: FeatureManifest = {
             required: false,
             default: '10000',
             description:
-                'How often (ms) the stale-cursor sweep runs. The sweep is a plain ' +
-                'periodic setInterval today; will swap to DC PeriodicSweep when that ships.',
+                'How often (ms) the stale-cursor sweep runs. The sweep uses DC PeriodicSweep ' +
+                '(overlap-protected, unref\'d).',
         },
     },
     dependencies: [],
