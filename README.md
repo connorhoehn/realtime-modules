@@ -9,6 +9,58 @@ adapters; the package provides the fan-out logic and channel contracts.
 progress. Pre-1.0 (`0.x`) — subpath shapes and storage contracts are
 unstable; pin exact tags.
 
+## Quick Start
+
+Wire presence + chat into a Node server in five steps:
+
+```ts
+import http from 'http';
+import { createWsHandler }                       from '@connorhoehn/realtime-modules/server-ws';
+import { ChatService, InMemoryChatStore }         from '@connorhoehn/realtime-modules/chat';
+import { PresenceService, PresenceManifest }      from '@connorhoehn/realtime-modules/presence';
+import { ChatManifest }                           from '@connorhoehn/realtime-modules/chat';
+
+// 1. Implement the minimal MessageRouter your services need.
+const router = {
+  nodeId: 'node-1',
+  sendToClient:         (id, msg)            => { /* send JSON frame to WS client */ },
+  sendToChannel:        (ch, msg, exclude)   => { /* fan-out to channel subscribers */ },
+  subscribeToChannel:   (id, ch)             => { /* track subscription */ },
+  unsubscribeFromChannel: (id, ch)           => { /* remove subscription */ },
+};
+const logger = { debug: console.debug, info: console.info,
+                 warn: console.warn, error: console.error };
+
+// 2. Instantiate feature services.
+const chatService     = new ChatService({ store: new InMemoryChatStore(), router, logger });
+const presenceService = new PresenceService(router, logger);
+
+// 3. Attach to an HTTP server.
+const server = http.createServer();
+const wsHandle = createWsHandler({
+  server,
+  services: { chat: chatService, presence: presenceService },
+  auth: async (req) => ({ userId: req.headers['x-user-id'] as string }),
+});
+server.listen(3000);
+
+// 4. Read manifests to validate env + log the channel contract.
+for (const m of [ChatManifest, PresenceManifest]) {
+  console.log(`[${m.name}@${m.version}] channels: ${m.channels?.join(', ')}`);
+}
+
+// 5. React client — connect and subscribe.
+//    import { useWebSocket } from '@connorhoehn/realtime-modules/client/ws';
+//    const { send, subscribe } = useWebSocket({ url: 'ws://localhost:3000', authToken });
+//    subscribe('chat:room-1');
+//    send({ service: 'chat', action: 'send', channel: 'chat:room-1', content: 'hello' });
+```
+
+For the full walkthrough see
+**[docs/FEATURE-MANIFEST-GUIDE.md](./docs/FEATURE-MANIFEST-GUIDE.md)** — covers
+all 12 feature modules, client hooks, `GatewayProxyClient` for Lambda/backend
+callers, and a step-by-step guide to adding your own feature module.
+
 ## Install
 
 The package is **not on npm** and lives inside the `websocket-gateway` repo
