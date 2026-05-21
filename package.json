@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -98,7 +98,7 @@
   },
   "dependencies": {
     "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#v0.3.32",
-    "distributed-core": "github:connorhoehn/distributed-core#distributed-core-v0.31.0",
+    "distributed-core": "github:connorhoehn/distributed-core#distributed-core-v0.33.0",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
   },
@@ -118,47 +118,81 @@
   "peerDependenciesMeta": {
     "@tiptap/extension-collaboration": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "@tiptap/extension-placeholder": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "@tiptap/extension-task-item": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "@tiptap/extension-task-list": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "@tiptap/react": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "@tiptap/starter-kit": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "@tiptap/y-tiptap": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     },
     "express": {
       "optional": true,
-      "_subpaths": ["./server", "./server-ws"]
+      "_subpaths": [
+        "./server",
+        "./server-ws"
+      ]
     },
     "react": {
       "optional": true,
-      "_subpaths": ["./client", "./adapters/tiptap", "./agent-streaming/client"]
+      "_subpaths": [
+        "./client",
+        "./adapters/tiptap",
+        "./agent-streaming/client"
+      ]
     },
     "ws": {
       "optional": true,
-      "_subpaths": ["./server", "./server-ws"]
+      "_subpaths": [
+        "./server",
+        "./server-ws"
+      ]
     },
     "y-protocols": {
       "optional": true,
-      "_subpaths": ["./adapters/tiptap", "./client"]
+      "_subpaths": [
+        "./adapters/tiptap",
+        "./client"
+      ]
     }
   },
   "devDependencies": {
