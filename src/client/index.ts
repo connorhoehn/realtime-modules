@@ -50,3 +50,12 @@ export type {
   GatewayMessage,
   UseWebSocketReturn,
 } from './types';
+
+// v0.3.x — GatewaySocketProvider + useFeatures for declarative feature activation.
+// Provides the WebSocket context so child hooks (useChat, usePresence, etc.)
+// work without manual wiring. Also exports useGateway() for direct WS access.
+export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from './GatewaySocketProvider';
+export type {
+  FeatureName,
+  GatewaySocketProviderProps,
+} from './GatewaySocketProvider';
