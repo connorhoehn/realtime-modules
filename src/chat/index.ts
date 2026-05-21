@@ -9,11 +9,13 @@
 import ChatService, { type ChatServiceOpts, type ChatMessageRouter, type ChatLogger } from './ChatService';
 import { ChatManifest } from './manifest';
 import { InMemoryChatStore } from './ChatStore';
+import { SubscriptionTracker } from './SubscriptionTracker';
 
 export {
     ChatService,
     ChatManifest,
     InMemoryChatStore,
+    SubscriptionTracker,
 };
 
 export type { ChatServiceOpts, ChatMessageRouter, ChatLogger };

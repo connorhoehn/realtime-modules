@@ -10,12 +10,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.InMemoryChatStore = exports.ChatManifest = exports.ChatService = void 0;
+exports.SubscriptionTracker = exports.InMemoryChatStore = exports.ChatManifest = exports.ChatService = void 0;
 const ChatService_1 = __importDefault(require("./ChatService"));
 exports.ChatService = ChatService_1.default;
 const manifest_1 = require("./manifest");
 Object.defineProperty(exports, "ChatManifest", { enumerable: true, get: function () { return manifest_1.ChatManifest; } });
 const ChatStore_1 = require("./ChatStore");
 Object.defineProperty(exports, "InMemoryChatStore", { enumerable: true, get: function () { return ChatStore_1.InMemoryChatStore; } });
+const SubscriptionTracker_1 = require("./SubscriptionTracker");
+Object.defineProperty(exports, "SubscriptionTracker", { enumerable: true, get: function () { return SubscriptionTracker_1.SubscriptionTracker; } });
 exports.default = ChatService_1.default;
 //# sourceMappingURL=index.js.map

@@ -1,7 +1,8 @@
 import ChatService, { type ChatServiceOpts, type ChatMessageRouter, type ChatLogger } from './ChatService';
 import { ChatManifest } from './manifest';
 import { InMemoryChatStore } from './ChatStore';
-export { ChatService, ChatManifest, InMemoryChatStore, };
+import { SubscriptionTracker } from './SubscriptionTracker';
+export { ChatService, ChatManifest, InMemoryChatStore, SubscriptionTracker, };
 export type { ChatServiceOpts, ChatMessageRouter, ChatLogger };
 export type { ChatStore } from './ChatStore';
 export type { ChatMessage, ChatHistoryQuery } from './types';
