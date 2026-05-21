@@ -3,18 +3,23 @@
 // Real WebSocket integration test harness.
 //
 // Starts a genuine http.Server + ws.WebSocketServer (via createWsHandler),
-// wires optional features (chat / presence) with their in-memory store
-// implementations, and hands back a TestServer + TestClient pair that
-// Wave 3 test authors can use without any external services.
+// wires optional features (chat / presence / cursor / reactions / activity /
+// social / call / ingest / pipeline / typed-documents) with their in-memory
+// store implementations, and hands back a TestServer + TestClient pair that
+// test authors can use without any external services.
 //
 // Design goals:
 //   - Zero external services required (no DDB-local, no Redis).
-//   - chat and presence are wired with in-memory stores + a simple
+//   - All 10 features are wired with in-memory stores + a simple
 //     in-process MessageRouter stub so both services operate correctly.
 //   - Ping/keepalive is disabled (pingIntervalMs=0) so tests don't need
 //     to worry about timer interactions.
 //   - TestClient.waitForMessage lets tests wait for a specific frame
 //     without ordering noise from session/join frames they don't care about.
+//   - TestServer.getService<T>(name) provides typed access to a service
+//     instance for tests that call methods like emitEvent() directly.
+//   - TestServer.registerUserClient(clientId, userId) supports targeted
+//     call routing tests without duplicating router logic in each test.
 
 import * as http from 'http';
 import WebSocket from 'ws';
@@ -24,16 +29,44 @@ import type { WsHandlerHandle } from '../../src/server-ws/types';
 import { ChatService } from '../../src/chat/ChatService';
 import { InMemoryChatStore } from '../../src/chat/ChatStore';
 import PresenceService from '../../src/presence/PresenceService';
+import { SocialService } from '../../src/social/SocialService';
+import { CallService } from '../../src/call/CallService';
+import { IngestService } from '../../src/ingest/IngestService';
+import { PipelineWsRouter } from '../../src/pipeline/PipelineWsRouter';
+import { DocumentEventsService } from '../../src/typed-documents/DocumentEventsService';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export type FeatureName =
+    | 'chat'
+    | 'presence'
+    | 'cursor'
+    | 'reactions'
+    | 'activity'
+    | 'social'
+    | 'call'
+    | 'ingest'
+    | 'pipeline'
+    | 'typed-documents';
 
 export interface TestServer {
     /** ws://127.0.0.1:{port} */
     url: string;
     /** http://127.0.0.1:{port} */
     httpUrl: string;
+    /**
+     * Returns the instantiated service for the given feature name.
+     * Use this to call service methods directly (e.g. emitEvent) from tests.
+     * Returns undefined if the feature was not wired.
+     */
+    getService<T = unknown>(name: string): T | undefined;
+    /**
+     * Register a clientId → userId mapping for the call feature's targeted
+     * routing. Only meaningful when 'call' is in the features list.
+     */
+    registerUserClient(clientId: string, userId: string): void;
     stop(): Promise<void>;
 }
 
@@ -51,7 +84,7 @@ export interface TestClient {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal in-process MessageRouter used by chat + presence services.
+// Minimal in-process MessageRouter used by chat + presence + social services.
 //
 // The gateway wires Redis pub/sub here; for integration tests we fan out
 // directly to the WsHandlerHandle so messages actually reach the client.
@@ -107,6 +140,45 @@ class InProcessMessageRouter {
 }
 
 // ---------------------------------------------------------------------------
+// In-process call router — extends InProcessMessageRouter with broadcastToAll
+// and getClientsByUserId for targeted call signaling tests.
+// ---------------------------------------------------------------------------
+
+class CallTestMessageRouter extends InProcessMessageRouter {
+    /** clientId → userId — populated via registerUserClient() */
+    private userIndex = new Map<string, string>();
+
+    register(clientId: string, userId: string): void {
+        this.userIndex.set(clientId, userId);
+    }
+
+    getClientsByUserId(
+        userIds: string[],
+        excludeClientId: string,
+    ): Array<{ clientId: string; userId: string }> {
+        const matches: Array<{ clientId: string; userId: string }> = [];
+        for (const [clientId, userId] of this.userIndex.entries()) {
+            if (clientId === excludeClientId) continue;
+            if (userIds.includes(userId)) {
+                matches.push({ clientId, userId });
+            }
+        }
+        return matches;
+    }
+
+    /** Fans out to every client tracked by the WsHandlerHandle. */
+    async broadcastToAll(message: unknown, excludeClientId: string): Promise<void> {
+        const handle = (this as any).handle as WsHandlerHandle | null;
+        if (!handle) return;
+        const all = handle.listClients();
+        for (const clientId of all) {
+            if (clientId === excludeClientId) continue;
+            handle.sendToClient(clientId, message as Record<string, unknown>);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Noop logger (suppresses service log noise during tests)
 // ---------------------------------------------------------------------------
 
@@ -122,7 +194,7 @@ const noopLogger = {
 // ---------------------------------------------------------------------------
 
 export async function startTestServer(options: {
-    features: ('chat' | 'presence' | 'cursor' | 'reactions')[];
+    features: FeatureName[];
 }): Promise<TestServer> {
     const httpServer = http.createServer();
 
@@ -139,6 +211,10 @@ export async function startTestServer(options: {
     const port = addr.port;
 
     const router = new InProcessMessageRouter();
+    const callRouter = new CallTestMessageRouter();
+
+    // All instantiated services, keyed by WS service name (what clients send
+    // as { service: '...' }). Note: typed-documents sends 'document-events'.
     const services: Record<string, { handleAction: Function; onClientConnect?: Function; onClientDisconnect?: Function }> = {};
 
     // ---- Wire requested features -------------------------------------------
@@ -199,14 +275,108 @@ export async function startTestServer(options: {
         }
     }
 
+    if (options.features.includes('activity')) {
+        // Lazy-require to mirror factory pattern — avoids loading heavy deps
+        // unless actually requested.
+        const { ActivityService } = await import('../../src/activity/ActivityService');
+        const { InMemoryActivityHistoryStore } = await import('../../src/activity/ActivityHistoryStore');
+        const actSvc = new ActivityService({
+            messageRouter: {
+                sendToClient: (clientId, msg) => router.sendToClient(clientId, msg),
+                sendToChannel: (channel, msg) => router.sendToChannel(channel, msg),
+                subscribeToChannel: (clientId, channel) => router.subscribeToChannel(clientId, channel),
+                unsubscribeFromChannel: (clientId, channel) =>
+                    router.unsubscribeFromChannel(clientId, channel),
+            },
+            logger: noopLogger,
+            historyStore: new InMemoryActivityHistoryStore(),
+        });
+        services['activity'] = actSvc;
+    }
+
+    if (options.features.includes('social')) {
+        const socialSvc = new SocialService({
+            logger: noopLogger,
+            messageRouter: {
+                sendToClient: (clientId, msg) => router.sendToClient(clientId, msg),
+                subscribeToChannel: (clientId, channel) =>
+                    router.subscribeToChannel(clientId, channel),
+                unsubscribeFromChannel: (clientId, channel) =>
+                    router.unsubscribeFromChannel(clientId, channel),
+            },
+        });
+        services['social'] = socialSvc;
+    }
+
+    if (options.features.includes('call')) {
+        const callSvc = new CallService({
+            messageRouter: callRouter,
+            logger: noopLogger,
+        });
+        services['call'] = callSvc;
+    }
+
+    if (options.features.includes('ingest')) {
+        const ingestSvc = new IngestService({
+            logger: noopLogger,
+            messageRouter: {
+                sendToClient: (clientId, msg) => router.sendToClient(clientId, msg),
+                sendToChannel: (channel, msg) => router.sendToChannel(channel, msg),
+                subscribeToChannel: (clientId, channel) =>
+                    router.subscribeToChannel(clientId, channel),
+                unsubscribeFromChannel: (clientId, channel) =>
+                    router.unsubscribeFromChannel(clientId, channel),
+            },
+        });
+        // WS service key is 'ingest' — matches what clients send.
+        services['ingest'] = ingestSvc;
+    }
+
+    if (options.features.includes('pipeline')) {
+        const pipelineSvc = new PipelineWsRouter({
+            logger: noopLogger,
+            messageRouter: {
+                sendToClient: (clientId, msg) => router.sendToClient(clientId, msg),
+                sendToChannel: (channel, msg) => router.sendToChannel(channel, msg),
+                subscribeToChannel: (clientId, channel) =>
+                    router.subscribeToChannel(clientId, channel),
+                unsubscribeFromChannel: (clientId, channel) =>
+                    router.unsubscribeFromChannel(clientId, channel),
+            },
+        });
+        // WS service key is 'pipeline' — matches what clients send:
+        // { service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' }
+        services['pipeline'] = pipelineSvc;
+    }
+
+    if (options.features.includes('typed-documents')) {
+        const docSvc = new DocumentEventsService({
+            logger: noopLogger,
+            messageRouter: {
+                sendToClient: (clientId, msg) => router.sendToClient(clientId, msg),
+                subscribeToChannel: (clientId, channel) =>
+                    router.subscribeToChannel(clientId, channel),
+                unsubscribeFromChannel: (clientId, channel) =>
+                    router.unsubscribeFromChannel(clientId, channel),
+            },
+        });
+        // WS service key MUST be 'document-events' — that is what clients send:
+        // { service: 'document-events', action: 'subscribe', documentId: '...' }
+        // (The feature manifest name is 'typed-documents'; the wire name differs.)
+        services['document-events'] = docSvc;
+    }
+
     const handle = createWsHandler({
         server: httpServer,
         services: services as any,
         pingIntervalMs: 0, // disable keepalive pings for test determinism
     });
 
-    // Wire the router to the handle so sendToClient/sendToChannel work.
+    // Wire the shared router to the handle so sendToClient/sendToChannel work.
     router.setHandle(handle);
+    // Wire the call router too (it inherits InProcessMessageRouter but needs
+    // its own handle reference for broadcastToAll).
+    callRouter.setHandle(handle);
 
     const url = `ws://127.0.0.1:${port}`;
     const httpUrl = `http://127.0.0.1:${port}`;
@@ -214,6 +384,18 @@ export async function startTestServer(options: {
     return {
         url,
         httpUrl,
+
+        getService<T = unknown>(name: string): T | undefined {
+            // Accept both the manifest name and the WS wire key.
+            // 'typed-documents' → 'document-events' on the wire.
+            const wireKey = name === 'typed-documents' ? 'document-events' : name;
+            return services[wireKey] as T | undefined;
+        },
+
+        registerUserClient(clientId: string, userId: string): void {
+            callRouter.register(clientId, userId);
+        },
+
         async stop(): Promise<void> {
             // Shut down services that have a lifecycle.
             for (const svc of Object.values(services)) {
