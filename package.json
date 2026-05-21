@@ -1,0 +1,181 @@
+{
+  "name": "@connorhoehn/realtime-modules",
+  "version": "0.3.0",
+  "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./agent-streaming": {
+      "types": "./dist/agent-streaming/index.d.ts",
+      "default": "./dist/agent-streaming/index.js"
+    },
+    "./agent-streaming/client": {
+      "types": "./dist/agent-streaming/client.d.ts",
+      "default": "./dist/agent-streaming/client.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./client/ws": {
+      "types": "./dist/client/ws.d.ts",
+      "default": "./dist/client/ws.js"
+    },
+    "./adapters/tiptap": {
+      "types": "./dist/adapters/tiptap/index.d.ts",
+      "default": "./dist/adapters/tiptap/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "default": "./dist/server/index.js"
+    },
+    "./presence": {
+      "types": "./dist/presence/index.d.ts",
+      "default": "./dist/presence/index.js"
+    },
+    "./proxy-client": {
+      "types": "./dist/proxy-client/index.d.ts",
+      "default": "./dist/proxy-client/index.js"
+    },
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "default": "./dist/chat/index.js"
+    },
+    "./reactions": {
+      "types": "./dist/reactions/index.d.ts",
+      "default": "./dist/reactions/index.js"
+    },
+    "./social": {
+      "types": "./dist/social/index.d.ts",
+      "default": "./dist/social/index.js"
+    },
+    "./call": {
+      "types": "./dist/call/index.d.ts",
+      "default": "./dist/call/index.js"
+    },
+    "./ingest": {
+      "types": "./dist/ingest/index.d.ts",
+      "default": "./dist/ingest/index.js"
+    },
+    "./server-ws": {
+      "types": "./dist/server-ws/index.d.ts",
+      "default": "./dist/server-ws/index.js"
+    },
+    "./activity": {
+      "types": "./dist/activity/index.d.ts",
+      "default": "./dist/activity/index.js"
+    },
+    "./typed-documents": {
+      "types": "./dist/typed-documents/index.d.ts",
+      "default": "./dist/typed-documents/index.js"
+    },
+    "./cursor": {
+      "types": "./dist/cursor/index.d.ts",
+      "default": "./dist/cursor/index.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline/index.d.ts",
+      "default": "./dist/pipeline/index.js"
+    }
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "prepare": "test -f dist/index.js || npm run build",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#v0.3.32",
+    "distributed-core": "github:connorhoehn/distributed-core#distributed-core-v0.31.0",
+    "lru-cache": "^10.4.3"
+  },
+  "peerDependencies": {
+    "@tiptap/extension-collaboration": "^3.0.0",
+    "@tiptap/extension-placeholder": "^3.0.0",
+    "@tiptap/extension-task-item": "^3.0.0",
+    "@tiptap/extension-task-list": "^3.0.0",
+    "@tiptap/react": "^3.0.0",
+    "@tiptap/starter-kit": "^3.0.0",
+    "@tiptap/y-tiptap": "^3.0.0",
+    "express": "^4.0.0 || ^5.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "ws": "^8.0.0",
+    "y-protocols": "^1.0.0",
+    "yjs": "^13.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tiptap/extension-collaboration": {
+      "optional": true
+    },
+    "@tiptap/extension-placeholder": {
+      "optional": true
+    },
+    "@tiptap/extension-task-item": {
+      "optional": true
+    },
+    "@tiptap/extension-task-list": {
+      "optional": true
+    },
+    "@tiptap/react": {
+      "optional": true
+    },
+    "@tiptap/starter-kit": {
+      "optional": true
+    },
+    "@tiptap/y-tiptap": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "ws": {
+      "optional": true
+    },
+    "y-protocols": {
+      "optional": true
+    },
+    "yjs": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@tiptap/extension-collaboration": "^3.22.3",
+    "@tiptap/extension-placeholder": "^3.22.3",
+    "@tiptap/extension-task-item": "^3.22.3",
+    "@tiptap/extension-task-list": "^3.22.3",
+    "@tiptap/react": "^3.22.3",
+    "@tiptap/starter-kit": "^3.22.3",
+    "@tiptap/y-tiptap": "^3.0.3",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.5.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.3",
+    "@types/supertest": "^7.2.0",
+    "@types/ws": "^8.18.1",
+    "jest": "^30.0.0",
+    "jest-environment-jsdom": "^30.4.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.6",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.9",
+    "typescript": "~5.6.3",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.29"
+  }
+}
