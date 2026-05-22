@@ -54,7 +54,9 @@
     "test": "jest",
     "typecheck": "tsc --noEmit",
     "prepare": "test -f dist/index.js || npm run build",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "demo": "cd demo && npm run dev",
+    "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
     "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#v0.3.32",

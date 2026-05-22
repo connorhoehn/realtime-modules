@@ -20,6 +20,26 @@ This package is now client-only.
 See **[Migration from v0.5.x](#migration-from-v05x)** below if you
 were a server-side consumer.
 
+## Live demo
+
+A runnable showcase that exercises all six feature hooks is in the `demo/` directory.
+
+```bash
+cd demo && npm install && npm run dev   # → http://localhost:5173
+```
+
+Set `VITE_GATEWAY_URL=ws://localhost:4000` (and optionally `VITE_AUTH_TOKEN`) in
+`demo/.env.local`. See [`demo/README.md`](./demo/README.md) for full instructions.
+
+| Hook | What the demo shows |
+|---|---|
+| `useChat` | Message list, compose form, load-history |
+| `usePresence` | Roster, status dropdown, metadata editor |
+| `useReactions` | Emoji palette with aggregated counts, live stream |
+| `useActivity` | Typed event feed, load-history |
+| `useFileUpload` | Drag-and-drop, XHR progress bars, AV scan states |
+| `useVideoHangout` | Start/join/leave, participant list, video/audio toggle, join-token display |
+
 ## Quick Start
 
 ```tsx
