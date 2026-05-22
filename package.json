@@ -59,8 +59,8 @@
     "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
-    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#19af3c158bd5d930d19e9cc4019bba5e800b15df",
-    "distributed-core": "github:connorhoehn/distributed-core#e3a647b4cd586084c4bae15b30d3b881bf7ca035",
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#v0.3.47",
+    "distributed-core": "github:connorhoehn/distributed-core#distributed-core-v0.37.2",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
   },
