@@ -49,6 +49,11 @@ export type {
   GatewayError,
   GatewayMessage,
   UseWebSocketReturn,
+  ChatMessage,
+  PresenceStatus,
+  PresenceEntry,
+  Reaction,
+  ActivityEvent,
 } from './types';
 
 // v0.3.x — GatewaySocketProvider + useFeatures for declarative feature activation.

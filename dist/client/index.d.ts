@@ -14,7 +14,7 @@ export { useWebSocket } from './useWebSocket';
 export type { UseWebSocketOptions, UseWebSocketHookReturn, } from './useWebSocket';
 export { useAgentStream } from './useAgentStream';
 export type { UseAgentStreamOptions, UseAgentStreamReturn, Message, ToolCall, BuildBody, } from './useAgentStream';
-export type { ConnectionState, GatewayError, GatewayMessage, UseWebSocketReturn, } from './types';
+export type { ConnectionState, GatewayError, GatewayMessage, UseWebSocketReturn, ChatMessage, PresenceStatus, PresenceEntry, Reaction, ActivityEvent, } from './types';
 export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from './GatewaySocketProvider';
 export type { FeatureName, GatewaySocketProviderProps, GatewayContextValue, } from './GatewaySocketProvider';
 export { useChat } from './useChat';
