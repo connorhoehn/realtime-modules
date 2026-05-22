@@ -25,4 +25,8 @@ export { useReactions } from './useReactions';
 export type { UseReactionsReturn } from './useReactions';
 export { useActivity } from './useActivity';
 export type { UseActivityReturn } from './useActivity';
+export { useFileUpload } from './useFileUpload';
+export type { FileUploadState, UseFileUploadResult } from './useFileUpload';
+export { useVideoHangout } from './useVideoHangout';
+export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
 //# sourceMappingURL=index.d.ts.map

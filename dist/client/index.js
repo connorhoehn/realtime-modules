@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -48,4 +48,11 @@ var useReactions_1 = require("./useReactions");
 Object.defineProperty(exports, "useReactions", { enumerable: true, get: function () { return useReactions_1.useReactions; } });
 var useActivity_1 = require("./useActivity");
 Object.defineProperty(exports, "useActivity", { enumerable: true, get: function () { return useActivity_1.useActivity; } });
+// v0.7.2 — File upload lifecycle + video hangout signaling hooks.
+// useFileUpload: presigned-URL upload with XHR progress + server-side AV scan state.
+// useVideoHangout: LVS signaling layer — returns joinToken for <Stage> (web-broadcast-shim).
+var useFileUpload_1 = require("./useFileUpload");
+Object.defineProperty(exports, "useFileUpload", { enumerable: true, get: function () { return useFileUpload_1.useFileUpload; } });
+var useVideoHangout_1 = require("./useVideoHangout");
+Object.defineProperty(exports, "useVideoHangout", { enumerable: true, get: function () { return useVideoHangout_1.useVideoHangout; } });
 //# sourceMappingURL=index.js.map

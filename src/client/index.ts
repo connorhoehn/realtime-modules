@@ -75,3 +75,12 @@ export type { UseReactionsReturn } from './useReactions';
 
 export { useActivity } from './useActivity';
 export type { UseActivityReturn } from './useActivity';
+
+// v0.7.2 — File upload lifecycle + video hangout signaling hooks.
+// useFileUpload: presigned-URL upload with XHR progress + server-side AV scan state.
+// useVideoHangout: LVS signaling layer — returns joinToken for <Stage> (web-broadcast-shim).
+export { useFileUpload } from './useFileUpload';
+export type { FileUploadState, UseFileUploadResult } from './useFileUpload';
+
+export { useVideoHangout } from './useVideoHangout';
+export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
