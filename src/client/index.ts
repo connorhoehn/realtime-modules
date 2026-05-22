@@ -101,3 +101,14 @@ export type {
   UseNotificationsOptions,
   UseNotificationsResult,
 } from './useNotifications';
+
+// v0.7.5 — useCapability: CRD-aware capability discovery. Apps can render
+// conditionally based on whether a named capability is provisioned for the
+// current user/context. Queries /api/capabilities on the gateway; falls back
+// to optimistic enabled=true when the endpoint is not yet available. Also
+// listens for capability:updated push frames so state updates without a remount.
+export { useCapability } from './useCapability';
+export type {
+  CapabilityDescriptor,
+  UseCapabilityResult,
+} from './useCapability';

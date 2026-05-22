@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -61,4 +61,11 @@ Object.defineProperty(exports, "useVideoHangout", { enumerable: true, get: funct
 // Read-state is persisted in localStorage so marks survive page refresh.
 var useNotifications_1 = require("./useNotifications");
 Object.defineProperty(exports, "useNotifications", { enumerable: true, get: function () { return useNotifications_1.useNotifications; } });
+// v0.7.5 — useCapability: CRD-aware capability discovery. Apps can render
+// conditionally based on whether a named capability is provisioned for the
+// current user/context. Queries /api/capabilities on the gateway; falls back
+// to optimistic enabled=true when the endpoint is not yet available. Also
+// listens for capability:updated push frames so state updates without a remount.
+var useCapability_1 = require("./useCapability");
+Object.defineProperty(exports, "useCapability", { enumerable: true, get: function () { return useCapability_1.useCapability; } });
 //# sourceMappingURL=index.js.map

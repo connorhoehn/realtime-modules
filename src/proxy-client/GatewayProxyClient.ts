@@ -275,6 +275,33 @@ export class GatewayProxyClient {
         });
     }
 
+    /**
+     * `GET /api/capabilities?name=<name>[&channel=<channel>]` — queries the
+     * gateway control plane for a named capability CRD. Returns the enabled
+     * state and optional metadata (quotas, feature flags, bundle version).
+     *
+     * NOTE: The /api/capabilities route has not yet landed on the gateway.
+     * useCapability() catches 404 from this method and falls back to optimistic
+     * enabled=true so existing UI code continues to work without gating.
+     *
+     * When the route ships, it will be gated by service-auth HMAC — wire
+     * `SERVICE_AUTH_SECRET` in the gateway helm chart and provide matching
+     * `serviceAuthSecret` + `serviceAuthClientId` to this client.
+     */
+    async getCapability(
+        name: string,
+        channel?: string,
+    ): Promise<{ enabled: boolean; version?: string; metadata?: Record<string, unknown> }> {
+        if (!name) throw new TypeError('getCapability: name is required');
+        const query: Record<string, string | undefined> = { name };
+        if (channel) query['channel'] = channel;
+        return this.request<{ enabled: boolean; version?: string; metadata?: Record<string, unknown> }>({
+            method: 'GET',
+            path: '/api/capabilities',
+            query,
+        });
+    }
+
     // ---- Internal -------------------------------------------------------
 
     private async request<T>(opts: RequestOptions): Promise<T> {

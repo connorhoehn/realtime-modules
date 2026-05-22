@@ -31,4 +31,6 @@ export { useVideoHangout } from './useVideoHangout';
 export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
 export { useNotifications } from './useNotifications';
 export type { Notification, NotificationType, UseNotificationsOptions, UseNotificationsResult, } from './useNotifications';
+export { useCapability } from './useCapability';
+export type { CapabilityDescriptor, UseCapabilityResult, } from './useCapability';
 //# sourceMappingURL=index.d.ts.map
