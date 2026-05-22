@@ -63,6 +63,34 @@ function ChatRoom({ channel }: { channel: string }) {
 The provider owns the single WebSocket connection. Child hooks read
 context via `useGateway()` and never re-establish their own socket.
 
+**Composite pattern — `useChannel` (v0.7.8):**
+
+```tsx
+import { useChannel } from '@connorhoehn/realtime-modules/client';
+
+function Room({ channel }: { channel: string }) {
+  // All four features enabled by default; each value is T | null.
+  const { chat, presence, reactions, activity } = useChannel(channel);
+
+  return (
+    <>
+      <header>{presence?.roster.length ?? 0} online</header>
+      <ul>{chat?.messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
+      <button onClick={() => chat?.sendMessage('hi')}>send</button>
+      <button onClick={() => reactions?.react('\u{1F525}')}>fire</button>
+    </>
+  );
+}
+
+// Opt-out individual features:
+const { chat } = useChannel(channel, {
+  features: { presence: false, reactions: false, activity: false },
+});
+```
+
+Granular hooks (`useChat`, `usePresence`, etc.) are still valid for
+deeply-nested components that only need one feature.
+
 ---
 
 ## Install
@@ -144,6 +172,7 @@ are channel-scoped: they subscribe/unsubscribe automatically when the
 |---|---|---|
 | `useGateway()` | `{ send, onMessage, onConnect, onDisconnect, state, … }` | No (provider context) |
 | `useWebSocket(opts)` | Low-level WS state — `connectionState`, `clientId`, `sendMessage`, … | No |
+| `useChannel(channel, opts?)` | `{ chat, presence, reactions, activity, channel }` — composite (v0.7.8) | Yes |
 | `useChat(channel)` | `{ messages, sendMessage, loadHistory }` | Yes |
 | `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
 | `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor }` | Yes |

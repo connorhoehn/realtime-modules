@@ -100,6 +100,57 @@ function Room({ channelId }: { channelId: string }) {
 }
 ```
 
+### `useChannel` — composite hook (v0.7.8)
+
+`useChannel(channel, opts?)` bundles all four per-channel hooks into one call.
+Use it when a component wants the full feature set and you don't need to pass
+each hook result to a separate subtree.
+
+```tsx
+import {
+  GatewaySocketProvider,
+  useChannel,
+} from '@connorhoehn/realtime-modules/client';
+
+function Room({ channelId }: { channelId: string }) {
+  // All features enabled by default.
+  const { chat, presence, reactions, activity } = useChannel(channelId);
+
+  // Safe optional-chain — each value is T | null.
+  return (
+    <>
+      <header>{presence?.roster.length ?? 0} online</header>
+      <ul>{chat?.messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
+      <button onClick={() => chat?.sendMessage('hi')}>send</button>
+      <button onClick={() => reactions?.react('\u{1F525}')}>fire</button>
+    </>
+  );
+}
+```
+
+**Opt-out individual features** — disabled features return `null`:
+
+```tsx
+// Only chat + presence; reactions and activity are null.
+const { chat, presence } = useChannel(channelId, {
+  features: { chat: true, presence: true, reactions: false, activity: false },
+});
+```
+
+**Per-entity reactions** via `reactionsTargetId`:
+
+```tsx
+// reactions list is pre-filtered to articleId.
+const { chat, reactions } = useChannel('articles', {
+  reactionsTargetId: articleId,
+});
+```
+
+> **Granular hooks remain valid.** When components are deeply nested or only
+> one feature is needed, importing `useChat` / `usePresence` / `useReactions` /
+> `useActivity` directly is still idiomatic. `useChannel` is additive — it adds
+> no new state or subscriptions beyond what the four sub-hooks already create.
+
 ### Per-entity reactions (v0.7.6)
 
 `useReactions` accepts an optional `{ targetId }` to scope reactions to a

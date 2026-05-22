@@ -35,4 +35,6 @@ export { useCapability } from './useCapability';
 export type { CapabilityDescriptor, UseCapabilityResult, } from './useCapability';
 export { useFeatureFlag } from './useFeatureFlag';
 export type { UseFeatureFlagResult } from './useFeatureFlag';
+export { useChannel } from './useChannel';
+export type { UseChannelOptions, UseChannelFeatures, UseChannelResult, } from './useChannel';
 //# sourceMappingURL=index.d.ts.map

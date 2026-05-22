@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -76,4 +76,11 @@ Object.defineProperty(exports, "useCapability", { enumerable: true, get: functio
 // so state updates reactively without a remount.
 var useFeatureFlag_1 = require("./useFeatureFlag");
 Object.defineProperty(exports, "useFeatureFlag", { enumerable: true, get: function () { return useFeatureFlag_1.useFeatureFlag; } });
+// v0.7.8 — useChannel: composite hook bundling useChat + usePresence +
+// useReactions + useActivity for a single channel. Reduces per-channel
+// boilerplate for apps that want all four features. Each sub-hook is opt-out
+// via opts.features; disabled features return null so consumers can
+// optional-chain safely: chat?.sendMessage('hi').
+var useChannel_1 = require("./useChannel");
+Object.defineProperty(exports, "useChannel", { enumerable: true, get: function () { return useChannel_1.useChannel; } });
 //# sourceMappingURL=index.js.map

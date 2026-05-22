@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -59,8 +59,8 @@
     "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
-    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#dabdbfd3c89af1556f71e6fa4f9a919a8345596e",
-    "distributed-core": "github:connorhoehn/distributed-core#449a501e452a7d5462347e4ad4b8696efb8fb77c",
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#19af3c158bd5d930d19e9cc4019bba5e800b15df",
+    "distributed-core": "github:connorhoehn/distributed-core#e3a647b4cd586084c4bae15b30d3b881bf7ca035",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
   },

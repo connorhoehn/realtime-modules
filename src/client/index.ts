@@ -121,3 +121,15 @@ export type {
 // so state updates reactively without a remount.
 export { useFeatureFlag } from './useFeatureFlag';
 export type { UseFeatureFlagResult } from './useFeatureFlag';
+
+// v0.7.8 — useChannel: composite hook bundling useChat + usePresence +
+// useReactions + useActivity for a single channel. Reduces per-channel
+// boilerplate for apps that want all four features. Each sub-hook is opt-out
+// via opts.features; disabled features return null so consumers can
+// optional-chain safely: chat?.sendMessage('hi').
+export { useChannel } from './useChannel';
+export type {
+  UseChannelOptions,
+  UseChannelFeatures,
+  UseChannelResult,
+} from './useChannel';
