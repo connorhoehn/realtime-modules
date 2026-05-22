@@ -276,6 +276,29 @@ export class GatewayProxyClient {
     }
 
     /**
+     * `GET /api/feature-flags/:name` — queries the gateway for an app-level
+     * feature flag value. Returns `{ enabled, variant?, metadata? }` when the
+     * flag exists, or `null` on any error (including 404).
+     *
+     * NOTE: The `/api/feature-flags` route has not yet landed on the gateway.
+     * `useFeatureFlag()` catches errors from this method and falls back to the
+     * `defaultValue` argument so existing UI code keeps working without gating.
+     *
+     * When the route ships, it will be gated by service-auth HMAC — wire
+     * `SERVICE_AUTH_SECRET` in the gateway helm chart and provide matching
+     * `serviceAuthSecret` + `serviceAuthClientId` to this client.
+     */
+    async getFeatureFlag(
+        name: string,
+    ): Promise<{ enabled: boolean; variant?: string; metadata?: Record<string, unknown> } | null> {
+        if (!name) throw new TypeError('getFeatureFlag: name is required');
+        return this.request<{ enabled: boolean; variant?: string; metadata?: Record<string, unknown> }>({
+            method: 'GET',
+            path: `/api/feature-flags/${encodeURIComponent(name)}`,
+        }).catch(() => null);
+    }
+
+    /**
      * `GET /api/capabilities?name=<name>[&channel=<channel>]` — queries the
      * gateway control plane for a named capability CRD. Returns the enabled
      * state and optional metadata (quotas, feature flags, bundle version).

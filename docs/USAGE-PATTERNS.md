@@ -198,6 +198,82 @@ export function StandalonePanel({ token }: { token: string }) {
 }
 ```
 
+### `useCapability` — CRD-derived infrastructure toggles (v0.7.5)
+
+`useCapability` discovers whether a named capability is provisioned for the
+current context via the gateway's control plane. Capabilities are driven by
+CRDs — they represent infrastructure-level availability questions ("has the
+operator enabled chat for this tenant?").
+
+```tsx
+import { useCapability } from '@connorhoehn/realtime-modules/client';
+
+function ChatPanel({ channel }: { channel: string }) {
+  const { enabled, isLoading } = useCapability('chat');
+
+  if (isLoading) return <Spinner />;
+  if (!enabled)  return <ChatNotAvailable />;
+  return <ChatRoom channel={channel} />;
+}
+```
+
+- Falls back to `enabled=true` when the `/api/capabilities` endpoint is not yet
+  deployed (404 → optimistic pass-through).
+- Reacts to `capability:updated` push frames so CRD toggles take effect without
+  a page refresh.
+- Optional `channel` arg for channel-scoped capability lookups.
+
+### `useFeatureFlag` — app-level boolean/variant toggles (v0.7.7)
+
+`useFeatureFlag` is the orthogonal companion to `useCapability`. Use it for
+A/B tests, gradual rollouts, and kill-switches — decisions that live in the
+app layer, not the infrastructure/CRD layer.
+
+**Boolean toggle (kill-switch / gradual rollout)**
+
+```tsx
+import { useFeatureFlag } from '@connorhoehn/realtime-modules/client';
+
+function CheckoutButton() {
+  const { enabled, isLoading } = useFeatureFlag('new-checkout-ui');
+
+  if (isLoading) return <Spinner />;
+  return enabled ? <NewCheckoutButton /> : <LegacyCheckoutButton />;
+}
+```
+
+**Variant pattern (A/B test)**
+
+```tsx
+import { useFeatureFlag } from '@connorhoehn/realtime-modules/client';
+
+function CheckoutFlow() {
+  const { variant } = useFeatureFlag('checkout-flow');
+
+  if (variant === 'variant-a') return <CheckoutFlowA />;
+  if (variant === 'variant-b') return <CheckoutFlowB />;
+  return <CheckoutFlowControl />;
+}
+```
+
+**vs `useCapability`**
+
+| | `useCapability` | `useFeatureFlag` |
+|---|---|---|
+| Source of truth | CRD / control-plane | App-level flag store |
+| Question | Is this capability provisioned? | Should this user see X? |
+| Default (no endpoint) | Optimistic `true` | Caller-supplied `defaultValue` (default `false`) |
+| Push frame | `capability:updated` | `feature-flag:updated` |
+| Scoping | Optional channel scope | Flag name only |
+
+Falls back gracefully to `defaultValue` (default `false`) when:
+- No REST surface is wired (non-WS callers without `GatewayProxyClient`), or
+- The `/api/feature-flags` endpoint has not yet landed on the gateway (404 or
+  any error is swallowed silently).
+
+Reacts to `feature-flag:updated` push frames so rollout changes take effect
+without a page refresh.
+
 ---
 
 ## `./client/ws` — Yjs-free WebSocket hook

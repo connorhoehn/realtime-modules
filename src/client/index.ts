@@ -112,3 +112,12 @@ export type {
   CapabilityDescriptor,
   UseCapabilityResult,
 } from './useCapability';
+
+// v0.7.7 — useFeatureFlag: app-level boolean/variant feature flag hook.
+// Orthogonal to useCapability (CRD-driven, infrastructure-level). Designed for
+// A/B testing, gradual rollouts, and kill-switches. Queries
+// /api/feature-flags/:name on the gateway; falls back to defaultValue when the
+// endpoint is not yet available. Listens for feature-flag:updated push frames
+// so state updates reactively without a remount.
+export { useFeatureFlag } from './useFeatureFlag';
+export type { UseFeatureFlagResult } from './useFeatureFlag';

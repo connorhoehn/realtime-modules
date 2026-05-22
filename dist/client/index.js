@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -68,4 +68,12 @@ Object.defineProperty(exports, "useNotifications", { enumerable: true, get: func
 // listens for capability:updated push frames so state updates without a remount.
 var useCapability_1 = require("./useCapability");
 Object.defineProperty(exports, "useCapability", { enumerable: true, get: function () { return useCapability_1.useCapability; } });
+// v0.7.7 — useFeatureFlag: app-level boolean/variant feature flag hook.
+// Orthogonal to useCapability (CRD-driven, infrastructure-level). Designed for
+// A/B testing, gradual rollouts, and kill-switches. Queries
+// /api/feature-flags/:name on the gateway; falls back to defaultValue when the
+// endpoint is not yet available. Listens for feature-flag:updated push frames
+// so state updates reactively without a remount.
+var useFeatureFlag_1 = require("./useFeatureFlag");
+Object.defineProperty(exports, "useFeatureFlag", { enumerable: true, get: function () { return useFeatureFlag_1.useFeatureFlag; } });
 //# sourceMappingURL=index.js.map

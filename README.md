@@ -72,7 +72,7 @@ The package is **not on npm** — install via a git tag pin:
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.6"
+    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.7"
   }
 }
 ```
@@ -151,6 +151,8 @@ are channel-scoped: they subscribe/unsubscribe automatically when the
 | `useFileUpload(channel)` | `{ uploads, upload, cancel, removeCompleted }` | Yes |
 | `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }` | Yes |
 | `useNotifications()` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }` | No (user-scoped) |
+| `useCapability(name, channel?)` | `{ capability, enabled, isLoading, error }` | No (CRD-scoped) |
+| `useFeatureFlag(name, defaultValue?)` | `{ enabled, isLoading, variant?, metadata? }` | No (flag-scoped) |
 | `useCRDT(channel)` | `{ doc, awareness }` | Yes |
 | `useAgentStream(opts)` | `{ messages, streamingText, activeToolCalls, isStreaming, sendMessage, … }` | Per-stream |
 
@@ -234,6 +236,8 @@ Set `VITE_GATEWAY_URL=ws://localhost:4000` (and optionally
 | `useFileUpload` | Beta (v0.7.2 — gateway-side upload service not yet wired) |
 | `useVideoHangout` | Beta (v0.7.2 — LVS signaling integration deferred) |
 | `useNotifications` | Beta (v0.7.4 — gateway notification service not yet wired) |
+| `useCapability` | Beta (v0.7.5 — /api/capabilities not yet on gateway; optimistic fallback active) |
+| `useFeatureFlag` | Beta (v0.7.7 — /api/feature-flags not yet on gateway; falls back to defaultValue) |
 | `useCRDT`, `useYjsDoc`, `useAwarenessState`, `useIdleDetector` | Stable |
 | `useAgentStream` | Stable (v0.2.0) |
 | `./proxy-client` | Stable (v0.2.0, HMAC signing v0.7.1) |
