@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -37,4 +37,15 @@ Object.defineProperty(exports, "GatewaySocketProvider", { enumerable: true, get:
 Object.defineProperty(exports, "GatewayContext", { enumerable: true, get: function () { return GatewaySocketProvider_1.GatewayContext; } });
 Object.defineProperty(exports, "useGateway", { enumerable: true, get: function () { return GatewaySocketProvider_1.useGateway; } });
 Object.defineProperty(exports, "useFeatures", { enumerable: true, get: function () { return GatewaySocketProvider_1.useFeatures; } });
+// v0.7.0 — Feature hooks: useChat, usePresence, useReactions, useActivity.
+// All hooks require a GatewaySocketProvider ancestor and use the message bus
+// exposed by useGateway() to subscribe to inbound frames per channel.
+var useChat_1 = require("./useChat");
+Object.defineProperty(exports, "useChat", { enumerable: true, get: function () { return useChat_1.useChat; } });
+var usePresence_1 = require("./usePresence");
+Object.defineProperty(exports, "usePresence", { enumerable: true, get: function () { return usePresence_1.usePresence; } });
+var useReactions_1 = require("./useReactions");
+Object.defineProperty(exports, "useReactions", { enumerable: true, get: function () { return useReactions_1.useReactions; } });
+var useActivity_1 = require("./useActivity");
+Object.defineProperty(exports, "useActivity", { enumerable: true, get: function () { return useActivity_1.useActivity; } });
 //# sourceMappingURL=index.js.map

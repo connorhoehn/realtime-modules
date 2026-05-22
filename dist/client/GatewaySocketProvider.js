@@ -25,9 +25,6 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 //     the consumer wired subscriptions manually.
 const react_1 = require("react");
 const useWebSocket_1 = require("./useWebSocket");
-// ---------------------------------------------------------------------------
-// Contexts
-// ---------------------------------------------------------------------------
 /**
  * Holds the full UseWebSocketHookReturn so child hooks can consume the
  * WS connection without prop-drilling. Do not call useGateway() outside
@@ -66,11 +63,30 @@ FeaturesContext.displayName = 'FeaturesContext';
  * feature list via useFeatures().
  */
 function GatewaySocketProvider({ url, children, features = [], token, channel, }) {
+    // Message-bus: child hooks register handlers; GatewaySocketProvider fans
+    // each inbound frame out to all registered handlers in registration order.
+    const handlersRef = (0, react_1.useRef)(new Set());
+    const busOnMessage = (0, react_1.useCallback)((handler) => {
+        handlersRef.current.add(handler);
+        return () => {
+            handlersRef.current.delete(handler);
+        };
+    }, []);
     const ws = (0, useWebSocket_1.useWebSocket)({
         url,
         authToken: token,
         defaultChannel: channel,
         autoResubscribe: false,
+        onMessage: (msg) => {
+            for (const handler of handlersRef.current) {
+                try {
+                    handler(msg);
+                }
+                catch {
+                    // user handler errors must not break the bus
+                }
+            }
+        },
     });
     // Stable refs so the effect below doesn't re-run when features identity
     // changes between renders (array literal creates new ref each render).
@@ -108,13 +124,22 @@ function GatewaySocketProvider({ url, children, features = [], token, channel, }
         // hook manages its own subscription lifecycle. The provider registers
         // the name so useFeatures() returns the full declared list.
     }, [connectionState, send, currentChannel]);
-    return ((0, jsx_runtime_1.jsx)(FeaturesContext.Provider, { value: features, children: (0, jsx_runtime_1.jsx)(exports.GatewayContext.Provider, { value: ws, children: children }) }));
+    // Merge the message-bus subscriber into the WS context value. useMemo keeps
+    // the identity stable across renders (only changes when `ws` identity changes,
+    // which is rare — reconnects don't replace the ws object).
+    const contextValue = (0, react_1.useMemo)(() => ({ ...ws, onMessage: busOnMessage }), 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ws, busOnMessage]);
+    return ((0, jsx_runtime_1.jsx)(FeaturesContext.Provider, { value: features, children: (0, jsx_runtime_1.jsx)(exports.GatewayContext.Provider, { value: contextValue, children: children }) }));
 }
 // ---------------------------------------------------------------------------
 // Consumer hooks
 // ---------------------------------------------------------------------------
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
+ *
+ * Returns `GatewayContextValue` — a superset of `UseWebSocketHookReturn` that
+ * also includes `onMessage(handler) => unsubscribe` for child feature hooks.
  *
  * Throws if called outside a provider so the error message is actionable.
  */

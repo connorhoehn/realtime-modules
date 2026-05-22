@@ -1,5 +1,6 @@
 import React, { type ReactNode } from 'react';
 import type { UseWebSocketHookReturn } from './useWebSocket';
+import type { GatewayMessage } from './types';
 /** All feature identifiers that GatewaySocketProvider knows how to activate. */
 export type FeatureName = 'chat' | 'presence' | 'cursor' | 'reactions' | 'activity' | 'agent-streaming';
 export interface GatewaySocketProviderProps {
@@ -34,11 +35,23 @@ export interface GatewaySocketProviderProps {
     channel?: string;
 }
 /**
+ * Extended WS context — `UseWebSocketHookReturn` plus a post-init message
+ * subscription bus so child hooks (useChat, usePresence, etc.) can register
+ * handlers without needing to be wired at construction time.
+ *
+ * `onMessage(handler)` — register a handler for inbound gateway frames.
+ * Returns an unsubscribe function. Safe to call from any child component
+ * inside a GatewaySocketProvider; handlers are called in registration order.
+ */
+export interface GatewayContextValue extends UseWebSocketHookReturn {
+    onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
+}
+/**
  * Holds the full UseWebSocketHookReturn so child hooks can consume the
  * WS connection without prop-drilling. Do not call useGateway() outside
  * a GatewaySocketProvider — it throws.
  */
-export declare const GatewayContext: React.Context<UseWebSocketHookReturn | null>;
+export declare const GatewayContext: React.Context<GatewayContextValue | null>;
 /**
  * GatewaySocketProvider — React context provider for the gateway WS
  * connection.
@@ -62,9 +75,12 @@ export declare function GatewaySocketProvider({ url, children, features, token, 
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *
+ * Returns `GatewayContextValue` — a superset of `UseWebSocketHookReturn` that
+ * also includes `onMessage(handler) => unsubscribe` for child feature hooks.
+ *
  * Throws if called outside a provider so the error message is actionable.
  */
-export declare function useGateway(): UseWebSocketHookReturn;
+export declare function useGateway(): GatewayContextValue;
 /**
  * useFeatures — returns the FeatureName[] declared by the nearest
  * GatewaySocketProvider. Returns [] when called outside a provider

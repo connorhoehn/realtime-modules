@@ -14,6 +14,81 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-21
+
+### Added
+
+- **`useChat(channel)`** — React hook returning `{ messages, sendMessage, loadHistory }`.
+  Listens for `chat:message` and `chat:history` inbound frames; sends via the gateway
+  chat service. Messages accumulate newest-last; `loadHistory()` sends a `chat:history`
+  action frame (default limit 50).
+- **`usePresence(channel)`** — React hook returning `{ roster, setStatus, updateMetadata }`.
+  Maintains a `PresenceEntry[]` roster keyed by `clientId` (sorted for stable render).
+  Handles `presence:state` (full snapshot), `presence:joined`, `presence:updated`,
+  `presence:left` frames. Auto-subscribes / unsubscribes on channel change.
+- **`useReactions(channel)`** — React hook returning `{ reactions, react }`.
+  Bounded to the most recent 50 `Reaction[]`. Handles `reaction:new` and `reaction:history`
+  inbound frames; `react(emoji)` sends a `reaction:react` action frame.
+- **`useActivity(channel)`** — React hook returning `{ events, loadHistory }`.
+  Accumulates `ActivityEvent[]` oldest-first. Handles `activity:event` and
+  `activity:history` frames; auto-subscribes on channel change.
+- **`GatewayContextValue`** — extended context type for `useGateway()` that adds
+  `onMessage(handler) => () => void` — a post-init message subscription bus
+  child hooks use to register inbound frame handlers without prop-drilling.
+  `GatewaySocketProvider` fans all inbound WS frames through this bus. Type exported
+  from `./client`.
+
+### Changed
+
+- **`GatewaySocketProvider`** now wires an `onMessage` callback into `useWebSocket` and
+  distributes frames to child-registered handlers (e.g. useChat, usePresence) in
+  registration order. Existing consumer behaviour is unchanged — the bus is additive.
+- **`useGateway()`** now returns `GatewayContextValue` (superset of `UseWebSocketHookReturn`).
+  All existing callsites remain compatible; `onMessage` is an additive field.
+
+## [0.6.0] — 2026-05-21
+
+Server-side services removed; client-only release.
+
+### Changed
+
+- Dropped all server-side service classes (CRDT, Chat, Presence, Reactions, Activity,
+  etc.) from the package — these moved in-tree to the gateway. Package is now
+  client-library-only: `./client`, `./agent-streaming`, `./proxy-client`, `./client/ws`.
+- Pruned orphan tests that referenced removed server exports.
+- README and ADOPTION-GUIDE rewritten for the client-only v0.6+ surface.
+
+## [0.5.x] — 2026-05-21
+
+### 0.5.3
+- Pre-built dist for v0.5.3; DC v0.33.0 dependency pin updated.
+
+### 0.5.2
+- Unified integration test harness for all 10 `FEATURE_REGISTRY` features via
+  `createRealtimeServer` factory.
+
+### 0.5.1
+- Integration test coverage across all 10 features (social, call, ingest, pipeline,
+  typed-documents, + the Wave-2 core set).
+
+### 0.5.0
+- Per-feature adapter overrides + `FeaturePlugin` lifecycle hooks on
+  `createRealtimeServer`. DC `PeriodicSweep` replaces hand-rolled `setInterval`
+  in timer code.
+
+## [0.4.x] — 2026-05-20
+
+### 0.4.3
+- `FEATURE_REGISTRY` 10/10 complete; `/client/ws` subpath shipping
+  `GatewaySocketProvider`; README TypeScript requirements documented.
+
+### 0.4.0
+- **`createRealtimeServer` factory** — zero-config server setup with `inMemoryAdapters`.
+- **`GatewaySocketProvider` `features` prop** + **`useFeatures` hook** — declarative
+  feature activation; provider auto-subscribes on connect for 'presence' and 'chat'.
+- Yjs moved to direct dependency; peer-dep subpath requirements annotated.
+- Integration test harness (`startTestServer` + `connectTestClient`).
+
 ## [0.3.0] — 2026-05-19
 
 ### Fixed

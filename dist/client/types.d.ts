@@ -26,4 +26,48 @@ export interface UseWebSocketReturn {
     disconnect: () => void;
     reconnect: () => void;
 }
+/** A persisted chat message — mirror of gateway/chat/types.ts ChatMessage. */
+export interface ChatMessage {
+    id: string;
+    clientId: string;
+    channel: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+    timestamp: string;
+}
+/** Presence status values accepted by the gateway's presence service. */
+export type PresenceStatus = 'online' | 'away' | 'busy' | 'offline';
+/**
+ * One presence entry — mirror of gateway/presence/types.ts PresenceEntry.
+ * Field set is preserved verbatim so the WS wire surface stays byte-identical.
+ */
+export interface PresenceEntry {
+    clientId: string;
+    status: PresenceStatus;
+    metadata: Record<string, unknown>;
+    channels: string[];
+    nodeId: string;
+    timestamp: string;
+    lastSeen: string;
+    lastHeartbeat: number;
+}
+/** One reaction event — mirror of gateway/reactions/types.ts Reaction. */
+export interface Reaction {
+    id: string;
+    clientId: string;
+    channel: string;
+    emoji: string;
+    effect: string;
+    position: unknown;
+    metadata: Record<string, unknown>;
+    timestamp: string;
+}
+/** One activity event — mirror of gateway/activity/types.ts ActivityEvent. */
+export interface ActivityEvent {
+    eventType: string;
+    detail: Record<string, unknown>;
+    timestamp: string;
+    userId: string | null;
+    displayName: string;
+}
 //# sourceMappingURL=types.d.ts.map

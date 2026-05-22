@@ -58,4 +58,20 @@ export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from '
 export type {
   FeatureName,
   GatewaySocketProviderProps,
+  GatewayContextValue,
 } from './GatewaySocketProvider';
+
+// v0.7.0 — Feature hooks: useChat, usePresence, useReactions, useActivity.
+// All hooks require a GatewaySocketProvider ancestor and use the message bus
+// exposed by useGateway() to subscribe to inbound frames per channel.
+export { useChat } from './useChat';
+export type { UseChatReturn } from './useChat';
+
+export { usePresence } from './usePresence';
+export type { UsePresenceReturn } from './usePresence';
+
+export { useReactions } from './useReactions';
+export type { UseReactionsReturn } from './useReactions';
+
+export { useActivity } from './useActivity';
+export type { UseActivityReturn } from './useActivity';

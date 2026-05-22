@@ -16,5 +16,13 @@ export { useAgentStream } from './useAgentStream';
 export type { UseAgentStreamOptions, UseAgentStreamReturn, Message, ToolCall, BuildBody, } from './useAgentStream';
 export type { ConnectionState, GatewayError, GatewayMessage, UseWebSocketReturn, } from './types';
 export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from './GatewaySocketProvider';
-export type { FeatureName, GatewaySocketProviderProps, } from './GatewaySocketProvider';
+export type { FeatureName, GatewaySocketProviderProps, GatewayContextValue, } from './GatewaySocketProvider';
+export { useChat } from './useChat';
+export type { UseChatReturn } from './useChat';
+export { usePresence } from './usePresence';
+export type { UsePresenceReturn } from './usePresence';
+export { useReactions } from './useReactions';
+export type { UseReactionsReturn } from './useReactions';
+export { useActivity } from './useActivity';
+export type { UseActivityReturn } from './useActivity';
 //# sourceMappingURL=index.d.ts.map
