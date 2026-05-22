@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -55,4 +55,10 @@ var useFileUpload_1 = require("./useFileUpload");
 Object.defineProperty(exports, "useFileUpload", { enumerable: true, get: function () { return useFileUpload_1.useFileUpload; } });
 var useVideoHangout_1 = require("./useVideoHangout");
 Object.defineProperty(exports, "useVideoHangout", { enumerable: true, get: function () { return useVideoHangout_1.useVideoHangout; } });
+// v0.7.4 — useNotifications: user-scoped notification inbox that listens for
+// `notification:*` frames from the gateway. Complements the channel-scoped
+// hooks (useChat, usePresence, etc.) with a single cross-channel inbox.
+// Read-state is persisted in localStorage so marks survive page refresh.
+var useNotifications_1 = require("./useNotifications");
+Object.defineProperty(exports, "useNotifications", { enumerable: true, get: function () { return useNotifications_1.useNotifications; } });
 //# sourceMappingURL=index.js.map

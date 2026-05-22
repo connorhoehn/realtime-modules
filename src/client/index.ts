@@ -84,3 +84,15 @@ export type { FileUploadState, UseFileUploadResult } from './useFileUpload';
 
 export { useVideoHangout } from './useVideoHangout';
 export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
+
+// v0.7.4 — useNotifications: user-scoped notification inbox that listens for
+// `notification:*` frames from the gateway. Complements the channel-scoped
+// hooks (useChat, usePresence, etc.) with a single cross-channel inbox.
+// Read-state is persisted in localStorage so marks survive page refresh.
+export { useNotifications } from './useNotifications';
+export type {
+  Notification,
+  NotificationType,
+  UseNotificationsOptions,
+  UseNotificationsResult,
+} from './useNotifications';

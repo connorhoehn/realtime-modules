@@ -29,4 +29,6 @@ export { useFileUpload } from './useFileUpload';
 export type { FileUploadState, UseFileUploadResult } from './useFileUpload';
 export { useVideoHangout } from './useVideoHangout';
 export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
+export { useNotifications } from './useNotifications';
+export type { Notification, NotificationType, UseNotificationsOptions, UseNotificationsResult, } from './useNotifications';
 //# sourceMappingURL=index.d.ts.map
