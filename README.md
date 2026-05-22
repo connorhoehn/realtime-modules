@@ -158,6 +158,33 @@ gateway over HTTP through `./proxy-client`. The gateway exposes
 publish/history/presence endpoints over plain REST so SSR + Lambda
 callers can drive the same features without holding a socket.
 
+### proxy-client — automatic HMAC signing (v0.7.1+)
+
+The gateway's REST routes require a valid `X-Service-Auth` header.
+Provide `serviceAuthSecret` + `serviceAuthClientId` and the client
+signs every request automatically:
+
+```ts
+import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
+
+const client = new GatewayProxyClient({
+  gatewayUrl: process.env.GATEWAY_URL!,
+  serviceAuthSecret: process.env.SERVICE_AUTH_SECRET,
+  serviceAuthClientId: 'my-lambda-app',
+});
+
+// X-Service-Auth header computed automatically on every call.
+await client.publishToChannel('chat:general', { type: 'message', text: 'hello' });
+const { users } = await client.getPresence('chat:general');
+const messages  = await client.getChatHistory('chat:general', { limit: 50 });
+```
+
+The wire format (`v1.<id>.<ts>.<mac>`) is identical to
+`@connorhoehn/service-runtime`'s `signEnvelope`. The algorithm is
+inlined (Node built-in `crypto`) so there is no extra runtime dep.
+When both signing options are omitted the client operates in legacy
+mode with no auth header.
+
 [aws-lambda-web-adapter]: https://github.com/awslabs/aws-lambda-web-adapter
 
 ## FeatureManifest

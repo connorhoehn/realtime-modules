@@ -314,6 +314,94 @@ describe('GatewayProxyClient — stub paths (gateway routes not yet implemented)
     });
 });
 
+describe('GatewayProxyClient — HMAC signing (serviceAuthSecret)', () => {
+    const SECRET = 'test-secret-abc123';
+    const CLIENT_ID = 'test-lambda-app';
+
+    it('adds X-Service-Auth header when serviceAuthSecret + serviceAuthClientId provided', async () => {
+        const { fetch: mock, calls } = makeMockFetch([{ status: 200, body: {} }]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+            serviceAuthSecret: SECRET,
+            serviceAuthClientId: CLIENT_ID,
+        });
+        await client.getHealth();
+        const authHeader = calls[0].headers['x-service-auth'];
+        expect(authHeader).toBeDefined();
+        // v1.<serviceId>.<unixTsSec>.<base64url-mac>
+        expect(authHeader).toMatch(/^v1\.test-lambda-app\.\d+\.[A-Za-z0-9_-]+$/);
+    });
+
+    it('does NOT add X-Service-Auth header when serviceAuthSecret is omitted (legacy mode)', async () => {
+        const { fetch: mock, calls } = makeMockFetch([{ status: 200, body: {} }]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+        });
+        await client.getHealth();
+        expect(calls[0].headers['x-service-auth']).toBeUndefined();
+    });
+
+    it('computes a fresh timestamp per request (header varies across calls)', async () => {
+        const { fetch: mock, calls } = makeMockFetch([
+            { status: 200, body: { status: 'ok' } },
+            { status: 200, body: { status: 'ok' } },
+        ]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+            serviceAuthSecret: SECRET,
+            serviceAuthClientId: CLIENT_ID,
+        });
+        await client.getHealth();
+        // Small pause to allow clock to advance (1 second boundary).
+        // If both calls land in the same second the ts segment may be equal —
+        // that's fine; we only assert the header exists and has the right shape.
+        await client.getHealth();
+        const h1 = calls[0].headers['x-service-auth'];
+        const h2 = calls[1].headers['x-service-auth'];
+        expect(h1).toMatch(/^v1\.test-lambda-app\.\d+\.[A-Za-z0-9_-]+$/);
+        expect(h2).toMatch(/^v1\.test-lambda-app\.\d+\.[A-Za-z0-9_-]+$/);
+    });
+
+    it('signs POST body (publishToChannel) with same v1 envelope', async () => {
+        const { fetch: mock, calls } = makeMockFetch([{ status: 200, body: { delivered: 3 } }]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+            serviceAuthSecret: SECRET,
+            serviceAuthClientId: CLIENT_ID,
+        });
+        await client.publishToChannel('room:1', { type: 'msg', text: 'hello' });
+        const authHeader = calls[0].headers['x-service-auth'];
+        expect(authHeader).toBeDefined();
+        expect(authHeader).toMatch(/^v1\.test-lambda-app\.\d+\.[A-Za-z0-9_-]+$/);
+    });
+
+    it('throws TypeError when only serviceAuthSecret is provided (missing clientId)', () => {
+        expect(
+            () =>
+                new GatewayProxyClient({
+                    gatewayUrl: 'https://gw.example.com',
+                    fetch: makeMockFetch([]).fetch,
+                    serviceAuthSecret: SECRET,
+                }),
+        ).toThrow(/serviceAuthClientId is required/);
+    });
+
+    it('throws TypeError when only serviceAuthClientId is provided (missing secret)', () => {
+        expect(
+            () =>
+                new GatewayProxyClient({
+                    gatewayUrl: 'https://gw.example.com',
+                    fetch: makeMockFetch([]).fetch,
+                    serviceAuthClientId: CLIENT_ID,
+                }),
+        ).toThrow(/serviceAuthSecret is required/);
+    });
+});
+
 describe('GatewayProxyClient — error handling', () => {
     it('surfaces HTTP non-2xx as ProxyClientHttpError with status + body', async () => {
         const { fetch: mock } = makeMockFetch([

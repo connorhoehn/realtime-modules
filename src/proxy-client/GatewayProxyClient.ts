@@ -23,11 +23,18 @@
 // `a62195c` (Wave 6). The four wrappers below
 // (publishToChannel / getPresence / getChatHistory / getActivityHistory)
 // target those routes and work end-to-end the moment the operator wires
-// `SERVICE_AUTH_SECRET` in the gateway helm chart — without that secret
-// the routes reject with 401. Callers must also pass the HMAC signature
-// (see service-auth docs); the proxy-client does not yet compute it for
-// you. Pipeline status query remains a future addition.
+// `SERVICE_AUTH_SECRET` in the gateway helm chart.
+//
+// HMAC SIGNING — when `serviceAuthSecret` + `serviceAuthClientId` are
+// provided, the client computes the X-Service-Auth header automatically on
+// every request, using the same v1 envelope as @connorhoehn/service-runtime.
+// The algorithm is inlined here (uses Node built-in `crypto`) so the
+// proxy-client subpath has zero extra runtime dependencies. Callers that
+// want the canonical implementation can list @connorhoehn/service-runtime as
+// an optional peer dep and use signEnvelope directly — the wire format is
+// identical. Pipeline status query remains a future addition.
 
+import { createHmac } from 'crypto';
 import {
     ProxyClientOptions,
     ProxyClientNetworkError,
@@ -44,6 +51,60 @@ import {
     ActivityEvent,
 } from './types';
 
+// ---------------------------------------------------------------------------
+// Inline HMAC signing — wire-format compatible with @connorhoehn/service-runtime
+// signEnvelope. Format: v1.<serviceId>.<unixTsSec>.<base64url(HMAC-SHA256)>
+// Payload is canonicalised (sorted-keys JSON for objects, raw string otherwise).
+// ---------------------------------------------------------------------------
+
+function _canonicalise(payload: string | object): string {
+    if (typeof payload === 'string') return payload;
+    return _stableStringify(payload);
+}
+
+function _stableStringify(value: unknown, seen: Set<object> = new Set()): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    const obj = value as Record<string, unknown>;
+    if (seen.has(obj)) throw new Error('signEnvelope: circular reference in payload');
+    seen.add(obj);
+    try {
+        if (Array.isArray(obj)) {
+            return '[' + obj.map((v) => _stableStringify(v, seen)).join(',') + ']';
+        }
+        const keys = Object.keys(obj).sort();
+        const parts = keys
+            .filter((k) => obj[k] !== undefined)
+            .map((k) => JSON.stringify(k) + ':' + _stableStringify(obj[k], seen));
+        return '{' + parts.join(',') + '}';
+    } finally {
+        seen.delete(obj);
+    }
+}
+
+function _base64url(buf: Buffer): string {
+    return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Build an X-Service-Auth header value. Wire-format identical to
+ * @connorhoehn/service-runtime's signEnvelope (v1 envelope).
+ * Used internally by GatewayProxyClient when serviceAuthSecret is configured.
+ */
+function _buildServiceAuthHeader(
+    payload: string | object,
+    secret: string,
+    serviceId: string,
+): string {
+    const tsSec = Math.floor(Date.now() / 1000);
+    const payloadStr = _canonicalise(payload);
+    const mac = createHmac('sha256', secret);
+    mac.update(`${serviceId}.${tsSec}.${payloadStr}`);
+    return `v1.${serviceId}.${tsSec}.${_base64url(mac.digest())}`;
+}
+
+/** Header name for the HMAC service-auth envelope. */
+const SERVICE_AUTH_HEADER = 'X-Service-Auth';
+
 const DEFAULT_TIMEOUT_MS = 5_000;
 
 interface RequestOptions {
@@ -57,6 +118,8 @@ interface RequestOptions {
 export class GatewayProxyClient {
     private readonly baseUrl: string;
     private readonly authToken?: string;
+    private readonly serviceAuthSecret?: string;
+    private readonly serviceAuthClientId?: string;
     private readonly fetchImpl: typeof fetch;
     private readonly timeoutMs: number;
 
@@ -67,6 +130,20 @@ export class GatewayProxyClient {
         // Strip trailing slash so URL composition stays a clean `${base}/path`.
         this.baseUrl = opts.gatewayUrl.replace(/\/+$/, '');
         this.authToken = opts.authToken;
+
+        if (opts.serviceAuthSecret && !opts.serviceAuthClientId) {
+            throw new TypeError(
+                'GatewayProxyClient: serviceAuthClientId is required when serviceAuthSecret is set',
+            );
+        }
+        if (opts.serviceAuthClientId && !opts.serviceAuthSecret) {
+            throw new TypeError(
+                'GatewayProxyClient: serviceAuthSecret is required when serviceAuthClientId is set',
+            );
+        }
+        this.serviceAuthSecret = opts.serviceAuthSecret;
+        this.serviceAuthClientId = opts.serviceAuthClientId;
+
         const f = opts.fetch ?? (globalThis as { fetch?: typeof fetch }).fetch;
         if (typeof f !== 'function') {
             throw new TypeError(
@@ -207,6 +284,25 @@ export class GatewayProxyClient {
             ...(opts.headers ?? {}),
         };
         if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+
+        // Compute HMAC envelope when signing is configured. The payload signed
+        // is the request body (or an empty string for GET requests). This matches
+        // the gateway's requireServiceAuthRawHttp verifier which re-canonicalises
+        // the body on the server side.
+        if (this.serviceAuthSecret && this.serviceAuthClientId) {
+            // Sign the body (or empty string for bodyless requests). The payload
+            // must be string | object for _buildServiceAuthHeader / _canonicalise;
+            // opts.body is `unknown` so we cast after the undefined guard. Any
+            // value that reaches here is always a plain serialisable object or
+            // primitive (set by the public methods above), never a class instance.
+            const signingPayload: string | object =
+                opts.body !== undefined ? (opts.body as string | object) : '';
+            headers[SERVICE_AUTH_HEADER] = _buildServiceAuthHeader(
+                signingPayload,
+                this.serviceAuthSecret,
+                this.serviceAuthClientId,
+            );
+        }
 
         const init: RequestInit = { method: opts.method, headers };
         if (opts.body !== undefined) {

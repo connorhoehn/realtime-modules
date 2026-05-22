@@ -2,6 +2,8 @@ import { ProxyClientOptions, GatewayHealthResponse, GatewayClusterInfo, GatewayS
 export declare class GatewayProxyClient {
     private readonly baseUrl;
     private readonly authToken?;
+    private readonly serviceAuthSecret?;
+    private readonly serviceAuthClientId?;
     private readonly fetchImpl;
     private readonly timeoutMs;
     constructor(opts: ProxyClientOptions);

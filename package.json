@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -59,6 +59,7 @@
     "yjs": "^13.0.0"
   },
   "peerDependencies": {
+    "@connorhoehn/service-runtime": "^0.2.0",
     "@tiptap/extension-collaboration": "^3.0.0",
     "@tiptap/extension-placeholder": "^3.0.0",
     "@tiptap/extension-task-item": "^3.0.0",
@@ -72,6 +73,10 @@
     "y-protocols": "^1.0.0"
   },
   "peerDependenciesMeta": {
+    "@connorhoehn/service-runtime": {
+      "optional": true,
+      "_note": "Required only when using GatewayProxyClient with serviceAuthSecret. The client includes an inlined compatible implementation; install this package when you need server-side verify/require-service-auth utilities."
+    },
     "@tiptap/extension-collaboration": {
       "optional": true,
       "_subpaths": [

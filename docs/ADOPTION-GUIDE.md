@@ -251,24 +251,54 @@ export function CollabDoc({ documentId }: { documentId: string }) {
 ## 5. Lambda / SSR — proxy-client
 
 Apps running in AWS Lambda or behind a CDN edge can call gateway REST
-endpoints via `GatewayProxyClient` instead of holding a WebSocket:
+endpoints via `GatewayProxyClient` instead of holding a WebSocket.
+
+### 5.1 Automatic HMAC signing (recommended)
+
+The gateway's REST routes (`/api/channels/:id/messages`, `/api/presence/:channel`,
+etc.) require a valid `X-Service-Auth` HMAC envelope. Provide
+`serviceAuthSecret` + `serviceAuthClientId` and the client signs every
+request automatically — no manual header computation needed:
 
 ```ts
 import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
 
 const proxy = new GatewayProxyClient({
   gatewayUrl: process.env.GATEWAY_URL!,
-  serviceToken: process.env.SERVICE_TOKEN,
-  timeoutMs: 5_000,
+  serviceAuthSecret: process.env.SERVICE_AUTH_SECRET,   // shared HMAC secret
+  serviceAuthClientId: 'my-lambda-app',                 // must be in gateway's allowed list
+  timeout: 5_000,
 });
 
-// Publish an event to a channel.
+// Publish an event to a channel — X-Service-Auth header computed automatically.
 await proxy.publishToChannel('room:42', { type: 'notice', text: 'hello' });
 
-// Read history.
+// Read history — also signed automatically.
 const { messages } = await proxy.getChatHistory('room:42', { limit: 50 });
 const { users }    = await proxy.getPresence('room:42');
 const { events }   = await proxy.getActivityHistory('room:42', { limit: 20 });
+```
+
+The envelope wire format is `v1.<serviceId>.<unixTsSec>.<base64url-hmac>`,
+compatible with `@connorhoehn/service-runtime`'s `signEnvelope` / `verifyEnvelope`.
+You do not need to install service-runtime to use signed mode — the algorithm
+is inlined in the proxy-client using Node's built-in `crypto`.
+
+**Gateway-side setup:** ensure `SERVICE_AUTH_SECRET` is wired and the calling
+service id is included in `SERVICE_AUTH_ALLOWED_SERVICES`.
+
+### 5.2 Manual / legacy mode
+
+Omit both signing options to send requests without auth headers. This is
+useful if your ingress layer handles auth separately, or during local
+development without a shared secret:
+
+```ts
+const proxy = new GatewayProxyClient({
+  gatewayUrl: 'http://localhost:4000',
+});
+
+await proxy.publishToChannel('room:42', { type: 'test', text: 'hello' });
 ```
 
 Errors throw `ProxyClientHttpError` / `ProxyClientNetworkError` /

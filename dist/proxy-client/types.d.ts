@@ -47,6 +47,23 @@ export interface ProxyClientOptions {
      */
     authToken?: string;
     /**
+     * HMAC secret for automatic X-Service-Auth signing. Must be paired with
+     * `serviceAuthClientId`. When both are provided, every request receives a
+     * freshly-computed HMAC envelope matching the v1 wire-format used by
+     * @connorhoehn/service-runtime's signEnvelope.
+     *
+     * Tip: load from `process.env.SERVICE_AUTH_SECRET` and never hard-code.
+     */
+    serviceAuthSecret?: string;
+    /**
+     * Identifier of the calling service, embedded in the X-Service-Auth
+     * envelope. Must match the name listed in the gateway's
+     * SERVICE_AUTH_ALLOWED_SERVICES. Required when `serviceAuthSecret` is set.
+     *
+     * Example: `'orgiq-middleware'`
+     */
+    serviceAuthClientId?: string;
+    /**
      * Injectable fetch implementation. Defaults to `globalThis.fetch` (Node 18+
      * and all evergreen browsers ship one). Use this hook in tests, or to wire
      * a tracing/retry-wrapped fetch in production.
