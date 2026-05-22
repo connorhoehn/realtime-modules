@@ -1,31 +1,50 @@
 "use strict";
 // realtime-modules/src/client/useReactions.ts
 //
-// useReactions(channel) — React hook for gateway emoji reactions.
+// useReactions(channel, opts?) — React hook for gateway emoji reactions.
 //
 // Returns:
-//   reactions — last 50 Reaction[] for the channel (oldest first)
-//   react     — send a reaction emoji to the channel
+//   reactions      — last 50 Reaction[] for the channel (or filtered to
+//                    opts.targetId when provided), oldest first
+//   react          — send a reaction emoji to the channel
+//   reactionsFor   — utility: filter the full reaction list by targetId
+//                    without re-subscribing
 //
 // Inbound frame shapes (gateway reaction service):
 //   { type: 'reaction:new',     channel, ...Reaction }
 //   { type: 'reaction:history', channel, reactions: Reaction[] }
 //
 // Outbound frames:
-//   { service: 'reaction', action: 'react',   channel, emoji }
+//   { service: 'reaction', action: 'react',   channel, emoji, targetId?, metadata? }
 //   { service: 'reaction', action: 'history', channel, limit: number }
+//
+// targetId support (v0.7.6):
+//   - useReactions(channel, { targetId }) — reactions is pre-filtered to that entity
+//   - react(emoji, { targetId }) — per-call override; falls back to hook-level targetId
+//   - reactionsFor(targetId) — filter on demand from the full channel list
+//
+// NOTE: gateway-side ReactionService must forward the targetId field from inbound
+// frames to all subscribers for round-trip to work. The field passes through
+// opaquely in the current implementation.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useReactions = useReactions;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
 const MAX_REACTIONS = 50;
-function useReactions(channel) {
+function useReactions(channel, opts) {
     const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
-    const [reactions, setReactions] = (0, react_1.useState)([]);
+    // allReactions holds every reaction for the channel (unfiltered).
+    const [allReactions, setAllReactions] = (0, react_1.useState)([]);
     const channelRef = (0, react_1.useRef)(channel);
     (0, react_1.useEffect)(() => {
         channelRef.current = channel;
     }, [channel]);
+    // Track hook-level targetId via ref so callbacks see the latest value without
+    // needing to re-register the message handler on every opts change.
+    const targetIdRef = (0, react_1.useRef)(opts?.targetId);
+    (0, react_1.useEffect)(() => {
+        targetIdRef.current = opts?.targetId;
+    }, [opts?.targetId]);
     // Register inbound handler once.
     (0, react_1.useEffect)(() => {
         const unsubscribe = onMessage((msg) => {
@@ -35,7 +54,7 @@ function useReactions(channel) {
                 const entry = asReaction(msg);
                 if (entry) {
                     // Keep bounded to MAX_REACTIONS — drop the oldest when over limit.
-                    setReactions((prev) => {
+                    setAllReactions((prev) => {
                         const next = [...prev, entry];
                         return next.length > MAX_REACTIONS ? next.slice(next.length - MAX_REACTIONS) : next;
                     });
@@ -48,19 +67,35 @@ function useReactions(channel) {
                     .map((r) => asReaction(r))
                     .filter(Boolean);
                 // Honour the bound even on history payloads.
-                setReactions(parsed.slice(-MAX_REACTIONS));
+                setAllReactions(parsed.slice(-MAX_REACTIONS));
             }
         });
         return unsubscribe;
     }, [onMessage]);
     // Reset reactions when channel changes.
     (0, react_1.useEffect)(() => {
-        setReactions([]);
+        setAllReactions([]);
     }, [channel]);
-    const react = (0, react_1.useCallback)((emoji) => {
-        send({ service: 'reaction', action: 'react', channel: channelRef.current, emoji });
+    const react = (0, react_1.useCallback)((emoji, reactOpts) => {
+        const resolvedTargetId = reactOpts?.targetId ?? targetIdRef.current;
+        const frame = {
+            service: 'reaction',
+            action: 'react',
+            channel: channelRef.current,
+            emoji,
+        };
+        if (resolvedTargetId !== undefined)
+            frame.targetId = resolvedTargetId;
+        if (reactOpts?.metadata !== undefined)
+            frame.metadata = reactOpts.metadata;
+        send(frame);
     }, [send]);
-    return { reactions, react };
+    const reactionsFor = (0, react_1.useCallback)((targetId) => allReactions.filter((r) => r.targetId === targetId), [allReactions]);
+    // Apply hook-level targetId filter for the returned reactions list.
+    const reactions = opts?.targetId !== undefined
+        ? allReactions.filter((r) => r.targetId === opts.targetId)
+        : allReactions;
+    return { reactions, react, reactionsFor };
 }
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,6 +118,7 @@ function asReaction(raw) {
             ? raw.metadata
             : {}),
         timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
+        targetId: typeof raw.targetId === 'string' ? raw.targetId : undefined,
     };
 }
 //# sourceMappingURL=useReactions.js.map

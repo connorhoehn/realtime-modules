@@ -72,7 +72,7 @@ The package is **not on npm** — install via a git tag pin:
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.4"
+    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.6"
   }
 }
 ```
@@ -146,7 +146,7 @@ are channel-scoped: they subscribe/unsubscribe automatically when the
 | `useWebSocket(opts)` | Low-level WS state — `connectionState`, `clientId`, `sendMessage`, … | No |
 | `useChat(channel)` | `{ messages, sendMessage, loadHistory }` | Yes |
 | `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
-| `useReactions(channel)` | `{ reactions, react }` | Yes |
+| `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor }` | Yes |
 | `useActivity(channel)` | `{ events, loadHistory }` | Yes |
 | `useFileUpload(channel)` | `{ uploads, upload, cancel, removeCompleted }` | Yes |
 | `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }` | Yes |

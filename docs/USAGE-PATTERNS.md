@@ -100,6 +100,54 @@ function Room({ channelId }: { channelId: string }) {
 }
 ```
 
+### Per-entity reactions (v0.7.6)
+
+`useReactions` accepts an optional `{ targetId }` to scope reactions to a
+specific entity (message, article, comment, …). `react()` forwards the id to
+the gateway; `reactionsFor()` lets you filter on demand from the full channel
+list without a second subscription.
+
+```tsx
+import { useReactions } from '@connorhoehn/realtime-modules/client';
+
+// Scoped hook — only reactions for this article are returned.
+function ArticleReactions({ articleId }: { articleId: string }) {
+  const { reactions, react } = useReactions('articles', { targetId: articleId });
+
+  return (
+    <div>
+      {['👍', '❤️', '😂', '😮', '😢'].map((emoji) => (
+        <button key={emoji} onClick={() => react(emoji)}>
+          {emoji} {reactions.filter((r) => r.emoji === emoji).length}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Channel-level hook with on-demand per-entity filter.
+function CommentList({ comments }: { comments: Array<{ id: string; text: string }> }) {
+  const { reactionsFor, react } = useReactions('comments');
+
+  return (
+    <ul>
+      {comments.map((c) => (
+        <li key={c.id}>
+          {c.text}
+          <button onClick={() => react('👍', { targetId: c.id })}>
+            👍 {reactionsFor(c.id).filter((r) => r.emoji === '👍').length}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+> **Gateway note.** The `targetId` field passes through the gateway's
+> `ReactionService` opaquely. Server-side persistence and per-entity querying
+> require a corresponding gateway-side change — track in websocket-gateway.
+
 ### CRDT document + awareness
 
 ```tsx

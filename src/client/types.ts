@@ -90,6 +90,8 @@ export interface Reaction {
   position: unknown;
   metadata: Record<string, unknown>;
   timestamp: string;
+  /** Optional entity being reacted to (messageId, articleId, commentId, …). */
+  targetId?: string;
 }
 
 /** One activity event — mirror of gateway/activity/types.ts ActivityEvent. */
