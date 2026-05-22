@@ -3,7 +3,7 @@
 Concrete per-subpath examples. For installation, peer deps, version
 pinning, and migration, see `./ADOPTION-GUIDE.md`.
 
-Each section: **What you get** → **Usage** → **Manifest** (where
+Each section: **What you get** → **Usage** → **Notes** (where
 applicable). All code uses real type signatures from the source.
 
 ---
@@ -21,7 +21,8 @@ From `src/client/index.ts`:
   `useWebSocket` connection. Mount once near the tree root; child
   components read context via `useGateway()`. Accepts `url`, `token`,
   `features`, `channel` props.
-- `useGateway()` — access the WS connection from any descendant.
+- `useGateway()` — access the WS connection and `onMessage` bus from
+  any descendant.
 - `useFeatures()` — read the active `FeatureName[]` from context.
 - `useWebSocket(opts)` — low-level transport hook. Handles reconnect,
   session handshake, auto-resubscribe. Use directly when you can't
@@ -37,14 +38,13 @@ From `src/client/index.ts`:
 - `useAgentStream(opts)` — fetch + parse an AG-UI SSE stream.
 - `SharedTextEditor` — `contentEditable` rich-text surface, no editor
   dependency.
+- Channel feature hooks: `useChat`, `usePresence`, `useReactions`,
+  `useActivity`, `useFileUpload`, `useVideoHangout`.
+- `useNotifications()` — user-scoped notification inbox.
 - Contract types: `ConnectionState`, `GatewayError`, `GatewayMessage`,
-  `UseWebSocketReturn`.
+  `UseWebSocketReturn`, `GatewayContextValue`.
 
-Sibling hooks `useChat` / `usePresence` / `useReactions` /
-`useActivity` compose on top of `GatewaySocketProvider` and will be
-exported from this subpath as they land.
-
-### Provider + hooks usage
+### Provider + channel hooks
 
 ```tsx
 import {
@@ -53,6 +53,9 @@ import {
   usePresence,
   useReactions,
   useActivity,
+  useFileUpload,
+  useVideoHangout,
+  useNotifications,
 } from '@connorhoehn/realtime-modules/client';
 
 export function App() {
@@ -61,27 +64,37 @@ export function App() {
       url="wss://gateway.example.com/ws"
       token={getAuthToken()}
       features={['presence', 'chat', 'reactions', 'activity']}
-      channel="room:42"
     >
+      <NotificationBell />
       <Room channelId="room:42" />
     </GatewaySocketProvider>
   );
 }
 
+function NotificationBell() {
+  const { unreadCount, markAllRead } = useNotifications();
+  return <button onClick={markAllRead}>Bell ({unreadCount})</button>;
+}
+
 function Room({ channelId }: { channelId: string }) {
-  const { messages, send }       = useChat({ channel: channelId });
-  const { peers }                = usePresence({ channel: channelId });
-  const { reactions, sendEmoji } = useReactions({ channel: channelId });
-  const { events }               = useActivity({ channel: channelId });
+  const { messages, sendMessage }      = useChat(channelId);
+  const { roster }                     = usePresence(channelId);
+  const { reactions, react }           = useReactions(channelId);
+  const { events }                     = useActivity(channelId);
+  const { uploads, upload }            = useFileUpload(channelId);
+  const { session, start, join, leave } = useVideoHangout(channelId);
 
   return (
     <>
-      <header>{peers.length} online</header>
+      <header>{roster.length} online</header>
       <ul>{messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
-      <footer>
-        <button onClick={() => send({ message: 'hi' })}>send</button>
-        <button onClick={() => sendEmoji('\u{1F525}', { x: 0.5, y: 0.5 })}>fire</button>
-      </footer>
+      <button onClick={() => sendMessage({ message: 'hi' })}>send</button>
+      <button onClick={() => react('\u{1F525}')}>fire</button>
+      <input type="file" onChange={(e) => e.target.files && upload(e.target.files[0])} />
+      {!session
+        ? <button onClick={() => start()}>Start video</button>
+        : <button onClick={leave}>Leave</button>
+      }
     </>
   );
 }
@@ -137,11 +150,6 @@ export function StandalonePanel({ token }: { token: string }) {
 }
 ```
 
-### Manifest
-
-None — `./client` is purely client-side. Manifests live with
-server-side modules.
-
 ---
 
 ## `./client/ws` — Yjs-free WebSocket hook
@@ -166,7 +174,7 @@ function StatusBar() {
 ## `./agent-streaming` — AG-UI SSE emitter (server)
 
 Server-side emitter for the AG-UI v0.1.x agent-event protocol. Use on
-any Express server (or any Lambda behind aws-lambda-web-adapter with
+any Express server (or Lambda behind aws-lambda-web-adapter with
 Function URL streaming enabled).
 
 ### What you get
@@ -240,18 +248,11 @@ app.post('/api/run', (req, res) => {
 });
 ```
 
-### Manifest
-
-```ts
-import { agentStreamingManifest }
-  from '@connorhoehn/realtime-modules/agent-streaming';
-```
-
 ---
 
 ## `./agent-streaming/client` — browser SSE helper
 
-Browser-only fetch + SSE parser. No Express dependency.
+Browser-only fetch + SSE parser. No Express or Yjs dependency.
 
 ```ts
 import { streamAgentRequest }
@@ -327,10 +328,6 @@ Peer deps: `react`, `yjs`, `y-protocols`, plus the `@tiptap/*` set
 `extension-task-list`, `extension-task-item`, `extension-placeholder`,
 `y-tiptap`).
 
-### Manifest
-
-None — covered by manifests in the gateway's CRDT module.
-
 ---
 
 ## `./proxy-client` — HTTP REST shim
@@ -349,7 +346,7 @@ From `src/proxy-client/index.ts`:
 - Types: `ProxyClientOptions`, `ChatMessage`, `PresenceEntry`,
   `PresenceStatus`, `ActivityEvent`, and gateway response shapes.
 
-### Usage
+### Usage with automatic HMAC signing (v0.7.1+)
 
 ```ts
 import {
@@ -359,14 +356,14 @@ import {
 
 const proxy = new GatewayProxyClient({
   gatewayUrl: process.env.GATEWAY_URL!,
-  serviceToken: process.env.SERVICE_TOKEN,   // for service-auth routes
-  timeoutMs: 5_000,
+  serviceAuthSecret: process.env.SERVICE_AUTH_SECRET,
+  serviceAuthClientId: 'my-lambda-app',
+  timeout: 5_000,
 });
 
-// Publish to a channel (requires serviceToken).
+// All calls automatically include X-Service-Auth header.
 await proxy.publishToChannel('room:42', { type: 'notice', text: 'hello' });
 
-// Read feature history (requires serviceToken).
 const { messages } = await proxy.getChatHistory('room:42', { limit: 50 });
 const { users }    = await proxy.getPresence('room:42');
 const { events }   = await proxy.getActivityHistory('room:42', { limit: 20 });
@@ -393,10 +390,6 @@ try {
 and a **Function URL** — API Gateway buffers responses and breaks SSE.
 
 [aws-lambda-web-adapter]: https://github.com/awslabs/aws-lambda-web-adapter
-
-### Manifest
-
-None — transport binding, not a domain feature.
 
 ---
 
@@ -463,18 +456,14 @@ The `useWebSocket` hook in `./client` speaks the same protocol — the
 `{ service, action, ... }` inbound shape and the `{ type: 'session' }`
 handshake frame are matched on both ends.
 
-### Manifest
-
-None — transport binding, not a domain feature.
-
 ---
 
 ## Where the package leaves you on your own
 
 - **Server-side service classes** — `CRDTService`, `ChatService`,
   `PresenceService`, `ReactionService`, `ActivityService` all live in
-  `websocket-gateway/src/`. Consume them through the gateway WS protocol
-  (client hooks) or REST (`./proxy-client`).
+  `websocket-gateway/src/`. Consume them through the gateway WS
+  protocol (client hooks) or REST (`./proxy-client`).
 - **Cross-node fan-out** — every `*MessageRouter` interface in the
   gateway is a contract; the gateway supplies its own Redis pub/sub
   implementations.

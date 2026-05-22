@@ -14,6 +14,58 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.7.4] — 2026-05-21
+
+### Added
+
+- **`useNotifications()`** — user-scoped notification inbox hook returning
+  `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }`.
+  Listens for `notification:new`, `notification:read`, and
+  `notification:bulk-update` frames from the gateway without any channel filter
+  (notifications are user-scoped, not channel-scoped).
+  Read state is persisted in `localStorage` under `'rmn:notifications:read'` so
+  a page refresh does not lose marks. In-memory list is capped at 100 entries
+  (configurable via `maxNotifications` option). Gateway-side notification service
+  is not yet wired — hook is the consumer surface; server wiring is deferred.
+  Exported from `./client`.
+
+## [0.7.3] — 2026-05-21
+
+### Fixed
+
+- **`./server` subpath restored** — the `./server` export entry was
+  inadvertently dropped during the v0.6.0 server-side pruning. It is
+  needed by gateway integration tests that import the `server-ws` handler
+  factory through the legacy path. Restored in `package.json` exports map.
+
+## [0.7.2] — 2026-05-21
+
+### Added
+
+- **`useFileUpload(channel)`** — React hook for gateway-mediated file upload
+  lifecycle. Returns `{ uploads, upload, cancel, removeCompleted }`. Handles
+  the full presigned-URL flow: `request-upload` → `fileupload:url` → XHR PUT
+  with progress → `complete` → `fileupload:complete` (or `scanning` / `clean` /
+  `infected` / `failed`). Supports cancel mid-upload. Exported from `./client`.
+- **`useVideoHangout(channel)`** — React hook for LVS video session signaling.
+  Returns `{ session, participants, joinToken, start, join, leave, end,
+  toggleVideo, toggleAudio }`. Manages the WS signaling layer only — WebRTC /
+  media is the web-broadcast-shim's concern. `joinToken` is passed to the
+  consumer's `<Stage>` component. Exported from `./client`.
+
+## [0.7.1] — 2026-05-21
+
+### Added
+
+- **`GatewayProxyClient` automatic HMAC signing** — pass `serviceAuthSecret`
+  + `serviceAuthClientId` to the constructor and the client computes and
+  attaches an `X-Service-Auth: v1.<id>.<ts>.<mac>` header on every request
+  automatically. Algorithm is inlined using Node's built-in `crypto` — no
+  extra runtime dependency. Wire format is compatible with
+  `@connorhoehn/service-runtime`'s `signEnvelope` / `verifyEnvelope`.
+  When both signing options are omitted, the client continues to operate in
+  legacy (no-auth) mode.
+
 ## [0.7.0] — 2026-05-21
 
 ### Added
@@ -52,9 +104,14 @@ Server-side services removed; client-only release.
 
 ### Changed
 
-- Dropped all server-side service classes (CRDT, Chat, Presence, Reactions, Activity,
-  etc.) from the package — these moved in-tree to the gateway. Package is now
-  client-library-only: `./client`, `./agent-streaming`, `./proxy-client`, `./client/ws`.
+- **Dropped all server-side service classes** — `CRDTService`, `ChatService`,
+  `PresenceService`, `ReactionService`, `ActivityService`, and all supporting
+  server subpaths (`./chat`, `./presence`, `./reactions`, `./activity`,
+  `./server`, `./cursor`, `./ingest`, `./pipeline`, `./social`, `./call`,
+  `./typed-documents`) removed from the package. These moved in-tree to
+  `websocket-gateway/src/`. Package is now client-library-only: `./client`,
+  `./client/ws`, `./agent-streaming`, `./agent-streaming/client`,
+  `./proxy-client`, `./server-ws`, `./adapters/tiptap`.
 - Pruned orphan tests that referenced removed server exports.
 - README and ADOPTION-GUIDE rewritten for the client-only v0.6+ surface.
 
