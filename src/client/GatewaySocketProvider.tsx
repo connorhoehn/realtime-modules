@@ -19,13 +19,16 @@
 
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   type ReactNode,
 } from 'react';
 import { useWebSocket } from './useWebSocket';
 import type { UseWebSocketHookReturn } from './useWebSocket';
+import type { GatewayMessage } from './types';
 
 // ---------------------------------------------------------------------------
 // FeatureName
@@ -81,11 +84,24 @@ export interface GatewaySocketProviderProps {
 // ---------------------------------------------------------------------------
 
 /**
+ * Extended WS context — `UseWebSocketHookReturn` plus a post-init message
+ * subscription bus so child hooks (useChat, usePresence, etc.) can register
+ * handlers without needing to be wired at construction time.
+ *
+ * `onMessage(handler)` — register a handler for inbound gateway frames.
+ * Returns an unsubscribe function. Safe to call from any child component
+ * inside a GatewaySocketProvider; handlers are called in registration order.
+ */
+export interface GatewayContextValue extends UseWebSocketHookReturn {
+  onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
+}
+
+/**
  * Holds the full UseWebSocketHookReturn so child hooks can consume the
  * WS connection without prop-drilling. Do not call useGateway() outside
  * a GatewaySocketProvider — it throws.
  */
-export const GatewayContext = createContext<UseWebSocketHookReturn | null>(null);
+export const GatewayContext = createContext<GatewayContextValue | null>(null);
 GatewayContext.displayName = 'GatewayContext';
 
 /**
@@ -127,11 +143,31 @@ export function GatewaySocketProvider({
   token,
   channel,
 }: GatewaySocketProviderProps) {
+  // Message-bus: child hooks register handlers; GatewaySocketProvider fans
+  // each inbound frame out to all registered handlers in registration order.
+  const handlersRef = useRef<Set<(msg: GatewayMessage) => void>>(new Set());
+
+  const busOnMessage = useCallback((handler: (msg: GatewayMessage) => void): (() => void) => {
+    handlersRef.current.add(handler);
+    return () => {
+      handlersRef.current.delete(handler);
+    };
+  }, []);
+
   const ws = useWebSocket({
     url,
     authToken: token,
     defaultChannel: channel,
     autoResubscribe: false,
+    onMessage: (msg) => {
+      for (const handler of handlersRef.current) {
+        try {
+          handler(msg);
+        } catch {
+          // user handler errors must not break the bus
+        }
+      }
+    },
   });
 
   // Stable refs so the effect below doesn't re-run when features identity
@@ -174,9 +210,18 @@ export function GatewaySocketProvider({
     // the name so useFeatures() returns the full declared list.
   }, [connectionState, send, currentChannel]);
 
+  // Merge the message-bus subscriber into the WS context value. useMemo keeps
+  // the identity stable across renders (only changes when `ws` identity changes,
+  // which is rare — reconnects don't replace the ws object).
+  const contextValue = useMemo<GatewayContextValue>(
+    () => ({ ...ws, onMessage: busOnMessage }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ws, busOnMessage],
+  );
+
   return (
     <FeaturesContext.Provider value={features}>
-      <GatewayContext.Provider value={ws}>
+      <GatewayContext.Provider value={contextValue}>
         {children}
       </GatewayContext.Provider>
     </FeaturesContext.Provider>
@@ -190,9 +235,12 @@ export function GatewaySocketProvider({
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *
+ * Returns `GatewayContextValue` — a superset of `UseWebSocketHookReturn` that
+ * also includes `onMessage(handler) => unsubscribe` for child feature hooks.
+ *
  * Throws if called outside a provider so the error message is actionable.
  */
-export function useGateway(): UseWebSocketHookReturn {
+export function useGateway(): GatewayContextValue {
   const ctx = useContext(GatewayContext);
   if (!ctx) {
     throw new Error(

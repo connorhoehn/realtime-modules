@@ -3,35 +3,47 @@
 Operator-facing guide for installing the realtime-modules toolkit into
 a new app and wiring its subpath exports.
 
+**v0.6.0 note:** this package is now **client-only**. Server-side
+service classes (`CRDTService`, `ChatService`, `PresenceService`, etc.)
+were removed and live in-tree in the `websocket-gateway` repo. If you
+were a server-side consumer, see
+[Migration from v0.5.x](#migration-from-v05x) at the bottom.
+
 ---
 
 ## 1. What `realtime-modules` is
 
-`@connorhoehn/realtime-modules` is a **toolkit** (not a framework) for
-building realtime experiences — collaborative documents, presence,
-chat, reactions, agent streaming — out of reusable **feature triples**:
+`@connorhoehn/realtime-modules` is a **client toolkit** for building
+realtime experiences — collaborative documents, presence, chat,
+reactions, agent streaming — on top of a running `websocket-gateway`
+deployment. It ships:
 
-1. **UI** — React components and hooks the consumer mounts into its app.
-2. **Backend** — Service classes the consumer wires into its server.
-3. **Manifest** — a `FeatureManifest` declaring env vars, WS channel
-   patterns, event-catalog declarations, dependencies, and install
-   hooks so platform tooling (`gateway`, `edge-gateway`,
-   `realtime-fanout`) can discover which channels and events to expect.
-
-Storage adapters are **pluggable**: every feature talks to one or more
-storage interfaces (`SnapshotStore`, `MetadataStore`, `HotCache`,
-`MessageRouterContract`) so consumers bring their own backend (DDB,
-Postgres, SQLite, in-memory) without forking the package. Pick what
-you want — subpath exports keep your bundle small.
+- **React hooks and providers** for WS connection management, CRDT
+  documents, awareness, and feature-gated subscriptions.
+- **AG-UI / SSE emitter** for server-side agent streaming, plus a
+  matching client hook (`useAgentStream`).
+- **Tiptap adapter** for rich-text collaborative editing.
+- **HTTP proxy client** for Lambda/SSR callers that talk to the gateway
+  over REST instead of WebSocket.
 
 ---
 
 ## 2. Installation
 
-### Inside this monorepo
+The package is **not on npm** — install via a git tag pin:
 
-`realtime-modules` currently lives at `websocket-gateway/realtime-modules/`.
-Apps in the same workspace can depend on it via a file pin:
+```json
+{
+  "dependencies": {
+    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.6.0"
+  }
+}
+```
+
+The repo ships a pre-built `dist/` so consumers do not need to run
+the TypeScript build.
+
+For local development against a sibling checkout:
 
 ```json
 {
@@ -41,74 +53,69 @@ Apps in the same workspace can depend on it via a file pin:
 }
 ```
 
-After `npm install`, the package's `prepare` script runs `tsc` so the
-`dist/` artifacts are in place before the consumer compiles.
+Run `npm run build` once after pulling to refresh `dist/`.
 
-### Once extracted to its own GitHub repo
-
-When realtime-modules graduates to a standalone repository, pin to a
-released tag:
+### TypeScript requirements
 
 ```json
 {
-  "dependencies": {
-    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.3.0"
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "moduleResolution": "bundler"
   }
 }
 ```
 
-Pin to **immutable tags**, not branches. The package follows the same
-"main HEAD or tagged release, never floating branch" rule applied to
-`distributed-core` and `event-catalog`.
+- **`skipLibCheck: true`** — suppress transitive type conflicts from
+  `yjs` / `lru-cache` under TypeScript 5.x/6.x.
+- **`moduleResolution: "bundler"` (or `"node16"` / `"nodenext"`)** —
+  required for subpath imports like `./client/ws` to resolve. Classic
+  `"node"` mode does not support package `exports` maps.
 
 ### Peer dependencies
 
-All peer deps are marked **optional** so subpaths can be cherry-picked.
-Install only what your chosen subpaths require:
+All peer deps are marked **optional** — install only what your chosen
+subpaths need:
 
 | Subpath | Required peer deps |
 | --- | --- |
-| `./server` | `yjs`, `y-protocols` |
 | `./client` | `react`, `yjs`, `y-protocols` |
-| `./adapters/tiptap` | `react`, `yjs`, plus the full `@tiptap/*` set |
-| `./agent-streaming` | `express` (server only) |
+| `./client/ws` | `react` only — no Yjs |
+| `./adapters/tiptap` | `react`, `yjs`, `y-protocols`, full `@tiptap/*` set |
+| `./agent-streaming` | `express` (server side only) |
+| `./agent-streaming/client` | none |
+| `./server-ws` | `ws` |
+| `./proxy-client` | none |
 
 ---
 
 ## 3. Subpaths overview
 
-The package ships these entry points (see `package.json#exports`):
+The package ships seven subpath entry points:
 
 | Subpath | Provides |
 | --- | --- |
-| `@connorhoehn/realtime-modules` (root) | `FeatureManifest` type + re-exports of `./agent-streaming`, `./client`, `./server` for ergonomic single-import access. Prefer dedicated subpaths for tree-shaking. |
-| `@connorhoehn/realtime-modules/server` | `CRDTService` (orchestrator), `SnapshotManager`, `DocumentMetadataService`, `DocumentPresenceService`, `AwarenessCoalescer`, `IdleEvictionManager`, store contracts (`SnapshotStore`, `MetadataStore`, `HotCache`, `MessageRouterContract`), and the in-memory store implementations (`MemorySnapshotStore`, `MemoryMetadataStore`, `MemoryHotCache`). Includes `config` namespace for overriding windows. |
-| `@connorhoehn/realtime-modules/client` | `GatewayProvider` (editor-agnostic Y.js bridge), `useYjsDoc`, `useCRDT`, `useAwarenessState`, `useIdleDetector`, and `SharedTextEditor` (`contentEditable`-based, no editor dependency). |
-| `@connorhoehn/realtime-modules/adapters/tiptap` | `TiptapEditor` + `EditorToolbar`. Separated so Monaco / CodeMirror / contentEditable consumers don't pull in Tiptap or ProseMirror. |
-| `@connorhoehn/realtime-modules/agent-streaming` | AG-UI v0.1.x server-side emitter: `AgentStreamImpl`, `createAgentStream`, `agentStreamMiddleware`, and the full AG-UI event type set (text, tool calls, reasoning, state, activity, etc.). Pairs with `@connorhoehnslalom/ui-components/agents` on the client. |
+| `./client` | React surface: `GatewaySocketProvider`, `useGateway`, `useFeatures`, `useWebSocket`, `GatewayProvider`, `useCRDT`, `useYjsDoc`, `useAwarenessState`, `useIdleDetector`, `useAgentStream`, `SharedTextEditor`. Sibling hooks `useChat` / `usePresence` / `useReactions` / `useActivity` compose on top of the provider as they land. |
+| `./client/ws` | Yjs-free `useWebSocket` only — keeps `yjs` and `y-protocols` out of the bundle. Use from apps that don't touch CRDT. |
+| `./server-ws` | `createWsHandler` — thin `ws.Server` factory for hosts that want a local WS surface (tests, fixtures, non-gateway servers). |
+| `./agent-streaming` | Server-side AG-UI v0.1.x SSE emitter: `createAgentStream`, `agentStreamMiddleware`, full AG-UI event type tree. |
+| `./agent-streaming/client` | Browser-only `streamAgentRequest` fetch + SSE parser. No Express dependency. |
+| `./adapters/tiptap` | `TiptapEditor` + `EditorToolbar` bound to a Yjs `XmlFragment`. Isolated so non-Tiptap consumers don't pull in ProseMirror. |
+| `./proxy-client` | `GatewayProxyClient` — typed REST shim for Lambda / SSR callers that talk to the gateway over HTTP. |
 
-### Wave 2 subpaths (in flight)
-
-The package layout reserves these subpath directories. The exports map
-in `package.json` does not yet include them — track Wave 2 PRs for
-when they go live:
-
-- `./presence` — `PresenceService` + `MessageRouterContract` (extraction in progress, task #31).
-- `./chat` — `ChatService` + `ChatStore` interface + `InMemoryChatStore` (task #32).
-- `./reactions` — `ReactionService` (task #33).
-
-Until those land, presence/chat/reactions consumers must continue
-calling the gateway's HTTP/WS APIs directly.
+The root entry (`@connorhoehn/realtime-modules`) re-exports `./client`,
+`./agent-streaming`, and `./server-ws` for ergonomic single-import
+access. Prefer subpath imports for tree-shaking.
 
 ---
 
-## 4. Concrete example — building a hypothetical "agent dashboard" app
+## 4. Concrete example — agent dashboard app
 
-An Express + React app that wants three features:
+An Express + React app that wants:
 
-1. **WS connection management** (from `./client`).
-2. **Presence** (would consume `./presence`, *blocked* on Wave 2 — see gap below).
-3. **AG-UI streaming chat** (from `./agent-streaming` server + the matching client emitter package).
+1. **WS realtime features** (presence, chat) via `GatewaySocketProvider`.
+2. **Collaborative document** via `useYjsDoc` + Tiptap.
+3. **AG-UI streaming chat** via `agentStreamMiddleware` + `useAgentStream`.
 
 ### 4.1 `package.json`
 
@@ -117,8 +124,7 @@ An Express + React app that wants three features:
   "name": "agent-dashboard",
   "private": true,
   "dependencies": {
-    "@connorhoehn/realtime-modules": "file:../realtime-modules",
-    "@connorhoehnslalom/ui-components": "^1.0.0",
+    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.6.0",
     "express": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -128,340 +134,230 @@ An Express + React app that wants three features:
 }
 ```
 
-### 4.2 Backend wiring — Express boot
+### 4.2 Backend — AG-UI streaming endpoint
 
 ```ts
 // server/index.ts
 import express from 'express';
 import { agentStreamMiddleware } from '@connorhoehn/realtime-modules/agent-streaming';
-import {
-  CRDTService,
-  MemorySnapshotStore,
-  MemoryMetadataStore,
-  MemoryHotCache,
-  type MessageRouterContract,
-} from '@connorhoehn/realtime-modules/server';
 
 const app = express();
 app.use(express.json());
 
-// 1. CRDT service for collaborative documents.
-//    Plug in your own MessageRouter implementation that bridges to
-//    your WS transport — this app uses a thin in-process router.
-const messageRouter: MessageRouterContract = createInProcessRouter();
-
-const crdt = new CRDTService({
-  messageRouter,
-  snapshotStore: new MemorySnapshotStore(),
-  metadataStore: new MemoryMetadataStore(),
-  hotCache: new MemoryHotCache(),
-  logger: console,
-  // Optional authz hook. Default is permissive.
-  authz: (clientId, channel) => isAllowed(clientId, channel),
-});
-
-// 2. AG-UI streaming chat. Mount POST + SSE handler.
 app.post('/api/agents/:agentId/stream', agentStreamMiddleware(
   async (req, stream, signal) => {
     const runner = await getAgentRunner(req.params.agentId);
     for await (const evt of runner.stream(req.body, { signal })) {
-      // Dispatch each AG-UI event onto the stream.
-      switch (evt.type) {
-        case 'text': stream.textMessageChunk({ delta: evt.text }); break;
-        case 'tool': stream.toolCallChunk(evt.payload); break;
-        // ... etc
+      if (signal.aborted) break;
+      if (evt.type === 'text') {
+        stream.textMessageChunk({ messageId: evt.messageId, role: 'assistant', delta: evt.text });
       }
     }
   },
-  { heartbeatMs: 25_000 }
+  { heartbeatMs: 25_000 },
 ));
 
 app.listen(3000);
 ```
 
-Note: the app **wires its own Express routes** for CRDT. The package
-ships service classes, not route mounters (see §7).
+Server-side service classes (CRDT, Chat, Presence) are **not** in this
+package — they run inside `websocket-gateway`. Your backend talks to the
+gateway over REST via `GatewayProxyClient` or connects clients directly
+to the gateway WS endpoint.
 
-### 4.3 Frontend — React component imports
+### 4.3 Frontend — React component tree
 
 ```tsx
-// app/components/CollabDoc.tsx
-import { useYjsDoc, useAwarenessState, SharedTextEditor }
-  from '@connorhoehn/realtime-modules/client';
-import type { UseWebSocketReturn }
-  from '@connorhoehn/realtime-modules/client';
+// app/App.tsx
+import {
+  GatewaySocketProvider,
+  useChat,       // lands when feature hook ships
+  usePresence,   // lands when feature hook ships
+  useAgentStream,
+} from '@connorhoehn/realtime-modules/client';
 
-export function CollabDoc({
-  ws,
-  documentId,
-}: {
-  ws: UseWebSocketReturn;       // satisfies the contract (see gap below)
-  documentId: string;
-}) {
-  const { ydoc, provider, synced } = useYjsDoc({
-    documentId,
-    ws,
-    onMessage: ws.onMessage,    // adapter on the consumer side
+export function App() {
+  return (
+    <GatewaySocketProvider
+      url="wss://gateway.example.com/ws"
+      token={getAuthToken()}
+      features={['presence', 'chat']}
+      channel="room:42"
+    >
+      <Room />
+    </GatewaySocketProvider>
+  );
+}
+
+function Room() {
+  // These hooks read the WS context from GatewaySocketProvider —
+  // no prop-drilling needed.
+  const { messages, send } = useChat({ channel: 'room:42' });
+  const { peers } = usePresence({ channel: 'room:42' });
+
+  const { streamingText, sendMessage } = useAgentStream({
+    endpoint: '/api/agents/default/stream',
   });
 
-  const awareness = useAwarenessState(provider, {
-    userId: 'me',
-    color: '#ff6b6b',
-  });
-
-  if (!synced) return <div>Loading document...</div>;
-
-  return <SharedTextEditor ydoc={ydoc!} provider={provider!} />;
+  return (
+    <>
+      <header>{peers.length} online</header>
+      <ul>{messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
+      <button onClick={() => send({ message: 'hi' })}>send</button>
+      <pre>{streamingText}</pre>
+      <button onClick={() => sendMessage({ content: 'summarize' })}>ask agent</button>
+    </>
+  );
 }
 ```
 
-```tsx
-// app/components/AgentChat.tsx
-import { AgentStreamConsumer }
-  from '@connorhoehnslalom/ui-components/agents';
+### 4.4 Collaborative document (CRDT + Tiptap)
 
-export function AgentChat({ agentId }: { agentId: string }) {
+```tsx
+// app/components/CollabDoc.tsx
+import { useGateway, useYjsDoc, useAwarenessState }
+  from '@connorhoehn/realtime-modules/client';
+import { TiptapEditor, type CollaborationProvider }
+  from '@connorhoehn/realtime-modules/adapters/tiptap';
+
+export function CollabDoc({ documentId }: { documentId: string }) {
+  const ws = useGateway();   // from parent GatewaySocketProvider
+
+  const { ydoc, provider, synced } = useYjsDoc({ documentId, ws });
+  const { updateCursorInfo } = useAwarenessState(provider, {
+    userId: 'me',
+    displayName: 'Connor',
+    color: '#06b6d4',
+    mode: 'edit',
+    currentSectionId: null,
+  });
+
+  if (!synced || !ydoc || !provider) return <div>Loading...</div>;
+
   return (
-    <AgentStreamConsumer
-      endpoint={`/api/agents/${agentId}/stream`}
-      onEvent={(evt) => { /* render */ }}
+    <TiptapEditor
+      fragment={ydoc.getXmlFragment('prosemirror')}
+      ydoc={ydoc}
+      provider={provider as CollaborationProvider}
+      user={{ name: 'Connor', color: '#06b6d4' }}
+      onUpdateCursorInfo={updateCursorInfo}
     />
   );
 }
 ```
 
-### Gap surfaced by this example
-
-**There is no `useWebSocket` hook exported from `./client`.** The
-subpath exports only the **type contract** `UseWebSocketReturn`
-(in `client/types.ts`) — consumers must supply a hook that satisfies
-that shape (`connectionState`, `sessionToken`, `clientId`,
-`currentChannel`, `switchChannel`, `sendMessage`, `disconnect`,
-`reconnect`). The original `useWebSocket` lives in gateway frontend
-(`frontend/src/hooks/useWebSocket.ts`) and has not yet been lifted.
-**TODO (Wave 3):** extract `useWebSocket` into `./client` so apps
-don't have to reimplement transport, reconnect, and session handling.
-
 ---
 
-## 5. Bring-your-own storage adapters
+## 5. Lambda / SSR — proxy-client
 
-Every store the server module needs is defined as a TypeScript
-interface in `src/server/stores/`. To target a different backend,
-implement the interface — that's the entire contract.
-
-### Reference: `MemorySnapshotStore`
+Apps running in AWS Lambda or behind a CDN edge can call gateway REST
+endpoints via `GatewayProxyClient` instead of holding a WebSocket:
 
 ```ts
-import type {
-  SnapshotStore,
-  VersionMeta,
-} from '@connorhoehn/realtime-modules/server';
+import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
 
-export class SqliteSnapshotStore implements SnapshotStore {
-  constructor(private db: import('better-sqlite3').Database) {}
-
-  async putSnapshot(
-    channelId: string,
-    gzippedBytes: Buffer,
-    meta: { timestamp: number; versionName?: string }
-  ): Promise<void> {
-    this.db.prepare(
-      `INSERT INTO snapshots (channel_id, ts, name, bytes)
-       VALUES (?, ?, ?, ?)`
-    ).run(channelId, meta.timestamp, meta.versionName ?? null, gzippedBytes);
-  }
-
-  async getLatestSnapshot(channelId: string) {
-    const row = this.db.prepare(
-      `SELECT ts, name, bytes FROM snapshots
-        WHERE channel_id = ? ORDER BY ts DESC LIMIT 1`
-    ).get(channelId);
-    return row
-      ? { bytes: row.bytes, timestamp: row.ts, versionName: row.name ?? undefined }
-      : null;
-  }
-
-  async listVersions(channelId: string, limit: number): Promise<VersionMeta[]> {
-    const rows = this.db.prepare(
-      `SELECT ts, name, length(bytes) AS size FROM snapshots
-        WHERE channel_id = ? ORDER BY ts DESC LIMIT ?`
-    ).all(channelId, limit);
-    return rows.map((r: any) => ({
-      channelId, timestamp: r.ts, versionName: r.name ?? undefined, size: r.size,
-    }));
-  }
-
-  async getVersion(channelId: string, timestamp: number): Promise<Buffer | null> {
-    const row = this.db.prepare(
-      `SELECT bytes FROM snapshots WHERE channel_id = ? AND ts = ?`
-    ).get(channelId, timestamp);
-    return row ? row.bytes : null;
-  }
-}
-```
-
-Then plug it into `CRDTService`:
-
-```ts
-const crdt = new CRDTService({
-  messageRouter,
-  snapshotStore: new SqliteSnapshotStore(db),
-  metadataStore: new SqliteMetadataStore(db),
-  hotCache: null,           // hot cache is optional
-  logger,
+const proxy = new GatewayProxyClient({
+  gatewayUrl: process.env.GATEWAY_URL!,
+  serviceToken: process.env.SERVICE_TOKEN,
+  timeoutMs: 5_000,
 });
+
+// Publish an event to a channel.
+await proxy.publishToChannel('room:42', { type: 'notice', text: 'hello' });
+
+// Read history.
+const { messages } = await proxy.getChatHistory('room:42', { limit: 50 });
+const { users }    = await proxy.getPresence('room:42');
+const { events }   = await proxy.getActivityHistory('room:42', { limit: 20 });
 ```
 
-`MetadataStore` and `HotCache` follow the same pattern.
-`MemoryMetadataStore` and `MemoryHotCache` (in
-`src/server/stores/MemoryStore.ts`) are working references — they're
-what the test suite uses and what zero-config consumers get out of the
-box.
+Errors throw `ProxyClientHttpError` / `ProxyClientNetworkError` /
+`ProxyClientTimeoutError` from `./proxy-client` — all extend
+`ProxyClientError`.
 
-**Contract notes that matter** (from `SnapshotStore.ts`):
+**Lambda + SSE note:** `./agent-streaming` works in Lambda via
+[aws-lambda-web-adapter] with `AWS_LWA_INVOKE_MODE=response_stream`
+and a **Function URL**. Do not use API Gateway (REST or HTTP) — it
+buffers responses and breaks SSE.
 
-- Snapshot bytes are **gzipped at the contract boundary**. The store
-  must round-trip them byte-for-byte; the caller does the gzip /
-  gunzip itself.
-- `timestamp` is a millisecond-epoch sort key that doubles as the
-  version id surfaced in restore APIs.
-- `VersionMeta.size` may be `0` for legacy rows that predate the field.
+[aws-lambda-web-adapter]: https://github.com/awslabs/aws-lambda-web-adapter
 
 ---
 
 ## 6. The `FeatureManifest` pattern
 
-Every feature ships (or will ship) a `FeatureManifest`. Today only
-`AgentStreamingManifest` is exported (`./agent-streaming`), but the
-contract is the same for chat, presence, document-sharing, etc.
+`FeatureManifest` (in `src/feature-manifest/types.ts`) is the shared
+contract between features and the host. The `agentStreamingManifest`
+is exported from `./agent-streaming`. Read it at boot to assert
+required env vars:
 
 ```ts
-export interface FeatureManifest {
-  name: string;                // 'chat' | 'presence' | 'document-sharing' | ...
-  version: string;             // independent of the package semver
-  envVars?: Record<string, {
-    required?: boolean;
-    default?: string;
-    description: string;
-  }>;
-  channels?: string[];         // WS channel patterns this feature uses
-  declarations?: string;       // module path to EventDeclaration[] export
-  dependencies?: string[];     // other feature names required first
-  install?: {
-    backendRoutes?: string;    // module path to (app) => void route mounter
-    frontendImport?: string;   // suggested frontend import path
-  };
+import { agentStreamingManifest }
+  from '@connorhoehn/realtime-modules/agent-streaming';
+
+for (const [key, meta] of Object.entries(agentStreamingManifest.envVars ?? {})) {
+  if (meta.required && !process.env[key]) {
+    throw new Error(`Missing required env var: ${key}`);
+  }
 }
 ```
-
-### Why apps care
-
-- **Validation.** Platform tooling can fail-fast on missing env vars
-  by reading `manifest.envVars`.
-- **Channel registration.** Gateway / edge-gateway can pre-declare
-  WS channel patterns from `manifest.channels` so a feature that
-  doesn't broadcast on a registered channel is caught at boot.
-- **Event-catalog wiring.** The `declarations` path points at a list
-  the event-catalog publisher / consumer can register.
-- **Future `npx realtime-modules add chat` CLI.** *(Not yet
-  implemented — Wave 3+ work.)* The CLI will read `install.backendRoutes`
-  and `install.frontendImport` to scaffold the consumer's wiring.
-
-For now, host applications can read manifests in code (`import {
-AgentStreamingManifest } from '@connorhoehn/realtime-modules/agent-streaming'`)
-to assert env-var presence at boot and to feed manifest metadata into
-their own telemetry.
 
 ---
 
 ## 7. What's NOT included
 
-Treat realtime-modules as a **toolkit**, not a framework. It explicitly
-does **not** ship:
-
-- **Express routes.** The server module exports service classes
-  (`CRDTService`, etc.) but no `mountCrdtRoutes(app)` helper. Apps
-  wire their own router. The only Express-aware export today is
-  `agentStreamMiddleware` (a single `RequestHandler` factory).
-- **WebSocket transport.** Consumers bring their own WS server +
-  connection manager + auth. The package only specifies the
-  `MessageRouterContract` shape it talks to.
-- **A `useWebSocket` hook on the client.** Only the
-  `UseWebSocketReturn` *contract type* is exported (see §4 gap).
-- **Auth / authz.** `CRDTService` accepts an optional `authz` callback;
-  default is permissive pass-through. Real authn lives in the host.
-- **AWS-SDK / Redis client wiring.** Storage adapters own their
-  client lifecycle; the package depends only on the abstract store
-  interfaces.
+- **Server-side service classes.** `CRDTService`, `ChatService`,
+  `PresenceService`, `ReactionService`, `ActivityService`, etc. all
+  live in `websocket-gateway/src/`. Consume them through the gateway
+  WS protocol (client hooks) or HTTP (proxy-client).
+- **Express routes.** Only `agentStreamMiddleware` mounts an Express
+  handler. All other features are plain service classes in the gateway.
+- **Auth / authz.** `createWsHandler` accepts an `auth` callback;
+  `GatewaySocketProvider` forwards a `token`; the rest is your
+  application's concern.
 - **A CLI installer.** `npx realtime-modules add <feature>` is a
-  future deliverable, currently aspirational.
+  future aspiration.
 
 ---
 
 ## 8. Operational notes
 
-### Peer-dependency handling
+### Peer dependency handling
 
-All peer deps are marked `optional` in `peerDependenciesMeta`.
-Consequences for consumers:
+npm will not warn about missing optional peers — a missing peer shows
+up as `ERR_MODULE_NOT_FOUND` at import time. If you see
+`Cannot find module 'y-protocols'`, install the peer.
 
-- Install **only** the peers your chosen subpaths use. Pure
-  `./server` consumers can skip `react` and the `@tiptap/*` family.
-- npm will not warn about missing optional peers, so a missing peer
-  shows up as an `ERR_MODULE_NOT_FOUND` at import time. If you see
-  `Cannot find module 'y-protocols'`, you forgot a peer install.
-- Lockfile drift across consumers is your responsibility — pin
-  exact peer versions when reproducibility matters.
+### Version pinning
 
-### Version pinning across consumers
+Pin consumers to **tags**, e.g.
+`github:connorhoehn/realtime-modules#v0.6.0`. Treat `main` HEAD the
+way the platform treats `distributed-core` — freely usable when you
+control both ends of the upgrade, never trusted as a long-term pin.
 
-Once realtime-modules extracts to its own GitHub repo:
-
-- Pin consumers to **tags**, e.g. `github:connorhoehn/realtime-modules#v0.3.0`.
-- Treat `main` HEAD the way the platform treats `distributed-core` —
-  freely usable when you control both ends of the upgrade, never
-  trusted as a long-term pin.
-- When extracting, run the typecheck across each consumer
-  (`npm run typecheck`) before publishing a new tag — the package's
-  subpath exports are not API-stable yet and breakages will surface
-  as TS errors, not runtime crashes.
-- Plan for at least one drift hazard: storage-contract shapes
-  (`SnapshotStore`, `MetadataStore`) are load-bearing. Bump the
-  package's minor version on any breaking change to those interfaces
-  and call it out in the release notes so consumer adapter
-  implementations get updated in lockstep.
-
-### Logging + metrics
-
-`CRDTService` accepts `logger` (required) and `metricsCollector`
-(optional). Logger is structural — anything with `info`, `warn`,
-`error`, `debug` works (`pino` and `console` both satisfy). The metrics
-collector contract is intentionally narrow (`recordError(code)`); pass
-your own thin adapter.
-
-### Config overrides
-
-Tuning knobs (snapshot intervals, eviction windows, operation batch
-window) live in `src/server/config.ts` and are exported under the
-`config` namespace:
-
-```ts
-import { config } from '@connorhoehn/realtime-modules/server';
-console.log(config.SNAPSHOT_INTERVAL_MS);
-```
-
-These are module-level constants today; runtime override hooks are a
-Wave 2+ addition.
+Run `npm run typecheck` across each consumer before publishing a new
+tag — the package's subpath exports are not API-stable yet and
+breakages surface as TS errors, not runtime crashes.
 
 ---
 
-## Status snapshot
+## Migration from v0.5.x
 
-- **Package version:** `0.0.0` (skeleton stage — see `package.json`).
-- **Stable subpaths:** `./`, `./server`, `./client`, `./adapters/tiptap`, `./agent-streaming`.
-- **In-flight subpaths:** `./presence`, `./chat`, `./reactions` (Wave 2).
-- **Reference consumer:** `websocket-gateway` (the host repo).
-- **Known gaps:** `useWebSocket` hook not lifted (Wave 3); no Express
-  route mounters; no CLI installer; manifests only exported for
-  `agent-streaming` so far.
+If you depended on a server-side subpath in v0.5.x or earlier, the
+service class now lives in `websocket-gateway/src/`. The canonical fix
+is to **delete the import** and consume the feature through gateway —
+either via WS (client hooks) or HTTP (`./proxy-client`).
+
+| Removed in v0.6.0 | Replacement |
+| --- | --- |
+| `import { ChatService } from '…/chat'` | `useChat()` over WS, or `proxy.getChatHistory()` over HTTP |
+| `import { PresenceService } from '…/presence'` | `usePresence()` over WS, or `proxy.getPresence()` over HTTP |
+| `import { ReactionService } from '…/reactions'` | `useReactions()` over WS |
+| `import { ActivityService } from '…/activity'` | `useActivity()` over WS, or `proxy.getActivityHistory()` over HTTP |
+| `import { CRDTService } from '…/server'` | `useCRDT()` / `useYjsDoc()` over WS |
+| `import { CursorService } from '…/cursor'` | gateway-internal; consume cursor updates via `useAwarenessState` |
+| `import { … } from '…/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library replacement |
+
+There is no separately-published "server-side toolkit" replacement. If
+you have a non-gateway host that needs these services, fork the
+implementations out of the gateway repo.

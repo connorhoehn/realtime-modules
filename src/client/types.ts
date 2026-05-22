@@ -41,3 +41,62 @@ export interface UseWebSocketReturn {
   disconnect: () => void;
   reconnect: () => void;
 }
+
+// ---------------------------------------------------------------------------
+// Realtime-feature wire-shape types (mirrors of gateway's
+// src/realtime-fanout/{chat,presence,reactions,activity}/types.ts).
+//
+// Copied (not imported) so this package stays decoupled from the gateway
+// source tree. The four feature hooks below (useChat, usePresence,
+// useReactions, useActivity) consume these shapes verbatim from the
+// gateway's outbound WS frames.
+// ---------------------------------------------------------------------------
+
+/** A persisted chat message — mirror of gateway/chat/types.ts ChatMessage. */
+export interface ChatMessage {
+  id: string;
+  clientId: string;
+  channel: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  timestamp: string;
+}
+
+/** Presence status values accepted by the gateway's presence service. */
+export type PresenceStatus = 'online' | 'away' | 'busy' | 'offline';
+
+/**
+ * One presence entry — mirror of gateway/presence/types.ts PresenceEntry.
+ * Field set is preserved verbatim so the WS wire surface stays byte-identical.
+ */
+export interface PresenceEntry {
+  clientId: string;
+  status: PresenceStatus;
+  metadata: Record<string, unknown>;
+  channels: string[];
+  nodeId: string;
+  timestamp: string;
+  lastSeen: string;
+  lastHeartbeat: number;
+}
+
+/** One reaction event — mirror of gateway/reactions/types.ts Reaction. */
+export interface Reaction {
+  id: string;
+  clientId: string;
+  channel: string;
+  emoji: string;
+  effect: string;
+  position: unknown;
+  metadata: Record<string, unknown>;
+  timestamp: string;
+}
+
+/** One activity event — mirror of gateway/activity/types.ts ActivityEvent. */
+export interface ActivityEvent {
+  eventType: string;
+  detail: Record<string, unknown>;
+  timestamp: string;
+  userId: string | null;
+  displayName: string;
+}
