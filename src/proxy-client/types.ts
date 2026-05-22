@@ -9,9 +9,48 @@
 // the once-they-ship presence/chat/activity REST endpoints will return are
 // re-exported here — anything else stays in its native subpath.
 
-export type { ChatMessage, ChatHistoryQuery } from '../chat/types';
-export type { PresenceEntry, PresenceStatus } from '../presence/types';
-export type { ActivityEvent } from '../activity/types';
+// Wire shapes for gateway REST endpoints (chat / presence / activity history).
+// These were previously re-exported from the now-removed server-side subpaths;
+// they are inlined here so the proxy-client remains self-contained.
+
+/** A single chat message returned by GET /channels/:channelId/chat/history. */
+export interface ChatMessage {
+    messageId: string;
+    channelId: string;
+    userId: string;
+    content: string;
+    timestamp: number;
+    [k: string]: unknown;
+}
+
+/** Query parameters for the chat history endpoint. */
+export interface ChatHistoryQuery {
+    before?: number;
+    limit?: number;
+}
+
+/** A presence entry returned by GET /channels/:channelId/presence. */
+export interface PresenceEntry {
+    userId: string;
+    status: PresenceStatus;
+    joinedAt: number;
+    metadata?: Record<string, unknown>;
+    [k: string]: unknown;
+}
+
+/** Possible presence status values. */
+export type PresenceStatus = 'online' | 'away' | 'offline' | string;
+
+/** An activity-feed event returned by GET /channels/:channelId/activity/history. */
+export interface ActivityEvent {
+    eventId: string;
+    channelId: string;
+    userId: string;
+    type: string;
+    payload?: Record<string, unknown>;
+    timestamp: number;
+    [k: string]: unknown;
+}
 
 /** Options accepted by the GatewayProxyClient constructor. */
 export interface ProxyClientOptions {
