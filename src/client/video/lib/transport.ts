@@ -9,12 +9,41 @@
 export class LVSApiError extends Error {
   status: number;
   url: string;
-  constructor(message: string, status: number, url: string) {
+  /** Parsed `Retry-After` value in seconds, when the server sent one
+   *  (typically on 503). Supports both delta-seconds and HTTP-date
+   *  formats per RFC 7231 §7.1.3. `null` when absent or unparseable. */
+  retryAfterSec: number | null;
+  constructor(
+    message: string,
+    status: number,
+    url: string,
+    retryAfterSec: number | null = null,
+  ) {
     super(message);
     this.name = 'LVSApiError';
     this.status = status;
     this.url = url;
+    this.retryAfterSec = retryAfterSec;
   }
+}
+
+/** Parse a `Retry-After` header value into a delay in seconds. Accepts
+ *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").
+ *  Returns null for absent/malformed/past-date inputs. */
+export function parseRetryAfter(headerValue: string | null): number | null {
+  if (!headerValue) return null;
+  const trimmed = headerValue.trim();
+  if (trimmed === '') return null;
+  // Delta-seconds form
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number(trimmed);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  // HTTP-date form
+  const date = Date.parse(trimmed);
+  if (Number.isNaN(date)) return null;
+  const deltaSec = Math.ceil((date - Date.now()) / 1000);
+  return deltaSec >= 0 ? deltaSec : null;
 }
 
 export interface WhipPublishOptions {
@@ -60,7 +89,12 @@ export async function whipPublish(opts: WhipPublishOptions): Promise<WhipPublish
   });
   if (!r.ok) {
     const body = await r.text().catch(() => '');
-    throw new LVSApiError(`${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url);
+    throw new LVSApiError(
+      `${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`,
+      r.status,
+      url,
+      parseRetryAfter(r.headers.get('Retry-After')),
+    );
   }
   return {
     answerSdp: await r.text(),
@@ -118,7 +152,12 @@ export async function whepPublish(opts: WhepPublishOptions): Promise<WhepPublish
   });
   if (!r.ok) {
     const body = await r.text().catch(() => '');
-    throw new LVSApiError(`${r.status} ${r.statusText}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url);
+    throw new LVSApiError(
+      `${r.status} ${r.statusText}${body ? ` — ${body.slice(0, 200)}` : ''}`,
+      r.status,
+      url,
+      parseRetryAfter(r.headers.get('Retry-After')),
+    );
   }
   return {
     answerSdp: await r.text(),
