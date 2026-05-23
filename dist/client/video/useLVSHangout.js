@@ -363,7 +363,12 @@ function useLVSHangout(opts) {
                         else {
                             // Camera-kind track → goes into streams[]. Dedup by
                             // track id (onTrack can fire twice in some browsers
-                            // during renegotiation).
+                            // during renegotiation). React StrictMode also opens
+                            // two WHEP PCs in dev — when the second PC delivers its
+                            // own copy of the audio+video tracks, we MUST evict the
+                            // older same-kind track or the <video> element ends up
+                            // bound to a stale (muted forever) receiver and the tile
+                            // shows the avatar fallback even though video is flowing.
                             let stream = existing.streams[0];
                             if (!stream) {
                                 stream = new MediaStream();
@@ -371,6 +376,21 @@ function useLVSHangout(opts) {
                                 existing.streamIds = new Set([stream.id]);
                             }
                             if (!stream.getTracks().some((t) => t.id === track.id)) {
+                                // Evict same-kind duplicates first so we keep exactly
+                                // one audio + one video. Stop them so the dead receiver
+                                // releases its resources.
+                                for (const t of stream.getTracks()) {
+                                    if (t.kind === track.kind && t.id !== track.id) {
+                                        try {
+                                            t.stop();
+                                        }
+                                        catch { /* */ }
+                                        try {
+                                            stream.removeTrack(t);
+                                        }
+                                        catch { /* */ }
+                                    }
+                                }
                                 stream.addTrack(track);
                             }
                             next.set(basePid, { ...existing });
