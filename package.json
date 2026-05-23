@@ -30,6 +30,11 @@
       "types": "./dist/client/video/index.d.ts",
       "default": "./dist/client/video/index.js"
     },
+    "./client/hangout-rooms": {
+      "types": "./dist/client/hangout-rooms/index.d.ts",
+      "import": "./dist/client/hangout-rooms/index.js",
+      "default": "./dist/client/hangout-rooms/index.js"
+    },
     "./adapters/tiptap": {
       "types": "./dist/adapters/tiptap/index.d.ts",
       "default": "./dist/adapters/tiptap/index.js"
