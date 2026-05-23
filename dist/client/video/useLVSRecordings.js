@@ -14,16 +14,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.useLVSRecordings = useLVSRecordings;
 const react_1 = require("react");
 const LVSProvider_1 = require("./LVSProvider");
-function useSafeLVSContext() {
-    try {
-        return (0, LVSProvider_1.useLVSContext)();
-    }
-    catch {
-        return null;
-    }
-}
 function useLVSRecordings(opts) {
-    const ctx = useSafeLVSContext();
+    const ctx = (0, LVSProvider_1.useSafeLVSContext)();
     const baseUrl = opts.baseUrl ?? ctx?.baseUrl ?? '';
     const [recordings, setRecordings] = (0, react_1.useState)([]);
     const [isLoading, setIsLoading] = (0, react_1.useState)(false);

@@ -21,16 +21,8 @@ exports.useLVSHlsPlayer = useLVSHlsPlayer;
 const react_1 = require("react");
 const LVSProvider_1 = require("./LVSProvider");
 const jwt_1 = require("./lib/jwt");
-function useSafeLVSContext() {
-    try {
-        return (0, LVSProvider_1.useLVSContext)();
-    }
-    catch {
-        return null;
-    }
-}
 function useLVSHlsPlayer(opts) {
-    const ctx = useSafeLVSContext();
+    const ctx = (0, LVSProvider_1.useSafeLVSContext)();
     const baseUrl = opts.baseUrl ?? ctx?.baseUrl ?? '';
     return (0, react_1.useMemo)(() => {
         if (!opts.channelArn || !opts.fromIso || !opts.toIso || !baseUrl) {

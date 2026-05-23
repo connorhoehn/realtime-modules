@@ -45,7 +45,7 @@ function useLVSPublisher(opts) {
     // swallows the "no provider" throw so we can decide whether overrides
     // suffice. The final null-check (after all hooks) preserves
     // rules-of-hooks ordering.
-    const ctx = useSafeLVSContext();
+    const ctx = (0, LVSProvider_1.useSafeLVSContext)();
     // Partial overlay: per-call opts override individual fields, the rest
     // come from <LVSProvider>. Previously this required BOTH baseUrl AND
     // getAuthToken to be passed to override anything — useLVSHangout only
@@ -72,6 +72,14 @@ function useLVSPublisher(opts) {
     // (audio-only → AV) without first changing the prop and round-
     // tripping through React. Cleared after consumption.
     const streamOverrideRef = (0, react_1.useRef)(null);
+    // Set true for the duration of a republish() so the autoStart effect
+    // doesn't race the republish's own start() when the consumer also
+    // swaps the `stream` prop in the same tick (e.g. useLVSHangout's
+    // enableCamera() calls setLocalStream(merged) AND publisher.republish(merged);
+    // the React re-render triggers autoStart's effect with the new stream
+    // reference WHILE republish has already torn down the PC, which would
+    // double-start.
+    const republishingRef = (0, react_1.useRef)(false);
     const lastStatsRef = (0, react_1.useRef)({ bytes: 0, packets: 0, lost: 0, ts: 0 });
     const statsTimerRef = (0, react_1.useRef)(null);
     const watchdogTimerRef = (0, react_1.useRef)(null);
@@ -344,11 +352,22 @@ function useLVSPublisher(opts) {
      * event on the LVS producer-discovery WS and can re-WHEP.
      */
     const republish = (0, react_1.useCallback)(async (newStream) => {
-        // Order matters: stop FIRST so the WHIP resource is released
-        // server-side, then queue the new stream and re-start.
-        await stop();
+        // Set the override BEFORE stop() so that even if the autoStart
+        // effect fires between stop() and start() (because the consumer
+        // also swapped the `stream` prop in the same React tick), it picks
+        // up the correct stream. The republishingRef guard suppresses the
+        // autoStart's start() entirely so we don't double-WHIP.
+        republishingRef.current = true;
         streamOverrideRef.current = newStream;
-        await start();
+        try {
+            // Order matters: stop FIRST so the WHIP resource is released
+            // server-side, then re-start with the override.
+            await stop();
+            await start();
+        }
+        finally {
+            republishingRef.current = false;
+        }
     }, [stop, start]);
     // Auto-start when stream becomes available. Re-runs if the stream
     // reference changes, but only kicks off when we're idle — avoids
@@ -359,6 +378,10 @@ function useLVSPublisher(opts) {
         if (!stream)
             return;
         if (pcRef.current)
+            return;
+        // Suppress while republish() owns the lifecycle — it will call
+        // start() itself with the correct stream override.
+        if (republishingRef.current)
             return;
         void start();
         // We intentionally don't depend on `start` here — its identity
@@ -392,15 +415,5 @@ function useLVSPublisher(opts) {
         replaceStream,
         republish,
     };
-}
-/** Wrap useLVSContext so callers can pass full overrides without needing
- *  a provider. Returns null if no provider is mounted. */
-function useSafeLVSContext() {
-    try {
-        return (0, LVSProvider_1.useLVSContext)();
-    }
-    catch {
-        return null;
-    }
 }
 //# sourceMappingURL=useLVSPublisher.js.map

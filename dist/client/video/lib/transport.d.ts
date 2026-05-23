@@ -1,8 +1,16 @@
 export declare class LVSApiError extends Error {
     status: number;
     url: string;
-    constructor(message: string, status: number, url: string);
+    /** Parsed `Retry-After` value in seconds, when the server sent one
+     *  (typically on 503). Supports both delta-seconds and HTTP-date
+     *  formats per RFC 7231 §7.1.3. `null` when absent or unparseable. */
+    retryAfterSec: number | null;
+    constructor(message: string, status: number, url: string, retryAfterSec?: number | null);
 }
+/** Parse a `Retry-After` header value into a delay in seconds. Accepts
+ *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").
+ *  Returns null for absent/malformed/past-date inputs. */
+export declare function parseRetryAfter(headerValue: string | null): number | null;
 export interface WhipPublishOptions {
     /** Channel ARN (e.g. `arn:local:ivs:channel/<uuid>`). Used to build
      *  the WHIP URL: `${baseUrl}/api/channels/:arn/whip`. */
@@ -40,6 +48,11 @@ export interface WhepPublishOptions {
      *  participantId so the WHEP answer never includes the caller's own
      *  published tracks. Required for hangouts (else self-echo). */
     excludeParticipantId?: string;
+    /** When set, the SFU returns ONLY the named publisher's producers.
+     *  Used by the parallel screen-share WHEP — without this the SFU
+     *  picks the first matching producer (typically the publisher's
+     *  camera) instead of the targeted `${pid}:screen` producer. */
+    participantId?: string;
     baseUrl?: string;
     fetchImpl?: typeof fetch;
 }

@@ -72,14 +72,8 @@ function useLVSHangout(opts) {
     const channelArn = (0, react_1.useMemo)(() => (0, jwt_1.decodeArn)(stageToken), [stageToken]);
     // Safe-context — null when caller forgot to mount <LVSProvider>. The
     // parallel-WHEP effect uses ctx?.baseUrl as the fallback when opts.baseUrl
-    // is unset. Same try/catch pattern used by useLVSPublisher/Subscriber.
-    let ctx = null;
-    try {
-        ctx = (0, LVSProvider_1.useLVSContext)();
-    }
-    catch {
-        ctx = null;
-    }
+    // is unset.
+    const ctx = (0, LVSProvider_1.useSafeLVSContext)();
     // Local capture state. The publisher hook is headless (caller-owned
     // capture), so this layer owns getUserMedia + screen-share swap.
     const [localStream, setLocalStream] = (0, react_1.useState)(null);
@@ -158,11 +152,15 @@ function useLVSHangout(opts) {
     // it as a separate publisher and remote subscribers can WHEP it as
     // its own producer (camera publisher stays untouched on the wire).
     // Auto-starts when `localScreenStream` is non-null, auto-tears-down
-    // when it's nulled. Same auth resolver.
+    // when it's nulled. Same auth resolver. Memoized so the publisher
+    // hook's deps don't see a new string identity per render (would
+    // re-bind start() each render — harmless today but keeps a stable
+    // upstream contract).
+    const screenParticipantId = (0, react_1.useMemo)(() => (participantId ? `${participantId}:screen` : undefined), [participantId]);
     const screenPublisher = (0, useLVSPublisher_1.useLVSPublisher)({
         channelArn: channelArn ?? '',
         stream: channelArn ? localScreenStream : null,
-        participantId: participantId ? `${participantId}:screen` : undefined,
+        participantId: screenParticipantId,
         autoStart: true,
         baseUrl,
         getAuthToken: resolveAuthToken,
@@ -187,7 +185,20 @@ function useLVSHangout(opts) {
                 return;
             // Skip echo from our own publisher in case the SFU answer
             // includes us despite excludeParticipantId (defense in depth).
-            if (participantId && msid === participantId)
+            // Also skip our dedicated screen publisher whose pid namespace
+            // is `${participantId}:screen` — equality-only would let our
+            // own screen track render as a "remote".
+            if (participantId && (msid === participantId || msid.startsWith(participantId + ':')))
+                return;
+            // Skip any remote screen producer here — `${pid}:screen` msid
+            // means a dedicated screen publisher whose tracks are routed
+            // through the parallel WHEP path (effect below) into
+            // `entry.screenStream`. If the SFU's primary WHEP answer ever
+            // also includes a screen producer (multiplex behavior may vary
+            // by build), we'd otherwise create a phantom participant tile
+            // keyed by `${pid}:screen` AND double-attach the track to both
+            // the camera tile's streams[] and the dedicated screenStream.
+            if (msid.includes(':'))
                 return;
             setRemoteParticipants((prev) => {
                 const next = new Map(prev);
@@ -347,7 +358,11 @@ function useLVSHangout(opts) {
                     channelArn,
                     offerSdp: sdp,
                     authToken,
-                    // Target THIS publisher's producers specifically.
+                    // Target THIS publisher's screen producer specifically —
+                    // without it the SFU's first-match path returns the publisher's
+                    // CAMERA instead of their screen track, so a remote screen-share
+                    // would render as a duplicate camera tile.
+                    participantId: fullPid,
                     excludeParticipantId: undefined,
                     baseUrl,
                 }).catch((e) => {
@@ -355,15 +370,6 @@ function useLVSHangout(opts) {
                     // — silently bail; the next producer.added retry catches it.
                     throw e;
                 });
-                // Note: lib/transport whepPublish doesn't have a `participantId`
-                // (target) parameter today — it sends `?excludeParticipantId=`.
-                // To target a specific publisher we'd need a server-supported
-                // `?participantId=` query, which whep.js already reads
-                // (whep.js:144). Add the target via URL param manually if
-                // transport.ts hasn't been extended; for now we rely on the
-                // server's first-match behavior, which after we filter out our
-                // own pid lands on the FIRST other publisher — fragile for
-                // N>2 but works for 1:1 + screen.
                 await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
                 if (cancelled) {
                     try {
@@ -408,6 +414,22 @@ function useLVSHangout(opts) {
             `/api/channels/${encodeURIComponent(channelArn)}/ws`;
         try {
             ws = new WebSocket(wsUrl);
+            // Subscribe-channel handshake — stageWsServer only delivers
+            // producer events after receiving this frame.
+            ws.addEventListener('open', () => {
+                void (async () => {
+                    try {
+                        const token = await resolveAuthToken();
+                        ws?.send(JSON.stringify({
+                            type: 'subscribe-channel',
+                            channelArn,
+                            participantId,
+                            token,
+                        }));
+                    }
+                    catch { /* token resolver threw — discovery silent, parallel WHEP screen-share won't surface */ }
+                })();
+            });
             ws.addEventListener('message', (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);

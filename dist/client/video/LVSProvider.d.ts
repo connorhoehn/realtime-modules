@@ -28,6 +28,14 @@ export declare function LVSProvider({ baseUrl, getAuthToken, log, children }: LV
  */
 export declare function useLVSContext(): LVSConfig;
 /**
+ * Non-throwing variant of {@link useLVSContext}: returns null when the
+ * caller is outside a provider. Hooks that accept full opts overrides
+ * (baseUrl + getAuthToken) should use this so the provider becomes
+ * truly optional — avoids the try/catch-around-useContext pattern that
+ * each hook used to duplicate (audit P0).
+ */
+export declare function useSafeLVSContext(): LVSConfig | null;
+/**
  * Internal helper for hooks: resolve the effective config by overlaying
  * per-call options on top of the provider context. Returns null if the
  * caller didn't pass overrides AND there's no provider — letting hooks

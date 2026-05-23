@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LVSProvider = LVSProvider;
 exports.useLVSContext = useLVSContext;
+exports.useSafeLVSContext = useSafeLVSContext;
 exports.resolveLVSConfig = resolveLVSConfig;
 const jsx_runtime_1 = require("react/jsx-runtime");
 // LVSProvider — React context for LVS (live-video-streaming) configuration.
@@ -38,6 +39,16 @@ function useLVSContext() {
         throw new Error('[lvs] useLVSContext called outside <LVSProvider>. Wrap your app in <LVSProvider baseUrl="..." getAuthToken={...}> or pass baseUrl + getAuthToken directly to the hook.');
     }
     return ctx;
+}
+/**
+ * Non-throwing variant of {@link useLVSContext}: returns null when the
+ * caller is outside a provider. Hooks that accept full opts overrides
+ * (baseUrl + getAuthToken) should use this so the provider becomes
+ * truly optional — avoids the try/catch-around-useContext pattern that
+ * each hook used to duplicate (audit P0).
+ */
+function useSafeLVSContext() {
+    return (0, react_1.useContext)(LVSContext);
 }
 /**
  * Internal helper for hooks: resolve the effective config by overlaying

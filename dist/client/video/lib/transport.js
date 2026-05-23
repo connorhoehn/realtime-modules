@@ -8,6 +8,7 @@
 // (whipPublish / whipTeardown / whepPublish / whepTeardown / fetchIceServers).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LVSApiError = void 0;
+exports.parseRetryAfter = parseRetryAfter;
 exports.whipPublish = whipPublish;
 exports.whipTeardown = whipTeardown;
 exports.whepPublish = whepPublish;
@@ -16,14 +17,40 @@ exports.fetchIceServers = fetchIceServers;
 class LVSApiError extends Error {
     status;
     url;
-    constructor(message, status, url) {
+    /** Parsed `Retry-After` value in seconds, when the server sent one
+     *  (typically on 503). Supports both delta-seconds and HTTP-date
+     *  formats per RFC 7231 §7.1.3. `null` when absent or unparseable. */
+    retryAfterSec;
+    constructor(message, status, url, retryAfterSec = null) {
         super(message);
         this.name = 'LVSApiError';
         this.status = status;
         this.url = url;
+        this.retryAfterSec = retryAfterSec;
     }
 }
 exports.LVSApiError = LVSApiError;
+/** Parse a `Retry-After` header value into a delay in seconds. Accepts
+ *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").
+ *  Returns null for absent/malformed/past-date inputs. */
+function parseRetryAfter(headerValue) {
+    if (!headerValue)
+        return null;
+    const trimmed = headerValue.trim();
+    if (trimmed === '')
+        return null;
+    // Delta-seconds form
+    if (/^\d+$/.test(trimmed)) {
+        const n = Number(trimmed);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+    }
+    // HTTP-date form
+    const date = Date.parse(trimmed);
+    if (Number.isNaN(date))
+        return null;
+    const deltaSec = Math.ceil((date - Date.now()) / 1000);
+    return deltaSec >= 0 ? deltaSec : null;
+}
 async function whipPublish(opts) {
     const base = opts.baseUrl ?? '';
     let url = `${base}/api/channels/${encodeURIComponent(opts.channelArn)}/whip`;
@@ -41,7 +68,7 @@ async function whipPublish(opts) {
     });
     if (!r.ok) {
         const body = await r.text().catch(() => '');
-        throw new LVSApiError(`${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url);
+        throw new LVSApiError(`${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url, parseRetryAfter(r.headers.get('Retry-After')));
     }
     return {
         answerSdp: await r.text(),
@@ -62,9 +89,13 @@ async function whipTeardown(resourceUrl, authToken, fetchImpl) {
 async function whepPublish(opts) {
     const base = opts.baseUrl ?? '';
     let url = `${base}/api/channels/${encodeURIComponent(opts.channelArn)}/whep`;
-    if (opts.excludeParticipantId) {
-        url += `?excludeParticipantId=${encodeURIComponent(opts.excludeParticipantId)}`;
-    }
+    const params = [];
+    if (opts.participantId)
+        params.push(`participantId=${encodeURIComponent(opts.participantId)}`);
+    if (opts.excludeParticipantId)
+        params.push(`excludeParticipantId=${encodeURIComponent(opts.excludeParticipantId)}`);
+    if (params.length)
+        url += `?${params.join('&')}`;
     const f = opts.fetchImpl ?? fetch;
     const r = await f(url, {
         method: 'POST',
@@ -77,7 +108,7 @@ async function whepPublish(opts) {
     });
     if (!r.ok) {
         const body = await r.text().catch(() => '');
-        throw new LVSApiError(`${r.status} ${r.statusText}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url);
+        throw new LVSApiError(`${r.status} ${r.statusText}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url, parseRetryAfter(r.headers.get('Retry-After')));
     }
     return {
         answerSdp: await r.text(),
