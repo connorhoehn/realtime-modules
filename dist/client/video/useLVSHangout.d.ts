@@ -38,7 +38,31 @@ export interface HangoutParticipant {
     hasAudio: boolean;
     /** Convenience: is any video track currently enabled? */
     hasVideo: boolean;
+    /** Wall-clock `Date.now()` recorded the first time this remote pid was
+     *  discovered by the multi-WHEP fan-out (i.e. when openPcFor opened a
+     *  PC for them). Undefined for the local participant. Consumers use this
+     *  alongside `subscriberMs` to implement ghost-producer policies — e.g.
+     *  if the SFU keeps a stale producer alive for ~30s after a publisher
+     *  crashes, a fresh joiner will WHEP onto it and get a tile with NO
+     *  matching app-level identity broadcast. The consumer can compare
+     *  `subscriberMs` against a threshold (e.g. 3s) and the absence of a
+     *  matching participantState entry to hide the tile.
+     *
+     *  Note: the hook does NOT filter — it only exposes the timestamp. The
+     *  consumer owns the policy decision. */
+    firstSeenAt?: number;
+    /** Milliseconds since this remote pid was first WHEP'd. Computed on
+     *  every render against an internal 1s tick so callers get a coarse
+     *  "how long has this tile been here" value without managing their
+     *  own timer. Undefined for the local participant. Resolution: ~1s
+     *  (don't use for sub-second decisions). */
+    subscriberMs?: number;
 }
+/** Convenience alias — every entry in `participants` where `isLocal=false`
+ *  is structurally a `RemoteParticipant`. Same shape as `HangoutParticipant`;
+ *  exported so consumers writing ghost-producer filters can name the type
+ *  they're working with. */
+export type RemoteParticipant = HangoutParticipant;
 export interface UseLVSHangoutResult {
     participants: HangoutParticipant[];
     isJoined: boolean;
@@ -59,6 +83,16 @@ export interface UseLVSHangoutResult {
     /** Drop the camera track + re-publish audio-only. Subscribers will
      *  see the video producer disappear (via `producer.removed`). */
     disableCamera: () => Promise<void>;
+    /** Unified camera-toggle entry point that survives a `.stop()`'d track.
+     *  When the existing video track is still `live`, this just flips
+     *  `enabled` (same as `toggleCamera`). When the track is `ended` /
+     *  stopped (camera permission revoked, device unplugged, prior consumer
+     *  called `.stop()`), this re-runs `getUserMedia` for video-only and
+     *  swaps the new track onto the existing video sender via
+     *  `RTCRtpSender.replaceTrack` — no WHIP renegotiation, peers keep
+     *  their subscription. Concurrency-guarded so a double-tap doesn't
+     *  spawn two getUserMedia calls. */
+    setCameraEnabled: (on: boolean) => Promise<void>;
     startScreenShare: () => Promise<void>;
     stopScreenShare: () => void;
     leave: () => void;

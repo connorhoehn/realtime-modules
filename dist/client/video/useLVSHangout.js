@@ -106,6 +106,10 @@ function useLVSHangout(opts) {
     const localStreamRef = (0, react_1.useRef)(null);
     const cameraStreamRef = (0, react_1.useRef)(null); // preserved across screen-share for restore
     const screenShareTrackRef = (0, react_1.useRef)(null);
+    // Guard against double-tap of the camera toggle while a re-acquire
+    // getUserMedia() is in flight — a second call would spawn a parallel
+    // permission/device request and race the first one's replaceTrack.
+    const cameraToggleInFlightRef = (0, react_1.useRef)(false);
     // Parallel WHEP PCs for EVERY remote producer, keyed by the producer's
     // full participantId. For a peer named `hank` you'll see two entries
     // when they're sharing: `hank` (camera kind) + `hank:screen` (screen
@@ -113,6 +117,24 @@ function useLVSHangout(opts) {
     // below — outside React's render path because hooks can't be called
     // in loops, and we need N concurrent PCs at runtime.
     const remoteSubscribersRef = (0, react_1.useRef)(new Map());
+    // First-seen timestamp per remote BASE pid (screen-only pids share the
+    // base entry). Recorded the first time the discovery WS / parallel-WHEP
+    // path observes a brand-new pid. Exposed on each participant as
+    // `firstSeenAt` so consumers can implement ghost-producer policies
+    // (e.g. hide tiles older than 3s with no matching identity broadcast).
+    // Lives in a ref because the value is set-once per pid and we don't
+    // want a state update just to record it; the render-side `nowTick`
+    // below drives recomputation of the derived `subscriberMs` field.
+    const firstSeenAtRef = (0, react_1.useRef)(new Map());
+    // Render-time "now" — bumped every 1s so the `subscriberMs` field in
+    // the participants memo recomputes without callers having to mount
+    // their own setInterval. Resolution: ~1s. Stops bumping when the
+    // component unmounts (cleanup clears the interval).
+    const [nowTick, setNowTick] = (0, react_1.useState)(() => Date.now());
+    (0, react_1.useEffect)(() => {
+        const id = setInterval(() => setNowTick(Date.now()), 1000);
+        return () => clearInterval(id);
+    }, []);
     // Stable identity so the publisher hook doesn't observe a new
     // `getAuthToken` on every render (which would churn its useMemo and
     // potentially restart publish).
@@ -244,6 +266,10 @@ function useLVSHangout(opts) {
                     // Don't delete the entry if camera-kind streams remain.
                     if (!e.screenStream && e.streams.length === 0) {
                         next.delete(basePid);
+                        // Last producer for this peer gone — drop the first-seen
+                        // entry so a rejoin under the same pid starts a fresh timer
+                        // (otherwise stale ghost-detection state would linger).
+                        firstSeenAtRef.current.delete(basePid);
                     }
                 }
                 else {
@@ -265,6 +291,7 @@ function useLVSHangout(opts) {
                     }
                     else {
                         next.delete(basePid);
+                        firstSeenAtRef.current.delete(basePid);
                     }
                 }
                 return next;
@@ -280,6 +307,14 @@ function useLVSHangout(opts) {
                 return;
             if (fullPid === `${participantId}:screen`)
                 return;
+            // Record first-seen for the BASE pid (so camera + `:screen` for
+            // the same publisher share one timestamp — the moment we first
+            // committed to subscribing to ANY producer for that peer). Set
+            // once per basePid; later kinds for the same peer don't reset it.
+            const basePidForSeen = fullPid.split(':')[0] ?? fullPid;
+            if (!firstSeenAtRef.current.has(basePidForSeen)) {
+                firstSeenAtRef.current.set(basePidForSeen, Date.now());
+            }
             try {
                 const authToken = await resolveAuthToken();
                 const ice = await (0, transport_1.fetchIceServers)(baseUrl);
@@ -633,6 +668,99 @@ function useLVSHangout(opts) {
             setError(`Failed to disable camera: ${msg}`);
         }
     }, [publisher]);
+    /**
+     * Unified camera-toggle that survives a `.stop()`'d (ended) track.
+     *
+     * Three cases:
+     *   1. Track is live, just disabled → flip `enabled` back on. Cheapest
+     *      path; equivalent to `toggleCamera(false)`. Local preview lights
+     *      up immediately; peers' inbound video resumes from black/freeze.
+     *   2. Track is live, currently enabled, caller passed `on=false` →
+     *      flip `enabled = false`. Same as `toggleCamera(true)`. We
+     *      DELIBERATELY do NOT `.stop()` here — leaving the track live
+     *      means the next setCameraEnabled(true) is the cheap case (1)
+     *      with no getUserMedia permission re-prompt.
+     *   3. No video track at all, or the only video track is `ended` /
+     *      stopped (camera was hard-released earlier, e.g. by an upstream
+     *      consumer or by `disableCamera()`) → re-run getUserMedia for
+     *      video, swap onto the existing video RTCRtpSender via
+     *      `publisher.replaceStream()` (RTCRtpSender.replaceTrack under
+     *      the hood, no WHIP renegotiation). Peers see the producer keep
+     *      flowing — no `producer.removed` / `producer.added` flicker.
+     *      The localStream reference is updated so the UI's
+     *      `<video srcObject={localStream}>` picks up the new track.
+     *
+     * Guarded by `cameraToggleInFlightRef` so a double-tap during the
+     * re-acquire path doesn't kick off two concurrent getUserMedia calls.
+     *
+     * Falls back to `enableCamera()` (full re-WHIP) when no video sender
+     * exists yet on the publisher — that happens when the call started
+     * audio-only and there's no video transceiver to replaceTrack onto.
+     */
+    const setCameraEnabled = (0, react_1.useCallback)(async (on) => {
+        if (cameraToggleInFlightRef.current)
+            return;
+        const existing = localStreamRef.current;
+        const videoTracks = existing ? existing.getVideoTracks() : [];
+        const liveVideo = videoTracks.find((t) => t.readyState === 'live');
+        // Case 1 + 2: a live track exists — just flip enabled. No async work.
+        if (liveVideo) {
+            for (const t of videoTracks) {
+                if (t.readyState === 'live')
+                    t.enabled = on;
+            }
+            setLocalFlagsTick((n) => n + 1);
+            return;
+        }
+        // Disabling and there's no live track anyway → nothing to do.
+        if (!on) {
+            setLocalFlagsTick((n) => n + 1);
+            return;
+        }
+        // Case 3: re-acquire + replaceTrack.
+        cameraToggleInFlightRef.current = true;
+        try {
+            const camStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+            });
+            const videoTrack = camStream.getVideoTracks()[0];
+            if (!videoTrack) {
+                camStream.getTracks().forEach((t) => t.stop());
+                return;
+            }
+            // Drop any prior ended video tracks from the merged stream we're
+            // about to publish + show locally.
+            const merged = new MediaStream();
+            if (existing) {
+                for (const t of existing.getAudioTracks())
+                    merged.addTrack(t);
+            }
+            merged.addTrack(videoTrack);
+            localStreamRef.current = merged;
+            cameraStreamRef.current = merged;
+            setLocalStream(merged);
+            // Try the cheap path first: swap onto the existing video sender.
+            // replaceStream() warns + skips when no video sender exists; in
+            // that case fall back to a full re-WHIP via republish() so the
+            // SFU actually gets a video producer.
+            try {
+                await publisher.replaceStream(merged);
+            }
+            catch {
+                // replaceStream throws when called before start() — fall through
+                // to republish which handles the no-PC case internally.
+                await publisher.republish(merged);
+            }
+            setLocalFlagsTick((n) => n + 1);
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setError(`Failed to enable camera: ${msg}`);
+        }
+        finally {
+            cameraToggleInFlightRef.current = false;
+        }
+    }, [publisher]);
     const leave = (0, react_1.useCallback)(() => {
         // Stop the screen-share track first so its `ended` handler doesn't
         // race the publisher teardown.
@@ -676,6 +804,8 @@ function useLVSHangout(opts) {
         setLocalStream(null);
         setLocalScreenStream(null);
         setRemoteParticipants(new Map());
+        // Wipe ghost-producer state so a subsequent rejoin starts fresh.
+        firstSeenAtRef.current.clear();
     }, [publisher]);
     // Unmount cleanup: same as leave(), but the publisher hook also runs
     // its own teardown — so we only release local tracks here to avoid
@@ -743,6 +873,16 @@ function useLVSHangout(opts) {
                 ? [...entry.streams, entry.screenStream]
                 : entry.streams;
             const flags = computeMediaFlags(flagSources);
+            // Ghost-producer annotations. firstSeenAt is set on first openPcFor
+            // for this BASE pid; subscriberMs is derived against `nowTick` so
+            // it advances at ~1s resolution without callers managing a timer.
+            // Fall back to `nowTick` if the ref is somehow missing the entry
+            // (shouldn't happen — openPcFor runs before track-onTrack populates
+            // remoteParticipants — but the fallback keeps subscriberMs=0 rather
+            // than NaN so consumer filters don't accidentally hide brand-new
+            // tiles on a missing-ref race).
+            const firstSeenAt = firstSeenAtRef.current.get(pid) ?? nowTick;
+            const subscriberMs = Math.max(0, nowTick - firstSeenAt);
             list.push({
                 participantId: pid,
                 displayName: pid, // falls back to participantId — no name channel from SFU
@@ -754,13 +894,16 @@ function useLVSHangout(opts) {
                 screenStream: entry.screenStream,
                 hasAudio: flags.hasAudio,
                 hasVideo: flags.hasVideo,
+                firstSeenAt,
+                subscriberMs,
             });
         }
         return list;
         // localFlagsTick + localStream + localScreenStream included so
-        // flag changes / screen-share toggles recompute.
+        // flag changes / screen-share toggles recompute. nowTick drives the
+        // ghost-producer subscriberMs recomputation every 1s.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [participantId, userId, remoteParticipants, localStream, localScreenStream, localFlagsTick]);
+    }, [participantId, userId, remoteParticipants, localStream, localScreenStream, localFlagsTick, nowTick]);
     // isJoined: publisher live is the primary signal — we've successfully
     // pushed bytes to the SFU. Parallel WHEPs may legitimately be absent
     // when alone in the lobby (no remote producers yet), so we don't gate
@@ -780,6 +923,7 @@ function useLVSHangout(opts) {
         toggleCamera,
         enableCamera,
         disableCamera,
+        setCameraEnabled,
         startScreenShare,
         stopScreenShare,
         leave,
