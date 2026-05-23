@@ -372,6 +372,9 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     const cleanupPc = (fullPid: string) => {
       const entry = screenSubscribersRef.current.get(fullPid);
       if (!entry) return;
+      // Permanent diagnostic — paired with the open log so we can grep
+      // open/close transitions when the spotlight inevitably regresses.
+      console.info('[screen-pc] close', { fullPid });
       try { entry.pc.close(); } catch { /* ignore */ }
       // Fire-and-forget DELETE — best effort.
       void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
@@ -400,6 +403,11 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       try {
         const authToken = await resolveAuthToken();
         const ice = await fetchIceServers(baseUrl);
+        // Permanent diagnostic — log every parallel WHEP attempt so the
+        // next regression is one browser-console scroll away. Pair with
+        // SFU-side `WHEP producer found` log lines via fullPid to verify
+        // the WHEP reached the server with the `:screen` suffix intact.
+        console.info('[screen-pc] open', { fullPid, hasIce: ice.length > 0 });
         const pc = new RTCPeerConnection({ iceServers: ice });
         // Recv-only — screen producers are video (audio optional).
         pc.addTransceiver('video', { direction: 'recvonly' });
@@ -410,6 +418,12 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           const track = ev.track;
           const incomingStream = ev.streams[0] ?? new MediaStream([track]);
           const basePid = fullPid.split(':')[0] ?? fullPid;
+          console.info('[screen-pc] track', {
+            fullPid,
+            basePid,
+            kind: track.kind,
+            streamId: incomingStream.id,
+          });
           setRemoteParticipants((prev) => {
             const next = new Map(prev);
             const existing = next.get(basePid) ?? {
@@ -511,6 +525,15 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           const msg = JSON.parse(ev.data);
           const pid = msg?.participantId;
           if (typeof pid !== 'string' || !pid.endsWith(':screen')) return;
+          // Permanent diagnostic — log every screen-related discovery
+          // event so a future regression in the producer.added wiring
+          // is visible without re-instrumenting. Kept info-level since
+          // these fire ~once per screen-share start/stop (rare).
+          console.info('[screen-discovery] event', {
+            type: msg.type,
+            participantId: pid,
+            kind: msg.kind,
+          });
           if (msg.type === 'producer.added' && msg.kind === 'video') {
             void openPcFor(pid);
           } else if (msg.type === 'producer.removed') {
@@ -745,13 +768,33 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
 
     // Remotes.
     for (const [pid, entry] of remoteParticipants.entries()) {
-      const flags = computeMediaFlags(entry.streams);
+      // computeMediaFlags must consider the camera streams AND the
+      // dedicated parallel-WHEP screenStream — a screen-only peer (camera
+      // off, sharing) needs hasVideo=true so consumers don't render them
+      // as a "no video" placeholder. Without including screenStream here,
+      // a camera-off sharer reads as hasVideo=false even though their
+      // screen track is live.
+      const flagSources = entry.screenStream
+        ? [...entry.streams, entry.screenStream]
+        : entry.streams;
+      const flags = computeMediaFlags(flagSources);
       list.push({
         participantId: pid,
         displayName: pid, // falls back to participantId — no name channel from SFU
         userId: pid,
         isLocal: false,
         streams: entry.streams,
+        // BUG-FIX (2026-05-23): expose screenStream for remote
+        // participants. Without this the parallel-WHEP path successfully
+        // pulled the screen track via `${pid}:screen` and stashed it on
+        // the internal map, but the public HangoutParticipant never
+        // carried it out — so consumers (HangoutOverlay spotlight) fell
+        // through to `streams[0]` (camera) and the OTHER peer kept
+        // seeing the sharer's CAMERA in the spotlight slot, not their
+        // screen. The parallel WHEP was succeeding all along (verified
+        // via SFU logs showing `WHEP producer found` for `:screen`
+        // pids); the bug was a missing field in the participants memo.
+        screenStream: entry.screenStream,
         hasAudio: flags.hasAudio,
         hasVideo: flags.hasVideo,
       });
