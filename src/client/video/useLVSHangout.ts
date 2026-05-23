@@ -268,7 +268,10 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         if (!msid) return;
         // Skip echo from our own publisher in case the SFU answer
         // includes us despite excludeParticipantId (defense in depth).
-        if (participantId && msid === participantId) return;
+        // Also skip our dedicated screen publisher whose pid namespace
+        // is `${participantId}:screen` — equality-only would let our
+        // own screen track render as a "remote".
+        if (participantId && (msid === participantId || msid.startsWith(participantId + ':'))) return;
 
         setRemoteParticipants((prev) => {
           const next = new Map(prev);
@@ -478,6 +481,21 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       `/api/channels/${encodeURIComponent(channelArn)}/ws`;
     try {
       ws = new WebSocket(wsUrl);
+      // Subscribe-channel handshake — stageWsServer only delivers
+      // producer events after receiving this frame.
+      ws.addEventListener('open', () => {
+        void (async () => {
+          try {
+            const token = await resolveAuthToken();
+            ws?.send(JSON.stringify({
+              type: 'subscribe-channel',
+              channelArn,
+              participantId,
+              token,
+            }));
+          } catch { /* token resolver threw — discovery silent, parallel WHEP screen-share won't surface */ }
+        })();
+      });
       ws.addEventListener('message', (ev) => {
         try {
           const msg = JSON.parse(ev.data);

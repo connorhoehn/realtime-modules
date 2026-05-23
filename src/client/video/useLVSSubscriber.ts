@@ -433,6 +433,25 @@ export function useLVSSubscriber(
       `/api/channels/${encodeURIComponent(opts.channelArn)}/ws`;
     try {
       ws = new WebSocket(wsUrl);
+      // Send the subscribe-channel handshake on open. The server
+      // (stageWsServer) keeps the socket alive but delivers ZERO
+      // producer.added / producer.removed events until it sees this
+      // frame — which is why bursts of producers used to show up only
+      // via the reconnect ladder. participantId = our pid so the
+      // server can scope replay frames.
+      ws.addEventListener('open', () => {
+        void (async () => {
+          try {
+            const token = await getAuthToken();
+            ws?.send(JSON.stringify({
+              type: 'subscribe-channel',
+              channelArn: opts.channelArn,
+              participantId: excludeRef.current ?? undefined,
+              token,
+            }));
+          } catch { /* token resolver threw — discovery WS goes silent, but core WHEP still works */ }
+        })();
+      });
       ws.addEventListener('message', (ev) => {
         try {
           const msg = JSON.parse(ev.data);
