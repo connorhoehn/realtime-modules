@@ -429,7 +429,11 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           channelArn,
           offerSdp: sdp,
           authToken,
-          // Target THIS publisher's producers specifically.
+          // Target THIS publisher's screen producer specifically —
+          // without it the SFU's first-match path returns the publisher's
+          // CAMERA instead of their screen track, so a remote screen-share
+          // would render as a duplicate camera tile.
+          participantId: fullPid,
           excludeParticipantId: undefined,
           baseUrl,
         }).catch((e: unknown) => {
@@ -437,16 +441,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           // — silently bail; the next producer.added retry catches it.
           throw e;
         });
-
-        // Note: lib/transport whepPublish doesn't have a `participantId`
-        // (target) parameter today — it sends `?excludeParticipantId=`.
-        // To target a specific publisher we'd need a server-supported
-        // `?participantId=` query, which whep.js already reads
-        // (whep.js:144). Add the target via URL param manually if
-        // transport.ts hasn't been extended; for now we rely on the
-        // server's first-match behavior, which after we filter out our
-        // own pid lands on the FIRST other publisher — fragile for
-        // N>2 but works for 1:1 + screen.
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
         if (cancelled) {
           try { pc.close(); } catch { /* */ }

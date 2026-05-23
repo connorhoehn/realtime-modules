@@ -124,6 +124,11 @@ export interface WhepPublishOptions {
    *  participantId so the WHEP answer never includes the caller's own
    *  published tracks. Required for hangouts (else self-echo). */
   excludeParticipantId?: string;
+  /** When set, the SFU returns ONLY the named publisher's producers.
+   *  Used by the parallel screen-share WHEP — without this the SFU
+   *  picks the first matching producer (typically the publisher's
+   *  camera) instead of the targeted `${pid}:screen` producer. */
+  participantId?: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
 }
@@ -137,9 +142,10 @@ export interface WhepPublishResult {
 export async function whepPublish(opts: WhepPublishOptions): Promise<WhepPublishResult> {
   const base = opts.baseUrl ?? '';
   let url = `${base}/api/channels/${encodeURIComponent(opts.channelArn)}/whep`;
-  if (opts.excludeParticipantId) {
-    url += `?excludeParticipantId=${encodeURIComponent(opts.excludeParticipantId)}`;
-  }
+  const params: string[] = [];
+  if (opts.participantId) params.push(`participantId=${encodeURIComponent(opts.participantId)}`);
+  if (opts.excludeParticipantId) params.push(`excludeParticipantId=${encodeURIComponent(opts.excludeParticipantId)}`);
+  if (params.length) url += `?${params.join('&')}`;
   const f = opts.fetchImpl ?? fetch;
   const r = await f(url, {
     method: 'POST',
