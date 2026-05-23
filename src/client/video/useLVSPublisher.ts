@@ -20,7 +20,7 @@ import {
   waitForIceGather, formatBitrate, classifyNetQ, type NetQuality,
 } from './lib/sdp';
 import { jwtSecondsRemaining } from './lib/jwt';
-import { useLVSContext, type LVSConfig } from './LVSProvider';
+import { useSafeLVSContext, type LVSConfig } from './LVSProvider';
 
 const MEDIA_WATCHDOG_MS = 20000;
 const STATS_POLL_MS = 1000;
@@ -478,12 +478,3 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
   };
 }
 
-/** Wrap useLVSContext so callers can pass full overrides without needing
- *  a provider. Returns null if no provider is mounted. */
-function useSafeLVSContext(): LVSConfig | null {
-  try {
-    return useLVSContext();
-  } catch {
-    return null;
-  }
-}

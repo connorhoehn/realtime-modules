@@ -11,7 +11,7 @@
 // platform-api decorates downstream (callId, lobbyName, etc.).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLVSContext, type LVSConfig } from './LVSProvider';
+import { useSafeLVSContext } from './LVSProvider';
 
 export interface LVSRecordingSegment {
   key: string;
@@ -48,10 +48,6 @@ export interface UseLVSRecordingsResult {
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
-}
-
-function useSafeLVSContext(): LVSConfig | null {
-  try { return useLVSContext(); } catch { return null; }
 }
 
 export function useLVSRecordings(opts: UseLVSRecordingsOptions): UseLVSRecordingsResult {

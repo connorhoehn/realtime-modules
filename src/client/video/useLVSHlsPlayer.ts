@@ -17,7 +17,7 @@
 // session and ignore the refresh.
 
 import { useMemo } from 'react';
-import { useLVSContext, type LVSConfig } from './LVSProvider';
+import { useSafeLVSContext } from './LVSProvider';
 import { jwtSecondsRemaining } from './lib/jwt';
 
 export interface UseLVSHlsPlayerOptions {
@@ -41,10 +41,6 @@ export interface UseLVSHlsPlayerResult {
   tokenExpiresInSec: number | null;
   /** True when inputs are present and a URL can be produced. */
   ready: boolean;
-}
-
-function useSafeLVSContext(): LVSConfig | null {
-  try { return useLVSContext(); } catch { return null; }
 }
 
 export function useLVSHlsPlayer(opts: UseLVSHlsPlayerOptions): UseLVSHlsPlayerResult {

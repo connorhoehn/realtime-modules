@@ -22,7 +22,7 @@ import { decodeArn } from './lib/jwt';
 import { useLVSPublisher } from './useLVSPublisher';
 import { useLVSSubscriber } from './useLVSSubscriber';
 import { whepPublish, whepTeardown, fetchIceServers } from './lib/transport';
-import { useLVSContext, type LVSConfig } from './LVSProvider';
+import { useSafeLVSContext, type LVSConfig } from './LVSProvider';
 import { waitForIceGather } from './lib/sdp';
 
 /** Default capture constraints — 720p video + audio. Matches the IVS
@@ -140,9 +140,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   const channelArn = useMemo(() => decodeArn(stageToken), [stageToken]);
   // Safe-context — null when caller forgot to mount <LVSProvider>. The
   // parallel-WHEP effect uses ctx?.baseUrl as the fallback when opts.baseUrl
-  // is unset. Same try/catch pattern used by useLVSPublisher/Subscriber.
-  let ctx: LVSConfig | null = null;
-  try { ctx = useLVSContext(); } catch { ctx = null; }
+  // is unset.
+  const ctx: LVSConfig | null = useSafeLVSContext();
 
   // Local capture state. The publisher hook is headless (caller-owned
   // capture), so this layer owns getUserMedia + screen-share swap.
