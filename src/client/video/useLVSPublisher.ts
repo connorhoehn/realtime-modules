@@ -145,6 +145,14 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
   // (audio-only → AV) without first changing the prop and round-
   // tripping through React. Cleared after consumption.
   const streamOverrideRef = useRef<MediaStream | null>(null);
+  // Set true for the duration of a republish() so the autoStart effect
+  // doesn't race the republish's own start() when the consumer also
+  // swaps the `stream` prop in the same tick (e.g. useLVSHangout's
+  // enableCamera() calls setLocalStream(merged) AND publisher.republish(merged);
+  // the React re-render triggers autoStart's effect with the new stream
+  // reference WHILE republish has already torn down the PC, which would
+  // double-start.
+  const republishingRef = useRef(false);
   const lastStatsRef = useRef<RawStats>({ bytes: 0, packets: 0, lost: 0, ts: 0 });
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -428,11 +436,21 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
    * event on the LVS producer-discovery WS and can re-WHEP.
    */
   const republish = useCallback(async (newStream: MediaStream) => {
-    // Order matters: stop FIRST so the WHIP resource is released
-    // server-side, then queue the new stream and re-start.
-    await stop();
+    // Set the override BEFORE stop() so that even if the autoStart
+    // effect fires between stop() and start() (because the consumer
+    // also swapped the `stream` prop in the same React tick), it picks
+    // up the correct stream. The republishingRef guard suppresses the
+    // autoStart's start() entirely so we don't double-WHIP.
+    republishingRef.current = true;
     streamOverrideRef.current = newStream;
-    await start();
+    try {
+      // Order matters: stop FIRST so the WHIP resource is released
+      // server-side, then re-start with the override.
+      await stop();
+      await start();
+    } finally {
+      republishingRef.current = false;
+    }
   }, [stop, start]);
 
   // Auto-start when stream becomes available. Re-runs if the stream
@@ -442,6 +460,9 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
     if (!autoStart) return;
     if (!stream) return;
     if (pcRef.current) return;
+    // Suppress while republish() owns the lifecycle — it will call
+    // start() itself with the correct stream override.
+    if (republishingRef.current) return;
     void start();
     // We intentionally don't depend on `start` here — its identity
     // changes when stream/participantId/etc. change, and we only want

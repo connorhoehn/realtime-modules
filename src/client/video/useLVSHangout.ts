@@ -238,11 +238,18 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // it as a separate publisher and remote subscribers can WHEP it as
   // its own producer (camera publisher stays untouched on the wire).
   // Auto-starts when `localScreenStream` is non-null, auto-tears-down
-  // when it's nulled. Same auth resolver.
+  // when it's nulled. Same auth resolver. Memoized so the publisher
+  // hook's deps don't see a new string identity per render (would
+  // re-bind start() each render — harmless today but keeps a stable
+  // upstream contract).
+  const screenParticipantId = useMemo(
+    () => (participantId ? `${participantId}:screen` : undefined),
+    [participantId],
+  );
   const screenPublisher = useLVSPublisher({
     channelArn: channelArn ?? '',
     stream: channelArn ? localScreenStream : null,
-    participantId: participantId ? `${participantId}:screen` : undefined,
+    participantId: screenParticipantId,
     autoStart: true,
     baseUrl,
     getAuthToken: resolveAuthToken,
@@ -272,6 +279,15 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         // is `${participantId}:screen` — equality-only would let our
         // own screen track render as a "remote".
         if (participantId && (msid === participantId || msid.startsWith(participantId + ':'))) return;
+        // Skip any remote screen producer here — `${pid}:screen` msid
+        // means a dedicated screen publisher whose tracks are routed
+        // through the parallel WHEP path (effect below) into
+        // `entry.screenStream`. If the SFU's primary WHEP answer ever
+        // also includes a screen producer (multiplex behavior may vary
+        // by build), we'd otherwise create a phantom participant tile
+        // keyed by `${pid}:screen` AND double-attach the track to both
+        // the camera tile's streams[] and the dedicated screenStream.
+        if (msid.includes(':')) return;
 
         setRemoteParticipants((prev) => {
           const next = new Map(prev);
