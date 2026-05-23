@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.7.8",
+  "version": "0.11.0",
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -25,6 +25,10 @@
     "./client/ws": {
       "types": "./dist/client/ws.d.ts",
       "default": "./dist/client/ws.js"
+    },
+    "./client/video": {
+      "types": "./dist/client/video/index.d.ts",
+      "default": "./dist/client/video/index.js"
     },
     "./adapters/tiptap": {
       "types": "./dist/adapters/tiptap/index.d.ts",
