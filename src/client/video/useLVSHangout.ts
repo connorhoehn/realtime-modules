@@ -893,6 +893,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     setLocalStream(null);
     setLocalScreenStream(null);
     setRemoteParticipants(new Map());
+    // Wipe ghost-producer state so a subsequent rejoin starts fresh.
+    firstSeenAtRef.current.clear();
   }, [publisher]);
 
   // Unmount cleanup: same as leave(), but the publisher hook also runs
@@ -958,6 +960,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         ? [...entry.streams, entry.screenStream]
         : entry.streams;
       const flags = computeMediaFlags(flagSources);
+      // Ghost-producer annotations. firstSeenAt is set on first openPcFor
+      // for this BASE pid; subscriberMs is derived against `nowTick` so
+      // it advances at ~1s resolution without callers managing a timer.
+      // Fall back to `nowTick` if the ref is somehow missing the entry
+      // (shouldn't happen — openPcFor runs before track-onTrack populates
+      // remoteParticipants — but the fallback keeps subscriberMs=0 rather
+      // than NaN so consumer filters don't accidentally hide brand-new
+      // tiles on a missing-ref race).
+      const firstSeenAt = firstSeenAtRef.current.get(pid) ?? nowTick;
+      const subscriberMs = Math.max(0, nowTick - firstSeenAt);
       list.push({
         participantId: pid,
         displayName: pid, // falls back to participantId — no name channel from SFU
@@ -969,14 +981,17 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         screenStream: entry.screenStream,
         hasAudio: flags.hasAudio,
         hasVideo: flags.hasVideo,
+        firstSeenAt,
+        subscriberMs,
       });
     }
 
     return list;
     // localFlagsTick + localStream + localScreenStream included so
-    // flag changes / screen-share toggles recompute.
+    // flag changes / screen-share toggles recompute. nowTick drives the
+    // ghost-producer subscriberMs recomputation every 1s.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantId, userId, remoteParticipants, localStream, localScreenStream, localFlagsTick]);
+  }, [participantId, userId, remoteParticipants, localStream, localScreenStream, localFlagsTick, nowTick]);
 
   // isJoined: publisher live is the primary signal — we've successfully
   // pushed bytes to the SFU. Parallel WHEPs may legitimately be absent
