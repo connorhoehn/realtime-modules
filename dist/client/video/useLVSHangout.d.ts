@@ -27,9 +27,9 @@ export interface HangoutParticipant {
      *  while keeping the camera tile alive as a PiP. */
     streams: MediaStream[];
     /** Active screen-share stream, if any. For the local user, populated
-     *  by `startScreenShare()`. Remote screen-share isn't yet detected
-     *  (mediasoup doesn't differentiate camera vs screen video tracks via
-     *  WHEP today). Undefined when not sharing. */
+     *  by `startScreenShare()`. For remotes, populated by the dedicated
+     *  parallel-WHEP PC opened against the `${pid}:screen` producer.
+     *  Undefined when not sharing. */
     screenStream?: MediaStream;
     /** Alias retained for legacy ui-components consumers — same as
      *  `displayName`. Some downstream components key on `userId`. */
@@ -64,8 +64,8 @@ export interface UseLVSHangoutResult {
     leave: () => void;
 }
 /**
- * Composite hangout hook. Wires WHIP (useLVSPublisher) + WHEP
- * (useLVSSubscriber) into a single participants-list API matching the
+ * Composite hangout hook. Wires WHIP (useLVSPublisher) + per-remote
+ * parallel WHEP PCs into a single participants-list API matching the
  * legacy IVS-Stage-based useHangoutEmbed surface, so consumers
  * (HangoutOverlay, HangoutDemoPage, VideoCallPanel) can swap with a
  * one-line import change.
@@ -73,13 +73,22 @@ export interface UseLVSHangoutResult {
  * Lifecycle:
  *   - idle while `stageToken` or `participantId` is null
  *   - acquires camera+mic via getUserMedia on first valid input
- *   - autostarts publisher; subscriber excludes our participantId
- *   - `leave()` releases all local tracks + stops both legs
+ *   - autostarts publisher
+ *   - opens the discovery WS; for every remote producer.added event
+ *     (camera OR `:screen`) opens a dedicated WHEP PC targeting that
+ *     publisher's pid with the positive selector. The SFU's
+ *     `findProducerOfKind(arn, kind, participantId)` returns ONLY
+ *     that publisher's tracks, so each remote peer gets its own PC
+ *     and its own tile.
+ *   - `leave()` releases all local tracks + tears down every parallel PC
  *   - unmount cleanup mirrors `leave()` (idempotent)
  *
- * Track routing: the subscriber's onTrack fires per inbound track with
- * the SDP msid (= publisher participantId). We dedup by stream-id when
- * grouping into per-participant tiles.
+ * Track routing: each parallel PC's onTrack carries that remote's
+ * camera (or screen) tracks. We attach them to the participant entry
+ * keyed by the remote's BASE pid (`fullPid.split(':')[0]`); a peer's
+ * camera + screen end up on the same participant entry — camera in
+ * `streams[]`, screen in `screenStream` — so a single peer never
+ * appears as two tiles.
  */
 export declare function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult;
 //# sourceMappingURL=useLVSHangout.d.ts.map

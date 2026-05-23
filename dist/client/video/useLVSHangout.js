@@ -8,21 +8,31 @@
 //   1. decodes the channel ARN from the token,
 //   2. acquires camera+mic via getUserMedia,
 //   3. publishes via useLVSPublisher (WHIP),
-//   4. subscribes via useLVSSubscriber (WHEP) with our participantId
-//      excluded so the SFU answer omits our own producers,
-//   5. assembles a participants list keyed by msid (= publisher
-//      participantId) so consumers can route tracks into per-tile UIs,
+//   4. opens ONE parallel WHEP PC per remote publisher discovered via
+//      the producer-discovery WS (both base cameras AND `:screen`
+//      producers — symmetric handling),
+//   5. assembles a participants list keyed by remote base pid so
+//      consumers can route tracks into per-tile UIs,
 //   6. exposes mute/camera/screen-share toggles + leave().
 //
 // The composite owns capture; the underlying publisher hook is headless
 // (caller-owned capture by design), so this layer is where getUserMedia
 // + screen-share live.
+//
+// 2026-05-23 — 3+ person fix. Previously this hook used a single
+// `useLVSSubscriber` WHEP that re-handshook on `producer.added`. That
+// only ever carried ONE peer's tracks per kind because the SFU's
+// `findProducerOfKind` returns first-match. For N peers we need N-1
+// parallel PCs (one per remote publisher), each WHEP'ing with the
+// positive `participantId` selector so the SFU answers with EXACTLY
+// that publisher's tracks. The screen-share path already did this for
+// `:screen` pids — we now do the same uniformly for cameras too, and
+// the main subscriber is gone.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useLVSHangout = useLVSHangout;
 const react_1 = require("react");
 const jwt_1 = require("./lib/jwt");
 const useLVSPublisher_1 = require("./useLVSPublisher");
-const useLVSSubscriber_1 = require("./useLVSSubscriber");
 const transport_1 = require("./lib/transport");
 const LVSProvider_1 = require("./LVSProvider");
 const sdp_1 = require("./lib/sdp");
@@ -48,8 +58,8 @@ function computeMediaFlags(streams) {
     return { hasAudio, hasVideo };
 }
 /**
- * Composite hangout hook. Wires WHIP (useLVSPublisher) + WHEP
- * (useLVSSubscriber) into a single participants-list API matching the
+ * Composite hangout hook. Wires WHIP (useLVSPublisher) + per-remote
+ * parallel WHEP PCs into a single participants-list API matching the
  * legacy IVS-Stage-based useHangoutEmbed surface, so consumers
  * (HangoutOverlay, HangoutDemoPage, VideoCallPanel) can swap with a
  * one-line import change.
@@ -57,13 +67,22 @@ function computeMediaFlags(streams) {
  * Lifecycle:
  *   - idle while `stageToken` or `participantId` is null
  *   - acquires camera+mic via getUserMedia on first valid input
- *   - autostarts publisher; subscriber excludes our participantId
- *   - `leave()` releases all local tracks + stops both legs
+ *   - autostarts publisher
+ *   - opens the discovery WS; for every remote producer.added event
+ *     (camera OR `:screen`) opens a dedicated WHEP PC targeting that
+ *     publisher's pid with the positive selector. The SFU's
+ *     `findProducerOfKind(arn, kind, participantId)` returns ONLY
+ *     that publisher's tracks, so each remote peer gets its own PC
+ *     and its own tile.
+ *   - `leave()` releases all local tracks + tears down every parallel PC
  *   - unmount cleanup mirrors `leave()` (idempotent)
  *
- * Track routing: the subscriber's onTrack fires per inbound track with
- * the SDP msid (= publisher participantId). We dedup by stream-id when
- * grouping into per-participant tiles.
+ * Track routing: each parallel PC's onTrack carries that remote's
+ * camera (or screen) tracks. We attach them to the participant entry
+ * keyed by the remote's BASE pid (`fullPid.split(':')[0]`); a peer's
+ * camera + screen end up on the same participant entry — camera in
+ * `streams[]`, screen in `screenStream` — so a single peer never
+ * appears as two tiles.
  */
 function useLVSHangout(opts) {
     const { stageToken, participantId, userId, media, baseUrl, getAuthToken } = opts;
@@ -87,13 +106,13 @@ function useLVSHangout(opts) {
     const localStreamRef = (0, react_1.useRef)(null);
     const cameraStreamRef = (0, react_1.useRef)(null); // preserved across screen-share for restore
     const screenShareTrackRef = (0, react_1.useRef)(null);
-    // P4 — parallel WHEP PCs for remote screen-share producers, keyed by
-    // the producer's full participantId (e.g. "hank:screen"). Each entry
-    // holds the live RTCPeerConnection + its WHEP resource URL so we can
-    // DELETE on teardown. Managed imperatively from the
-    // producer-discovery WS effect below — outside React's render path
-    // because hooks can't be called in loops.
-    const screenSubscribersRef = (0, react_1.useRef)(new Map());
+    // Parallel WHEP PCs for EVERY remote producer, keyed by the producer's
+    // full participantId. For a peer named `hank` you'll see two entries
+    // when they're sharing: `hank` (camera kind) + `hank:screen` (screen
+    // kind). Managed imperatively from the producer-discovery WS effect
+    // below — outside React's render path because hooks can't be called
+    // in loops, and we need N concurrent PCs at runtime.
+    const remoteSubscribersRef = (0, react_1.useRef)(new Map());
     // Stable identity so the publisher hook doesn't observe a new
     // `getAuthToken` on every render (which would churn its useMemo and
     // potentially restart publish).
@@ -147,7 +166,7 @@ function useLVSHangout(opts) {
         baseUrl,
         getAuthToken: resolveAuthToken,
     });
-    // P4 — second publisher dedicated to screen-share. Uses a synthetic
+    // Second publisher dedicated to screen-share. Uses a synthetic
     // participantId suffix `${participantId}:screen` so the SFU treats
     // it as a separate publisher and remote subscribers can WHEP it as
     // its own producer (camera publisher stays untouched on the wire).
@@ -165,109 +184,26 @@ function useLVSHangout(opts) {
         baseUrl,
         getAuthToken: resolveAuthToken,
     });
-    // Subscriber (WHEP). excludeParticipantId scrubs our own producers
-    // from the SFU answer so we don't render ourselves twice.
-    const subscriber = (0, useLVSSubscriber_1.useLVSSubscriber)({
-        channelArn: channelArn ?? '',
-        autoStart: !!channelArn && !!participantId,
-        excludeParticipantId: participantId ?? undefined,
-        baseUrl,
-        getAuthToken: resolveAuthToken,
-        // Watch LVS producer-discovery WS for remote upgrades (audio-only
-        // peer turning camera on, screenshare added, etc.). Triggers
-        // re-WHEP so we receive the new track kind.
-        watchProducerEvents: true,
-        onTrack: (0, react_1.useCallback)((track, msid) => {
-            // The SFU sets msid to `<participantId> <trackId>`, so msid is
-            // the publisher's participantId. Tracks without a stream id
-            // can't be tile-routed; skip them rather than bucket under '?'.
-            if (!msid)
-                return;
-            // Skip echo from our own publisher in case the SFU answer
-            // includes us despite excludeParticipantId (defense in depth).
-            // Also skip our dedicated screen publisher whose pid namespace
-            // is `${participantId}:screen` — equality-only would let our
-            // own screen track render as a "remote".
-            if (participantId && (msid === participantId || msid.startsWith(participantId + ':')))
-                return;
-            // Skip any remote screen producer here — `${pid}:screen` msid
-            // means a dedicated screen publisher whose tracks are routed
-            // through the parallel WHEP path (effect below) into
-            // `entry.screenStream`. If the SFU's primary WHEP answer ever
-            // also includes a screen producer (multiplex behavior may vary
-            // by build), we'd otherwise create a phantom participant tile
-            // keyed by `${pid}:screen` AND double-attach the track to both
-            // the camera tile's streams[] and the dedicated screenStream.
-            if (msid.includes(':'))
-                return;
-            setRemoteParticipants((prev) => {
-                const next = new Map(prev);
-                const existing = next.get(msid) ?? {
-                    streams: [],
-                    streamIds: new Set(),
-                };
-                // Each track arrives with a streams[] array; group tracks
-                // sharing the same stream id (= msid namespace) into one
-                // MediaStream so the consumer's <video srcObject> renders
-                // synchronized A/V.
-                let stream = existing.streams.find((s) => existing.streamIds.has(s.id));
-                // First track for this participant: create a fresh MediaStream
-                // (don't reuse ev.streams[0] — the subscriber aggregates ALL
-                // inbound tracks into a single shared stream, which would
-                // bleed across participant tiles).
-                if (!stream) {
-                    stream = new MediaStream();
-                    existing.streams = [stream];
-                    existing.streamIds.add(stream.id);
-                }
-                // Dedup by track id — onTrack can fire twice in some browsers
-                // during renegotiation.
-                if (!stream.getTracks().some((t) => t.id === track.id)) {
-                    stream.addTrack(track);
-                }
-                next.set(msid, existing);
-                return next;
-            });
-            // Prune the participant entry when the track ends.
-            const onEnded = () => {
-                setRemoteParticipants((prev) => {
-                    const next = new Map(prev);
-                    const entry = next.get(msid);
-                    if (!entry)
-                        return prev;
-                    for (const s of entry.streams) {
-                        if (s.getTracks().some((t) => t.id === track.id)) {
-                            s.removeTrack(track);
-                        }
-                    }
-                    // If all streams are now empty, drop the participant entirely.
-                    const nonEmpty = entry.streams.filter((s) => s.getTracks().length > 0);
-                    if (nonEmpty.length === 0) {
-                        next.delete(msid);
-                    }
-                    else {
-                        next.set(msid, { ...entry, streams: nonEmpty });
-                    }
-                    return next;
-                });
-            };
-            track.addEventListener('ended', onEnded, { once: true });
-        }, [participantId]),
-    });
-    // P4 — Parallel WHEP for remote screen-share producers.
+    // Silence "declared but never read" — the hook is consumed for its
+    // side effects (WHIP transport lifecycle), not its return value.
+    void screenPublisher;
+    // Parallel WHEP for EVERY remote producer (camera + screen).
     //
-    // The SFU's WHEP answer carries one producer per kind (cam OR
-    // screen — not both) per session. To consume a remote's screen in
-    // ADDITION to their camera, we open a SECOND WHEP PC targeting the
-    // `${pid}:screen` participantId. This effect manages those PCs
-    // imperatively (one per remote sharer) via the LVS producer-
-    // discovery WS at `/api/channels/:arn/ws`.
+    // The SFU's WHEP answer with no `participantId` selector returns ONE
+    // matching producer per kind (first-match across the channel). For
+    // multi-peer hangouts (3+ tabs) that means we'd only ever see ONE
+    // remote peer's tracks via a single PC. So instead we open a
+    // dedicated PC PER remote producer, each WHEP'ing with the positive
+    // `participantId: <fullPid>` selector — the SFU then returns ONLY
+    // that publisher's tracks.
     //
     // Lifecycle:
-    //   - on `producer.added` with participantId ending `:screen` →
-    //     open a new WHEP PC + route its video track to
-    //     remoteParticipants.get(basePid).screenStream
-    //   - on `producer.removed` → close the PC + drop the screenStream
+    //   - subscribe-channel handshake on WS open → server replays existing
+    //     producers (late-join catches all peers already in the call)
+    //   - on `producer.added` with a NON-self pid → open a WHEP PC
+    //     (kind='screen' when pid ends `:screen`, else 'camera')
+    //   - on `producer.removed` → close the PC + drop the relevant
+    //     stream (screenStream if screen-kind; streams[] entry otherwise)
     //   - on unmount → close every PC + DELETE every WHEP resource
     (0, react_1.useEffect)(() => {
         if (!channelArn)
@@ -280,39 +216,68 @@ function useLVSHangout(opts) {
         let cancelled = false;
         let ws = null;
         const cleanupPc = (fullPid) => {
-            const entry = screenSubscribersRef.current.get(fullPid);
+            const entry = remoteSubscribersRef.current.get(fullPid);
             if (!entry)
                 return;
             // Permanent diagnostic — paired with the open log so we can grep
-            // open/close transitions when the spotlight inevitably regresses.
-            console.info('[screen-pc] close', { fullPid });
+            // open/close transitions when remote tiles inevitably regress.
+            console.info('[remote-pc] close', { fullPid, kind: entry.kind });
             try {
                 entry.pc.close();
             }
             catch { /* ignore */ }
             // Fire-and-forget DELETE — best effort.
             void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
-            screenSubscribersRef.current.delete(fullPid);
-            // Drop the screenStream from the base participant entry.
+            remoteSubscribersRef.current.delete(fullPid);
             const basePid = fullPid.split(':')[0] ?? fullPid;
+            const isScreen = entry.kind === 'screen';
             setRemoteParticipants((prev) => {
                 const next = new Map(prev);
                 const e = next.get(basePid);
                 if (!e)
                     return prev;
-                if (e.screenStream) {
-                    next.set(basePid, { ...e, screenStream: undefined });
+                if (isScreen) {
+                    // Screen-kind teardown — drop screenStream only.
+                    if (e.screenStream) {
+                        next.set(basePid, { ...e, screenStream: undefined });
+                    }
+                    // Don't delete the entry if camera-kind streams remain.
+                    if (!e.screenStream && e.streams.length === 0) {
+                        next.delete(basePid);
+                    }
+                }
+                else {
+                    // Camera-kind teardown — drop streams[] (peer left or turned
+                    // off camera). Stop tracks first so the consumer's <video>
+                    // element drops the stale frame.
+                    for (const s of e.streams) {
+                        for (const t of s.getTracks()) {
+                            try {
+                                t.stop();
+                            }
+                            catch { /* */ }
+                        }
+                    }
+                    // If a screenStream is still live, keep the participant entry
+                    // around so the spotlight tile doesn't vanish.
+                    if (e.screenStream) {
+                        next.set(basePid, { ...e, streams: [], streamIds: new Set() });
+                    }
+                    else {
+                        next.delete(basePid);
+                    }
                 }
                 return next;
             });
         };
-        const openPcFor = async (fullPid) => {
+        const openPcFor = async (fullPid, kind) => {
             // Idempotent — bail if already subscribed.
-            if (screenSubscribersRef.current.has(fullPid))
+            if (remoteSubscribersRef.current.has(fullPid))
                 return;
-            // Don't self-subscribe (defense in depth — our own screen
-            // publisher uses `${participantId}:screen` which the SFU
-            // broadcasts back via the discovery WS).
+            // Don't self-subscribe (defense in depth — our own publishers
+            // get broadcast back via the discovery WS).
+            if (fullPid === participantId)
+                return;
             if (fullPid === `${participantId}:screen`)
                 return;
             try {
@@ -321,23 +286,25 @@ function useLVSHangout(opts) {
                 // Permanent diagnostic — log every parallel WHEP attempt so the
                 // next regression is one browser-console scroll away. Pair with
                 // SFU-side `WHEP producer found` log lines via fullPid to verify
-                // the WHEP reached the server with the `:screen` suffix intact.
-                console.info('[screen-pc] open', { fullPid, hasIce: ice.length > 0 });
+                // the WHEP reached the server with the right selector.
+                console.info('[remote-pc] open', { fullPid, kind, hasIce: ice.length > 0 });
                 const pc = new RTCPeerConnection({ iceServers: ice });
-                // Recv-only — screen producers are video (audio optional).
+                // Recv-only — both camera + screen publishers are video (+ audio
+                // for camera). Add both transceivers; SFU returns inactive lines
+                // for kinds the producer doesn't have.
                 pc.addTransceiver('video', { direction: 'recvonly' });
                 pc.addTransceiver('audio', { direction: 'recvonly' });
                 pc.addEventListener('track', (ev) => {
                     if (cancelled)
                         return;
                     const track = ev.track;
-                    const incomingStream = ev.streams[0] ?? new MediaStream([track]);
                     const basePid = fullPid.split(':')[0] ?? fullPid;
-                    console.info('[screen-pc] track', {
+                    console.info('[remote-pc] track', {
                         fullPid,
                         basePid,
-                        kind: track.kind,
-                        streamId: incomingStream.id,
+                        kind,
+                        trackKind: track.kind,
+                        streamId: ev.streams[0]?.id ?? null,
                     });
                     setRemoteParticipants((prev) => {
                         const next = new Map(prev);
@@ -345,21 +312,40 @@ function useLVSHangout(opts) {
                             streams: [],
                             streamIds: new Set(),
                         };
-                        // Keep camera streams[] untouched — only attach screen
-                        // here. We use a dedicated MediaStream so the consumer
-                        // can render screenStream in a separate <video> element
-                        // from streams[0] (camera).
-                        let screen = existing.screenStream;
-                        if (!screen) {
-                            screen = new MediaStream();
+                        if (kind === 'screen') {
+                            // Screen-kind track → goes into the dedicated
+                            // screenStream slot so consumers can route it to a
+                            // spotlight independently from the camera tile.
+                            let screen = existing.screenStream;
+                            if (!screen) {
+                                screen = new MediaStream();
+                            }
+                            if (!screen.getTracks().some((t) => t.id === track.id)) {
+                                screen.addTrack(track);
+                            }
+                            next.set(basePid, { ...existing, screenStream: screen });
                         }
-                        if (!screen.getTracks().some((t) => t.id === track.id)) {
-                            screen.addTrack(track);
+                        else {
+                            // Camera-kind track → goes into streams[]. Dedup by
+                            // track id (onTrack can fire twice in some browsers
+                            // during renegotiation).
+                            let stream = existing.streams[0];
+                            if (!stream) {
+                                stream = new MediaStream();
+                                existing.streams = [stream];
+                                existing.streamIds = new Set([stream.id]);
+                            }
+                            if (!stream.getTracks().some((t) => t.id === track.id)) {
+                                stream.addTrack(track);
+                            }
+                            next.set(basePid, { ...existing });
                         }
-                        next.set(basePid, { ...existing, screenStream: screen });
                         return next;
                     });
-                    // Drop on track end (publisher unpublished).
+                    // Drop the participant entry when the track ends. We tear the
+                    // whole PC down — the SFU emitted producer.removed which the
+                    // discovery WS handler will also catch, but track-ended is
+                    // the more reliable signal (no WS dependency).
                     track.addEventListener('ended', () => cleanupPc(fullPid), { once: true });
                 });
                 const offer = await pc.createOffer();
@@ -372,17 +358,12 @@ function useLVSHangout(opts) {
                     channelArn,
                     offerSdp: sdp,
                     authToken,
-                    // Target THIS publisher's screen producer specifically —
-                    // without it the SFU's first-match path returns the publisher's
-                    // CAMERA instead of their screen track, so a remote screen-share
-                    // would render as a duplicate camera tile.
+                    // Target THIS publisher specifically — without it the SFU's
+                    // first-match path returns the FIRST publisher of that kind
+                    // on the channel, which is the original 3+ person bug.
                     participantId: fullPid,
                     excludeParticipantId: undefined,
                     baseUrl,
-                }).catch((e) => {
-                    // No producers yet (race between WS event + WHIP completion)
-                    // — silently bail; the next producer.added retry catches it.
-                    throw e;
                 });
                 await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
                 if (cancelled) {
@@ -406,22 +387,28 @@ function useLVSHangout(opts) {
                     catch { /* */ }
                     return;
                 }
-                screenSubscribersRef.current.set(fullPid, {
+                remoteSubscribersRef.current.set(fullPid, {
                     pc,
                     resourceUrl: location,
                     authToken,
+                    kind,
                 });
             }
             catch (e) {
                 // Cleanup any partial state — next discovery tick may retry.
-                const entry = screenSubscribersRef.current.get(fullPid);
+                const entry = remoteSubscribersRef.current.get(fullPid);
                 if (entry) {
                     try {
                         entry.pc.close();
                     }
                     catch { /* */ }
-                    screenSubscribersRef.current.delete(fullPid);
+                    remoteSubscribersRef.current.delete(fullPid);
                 }
+                // Log so race conditions (WHIP hadn't completed yet when we
+                // raced the producer.added) are debuggable. info-level — a
+                // retry will follow once the next event lands.
+                const msg = e instanceof Error ? e.message : String(e);
+                console.info('[remote-pc] open failed', { fullPid, kind, err: msg });
             }
         };
         const wsUrl = baseUrl.replace(/^http/, 'ws') +
@@ -429,7 +416,8 @@ function useLVSHangout(opts) {
         try {
             ws = new WebSocket(wsUrl);
             // Subscribe-channel handshake — stageWsServer only delivers
-            // producer events after receiving this frame.
+            // producer events (including the REPLAY of existing publishers
+            // for late-joiners) after receiving this frame.
             ws.addEventListener('open', () => {
                 void (async () => {
                     try {
@@ -441,28 +429,49 @@ function useLVSHangout(opts) {
                             token,
                         }));
                     }
-                    catch { /* token resolver threw — discovery silent, parallel WHEP screen-share won't surface */ }
+                    catch { /* token resolver threw — discovery silent, parallel WHEP camera+screen won't surface */ }
                 })();
             });
             ws.addEventListener('message', (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);
                     const pid = msg?.participantId;
-                    if (typeof pid !== 'string' || !pid.endsWith(':screen'))
+                    if (typeof pid !== 'string')
                         return;
-                    // Permanent diagnostic — log every screen-related discovery
-                    // event so a future regression in the producer.added wiring
-                    // is visible without re-instrumenting. Kept info-level since
-                    // these fire ~once per screen-share start/stop (rare).
-                    console.info('[screen-discovery] event', {
+                    // Skip self — our own producers get echoed back here.
+                    if (pid === participantId)
+                        return;
+                    if (pid === `${participantId}:screen`)
+                        return;
+                    const isScreen = pid.endsWith(':screen');
+                    const kind = isScreen ? 'screen' : 'camera';
+                    // Permanent diagnostic — every remote producer event surfaces
+                    // here so future regressions in the discovery WS wiring are
+                    // visible without re-instrumenting. info-level since these
+                    // fire ~once per peer join / camera-toggle / screen-share-
+                    // toggle (rare enough to not flood the console).
+                    console.info('[remote-discovery] event', {
                         type: msg.type,
                         participantId: pid,
-                        kind: msg.kind,
+                        mediaKind: msg.kind,
+                        ourKind: kind,
                     });
-                    if (msg.type === 'producer.added' && msg.kind === 'video') {
-                        void openPcFor(pid);
+                    if (msg.type === 'producer.added') {
+                        // Only one PC per fullPid regardless of media kind — both
+                        // camera audio+video producers on the same publisher map to
+                        // the same PC (the SFU's WHEP answer carries both tracks).
+                        // openPcFor is idempotent.
+                        void openPcFor(pid, kind);
                     }
                     else if (msg.type === 'producer.removed') {
+                        // Only tear down when ALL media kinds for this publisher
+                        // are gone. The SFU emits producer.removed once per kind,
+                        // so on a camera+audio publisher leaving we'll see two
+                        // events; for screen-share stopping we'll see one (video-
+                        // only). Heuristic: tear down on the first event — the SFU
+                        // will close the second producer cleanly via PC negotiation
+                        // (tracks transition to `ended`). This matches the screen-
+                        // share path's original behavior.
                         cleanupPc(pid);
                     }
                 }
@@ -477,7 +486,7 @@ function useLVSHangout(opts) {
             }
             catch { /* */ }
             // Snapshot keys; cleanup mutates the map.
-            const keys = Array.from(screenSubscribersRef.current.keys());
+            const keys = Array.from(remoteSubscribersRef.current.keys());
             for (const k of keys)
                 cleanupPc(k);
         };
@@ -504,10 +513,10 @@ function useLVSHangout(opts) {
         setLocalFlagsTick((n) => n + 1);
     }, []);
     const stopScreenShare = (0, react_1.useCallback)(() => {
-        // P4 — clearing localScreenStream causes the dedicated
-        // screenPublisher to teardown its WHIP transport (DELETE),
-        // which fires `producer.removed` to subscribers. The camera
-        // publisher is untouched. No track-swap, no restore step.
+        // Clearing localScreenStream causes the dedicated screenPublisher
+        // to teardown its WHIP transport (DELETE), which fires
+        // `producer.removed` to subscribers. The camera publisher is
+        // untouched. No track-swap, no restore step.
         const track = screenShareTrackRef.current;
         if (track) {
             try {
@@ -528,14 +537,11 @@ function useLVSHangout(opts) {
                 return;
             }
             screenShareTrackRef.current = videoTrack;
-            // P4 — multi-stream design. Setting `localScreenStream` causes
-            // the dedicated screenPublisher (configured above) to autoStart
-            // a SECOND WHIP transport with `participantId: ${pid}:screen`.
+            // Multi-stream design. Setting `localScreenStream` causes the
+            // dedicated screenPublisher (configured above) to autoStart a
+            // SECOND WHIP transport with `participantId: ${pid}:screen`.
             // The camera publisher stays untouched — remote viewers see BOTH
             // the sharer's camera AND their screen at the same time.
-            // (Old v1 path here called `publisher.replaceStream(swap)` which
-            // swapped the camera track for the screen, hiding the sharer's
-            // face from remotes. Gone.)
             setLocalScreenStream(display);
             setIsScreenSharing(true);
             // Browser-chrome "Stop sharing" button fires `ended` on the
@@ -640,7 +646,22 @@ function useLVSHangout(opts) {
         }
         setIsScreenSharing(false);
         void publisher.stop();
-        void subscriber.stop();
+        // Tear down every parallel WHEP PC + DELETE the SFU resources. The
+        // discovery WS effect's cleanup runs on unmount; for an in-call
+        // leave() we need to do it eagerly here so the SFU drops us before
+        // peers see a stale producer entry.
+        const keys = Array.from(remoteSubscribersRef.current.keys());
+        for (const k of keys) {
+            const entry = remoteSubscribersRef.current.get(k);
+            if (!entry)
+                continue;
+            try {
+                entry.pc.close();
+            }
+            catch { /* */ }
+            void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
+            remoteSubscribersRef.current.delete(k);
+        }
         const s = localStreamRef.current;
         if (s) {
             s.getTracks().forEach((t) => {
@@ -655,10 +676,11 @@ function useLVSHangout(opts) {
         setLocalStream(null);
         setLocalScreenStream(null);
         setRemoteParticipants(new Map());
-    }, [publisher, subscriber]);
-    // Unmount cleanup: same as leave(), but the publisher/subscriber hooks
-    // also run their own teardown — so we only release local tracks here
-    // to avoid double-stopping the WHIP/WHEP resources.
+    }, [publisher]);
+    // Unmount cleanup: same as leave(), but the publisher hook also runs
+    // its own teardown — so we only release local tracks here to avoid
+    // double-stopping the WHIP resources. The discovery WS effect handles
+    // tearing down parallel PCs on unmount.
     (0, react_1.useEffect)(() => {
         return () => {
             const screen = screenShareTrackRef.current;
@@ -682,9 +704,9 @@ function useLVSHangout(opts) {
             screenShareTrackRef.current = null;
         };
     }, []);
-    // Surface error from either leg. Subscriber failures shouldn't blow
-    // up the UI if the publisher is fine (e.g. solo room, no producers
-    // yet); we only escalate publisher errors as fatal.
+    // Surface error from publisher leg. Per-remote WHEP failures are
+    // recoverable (next producer.added retries) and shouldn't blow up the
+    // UI — log only.
     const composedError = error ?? publisher.error ?? null;
     // Build the public participants list. Local user first; remotes
     // appended in insertion order (Map preserves it).
@@ -727,16 +749,8 @@ function useLVSHangout(opts) {
                 userId: pid,
                 isLocal: false,
                 streams: entry.streams,
-                // BUG-FIX (2026-05-23): expose screenStream for remote
-                // participants. Without this the parallel-WHEP path successfully
-                // pulled the screen track via `${pid}:screen` and stashed it on
-                // the internal map, but the public HangoutParticipant never
-                // carried it out — so consumers (HangoutOverlay spotlight) fell
-                // through to `streams[0]` (camera) and the OTHER peer kept
-                // seeing the sharer's CAMERA in the spotlight slot, not their
-                // screen. The parallel WHEP was succeeding all along (verified
-                // via SFU logs showing `WHEP producer found` for `:screen`
-                // pids); the bug was a missing field in the participants memo.
+                // Expose screenStream so consumers (HangoutOverlay spotlight)
+                // can route the parallel-WHEP screen track independently.
                 screenStream: entry.screenStream,
                 hasAudio: flags.hasAudio,
                 hasVideo: flags.hasVideo,
@@ -748,11 +762,10 @@ function useLVSHangout(opts) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [participantId, userId, remoteParticipants, localStream, localScreenStream, localFlagsTick]);
     // isJoined: publisher live is the primary signal — we've successfully
-    // pushed bytes to the SFU. Subscriber may legitimately be 'connecting'
-    // forever when alone in the lobby (no remote producers to answer
-    // with), so we don't gate on subscriber phase. This matches the
-    // legacy useHangoutEmbed UX where the UI mounts as soon as Stage
-    // joined, regardless of whether others were already there.
+    // pushed bytes to the SFU. Parallel WHEPs may legitimately be absent
+    // when alone in the lobby (no remote producers yet), so we don't gate
+    // on them. This matches the legacy useHangoutEmbed UX where the UI
+    // mounts as soon as Stage joined, regardless of who was already there.
     const isJoined = publisher.phase === 'live';
     // Camera state: did the local participant actually publish a live
     // video track? Drives the in-call "Turn on camera" button visibility.
