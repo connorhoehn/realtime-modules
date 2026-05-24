@@ -564,3 +564,180 @@ describe('useLVSHangout — StrictMode safety', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sticky-stale-state auto-recovery — when all WHEP receivers transition to
+// readyState='ended' (transient SFU consumer reap), the hook must:
+//   (a) fully scrub the participant entry within a tick,
+//   (b) auto-retry openPcFor against the same fullPid within ~1s IF the
+//       producer is still in the last discovery snapshot,
+//   (c) cap retries to RETRY_CAP (=3) per fullPid within RETRY_WINDOW_MS.
+// ---------------------------------------------------------------------------
+
+describe('useLVSHangout — all-tracks-ended auto-recovery', () => {
+  it('removes the participant entry within one tick when all remote tracks end', async () => {
+    const handle: HarnessHandle = { result: null };
+    await act(async () => {
+      render(<Harness token={TOKEN} pid={PID} handle={handle} />);
+    });
+
+    const ws = wsInstances[wsInstances.length - 1]!;
+    await act(async () => {
+      ws.triggerOpen();
+      ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' });
+      await flush();
+    });
+
+    const pc = whepPcs()[whepPcs().length - 1]!;
+    let audio: FakeTrack;
+    let video: FakeTrack;
+    await act(async () => {
+      audio = pc.emitTrack('audio', 'a-stale-1', 'stream-stale');
+      video = pc.emitTrack('video', 'v-stale-1', 'stream-stale');
+      await flush();
+    });
+
+    // Sanity: the remote tile is mounted.
+    expect(handle.result!.participants.find((p) => !p.isLocal)).toBeDefined();
+
+    // Both tracks end — consumer transport reaped server-side.
+    await act(async () => {
+      audio!.readyState = 'ended';
+      for (const cb of audio!._endedListeners) cb();
+      video!.readyState = 'ended';
+      for (const cb of video!._endedListeners) cb();
+      await flush();
+    });
+
+    // The participant entry MUST be gone — the avatar fallback won't
+    // stick on a stale stream because there's no stream to be stale.
+    expect(handle.result!.participants.find((p) => !p.isLocal)).toBeUndefined();
+    // The PC was closed as part of cleanup.
+    expect(pc.closed).toBe(true);
+  });
+
+  it('schedules a fresh openPcFor within ~1s when the producer is still in the discovery snapshot', async () => {
+    const handle: HarnessHandle = { result: null };
+    jest.useFakeTimers();
+    try {
+      await act(async () => {
+        render(<Harness token={TOKEN} pid={PID} handle={handle} />);
+      });
+
+      const ws = wsInstances[wsInstances.length - 1]!;
+      await act(async () => {
+        ws.triggerOpen();
+        ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' });
+        // Drain microtasks under fake timers.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const whepCallsBefore = fetchHandle.whepCalls.length;
+      expect(whepCallsBefore).toBeGreaterThanOrEqual(1);
+
+      const pc = whepPcs()[whepPcs().length - 1]!;
+      let audio: FakeTrack;
+      let video: FakeTrack;
+      await act(async () => {
+        audio = pc.emitTrack('audio', 'a-recov-1', 'stream-recov');
+        video = pc.emitTrack('video', 'v-recov-1', 'stream-recov');
+        await Promise.resolve();
+      });
+
+      // All tracks end.
+      await act(async () => {
+        audio!.readyState = 'ended';
+        for (const cb of audio!._endedListeners) cb();
+        video!.readyState = 'ended';
+        for (const cb of video!._endedListeners) cb();
+        await Promise.resolve();
+      });
+
+      // Entry gone immediately.
+      expect(handle.result!.participants.find((p) => !p.isLocal)).toBeUndefined();
+      // No retry yet — the timer hasn't fired.
+      expect(fetchHandle.whepCalls.length).toBe(whepCallsBefore);
+
+      // Advance past RETRY_DELAY_MS — auto-recovery should fire a fresh
+      // openPcFor, which lands a new WHEP POST.
+      await act(async () => {
+        jest.advanceTimersByTime(1_100);
+        // Drain async openPcFor chain.
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      expect(fetchHandle.whepCalls.length).toBeGreaterThan(whepCallsBefore);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not exceed RETRY_CAP (3) auto-recovery openPcFor calls per fullPid within 30s', async () => {
+    // Direct cap test: install a PC, emit tracks, end them, count retries.
+    // Make WHEP retries land but with tracks that we'll immediately end.
+    const handle: HarnessHandle = { result: null };
+    jest.useFakeTimers();
+    try {
+      await act(async () => {
+        render(<Harness token={TOKEN} pid={PID} handle={handle} />);
+      });
+
+      const ws = wsInstances[wsInstances.length - 1]!;
+      await act(async () => {
+        ws.triggerOpen();
+        ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' });
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      const whepCallsAtStart = fetchHandle.whepCalls.length;
+
+      // Helper: emit + end tracks on the latest PC to trigger one
+      // all-tracks-ended + scheduleRetry pass.
+      const endAndAdvance = async (idx: number) => {
+        const pc = whepPcs()[whepPcs().length - 1]!;
+        await act(async () => {
+          const a = pc.emitTrack('audio', `a${idx}`, `s${idx}`);
+          const v = pc.emitTrack('video', `v${idx}`, `s${idx}`);
+          await Promise.resolve();
+          a.readyState = 'ended';
+          for (const cb of a._endedListeners) cb();
+          v.readyState = 'ended';
+          for (const cb of v._endedListeners) cb();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          jest.advanceTimersByTime(1_100);
+          for (let i = 0; i < 12; i += 1) await Promise.resolve();
+        });
+      };
+
+      // Burn through the budget — each call increments retry count;
+      // after RETRY_CAP=3 retries in the window, no more should fire.
+      await endAndAdvance(1); // retry 1
+      const after1 = fetchHandle.whepCalls.length;
+      expect(after1).toBeGreaterThan(whepCallsAtStart);
+
+      await endAndAdvance(2); // retry 2
+      const after2 = fetchHandle.whepCalls.length;
+      expect(after2).toBeGreaterThan(after1);
+
+      await endAndAdvance(3); // retry 3 (cap)
+      const after3 = fetchHandle.whepCalls.length;
+      expect(after3).toBeGreaterThan(after2);
+
+      // 4th attempt — must NOT fire a new WHEP since cap is hit.
+      await endAndAdvance(4);
+      const after4 = fetchHandle.whepCalls.length;
+      expect(after4).toBe(after3);
+
+      // Total openPcFor-driven WHEPs from retries: exactly RETRY_CAP=3
+      // (after the initial open).
+      expect(after3 - whepCallsAtStart).toBe(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

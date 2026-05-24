@@ -291,6 +291,29 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // below drives recomputation of the derived `subscriberMs` field.
   const firstSeenAtRef = useRef<Map<string, number>>(new Map());
 
+  // Live snapshot of producers the discovery WS has told us are alive on
+  // the SFU. Keyed by fullPid → kind. Populated on `producer.added`,
+  // dropped on `producer.removed`. Used by the all-tracks-ended auto-
+  // recovery path: when a WHEP PC dies but the producer is still in this
+  // map, schedule a fresh openPcFor. Without this we'd never know the
+  // producer is still on the server (the producer.added that originally
+  // opened the PC may have fired minutes ago and we never persisted it).
+  const knownProducersRef = useRef<Map<string, 'camera' | 'screen'>>(new Map());
+
+  // Retry budget per fullPid for the all-tracks-ended auto-recovery
+  // path. Each entry holds the count + first-attempt timestamp; we
+  // reset when 30s have passed since the first attempt. Cap = 3 retries
+  // within a 30s window so a pathologically wedged producer (SFU side
+  // misconfig, codec mismatch) doesn't spam reconnects forever.
+  const retryBudgetRef = useRef<Map<string, { count: number; windowStart: number }>>(new Map());
+  const RETRY_CAP = 3;
+  const RETRY_WINDOW_MS = 30_000;
+  const RETRY_DELAY_MS = 1_000;
+
+  // Pending retry timers per fullPid so leave()/cleanup can cancel them
+  // before they fire into a torn-down hook.
+  const retryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
   // Render-time "now" — bumped every 1s so the `subscriberMs` field in
   // the participants memo recomputes without callers having to mount
   // their own setInterval. Resolution: ~1s. Stops bumping when the
@@ -414,7 +437,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const cleanupPc = (fullPid: string) => {
+    // forceDeleteBase=true means "even if other media (camera streams or
+    // screen) remain on the participant entry, scrub the basePid entirely
+    // from remoteParticipants and firstSeenAtRef". The all-tracks-ended
+    // auto-recovery path uses this so the next openPcFor sees a clean
+    // slate and creates a fresh MediaStream — without it, a stale entry
+    // could linger (e.g. screenStream still present from a different PC)
+    // and prevent the consumer's <video> element from re-binding to the
+    // fresh stream id. For producer.removed and StrictMode cleanup paths,
+    // the historical "preserve sibling media" semantics still apply.
+    const cleanupPc = (fullPid: string, forceDeleteBase = false) => {
       // Cancel any in-flight open for this pid so the open body bails
       // before it can publish a new entry to remoteSubscribersRef.
       const inflight = inFlightOpensRef.current.get(fullPid);
@@ -423,10 +455,25 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         inFlightOpensRef.current.delete(fullPid);
       }
       const entry = remoteSubscribersRef.current.get(fullPid);
-      if (!entry) return;
+      if (!entry) {
+        // No PC to close, but if forceDeleteBase is set we still want
+        // to scrub the participant entry (covers the case where the
+        // PC was already torn down by a prior sweep).
+        if (forceDeleteBase) {
+          const basePid = fullPid.split(':')[0] ?? fullPid;
+          setRemoteParticipants((prev) => {
+            if (!prev.has(basePid)) return prev;
+            const next = new Map(prev);
+            next.delete(basePid);
+            return next;
+          });
+          firstSeenAtRef.current.delete(basePid);
+        }
+        return;
+      }
       // Permanent diagnostic — paired with the open log so we can grep
       // open/close transitions when remote tiles inevitably regress.
-      console.info('[remote-pc] close', { fullPid, kind: entry.kind, epoch: entry.epoch });
+      console.info('[remote-pc] close', { fullPid, kind: entry.kind, epoch: entry.epoch, forceDeleteBase });
       try { entry.pc.close(); } catch { /* ignore */ }
       // Fire-and-forget DELETE — best effort.
       void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
@@ -437,6 +484,25 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         const next = new Map(prev);
         const e = next.get(basePid);
         if (!e) return prev;
+        if (forceDeleteBase) {
+          // Auto-recovery path — scrub everything for this basePid so the
+          // next openPcFor creates a brand-new participant entry +
+          // MediaStream. Stop any lingering tracks so the consumer's
+          // <video> element drops the stale frame.
+          for (const s of e.streams) {
+            for (const t of s.getTracks()) {
+              try { t.stop(); } catch { /* */ }
+            }
+          }
+          if (e.screenStream) {
+            for (const t of e.screenStream.getTracks()) {
+              try { t.stop(); } catch { /* */ }
+            }
+          }
+          next.delete(basePid);
+          firstSeenAtRef.current.delete(basePid);
+          return next;
+        }
         if (isScreen) {
           // Screen-kind teardown — drop screenStream only.
           if (e.screenStream) {
@@ -469,6 +535,77 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           }
         }
         return next;
+      });
+    };
+
+    // Auto-recovery: when a WHEP PC dies because all receivers'
+    // tracks transitioned to `ended` (transient SFU/ICE blip, consumer
+    // transport reaped server-side), schedule a fresh openPcFor against
+    // the same fullPid IF the producer is still in the discovery
+    // snapshot. Capped at RETRY_CAP attempts within RETRY_WINDOW_MS
+    // to avoid spamming the SFU when the producer is genuinely wedged.
+    //
+    // Respects the live epoch (`myEpoch`) + the discovery effect's
+    // `cancelled` flag — a scheduled retry that fires AFTER unmount /
+    // epoch-bump is a no-op because the epoch we record at schedule
+    // time won't match the current effect's epoch any more, and the
+    // openPcFor call itself observes `cancelled` at every async
+    // boundary.
+    const scheduleRetry = (fullPid: string) => {
+      if (cancelled) return;
+      const kind = knownProducersRef.current.get(fullPid);
+      if (!kind) return; // producer truly gone — nothing to retry
+      // Budget bookkeeping — start a fresh window if 30s have passed
+      // since the first attempt.
+      const now = Date.now();
+      let budget = retryBudgetRef.current.get(fullPid);
+      if (!budget || now - budget.windowStart >= RETRY_WINDOW_MS) {
+        budget = { count: 0, windowStart: now };
+        retryBudgetRef.current.set(fullPid, budget);
+      }
+      if (budget.count >= RETRY_CAP) {
+        console.info('[remote-pc] retry cap reached — giving up', {
+          fullPid,
+          attempts: budget.count,
+          windowMs: now - budget.windowStart,
+        });
+        return;
+      }
+      budget.count += 1;
+      // Cancel any pending timer for this pid before scheduling a new one
+      // (defensive — shouldn't happen given the cleanupPc serialization
+      // but cheap insurance against double-fire).
+      const existingTimer = retryTimersRef.current.get(fullPid);
+      if (existingTimer) clearTimeout(existingTimer);
+      console.info('[remote-pc] scheduling auto-recovery retry', {
+        fullPid,
+        kind,
+        attempt: budget.count,
+        delayMs: RETRY_DELAY_MS,
+      });
+      const timer = setTimeout(() => {
+        retryTimersRef.current.delete(fullPid);
+        if (cancelled) return;
+        // Re-verify the producer is still known + epoch is still live
+        // before firing. The effect cleanup bumps cancelled; the auto-
+        // recovery should not race past it.
+        if (myEpoch !== effectEpochRef.current) return;
+        if (!knownProducersRef.current.has(fullPid)) return;
+        void openPcFor(fullPid, kind);
+      }, RETRY_DELAY_MS);
+      retryTimersRef.current.set(fullPid, timer);
+    };
+
+    // Returns true if all receivers on the PC have a track in
+    // readyState='ended' (or no tracks at all). Used by both the
+    // track-ended handler and the periodic sweep to detect a fully
+    // dead consumer transport.
+    const isPcFullyDead = (pc: RTCPeerConnection): boolean => {
+      const receivers = pc.getReceivers();
+      if (receivers.length === 0) return false; // not yet wired up
+      return receivers.every((r) => {
+        const t = r.track;
+        return !t || t.readyState === 'ended';
       });
     };
 
@@ -606,6 +743,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           // still-live video tile. Now we inspect every receiver: if
           // any track is still live, we leave the PC alone and let the
           // SFU drive the eventual teardown via producer.removed.
+          //
+          // All-tracks-ended path (sticky-stale-state fix): when every
+          // receiver is dead the consumer transport was reaped by the
+          // SFU mid-call (transient ICE/DTLS blip). Fully scrub the
+          // participant entry via forceDeleteBase so the avatar fallback
+          // doesn't stick on a stale stream, then schedule an auto-
+          // recovery retry — the producer is likely still alive on the
+          // SFU and a fresh openPcFor will rebind the tile within ~1s.
           track.addEventListener('ended', () => {
             const current = remoteSubscribersRef.current.get(fullPid);
             if (!current) return;
@@ -620,7 +765,12 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
               });
               return;
             }
-            cleanupPc(fullPid);
+            console.info('[remote-pc] all tracks ended — full scrub + retry', {
+              fullPid,
+              endedKind: track.kind,
+            });
+            cleanupPc(fullPid, /* forceDeleteBase */ true);
+            scheduleRetry(fullPid);
           }, { once: true });
         });
 
@@ -780,12 +930,27 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           });
 
           if (msg.type === 'producer.added') {
+            // Persist in the discovery snapshot so the all-tracks-ended
+            // auto-recovery path knows the producer is still live on the
+            // SFU. Keyed by fullPid → kind (matches the openPcFor arg).
+            knownProducersRef.current.set(pid, kind);
             // Only one PC per fullPid regardless of media kind — both
             // camera audio+video producers on the same publisher map to
             // the same PC (the SFU's WHEP answer carries both tracks).
             // openPcFor is idempotent (epoch-keyed + in-flight slot).
             void openPcFor(pid, kind);
           } else if (msg.type === 'producer.removed') {
+            // Drop from the discovery snapshot first so any pending
+            // auto-recovery retry sees the producer as gone and bails.
+            knownProducersRef.current.delete(pid);
+            // Clear retry budget + cancel any pending timer — the
+            // producer is genuinely gone, not transient.
+            retryBudgetRef.current.delete(pid);
+            const pendingTimer = retryTimersRef.current.get(pid);
+            if (pendingTimer) {
+              clearTimeout(pendingTimer);
+              retryTimersRef.current.delete(pid);
+            }
             // Only tear down when ALL media kinds for this publisher
             // are gone. The SFU emits producer.removed once per kind,
             // so on a camera+audio publisher leaving we'll see two
@@ -812,11 +977,45 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
 
     connectWs();
 
+    // Periodic stream-health sweep — every 5s walk every WHEP PC owned
+    // by THIS epoch and check if all receivers' tracks are ended. The
+    // track-ended event handler covers the happy path but events can be
+    // missed (browser bugs, race with .close()) — the sweep is a
+    // belt-and-suspenders backstop so a stuck "avatar fallback forever"
+    // tile self-heals within at most 5s + RETRY_DELAY_MS.
+    const HEALTH_SWEEP_MS = 5_000;
+    const healthSweepTimer = setInterval(() => {
+      if (cancelled) return;
+      // Snapshot keys first — cleanupPc mutates the map.
+      const keys = Array.from(remoteSubscribersRef.current.keys());
+      for (const k of keys) {
+        const entry = remoteSubscribersRef.current.get(k);
+        if (!entry || entry.epoch !== myEpoch) continue;
+        if (isPcFullyDead(entry.pc)) {
+          console.info('[remote-pc] sweep — PC fully dead, scrubbing + retry', {
+            fullPid: k,
+            kind: entry.kind,
+          });
+          cleanupPc(k, /* forceDeleteBase */ true);
+          scheduleRetry(k);
+        }
+      }
+    }, HEALTH_SWEEP_MS);
+
     return () => {
       cancelled = true;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
+      }
+      clearInterval(healthSweepTimer);
+      // Cancel + drop every pending auto-recovery retry timer. Without
+      // this a retry scheduled milliseconds before unmount could fire
+      // openPcFor against a torn-down effect (epoch check catches it,
+      // but cancelling the timer is the obviously-correct path).
+      for (const [pid, t] of retryTimersRef.current.entries()) {
+        clearTimeout(t);
+        retryTimersRef.current.delete(pid);
       }
       // Cancel every in-flight open keyed to this epoch BEFORE closing
       // anything else — they may still be racing toward
@@ -1120,6 +1319,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     setRemoteParticipants(new Map());
     // Wipe ghost-producer state so a subsequent rejoin starts fresh.
     firstSeenAtRef.current.clear();
+    // Wipe discovery snapshot + auto-recovery retry budget so a
+    // subsequent rejoin doesn't carry over stale "producer is alive"
+    // beliefs (the SFU is going to re-broadcast producer.added on
+    // resubscribe anyway).
+    knownProducersRef.current.clear();
+    retryBudgetRef.current.clear();
+    for (const [pid, t] of retryTimersRef.current.entries()) {
+      clearTimeout(t);
+      retryTimersRef.current.delete(pid);
+    }
   }, [publisher]);
 
   // Unmount cleanup: same as leave(), but the publisher hook also runs
