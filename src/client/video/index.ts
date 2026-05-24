@@ -34,6 +34,7 @@ export {
   type UseLVSHangoutResult,
   type HangoutParticipant,
   type RemoteParticipant,
+  type HangoutConnectionState,
 } from './useLVSHangout';
 
 export {
