@@ -226,60 +226,18 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // permission/device request and race the first one's replaceTrack.
   const cameraToggleInFlightRef = useRef(false);
 
-  // Idempotency flag for leave(). React StrictMode can drive a fast
-  // leave-then-unmount sequence (or a consumer might double-bind a
-  // button onClick); without this guard, leave() would iterate the
-  // already-emptied refs and the unmount-effect cleanup would re-fire
-  // setState on a torn-down tree.
-  const leftRef = useRef(false);
-
   // Parallel WHEP PCs for EVERY remote producer, keyed by the producer's
   // full participantId. For a peer named `hank` you'll see two entries
   // when they're sharing: `hank` (camera kind) + `hank:screen` (screen
   // kind). Managed imperatively from the producer-discovery WS effect
   // below — outside React's render path because hooks can't be called
   // in loops, and we need N concurrent PCs at runtime.
-  //
-  // `epoch` tags which effect-invocation opened this PC. React StrictMode
-  // in dev double-invokes effects (mount → cleanup → mount), and without
-  // an epoch tag the SECOND invocation would observe an empty
-  // remoteSubscribersRef (cleanup cleared it) and re-open every WHEP,
-  // leaving TWO RTCPeerConnections subscribed to the same producer. With
-  // an epoch tag, the second invocation can detect "same-pid, older
-  // epoch still in flight or holding the slot" and close-then-replace
-  // atomically.
   const remoteSubscribersRef = useRef<Map<string, {
     pc: RTCPeerConnection;
     resourceUrl: string;
     authToken: string;
     kind: 'camera' | 'screen';
-    epoch: number;
   }>>(new Map());
-
-  // In-flight openPcFor calls — keyed by fullPid, value is the epoch of
-  // the effect-invocation that started the open + a cancel flag the
-  // caller can flip. Without this map the StrictMode-fast cleanup sets
-  // `cancelled = true` on the effect-closure-local var but the open
-  // continues to addTransceiver / whepPublish / setRemoteDescription
-  // and THEN drops the PC into remoteSubscribersRef AFTER cleanup
-  // already iterated the map and tore down what it could see.
-  //
-  // Shape: { epoch, cancel: () => void }. The cancel fn sets the
-  // entry's internal flag (closed-over) which the openPcFor body
-  // checks at every async boundary.
-  const inFlightOpensRef = useRef<Map<string, {
-    epoch: number;
-    cancelled: boolean;
-  }>>(new Map());
-
-  // Monotonic effect-epoch counter. Incremented at the top of every
-  // discovery-WS effect mount; cleanup captures its own epoch so it
-  // only tears down what IT opened (or what it stole from older
-  // epochs). React StrictMode runs effects twice in dev — without an
-  // epoch we cannot distinguish "cleanup of epoch 1 firing AFTER
-  // epoch 2 already opened a PC" from "cleanup of epoch 2 firing
-  // after its own open completed".
-  const effectEpochRef = useRef(0);
 
   // First-seen timestamp per remote BASE pid (screen-only pids share the
   // base entry). Recorded the first time the discovery WS / parallel-WHEP
@@ -290,29 +248,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // want a state update just to record it; the render-side `nowTick`
   // below drives recomputation of the derived `subscriberMs` field.
   const firstSeenAtRef = useRef<Map<string, number>>(new Map());
-
-  // Live snapshot of producers the discovery WS has told us are alive on
-  // the SFU. Keyed by fullPid → kind. Populated on `producer.added`,
-  // dropped on `producer.removed`. Used by the all-tracks-ended auto-
-  // recovery path: when a WHEP PC dies but the producer is still in this
-  // map, schedule a fresh openPcFor. Without this we'd never know the
-  // producer is still on the server (the producer.added that originally
-  // opened the PC may have fired minutes ago and we never persisted it).
-  const knownProducersRef = useRef<Map<string, 'camera' | 'screen'>>(new Map());
-
-  // Retry budget per fullPid for the all-tracks-ended auto-recovery
-  // path. Each entry holds the count + first-attempt timestamp; we
-  // reset when 30s have passed since the first attempt. Cap = 3 retries
-  // within a 30s window so a pathologically wedged producer (SFU side
-  // misconfig, codec mismatch) doesn't spam reconnects forever.
-  const retryBudgetRef = useRef<Map<string, { count: number; windowStart: number }>>(new Map());
-  const RETRY_CAP = 3;
-  const RETRY_WINDOW_MS = 30_000;
-  const RETRY_DELAY_MS = 1_000;
-
-  // Pending retry timers per fullPid so leave()/cleanup can cancel them
-  // before they fire into a torn-down hook.
-  const retryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Render-time "now" — bumped every 1s so the `subscriberMs` field in
   // the participants memo recomputes without callers having to mount
@@ -426,54 +361,15 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     const baseUrl = opts.baseUrl ?? ctx?.baseUrl;
     if (!baseUrl) return;
 
-    // Bump the epoch BEFORE any work. Cleanup will capture this value
-    // and use it to decide which PCs/in-flight opens it owns.
-    effectEpochRef.current += 1;
-    const myEpoch = effectEpochRef.current;
-
     let cancelled = false;
     let ws: WebSocket | null = null;
-    // Reconnect-ladder state — see WS setup further down.
-    let reconnectAttempt = 0;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // forceDeleteBase=true means "even if other media (camera streams or
-    // screen) remain on the participant entry, scrub the basePid entirely
-    // from remoteParticipants and firstSeenAtRef". The all-tracks-ended
-    // auto-recovery path uses this so the next openPcFor sees a clean
-    // slate and creates a fresh MediaStream — without it, a stale entry
-    // could linger (e.g. screenStream still present from a different PC)
-    // and prevent the consumer's <video> element from re-binding to the
-    // fresh stream id. For producer.removed and StrictMode cleanup paths,
-    // the historical "preserve sibling media" semantics still apply.
-    const cleanupPc = (fullPid: string, forceDeleteBase = false) => {
-      // Cancel any in-flight open for this pid so the open body bails
-      // before it can publish a new entry to remoteSubscribersRef.
-      const inflight = inFlightOpensRef.current.get(fullPid);
-      if (inflight) {
-        inflight.cancelled = true;
-        inFlightOpensRef.current.delete(fullPid);
-      }
+    const cleanupPc = (fullPid: string) => {
       const entry = remoteSubscribersRef.current.get(fullPid);
-      if (!entry) {
-        // No PC to close, but if forceDeleteBase is set we still want
-        // to scrub the participant entry (covers the case where the
-        // PC was already torn down by a prior sweep).
-        if (forceDeleteBase) {
-          const basePid = fullPid.split(':')[0] ?? fullPid;
-          setRemoteParticipants((prev) => {
-            if (!prev.has(basePid)) return prev;
-            const next = new Map(prev);
-            next.delete(basePid);
-            return next;
-          });
-          firstSeenAtRef.current.delete(basePid);
-        }
-        return;
-      }
+      if (!entry) return;
       // Permanent diagnostic — paired with the open log so we can grep
       // open/close transitions when remote tiles inevitably regress.
-      console.info('[remote-pc] close', { fullPid, kind: entry.kind, epoch: entry.epoch, forceDeleteBase });
+      console.info('[remote-pc] close', { fullPid, kind: entry.kind });
       try { entry.pc.close(); } catch { /* ignore */ }
       // Fire-and-forget DELETE — best effort.
       void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
@@ -484,25 +380,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         const next = new Map(prev);
         const e = next.get(basePid);
         if (!e) return prev;
-        if (forceDeleteBase) {
-          // Auto-recovery path — scrub everything for this basePid so the
-          // next openPcFor creates a brand-new participant entry +
-          // MediaStream. Stop any lingering tracks so the consumer's
-          // <video> element drops the stale frame.
-          for (const s of e.streams) {
-            for (const t of s.getTracks()) {
-              try { t.stop(); } catch { /* */ }
-            }
-          }
-          if (e.screenStream) {
-            for (const t of e.screenStream.getTracks()) {
-              try { t.stop(); } catch { /* */ }
-            }
-          }
-          next.delete(basePid);
-          firstSeenAtRef.current.delete(basePid);
-          return next;
-        }
         if (isScreen) {
           // Screen-kind teardown — drop screenStream only.
           if (e.screenStream) {
@@ -538,97 +415,13 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       });
     };
 
-    // Auto-recovery: when a WHEP PC dies because all receivers'
-    // tracks transitioned to `ended` (transient SFU/ICE blip, consumer
-    // transport reaped server-side), schedule a fresh openPcFor against
-    // the same fullPid IF the producer is still in the discovery
-    // snapshot. Capped at RETRY_CAP attempts within RETRY_WINDOW_MS
-    // to avoid spamming the SFU when the producer is genuinely wedged.
-    //
-    // Respects the live epoch (`myEpoch`) + the discovery effect's
-    // `cancelled` flag — a scheduled retry that fires AFTER unmount /
-    // epoch-bump is a no-op because the epoch we record at schedule
-    // time won't match the current effect's epoch any more, and the
-    // openPcFor call itself observes `cancelled` at every async
-    // boundary.
-    const scheduleRetry = (fullPid: string) => {
-      if (cancelled) return;
-      const kind = knownProducersRef.current.get(fullPid);
-      if (!kind) return; // producer truly gone — nothing to retry
-      // Budget bookkeeping — start a fresh window if 30s have passed
-      // since the first attempt.
-      const now = Date.now();
-      let budget = retryBudgetRef.current.get(fullPid);
-      if (!budget || now - budget.windowStart >= RETRY_WINDOW_MS) {
-        budget = { count: 0, windowStart: now };
-        retryBudgetRef.current.set(fullPid, budget);
-      }
-      if (budget.count >= RETRY_CAP) {
-        console.info('[remote-pc] retry cap reached — giving up', {
-          fullPid,
-          attempts: budget.count,
-          windowMs: now - budget.windowStart,
-        });
-        return;
-      }
-      budget.count += 1;
-      // Cancel any pending timer for this pid before scheduling a new one
-      // (defensive — shouldn't happen given the cleanupPc serialization
-      // but cheap insurance against double-fire).
-      const existingTimer = retryTimersRef.current.get(fullPid);
-      if (existingTimer) clearTimeout(existingTimer);
-      console.info('[remote-pc] scheduling auto-recovery retry', {
-        fullPid,
-        kind,
-        attempt: budget.count,
-        delayMs: RETRY_DELAY_MS,
-      });
-      const timer = setTimeout(() => {
-        retryTimersRef.current.delete(fullPid);
-        if (cancelled) return;
-        // Re-verify the producer is still known + epoch is still live
-        // before firing. The effect cleanup bumps cancelled; the auto-
-        // recovery should not race past it.
-        if (myEpoch !== effectEpochRef.current) return;
-        if (!knownProducersRef.current.has(fullPid)) return;
-        void openPcFor(fullPid, kind);
-      }, RETRY_DELAY_MS);
-      retryTimersRef.current.set(fullPid, timer);
-    };
-
-    // Returns true if all receivers on the PC have a track in
-    // readyState='ended' (or no tracks at all). Used by both the
-    // track-ended handler and the periodic sweep to detect a fully
-    // dead consumer transport.
-    const isPcFullyDead = (pc: RTCPeerConnection): boolean => {
-      const receivers = pc.getReceivers();
-      if (receivers.length === 0) return false; // not yet wired up
-      return receivers.every((r) => {
-        const t = r.track;
-        return !t || t.readyState === 'ended';
-      });
-    };
-
     const openPcFor = async (fullPid: string, kind: 'camera' | 'screen') => {
+      // Idempotent — bail if already subscribed.
+      if (remoteSubscribersRef.current.has(fullPid)) return;
       // Don't self-subscribe (defense in depth — our own publishers
       // get broadcast back via the discovery WS).
       if (fullPid === participantId) return;
       if (fullPid === `${participantId}:screen`) return;
-
-      // Idempotent within an epoch — bail if we already have a PC for
-      // this pid that was opened by ANY epoch (so a second StrictMode
-      // mount in dev doesn't re-open). The cleanup of the older epoch
-      // (which fires BEFORE this body runs again in StrictMode) will
-      // have already torn down its own PCs + in-flight opens, so
-      // anything we see here is genuinely held by the active session.
-      if (remoteSubscribersRef.current.has(fullPid)) return;
-      // Same idempotency for the in-flight slot — if an older epoch's
-      // open is still racing through whepPublish, leave it alone. Its
-      // cleanup has already flipped its cancelled flag (we did that in
-      // cleanupPc above OR the effect-cleanup loop below) so it will
-      // discard its own PC on the next async boundary; meanwhile, no
-      // double-open.
-      if (inFlightOpensRef.current.has(fullPid)) return;
 
       // Record first-seen for the BASE pid (so camera + `:screen` for
       // the same publisher share one timestamp — the moment we first
@@ -639,34 +432,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         firstSeenAtRef.current.set(basePidForSeen, Date.now());
       }
 
-      // Register the in-flight slot BEFORE any await. The cleanup
-      // function (effect-cleanup OR cleanupPc on producer.removed) can
-      // flip this object's `cancelled` flag and we'll observe it at
-      // every async boundary below. The slot also blocks a second
-      // openPcFor for the same pid from racing in.
-      const flight = { epoch: myEpoch, cancelled: false };
-      inFlightOpensRef.current.set(fullPid, flight);
-
-      const bail = (pc: RTCPeerConnection | null, location: string | null, authToken: string) => {
-        if (pc) { try { pc.close(); } catch { /* */ } }
-        if (location) void whepTeardown(location, authToken).catch(() => { /* */ });
-        // Only drop the in-flight slot if it's still ours — a newer
-        // epoch may have already replaced it.
-        if (inFlightOpensRef.current.get(fullPid) === flight) {
-          inFlightOpensRef.current.delete(fullPid);
-        }
-      };
-
       try {
         const authToken = await resolveAuthToken();
-        if (flight.cancelled || cancelled) { bail(null, null, authToken); return; }
         const ice = await fetchIceServers(baseUrl);
-        if (flight.cancelled || cancelled) { bail(null, null, authToken); return; }
         // Permanent diagnostic — log every parallel WHEP attempt so the
         // next regression is one browser-console scroll away. Pair with
         // SFU-side `WHEP producer found` log lines via fullPid to verify
         // the WHEP reached the server with the right selector.
-        console.info('[remote-pc] open', { fullPid, kind, epoch: myEpoch, hasIce: ice.length > 0 });
+        console.info('[remote-pc] open', { fullPid, kind, hasIce: ice.length > 0 });
         const pc = new RTCPeerConnection({ iceServers: ice });
         // Recv-only — both camera + screen publishers are video (+ audio
         // for camera). Add both transceivers; SFU returns inactive lines
@@ -708,12 +481,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             } else {
               // Camera-kind track → goes into streams[]. Dedup by
               // track id (onTrack can fire twice in some browsers
-              // during renegotiation). React StrictMode also opens
-              // two WHEP PCs in dev — when the second PC delivers its
-              // own copy of the audio+video tracks, we MUST evict the
-              // older same-kind track or the <video> element ends up
-              // bound to a stale (muted forever) receiver and the tile
-              // shows the avatar fallback even though video is flowing.
+              // during renegotiation).
               let stream = existing.streams[0];
               if (!stream) {
                 stream = new MediaStream();
@@ -721,15 +489,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
                 existing.streamIds = new Set([stream.id]);
               }
               if (!stream.getTracks().some((t) => t.id === track.id)) {
-                // Evict same-kind duplicates first so we keep exactly
-                // one audio + one video. Stop them so the dead receiver
-                // releases its resources.
-                for (const t of stream.getTracks()) {
-                  if (t.kind === track.kind && t.id !== track.id) {
-                    try { t.stop(); } catch { /* */ }
-                    try { stream.removeTrack(t); } catch { /* */ }
-                  }
-                }
                 stream.addTrack(track);
               }
               next.set(basePid, { ...existing });
@@ -737,49 +496,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             return next;
           });
 
-          // Finding 6 — only tear down the PC when ALL receivers' tracks
-          // have ended. A single audio glitch (mic device swap, codec
-          // failure) would previously kill the whole PC and drop the
-          // still-live video tile. Now we inspect every receiver: if
-          // any track is still live, we leave the PC alone and let the
-          // SFU drive the eventual teardown via producer.removed.
-          //
-          // All-tracks-ended path (sticky-stale-state fix): when every
-          // receiver is dead the consumer transport was reaped by the
-          // SFU mid-call (transient ICE/DTLS blip). Fully scrub the
-          // participant entry via forceDeleteBase so the avatar fallback
-          // doesn't stick on a stale stream, then schedule an auto-
-          // recovery retry — the producer is likely still alive on the
-          // SFU and a fresh openPcFor will rebind the tile within ~1s.
-          track.addEventListener('ended', () => {
-            const current = remoteSubscribersRef.current.get(fullPid);
-            if (!current) return;
-            const stillLive = current.pc.getReceivers().some((r) => {
-              const t = r.track;
-              return !!t && t.readyState === 'live';
-            });
-            if (stillLive) {
-              console.info('[remote-pc] track ended — keeping PC (other tracks live)', {
-                fullPid,
-                endedKind: track.kind,
-              });
-              return;
-            }
-            console.info('[remote-pc] all tracks ended — full scrub + retry', {
-              fullPid,
-              endedKind: track.kind,
-            });
-            cleanupPc(fullPid, /* forceDeleteBase */ true);
-            scheduleRetry(fullPid);
-          }, { once: true });
+          // Drop the participant entry when the track ends. We tear the
+          // whole PC down — the SFU emitted producer.removed which the
+          // discovery WS handler will also catch, but track-ended is
+          // the more reliable signal (no WS dependency).
+          track.addEventListener('ended', () => cleanupPc(fullPid), { once: true });
         });
 
         const offer = await pc.createOffer();
-        if (flight.cancelled || cancelled) { bail(pc, null, authToken); return; }
         await pc.setLocalDescription(offer);
-        if (flight.cancelled || cancelled) { bail(pc, null, authToken); return; }
         await waitForIceGather(pc, 3000);
-        if (flight.cancelled || cancelled) { bail(pc, null, authToken); return; }
         const sdp = pc.localDescription?.sdp;
         if (!sdp) throw new Error('failed to generate local SDP');
 
@@ -794,108 +520,54 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           excludeParticipantId: undefined,
           baseUrl,
         });
-        if (flight.cancelled || cancelled) { bail(pc, location, authToken); return; }
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-        if (flight.cancelled || cancelled) { bail(pc, location, authToken); return; }
+        if (cancelled) {
+          try { pc.close(); } catch { /* */ }
+          if (location) void whepTeardown(location, authToken).catch(() => { /* */ });
+          return;
+        }
         if (!location) {
           // No Location header — server didn't issue a WHEP resource
           // URL, so we can't DELETE on teardown. Bail with cleanup
           // (the PC stays connected for the session lifetime; consumer
           // gets the track but we can't release the SFU consumer
           // cleanly). Should never happen with a spec-compliant server.
-          bail(pc, null, authToken);
+          try { pc.close(); } catch { /* */ }
           return;
-        }
-        // If a DIFFERENT epoch managed to install a PC for the same
-        // pid while we were awaiting (shouldn't happen given the
-        // in-flight slot, but defense in depth), close the older entry
-        // before we overwrite. Same epoch / our own slot → just install.
-        const existingEntry = remoteSubscribersRef.current.get(fullPid);
-        if (existingEntry && existingEntry.epoch !== myEpoch) {
-          console.info('[remote-pc] superseding older-epoch PC', {
-            fullPid,
-            oldEpoch: existingEntry.epoch,
-            newEpoch: myEpoch,
-          });
-          try { existingEntry.pc.close(); } catch { /* */ }
-          void whepTeardown(existingEntry.resourceUrl, existingEntry.authToken).catch(() => { /* */ });
         }
         remoteSubscribersRef.current.set(fullPid, {
           pc,
           resourceUrl: location,
           authToken,
           kind,
-          epoch: myEpoch,
         });
-        if (inFlightOpensRef.current.get(fullPid) === flight) {
-          inFlightOpensRef.current.delete(fullPid);
-        }
       } catch (e: unknown) {
         // Cleanup any partial state — next discovery tick may retry.
         const entry = remoteSubscribersRef.current.get(fullPid);
-        if (entry && entry.epoch === myEpoch) {
+        if (entry) {
           try { entry.pc.close(); } catch { /* */ }
           remoteSubscribersRef.current.delete(fullPid);
-        }
-        if (inFlightOpensRef.current.get(fullPid) === flight) {
-          inFlightOpensRef.current.delete(fullPid);
         }
         // Log so race conditions (WHIP hadn't completed yet when we
         // raced the producer.added) are debuggable. info-level — a
         // retry will follow once the next event lands.
         const msg = e instanceof Error ? e.message : String(e);
-        console.info('[remote-pc] open failed', { fullPid, kind, epoch: myEpoch, err: msg });
+        console.info('[remote-pc] open failed', { fullPid, kind, err: msg });
       }
     };
 
     const wsUrl = baseUrl.replace(/^http/, 'ws') +
       `/api/channels/${encodeURIComponent(channelArn)}/ws`;
-
-    // Reconnect ladder — exponential backoff capped at 10s, reset on
-    // every successful open (Finding 7 — discovery WS had NO reconnect
-    // path; one transient blip silently killed all producer events for
-    // the rest of the call).
-    const RECONNECT_MAX_MS = 10_000;
-    const scheduleReconnect = () => {
-      if (cancelled) return;
-      const delay = Math.min(RECONNECT_MAX_MS, 250 * Math.pow(2, reconnectAttempt));
-      reconnectAttempt += 1;
-      console.info('[remote-discovery] scheduling reconnect', {
-        attempt: reconnectAttempt,
-        delayMs: delay,
-      });
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        if (cancelled) return;
-        connectWs();
-      }, delay);
-    };
-
-    const connectWs = () => {
-      if (cancelled) return;
-      let socket: WebSocket;
-      try {
-        socket = new WebSocket(wsUrl);
-      } catch {
-        // Construction failure — schedule a retry; otherwise the call
-        // is permanently blind to producer.added/removed events.
-        scheduleReconnect();
-        return;
-      }
-      ws = socket;
-      socket.addEventListener('open', () => {
-        if (cancelled) {
-          // StrictMode-fast cleanup already ran; close immediately so we
-          // don't dangle an open WS the next effect can't see.
-          try { socket.close(); } catch { /* */ }
-          return;
-        }
-        reconnectAttempt = 0; // successful open resets the backoff
+    try {
+      ws = new WebSocket(wsUrl);
+      // Subscribe-channel handshake — stageWsServer only delivers
+      // producer events (including the REPLAY of existing publishers
+      // for late-joiners) after receiving this frame.
+      ws.addEventListener('open', () => {
         void (async () => {
           try {
             const token = await resolveAuthToken();
-            if (cancelled) return;
-            socket.send(JSON.stringify({
+            ws?.send(JSON.stringify({
               type: 'subscribe-channel',
               channelArn,
               participantId,
@@ -904,8 +576,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           } catch { /* token resolver threw — discovery silent, parallel WHEP camera+screen won't surface */ }
         })();
       });
-      socket.addEventListener('message', (ev) => {
-        if (cancelled) return;
+      ws.addEventListener('message', (ev) => {
         try {
           const msg = JSON.parse(ev.data);
           const pid = msg?.participantId;
@@ -930,27 +601,12 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           });
 
           if (msg.type === 'producer.added') {
-            // Persist in the discovery snapshot so the all-tracks-ended
-            // auto-recovery path knows the producer is still live on the
-            // SFU. Keyed by fullPid → kind (matches the openPcFor arg).
-            knownProducersRef.current.set(pid, kind);
             // Only one PC per fullPid regardless of media kind — both
             // camera audio+video producers on the same publisher map to
             // the same PC (the SFU's WHEP answer carries both tracks).
-            // openPcFor is idempotent (epoch-keyed + in-flight slot).
+            // openPcFor is idempotent.
             void openPcFor(pid, kind);
           } else if (msg.type === 'producer.removed') {
-            // Drop from the discovery snapshot first so any pending
-            // auto-recovery retry sees the producer as gone and bails.
-            knownProducersRef.current.delete(pid);
-            // Clear retry budget + cancel any pending timer — the
-            // producer is genuinely gone, not transient.
-            retryBudgetRef.current.delete(pid);
-            const pendingTimer = retryTimersRef.current.get(pid);
-            if (pendingTimer) {
-              clearTimeout(pendingTimer);
-              retryTimersRef.current.delete(pid);
-            }
             // Only tear down when ALL media kinds for this publisher
             // are gone. The SFU emits producer.removed once per kind,
             // so on a camera+audio publisher leaving we'll see two
@@ -963,79 +619,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           }
         } catch { /* malformed frame — ignore */ }
       });
-      socket.addEventListener('close', () => {
-        if (cancelled) return;
-        // Unexpected close — reconnect. We don't try to dedupe vs.
-        // intentional close because cancelled-guard above covers that.
-        scheduleReconnect();
-      });
-      socket.addEventListener('error', () => {
-        // 'error' is followed by 'close' per the WS spec — let close
-        // schedule the reconnect to avoid double-scheduling.
-      });
-    };
-
-    connectWs();
-
-    // Periodic stream-health sweep — every 5s walk every WHEP PC owned
-    // by THIS epoch and check if all receivers' tracks are ended. The
-    // track-ended event handler covers the happy path but events can be
-    // missed (browser bugs, race with .close()) — the sweep is a
-    // belt-and-suspenders backstop so a stuck "avatar fallback forever"
-    // tile self-heals within at most 5s + RETRY_DELAY_MS.
-    const HEALTH_SWEEP_MS = 5_000;
-    const healthSweepTimer = setInterval(() => {
-      if (cancelled) return;
-      // Snapshot keys first — cleanupPc mutates the map.
-      const keys = Array.from(remoteSubscribersRef.current.keys());
-      for (const k of keys) {
-        const entry = remoteSubscribersRef.current.get(k);
-        if (!entry || entry.epoch !== myEpoch) continue;
-        if (isPcFullyDead(entry.pc)) {
-          console.info('[remote-pc] sweep — PC fully dead, scrubbing + retry', {
-            fullPid: k,
-            kind: entry.kind,
-          });
-          cleanupPc(k, /* forceDeleteBase */ true);
-          scheduleRetry(k);
-        }
-      }
-    }, HEALTH_SWEEP_MS);
+    } catch { /* WS construction failure — silent fail-open */ }
 
     return () => {
       cancelled = true;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      clearInterval(healthSweepTimer);
-      // Cancel + drop every pending auto-recovery retry timer. Without
-      // this a retry scheduled milliseconds before unmount could fire
-      // openPcFor against a torn-down effect (epoch check catches it,
-      // but cancelling the timer is the obviously-correct path).
-      for (const [pid, t] of retryTimersRef.current.entries()) {
-        clearTimeout(t);
-        retryTimersRef.current.delete(pid);
-      }
-      // Cancel every in-flight open keyed to this epoch BEFORE closing
-      // anything else — they may still be racing toward
-      // remoteSubscribersRef.set().
-      for (const [pid, flight] of inFlightOpensRef.current.entries()) {
-        if (flight.epoch === myEpoch) {
-          flight.cancelled = true;
-          inFlightOpensRef.current.delete(pid);
-        }
-      }
       try { ws?.close(); } catch { /* */ }
-      // Snapshot keys; cleanup mutates the map. Only tear down PCs
-      // owned by THIS epoch — a newer epoch (StrictMode remount) may
-      // already have installed its own PCs by the time this cleanup
-      // runs, and we must not nuke them.
+      // Snapshot keys; cleanup mutates the map.
       const keys = Array.from(remoteSubscribersRef.current.keys());
-      for (const k of keys) {
-        const entry = remoteSubscribersRef.current.get(k);
-        if (entry && entry.epoch === myEpoch) cleanupPc(k);
-      }
+      for (const k of keys) cleanupPc(k);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelArn, participantId, opts.baseUrl]);
@@ -1267,12 +858,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   }, [publisher]);
 
   const leave = useCallback(() => {
-    // Idempotent — a second leave() (StrictMode double-invoke, double-
-    // bound onClick, leave+unmount race) is a no-op rather than a
-    // thrash that re-fires setState on a torn-down tree.
-    if (leftRef.current) return;
-    leftRef.current = true;
-
     // Stop the screen-share track first so its `ended` handler doesn't
     // race the publisher teardown.
     const screen = screenShareTrackRef.current;
@@ -1283,15 +868,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     setIsScreenSharing(false);
 
     void publisher.stop();
-
-    // Cancel every in-flight openPcFor so the racing async bodies
-    // discard their PCs at the next await-boundary check instead of
-    // installing entries into remoteSubscribersRef AFTER we just
-    // cleared it.
-    for (const [pid, flight] of inFlightOpensRef.current.entries()) {
-      flight.cancelled = true;
-      inFlightOpensRef.current.delete(pid);
-    }
 
     // Tear down every parallel WHEP PC + DELETE the SFU resources. The
     // discovery WS effect's cleanup runs on unmount; for an in-call
@@ -1319,16 +895,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     setRemoteParticipants(new Map());
     // Wipe ghost-producer state so a subsequent rejoin starts fresh.
     firstSeenAtRef.current.clear();
-    // Wipe discovery snapshot + auto-recovery retry budget so a
-    // subsequent rejoin doesn't carry over stale "producer is alive"
-    // beliefs (the SFU is going to re-broadcast producer.added on
-    // resubscribe anyway).
-    knownProducersRef.current.clear();
-    retryBudgetRef.current.clear();
-    for (const [pid, t] of retryTimersRef.current.entries()) {
-      clearTimeout(t);
-      retryTimersRef.current.delete(pid);
-    }
   }, [publisher]);
 
   // Unmount cleanup: same as leave(), but the publisher hook also runs
