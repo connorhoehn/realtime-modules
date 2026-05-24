@@ -161,6 +161,39 @@ function useLVSHangout(opts) {
     // want a state update just to record it; the render-side `nowTick`
     // below drives recomputation of the derived `subscriberMs` field.
     const firstSeenAtRef = (0, react_1.useRef)(new Map());
+    // Live snapshot of producers the discovery WS has told us are alive on
+    // the SFU. Keyed by fullPid → kind. Populated on `producer.added`,
+    // dropped on `producer.removed`. Used by the all-tracks-ended auto-
+    // recovery path: when a WHEP PC dies but the producer is still in this
+    // map, schedule a fresh openPcFor. Without this we'd never know the
+    // producer is still on the server (the producer.added that originally
+    // opened the PC may have fired minutes ago and we never persisted it).
+    const knownProducersRef = (0, react_1.useRef)(new Map());
+    // Retry budget per fullPid for the all-tracks-ended auto-recovery
+    // path. Each entry holds the count + first-attempt timestamp; we
+    // reset when 30s have passed since the first attempt. Cap = 3 retries
+    // within a 30s window so a pathologically wedged producer (SFU side
+    // misconfig, codec mismatch) doesn't spam reconnects forever.
+    const retryBudgetRef = (0, react_1.useRef)(new Map());
+    const RETRY_CAP = 3;
+    const RETRY_WINDOW_MS = 30_000;
+    const RETRY_DELAY_MS = 1_000;
+    // Pending retry timers per fullPid so leave()/cleanup can cancel them
+    // before they fire into a torn-down hook.
+    const retryTimersRef = (0, react_1.useRef)(new Map());
+    // Live snapshot of every WHEP PC's connectionState, keyed by fullPid.
+    // Updated by a `connectionstatechange` listener installed in openPcFor.
+    // The aggregate `connectionState` derived value reads this map: ANY
+    // entry in 'disconnected'/'failed' flips the public aggregate to
+    // 'reconnecting' so the UI can banner-toast. Lives in a ref to avoid
+    // re-renders for every transient state churn; the `whepHealthTick`
+    // state below drives the actual re-render when the AGGREGATE changes.
+    const whepConnStatesRef = (0, react_1.useRef)(new Map());
+    const [whepHealthTick, setWhepHealthTick] = (0, react_1.useState)(0);
+    // Helper exposed via ref so the visibilitychange handler (which lives
+    // outside the discovery effect's closure) can poke the WHEP recovery
+    // path without us having to plumb scheduleRetry across closures.
+    const scheduleRetryRef = (0, react_1.useRef)(null);
     // Render-time "now" — bumped every 1s so the `subscriberMs` field in
     // the participants memo recomputes without callers having to mount
     // their own setInterval. Resolution: ~1s. Stops bumping when the
@@ -279,7 +312,16 @@ function useLVSHangout(opts) {
         // Reconnect-ladder state — see WS setup further down.
         let reconnectAttempt = 0;
         let reconnectTimer = null;
-        const cleanupPc = (fullPid) => {
+        // forceDeleteBase=true means "even if other media (camera streams or
+        // screen) remain on the participant entry, scrub the basePid entirely
+        // from remoteParticipants and firstSeenAtRef". The all-tracks-ended
+        // auto-recovery path uses this so the next openPcFor sees a clean
+        // slate and creates a fresh MediaStream — without it, a stale entry
+        // could linger (e.g. screenStream still present from a different PC)
+        // and prevent the consumer's <video> element from re-binding to the
+        // fresh stream id. For producer.removed and StrictMode cleanup paths,
+        // the historical "preserve sibling media" semantics still apply.
+        const cleanupPc = (fullPid, forceDeleteBase = false) => {
             // Cancel any in-flight open for this pid so the open body bails
             // before it can publish a new entry to remoteSubscribersRef.
             const inflight = inFlightOpensRef.current.get(fullPid);
@@ -288,11 +330,26 @@ function useLVSHangout(opts) {
                 inFlightOpensRef.current.delete(fullPid);
             }
             const entry = remoteSubscribersRef.current.get(fullPid);
-            if (!entry)
+            if (!entry) {
+                // No PC to close, but if forceDeleteBase is set we still want
+                // to scrub the participant entry (covers the case where the
+                // PC was already torn down by a prior sweep).
+                if (forceDeleteBase) {
+                    const basePid = fullPid.split(':')[0] ?? fullPid;
+                    setRemoteParticipants((prev) => {
+                        if (!prev.has(basePid))
+                            return prev;
+                        const next = new Map(prev);
+                        next.delete(basePid);
+                        return next;
+                    });
+                    firstSeenAtRef.current.delete(basePid);
+                }
                 return;
+            }
             // Permanent diagnostic — paired with the open log so we can grep
             // open/close transitions when remote tiles inevitably regress.
-            console.info('[remote-pc] close', { fullPid, kind: entry.kind, epoch: entry.epoch });
+            console.info('[remote-pc] close', { fullPid, kind: entry.kind, epoch: entry.epoch, forceDeleteBase });
             try {
                 entry.pc.close();
             }
@@ -300,6 +357,11 @@ function useLVSHangout(opts) {
             // Fire-and-forget DELETE — best effort.
             void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
             remoteSubscribersRef.current.delete(fullPid);
+            // Drop the per-PC connectionState snapshot so the aggregate
+            // doesn't keep reporting 'reconnecting' for a PC that no longer
+            // exists. Tick state to drive a re-render of the aggregate.
+            whepConnStatesRef.current.delete(fullPid);
+            setWhepHealthTick((n) => n + 1);
             const basePid = fullPid.split(':')[0] ?? fullPid;
             const isScreen = entry.kind === 'screen';
             setRemoteParticipants((prev) => {
@@ -307,6 +369,31 @@ function useLVSHangout(opts) {
                 const e = next.get(basePid);
                 if (!e)
                     return prev;
+                if (forceDeleteBase) {
+                    // Auto-recovery path — scrub everything for this basePid so the
+                    // next openPcFor creates a brand-new participant entry +
+                    // MediaStream. Stop any lingering tracks so the consumer's
+                    // <video> element drops the stale frame.
+                    for (const s of e.streams) {
+                        for (const t of s.getTracks()) {
+                            try {
+                                t.stop();
+                            }
+                            catch { /* */ }
+                        }
+                    }
+                    if (e.screenStream) {
+                        for (const t of e.screenStream.getTracks()) {
+                            try {
+                                t.stop();
+                            }
+                            catch { /* */ }
+                        }
+                    }
+                    next.delete(basePid);
+                    firstSeenAtRef.current.delete(basePid);
+                    return next;
+                }
                 if (isScreen) {
                     // Screen-kind teardown — drop screenStream only.
                     if (e.screenStream) {
@@ -344,6 +431,87 @@ function useLVSHangout(opts) {
                     }
                 }
                 return next;
+            });
+        };
+        // Auto-recovery: when a WHEP PC dies because all receivers'
+        // tracks transitioned to `ended` (transient SFU/ICE blip, consumer
+        // transport reaped server-side), schedule a fresh openPcFor against
+        // the same fullPid IF the producer is still in the discovery
+        // snapshot. Capped at RETRY_CAP attempts within RETRY_WINDOW_MS
+        // to avoid spamming the SFU when the producer is genuinely wedged.
+        //
+        // Respects the live epoch (`myEpoch`) + the discovery effect's
+        // `cancelled` flag — a scheduled retry that fires AFTER unmount /
+        // epoch-bump is a no-op because the epoch we record at schedule
+        // time won't match the current effect's epoch any more, and the
+        // openPcFor call itself observes `cancelled` at every async
+        // boundary.
+        const scheduleRetry = (fullPid) => {
+            if (cancelled)
+                return;
+            const kind = knownProducersRef.current.get(fullPid);
+            if (!kind)
+                return; // producer truly gone — nothing to retry
+            // Budget bookkeeping — start a fresh window if 30s have passed
+            // since the first attempt.
+            const now = Date.now();
+            let budget = retryBudgetRef.current.get(fullPid);
+            if (!budget || now - budget.windowStart >= RETRY_WINDOW_MS) {
+                budget = { count: 0, windowStart: now };
+                retryBudgetRef.current.set(fullPid, budget);
+            }
+            if (budget.count >= RETRY_CAP) {
+                console.info('[remote-pc] retry cap reached — giving up', {
+                    fullPid,
+                    attempts: budget.count,
+                    windowMs: now - budget.windowStart,
+                });
+                return;
+            }
+            budget.count += 1;
+            // Cancel any pending timer for this pid before scheduling a new one
+            // (defensive — shouldn't happen given the cleanupPc serialization
+            // but cheap insurance against double-fire).
+            const existingTimer = retryTimersRef.current.get(fullPid);
+            if (existingTimer)
+                clearTimeout(existingTimer);
+            console.info('[remote-pc] scheduling auto-recovery retry', {
+                fullPid,
+                kind,
+                attempt: budget.count,
+                delayMs: RETRY_DELAY_MS,
+            });
+            const timer = setTimeout(() => {
+                retryTimersRef.current.delete(fullPid);
+                if (cancelled)
+                    return;
+                // Re-verify the producer is still known + epoch is still live
+                // before firing. The effect cleanup bumps cancelled; the auto-
+                // recovery should not race past it.
+                if (myEpoch !== effectEpochRef.current)
+                    return;
+                if (!knownProducersRef.current.has(fullPid))
+                    return;
+                void openPcFor(fullPid, kind);
+            }, RETRY_DELAY_MS);
+            retryTimersRef.current.set(fullPid, timer);
+        };
+        // Publish scheduleRetry through a ref so the visibilitychange
+        // handler (which lives in a SEPARATE effect — see below) can drive
+        // it without having to re-enter this effect's closure. Reset on
+        // cleanup so a fired-after-unmount visibilitychange is a no-op.
+        scheduleRetryRef.current = scheduleRetry;
+        // Returns true if all receivers on the PC have a track in
+        // readyState='ended' (or no tracks at all). Used by both the
+        // track-ended handler and the periodic sweep to detect a fully
+        // dead consumer transport.
+        const isPcFullyDead = (pc) => {
+            const receivers = pc.getReceivers();
+            if (receivers.length === 0)
+                return false; // not yet wired up
+            return receivers.every((r) => {
+                const t = r.track;
+                return !t || t.readyState === 'ended';
             });
         };
         const openPcFor = async (fullPid, kind) => {
@@ -421,6 +589,35 @@ function useLVSHangout(opts) {
                 // for kinds the producer doesn't have.
                 pc.addTransceiver('video', { direction: 'recvonly' });
                 pc.addTransceiver('audio', { direction: 'recvonly' });
+                // Track this PC's connectionState in the shared snapshot so the
+                // aggregate `connectionState` derived value can pick it up. The
+                // listener is intentionally lightweight — it only flips the
+                // health-tick state when the aggregate would change, not on
+                // every transient churn (e.g. new → connecting → connected).
+                pc.addEventListener('connectionstatechange', () => {
+                    if (cancelled)
+                        return;
+                    const s = pc.connectionState;
+                    whepConnStatesRef.current.set(fullPid, s);
+                    // Bump the tick on transitions that affect the aggregate. We
+                    // bump on EVERY transition (cheap) rather than pre-computing
+                    // the aggregate here — the consumer's useMemo handles dedup.
+                    setWhepHealthTick((n) => n + 1);
+                    // Schedule the existing all-tracks-ended retry path on a
+                    // failed connectionState (the track-ended events sometimes
+                    // lag the connectionState transition by 100s of ms; this
+                    // catches the gap so the auto-recovery still fires within ~1s
+                    // of the actual failure instead of waiting on the 5s health
+                    // sweep).
+                    if (s === 'failed' && knownProducersRef.current.has(fullPid)) {
+                        // Don't tear down the PC here — the cleanupPc(true) +
+                        // scheduleRetry pair runs through the same all-tracks-ended
+                        // path; defer to that machinery so we don't double-fire.
+                        console.info('[remote-pc] connectionState=failed — triggering recovery', { fullPid });
+                        cleanupPc(fullPid, /* forceDeleteBase */ true);
+                        scheduleRetry(fullPid);
+                    }
+                });
                 pc.addEventListener('track', (ev) => {
                     if (cancelled)
                         return;
@@ -495,6 +692,14 @@ function useLVSHangout(opts) {
                     // still-live video tile. Now we inspect every receiver: if
                     // any track is still live, we leave the PC alone and let the
                     // SFU drive the eventual teardown via producer.removed.
+                    //
+                    // All-tracks-ended path (sticky-stale-state fix): when every
+                    // receiver is dead the consumer transport was reaped by the
+                    // SFU mid-call (transient ICE/DTLS blip). Fully scrub the
+                    // participant entry via forceDeleteBase so the avatar fallback
+                    // doesn't stick on a stale stream, then schedule an auto-
+                    // recovery retry — the producer is likely still alive on the
+                    // SFU and a fresh openPcFor will rebind the tile within ~1s.
                     track.addEventListener('ended', () => {
                         const current = remoteSubscribersRef.current.get(fullPid);
                         if (!current)
@@ -510,7 +715,12 @@ function useLVSHangout(opts) {
                             });
                             return;
                         }
-                        cleanupPc(fullPid);
+                        console.info('[remote-pc] all tracks ended — full scrub + retry', {
+                            fullPid,
+                            endedKind: track.kind,
+                        });
+                        cleanupPc(fullPid, /* forceDeleteBase */ true);
+                        scheduleRetry(fullPid);
                     }, { once: true });
                 });
                 const offer = await pc.createOffer();
@@ -698,6 +908,10 @@ function useLVSHangout(opts) {
                         ourKind: kind,
                     });
                     if (msg.type === 'producer.added') {
+                        // Persist in the discovery snapshot so the all-tracks-ended
+                        // auto-recovery path knows the producer is still live on the
+                        // SFU. Keyed by fullPid → kind (matches the openPcFor arg).
+                        knownProducersRef.current.set(pid, kind);
                         // Only one PC per fullPid regardless of media kind — both
                         // camera audio+video producers on the same publisher map to
                         // the same PC (the SFU's WHEP answer carries both tracks).
@@ -705,6 +919,17 @@ function useLVSHangout(opts) {
                         void openPcFor(pid, kind);
                     }
                     else if (msg.type === 'producer.removed') {
+                        // Drop from the discovery snapshot first so any pending
+                        // auto-recovery retry sees the producer as gone and bails.
+                        knownProducersRef.current.delete(pid);
+                        // Clear retry budget + cancel any pending timer — the
+                        // producer is genuinely gone, not transient.
+                        retryBudgetRef.current.delete(pid);
+                        const pendingTimer = retryTimersRef.current.get(pid);
+                        if (pendingTimer) {
+                            clearTimeout(pendingTimer);
+                            retryTimersRef.current.delete(pid);
+                        }
                         // Only tear down when ALL media kinds for this publisher
                         // are gone. The SFU emits producer.removed once per kind,
                         // so on a camera+audio publisher leaving we'll see two
@@ -731,11 +956,50 @@ function useLVSHangout(opts) {
             });
         };
         connectWs();
+        // Periodic stream-health sweep — every 5s walk every WHEP PC owned
+        // by THIS epoch and check if all receivers' tracks are ended. The
+        // track-ended event handler covers the happy path but events can be
+        // missed (browser bugs, race with .close()) — the sweep is a
+        // belt-and-suspenders backstop so a stuck "avatar fallback forever"
+        // tile self-heals within at most 5s + RETRY_DELAY_MS.
+        const HEALTH_SWEEP_MS = 5_000;
+        const healthSweepTimer = setInterval(() => {
+            if (cancelled)
+                return;
+            // Snapshot keys first — cleanupPc mutates the map.
+            const keys = Array.from(remoteSubscribersRef.current.keys());
+            for (const k of keys) {
+                const entry = remoteSubscribersRef.current.get(k);
+                if (!entry || entry.epoch !== myEpoch)
+                    continue;
+                if (isPcFullyDead(entry.pc)) {
+                    console.info('[remote-pc] sweep — PC fully dead, scrubbing + retry', {
+                        fullPid: k,
+                        kind: entry.kind,
+                    });
+                    cleanupPc(k, /* forceDeleteBase */ true);
+                    scheduleRetry(k);
+                }
+            }
+        }, HEALTH_SWEEP_MS);
         return () => {
             cancelled = true;
+            // Drop the published scheduleRetry pointer so the visibilitychange
+            // handler can't fire it against this torn-down closure. The next
+            // effect mount (StrictMode remount) will repopulate.
+            scheduleRetryRef.current = null;
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
+            }
+            clearInterval(healthSweepTimer);
+            // Cancel + drop every pending auto-recovery retry timer. Without
+            // this a retry scheduled milliseconds before unmount could fire
+            // openPcFor against a torn-down effect (epoch check catches it,
+            // but cancelling the timer is the obviously-correct path).
+            for (const [pid, t] of retryTimersRef.current.entries()) {
+                clearTimeout(t);
+                retryTimersRef.current.delete(pid);
             }
             // Cancel every in-flight open keyed to this epoch BEFORE closing
             // anything else — they may still be racing toward
@@ -763,6 +1027,64 @@ function useLVSHangout(opts) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [channelArn, participantId, opts.baseUrl]);
+    // Visibilitychange — backgrounded tabs throttle setInterval to 1Hz on
+    // Chrome, and the SFU's consumer-transport reaper may close our
+    // WHEP PCs before the periodic health sweep (5s interval) can fire.
+    // When the tab returns to visible we proactively check every WHEP PC:
+    // any in `disconnected` / `failed` get scheduled for the same auto-
+    // recovery `scheduleRetry` path used by the all-tracks-ended handler
+    // (so the existing 3-retry-in-30s budget still applies — visibility
+    // recovery isn't a budget bypass).
+    //
+    // The publisher's PC is handled by useLVSPublisher's own
+    // `connectionstatechange='failed'` → `scheduleReconnect` path; we
+    // don't need to drive that ourselves. Same for live PCs that
+    // genuinely survived the background period — we never touch them.
+    (0, react_1.useEffect)(() => {
+        if (typeof document === 'undefined')
+            return; // SSR / Node tests
+        const onVisibilityChange = () => {
+            if (document.visibilityState !== 'visible')
+                return;
+            // Snapshot keys first — scheduleRetry mutates the WHEP refs.
+            const keys = Array.from(remoteSubscribersRef.current.keys());
+            let recoveredAny = false;
+            for (const k of keys) {
+                const entry = remoteSubscribersRef.current.get(k);
+                if (!entry)
+                    continue;
+                const s = entry.pc.connectionState;
+                if (s === 'disconnected' || s === 'failed') {
+                    console.info('[remote-pc] visibility recovery — PC unhealthy, scrubbing + retry', {
+                        fullPid: k,
+                        kind: entry.kind,
+                        connectionState: s,
+                    });
+                    // Use the published cleanup + retry pair from the discovery
+                    // effect. cleanupPc isn't exposed via ref (it lives inside the
+                    // discovery effect closure), but we can force the same outcome
+                    // by closing the PC ourselves + scheduling a retry — when
+                    // openPcFor eventually runs it'll see no entry in
+                    // remoteSubscribersRef and will open a fresh PC.
+                    try {
+                        entry.pc.close();
+                    }
+                    catch { /* */ }
+                    remoteSubscribersRef.current.delete(k);
+                    whepConnStatesRef.current.delete(k);
+                    // Schedule the standard retry path (epoch-checked, budget-aware).
+                    scheduleRetryRef.current?.(k);
+                    recoveredAny = true;
+                }
+            }
+            if (recoveredAny)
+                setWhepHealthTick((n) => n + 1);
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, []);
     // toggleMute / toggleCamera flip `enabled` on the local tracks. No
     // SDP renegotiation — the publisher's transceivers stay live; we just
     // null the outbound media. Bump localFlagsTick so participants memo
@@ -1056,6 +1378,16 @@ function useLVSHangout(opts) {
         setRemoteParticipants(new Map());
         // Wipe ghost-producer state so a subsequent rejoin starts fresh.
         firstSeenAtRef.current.clear();
+        // Wipe discovery snapshot + auto-recovery retry budget so a
+        // subsequent rejoin doesn't carry over stale "producer is alive"
+        // beliefs (the SFU is going to re-broadcast producer.added on
+        // resubscribe anyway).
+        knownProducersRef.current.clear();
+        retryBudgetRef.current.clear();
+        for (const [pid, t] of retryTimersRef.current.entries()) {
+            clearTimeout(t);
+            retryTimersRef.current.delete(pid);
+        }
     }, [publisher]);
     // Unmount cleanup: same as leave(), but the publisher hook also runs
     // its own teardown — so we only release local tracks here to avoid
@@ -1160,6 +1492,36 @@ function useLVSHangout(opts) {
     // on them. This matches the legacy useHangoutEmbed UX where the UI
     // mounts as soon as Stage joined, regardless of who was already there.
     const isJoined = publisher.phase === 'live';
+    // Aggregate transport health. Order of precedence (worst → best):
+    //   1. publisher.phase='error' → 'failed' (retry budget exhausted)
+    //   2. publisher.phase='reconnecting' OR any WHEP in
+    //      disconnected/failed → 'reconnecting'
+    //   3. publisher.phase='live' → 'connected'
+    //   4. publisher.phase='connecting' → 'connecting'
+    //   5. otherwise → 'idle'
+    // whepHealthTick is in deps so the memo re-evaluates whenever a WHEP
+    // PC's connectionState changes.
+    const connectionState = (0, react_1.useMemo)(() => {
+        if (publisher.phase === 'error')
+            return 'failed';
+        let anyWhepUnhealthy = false;
+        for (const s of whepConnStatesRef.current.values()) {
+            if (s === 'disconnected' || s === 'failed') {
+                anyWhepUnhealthy = true;
+                break;
+            }
+        }
+        if (publisher.phase === 'reconnecting' || anyWhepUnhealthy)
+            return 'reconnecting';
+        if (publisher.phase === 'live')
+            return 'connected';
+        if (publisher.phase === 'connecting')
+            return 'connecting';
+        return 'idle';
+        // whepHealthTick is the re-render trigger; the ref read above
+        // captures the latest map values when it does.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [publisher.phase, whepHealthTick]);
     // Camera state: did the local participant actually publish a live
     // video track? Drives the in-call "Turn on camera" button visibility.
     const isCameraEnabled = (0, react_1.useMemo)(() => !!localStream && localStream.getVideoTracks().some((t) => t.readyState === 'live'), [localStream]);
@@ -1169,6 +1531,7 @@ function useLVSHangout(opts) {
         isScreenSharing,
         isCameraEnabled,
         error: composedError,
+        connectionState,
         toggleMute,
         toggleCamera,
         enableCamera,

@@ -1,5 +1,5 @@
 import { type NetQuality } from './lib/sdp';
-export type LVSPhase = 'idle' | 'connecting' | 'live' | 'error';
+export type LVSPhase = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'error';
 export interface LVSPublisherStats {
     bitrateBps: number;
     bitrateLabel: string;

@@ -63,12 +63,33 @@ export interface HangoutParticipant {
  *  exported so consumers writing ghost-producer filters can name the type
  *  they're working with. */
 export type RemoteParticipant = HangoutParticipant;
+/**
+ * Aggregate transport health across the publisher WHIP PC + every WHEP
+ * subscriber PC. UI consumers (HangoutOverlay) render a banner-toast
+ * while this is `'reconnecting'` so the user knows the call is
+ * recovering rather than permanently dead.
+ *
+ *   - 'idle'         — no token/pid yet, or the call hasn't been joined
+ *   - 'connecting'   — initial WHIP/WHEP handshake in flight
+ *   - 'connected'    — publisher live AND every WHEP PC is 'connected'
+ *                       (or there are no remote PCs yet)
+ *   - 'reconnecting' — publisher OR any WHEP PC is mid-auto-recovery
+ *                       (publisher.phase='reconnecting' OR a WHEP PC's
+ *                       connectionState is 'disconnected'/'failed' AND
+ *                       the all-tracks-ended path has scheduled a retry)
+ *   - 'failed'       — publisher hit its permanent error (retry budget
+ *                       exhausted) — UI should prompt user to refresh
+ */
+export type HangoutConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 export interface UseLVSHangoutResult {
     participants: HangoutParticipant[];
     isJoined: boolean;
     isScreenSharing: boolean;
     isCameraEnabled: boolean;
     error: string | null;
+    /** Aggregate transport health across publisher WHIP + every WHEP
+     *  subscriber. Drives the "Reconnecting…" banner in HangoutOverlay. */
+    connectionState: HangoutConnectionState;
     toggleMute: (muted: boolean) => void;
     /** Flip the local camera track's `enabled` flag — no SDP churn.
      *  Remote will see a black frame / frozen last frame. Use this for

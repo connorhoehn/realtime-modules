@@ -22,6 +22,16 @@ const LVSProvider_1 = require("./LVSProvider");
 const MEDIA_WATCHDOG_MS = 20000;
 const STATS_POLL_MS = 1000;
 const ICE_GATHER_TIMEOUT_MS = 3000;
+// Auto-reconnect tuning. When the PC's connectionState (or
+// iceConnectionState) flips to 'failed', we debounce briefly to avoid
+// thrashing on a network that's flapping between failed/connected and
+// then tear down + re-publish. Capped at RECONNECT_MAX_ATTEMPTS within
+// RECONNECT_WINDOW_MS so a genuinely-wedged transport (TURN unreachable,
+// SFU offline) doesn't loop forever — after the cap we surface a
+// permanent 'error' phase so the consumer can show "please refresh".
+const RECONNECT_DEBOUNCE_MS = 1000;
+const RECONNECT_MAX_ATTEMPTS = 3;
+const RECONNECT_WINDOW_MS = 60_000;
 function errMessage(e) {
     if (e instanceof transport_1.LVSApiError)
         return `WHIP ${e.status}: ${e.message}`;
@@ -86,6 +96,22 @@ function useLVSPublisher(opts) {
     // Token captured at publish-time so teardown can DELETE without
     // re-resolving auth (which may itself fail during shutdown).
     const authTokenRef = (0, react_1.useRef)(null);
+    // Auto-reconnect bookkeeping. `attempts` resets when the window
+    // (RECONNECT_WINDOW_MS) has elapsed since the first attempt. The
+    // timer ref lets cleanup cancel a pending debounce so we don't fire
+    // re-publish into a torn-down hook.
+    const reconnectAttemptsRef = (0, react_1.useRef)({
+        count: 0, windowStart: 0,
+    });
+    const reconnectTimerRef = (0, react_1.useRef)(null);
+    // True while a scheduled re-publish is executing. Suppresses redundant
+    // schedule attempts triggered by additional `failed` events fired by
+    // the doomed PC during teardown.
+    const reconnectingRef = (0, react_1.useRef)(false);
+    // True after a successful unmount so a pending reconnect timer that
+    // fires after unmount is a no-op rather than touching state on a torn-
+    // down tree.
+    const unmountedRef = (0, react_1.useRef)(false);
     const [phase, setPhase] = (0, react_1.useState)('idle');
     const [error, setError] = (0, react_1.useState)(null);
     const [iceState, setIceState] = (0, react_1.useState)('new');
@@ -179,7 +205,18 @@ function useLVSPublisher(opts) {
         setIceState('new');
         setConnState('new');
     }, [stopStatsPolling, clearWatchdog]);
+    const cancelReconnect = (0, react_1.useCallback)(() => {
+        if (reconnectTimerRef.current != null) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
+    }, []);
     const stop = (0, react_1.useCallback)(async () => {
+        cancelReconnect();
+        reconnectingRef.current = false;
+        // Reset retry budget on an explicit stop — a subsequent start() is
+        // a user-initiated session, not a recovery, so it gets a fresh budget.
+        reconnectAttemptsRef.current = { count: 0, windowStart: 0 };
         const resource = whipResourceRef.current;
         const token = authTokenRef.current;
         if (resource && token) {
@@ -189,6 +226,76 @@ function useLVSPublisher(opts) {
         teardownLocal();
         setPhase('idle');
         setError(null);
+    }, [teardownLocal, cancelReconnect]);
+    // Forward-declared via ref so scheduleReconnect (referenced by
+    // connectionstatechange listeners installed in start()) can call back
+    // into start() once it has been defined below. Without this indirection
+    // we'd have a chicken-and-egg dependency between start + scheduleReconnect.
+    const startRef = (0, react_1.useRef)(async () => { });
+    /**
+     * Auto-reconnect entry point. Called when the PC's connectionState
+     * (or iceConnectionState) flips to 'failed'. Debounces by
+     * RECONNECT_DEBOUNCE_MS so a flapping network doesn't thrash
+     * tear-down + re-publish; caps at RECONNECT_MAX_ATTEMPTS within
+     * RECONNECT_WINDOW_MS and then surfaces a permanent 'error' phase so
+     * the consumer can prompt for refresh.
+     *
+     * Caller contract: `start()` will use the SAME stream the original
+     * publish used (via the `stream` prop), so the consumer doesn't need
+     * to re-acquire camera. ICE servers are re-fetched (cheap) so a
+     * STUN/TURN config change between failure + retry is picked up.
+     */
+    const scheduleReconnect = (0, react_1.useCallback)(() => {
+        if (unmountedRef.current)
+            return;
+        if (reconnectingRef.current)
+            return; // a reconnect is already in flight
+        if (reconnectTimerRef.current != null)
+            return; // debounced timer already armed
+        const now = Date.now();
+        const budget = reconnectAttemptsRef.current;
+        // Fresh window: first attempt OR previous window expired.
+        if (budget.count === 0 || now - budget.windowStart >= RECONNECT_WINDOW_MS) {
+            reconnectAttemptsRef.current = { count: 0, windowStart: now };
+        }
+        if (reconnectAttemptsRef.current.count >= RECONNECT_MAX_ATTEMPTS) {
+            // Exhausted — surface a permanent error so the consumer can
+            // render a "reconnecting failed — please refresh" toast.
+            setPhase('error');
+            setError(`Reconnect failed after ${RECONNECT_MAX_ATTEMPTS} attempts — refresh the page to retry.`);
+            return;
+        }
+        reconnectAttemptsRef.current.count += 1;
+        // Flip the public phase NOW so the UI can show a "Reconnecting…"
+        // banner immediately rather than waiting for the debounce to elapse.
+        setPhase('reconnecting');
+        setError(null);
+        reconnectTimerRef.current = setTimeout(() => {
+            reconnectTimerRef.current = null;
+            if (unmountedRef.current)
+                return;
+            reconnectingRef.current = true;
+            // Tear down the dead PC + WHIP resource server-side before
+            // re-publishing. We can't await `whipTeardown` here because the
+            // setTimeout callback isn't async — fire-and-forget; the server
+            // will GC on its own even if the DELETE drops.
+            const resource = whipResourceRef.current;
+            const token = authTokenRef.current;
+            if (resource && token) {
+                void (0, transport_1.whipTeardown)(resource, token).catch(() => { });
+            }
+            teardownLocal();
+            // start() reads from `stream` prop (or streamOverrideRef) so the
+            // active media stream is reused. ICE servers re-fetch inside start.
+            void startRef.current().then(() => {
+                reconnectingRef.current = false;
+            }).catch(() => {
+                reconnectingRef.current = false;
+                // start() already set phase='error' on throw; if the new PC
+                // ALSO fails later, its connectionstatechange will re-enter
+                // scheduleReconnect which checks the budget again.
+            });
+        }, RECONNECT_DEBOUNCE_MS);
     }, [teardownLocal]);
     const start = (0, react_1.useCallback)(async () => {
         if (!resolved) {
@@ -236,10 +343,15 @@ function useLVSPublisher(opts) {
                 if (s === 'connected') {
                     setPhase('live');
                     setError(null);
+                    // Successful (re)connect — reset the retry budget so a future
+                    // failure gets a fresh allowance.
+                    reconnectAttemptsRef.current = { count: 0, windowStart: 0 };
                 }
                 else if (s === 'failed') {
-                    setPhase('error');
-                    setError('WebRTC connection failed — media path could not be established.');
+                    // Auto-recovery — tear down + re-publish after a 1s debounce.
+                    // The retry-budget cap inside scheduleReconnect surfaces a
+                    // permanent 'error' phase when exhausted.
+                    scheduleReconnect();
                 }
             });
             pc.addEventListener('iceconnectionstatechange', () => {
@@ -247,8 +359,10 @@ function useLVSPublisher(opts) {
                 log(`iceConnectionState -> ${s}`, 'info');
                 setIceState(s);
                 if (s === 'failed') {
-                    setPhase('error');
-                    setError('ICE failed — no network path between browser and SFU (TURN may be unreachable).');
+                    // Same recovery path as connectionState='failed'. ICE failures
+                    // are the most common mid-call drop (network change, TURN
+                    // unreachable for a few seconds).
+                    scheduleReconnect();
                 }
             });
             // Watchdog: if no bytes flow + ICE never connects within 20s,
@@ -299,8 +413,15 @@ function useLVSPublisher(opts) {
         }
     }, [
         resolved, stream, channelArn, participantId,
-        startStatsPolling, teardownLocal,
+        startStatsPolling, teardownLocal, scheduleReconnect,
     ]);
+    // Keep startRef pointing at the latest start() so scheduleReconnect's
+    // deferred setTimeout callback (which captured the OLD start identity)
+    // dispatches into the current closure. Without this, a reconnect that
+    // fires after `stream` changes would re-publish the stale stream.
+    (0, react_1.useEffect)(() => {
+        startRef.current = start;
+    }, [start]);
     /**
      * Swap the currently-published tracks via RTCRtpSender.replaceTrack —
      * no SDP renegotiation. Contract:
@@ -391,8 +512,14 @@ function useLVSPublisher(opts) {
     }, [stream, autoStart]);
     // Unmount cleanup. Synchronous DELETE via keepalive + sync local
     // teardown so the PC closes before React strict-mode tears the tree.
+    // The unmountedRef flag is reset on (re)mount because StrictMode
+    // double-invokes the effect (mount → cleanup → mount); the second
+    // mount needs a clean slate to schedule reconnects again.
     (0, react_1.useEffect)(() => {
+        unmountedRef.current = false;
         return () => {
+            unmountedRef.current = true;
+            cancelReconnect();
             const resource = whipResourceRef.current;
             const token = authTokenRef.current;
             if (resource && token) {
@@ -401,7 +528,7 @@ function useLVSPublisher(opts) {
             }
             teardownLocal();
         };
-    }, [teardownLocal]);
+    }, [teardownLocal, cancelReconnect]);
     return {
         phase,
         error,
