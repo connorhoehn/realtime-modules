@@ -50,6 +50,46 @@
     "./server": {
       "types": "./dist/server/index.d.ts",
       "default": "./dist/server/index.js"
+    },
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "default": "./dist/chat/index.js"
+    },
+    "./presence": {
+      "types": "./dist/presence/index.d.ts",
+      "default": "./dist/presence/index.js"
+    },
+    "./activity": {
+      "types": "./dist/activity/index.d.ts",
+      "default": "./dist/activity/index.js"
+    },
+    "./cursor": {
+      "types": "./dist/cursor/index.d.ts",
+      "default": "./dist/cursor/index.js"
+    },
+    "./ingest": {
+      "types": "./dist/ingest/index.d.ts",
+      "default": "./dist/ingest/index.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline/index.d.ts",
+      "default": "./dist/pipeline/index.js"
+    },
+    "./reactions": {
+      "types": "./dist/reactions/index.d.ts",
+      "default": "./dist/reactions/index.js"
+    },
+    "./social": {
+      "types": "./dist/social/index.d.ts",
+      "default": "./dist/social/index.js"
+    },
+    "./call": {
+      "types": "./dist/call/index.d.ts",
+      "default": "./dist/call/index.js"
+    },
+    "./typed-documents": {
+      "types": "./dist/typed-documents/index.d.ts",
+      "default": "./dist/typed-documents/index.js"
     }
   },
   "files": [
