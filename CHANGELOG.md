@@ -14,6 +14,17 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-05-28
+
+### Fixed
+
+- `dist/` rebuilt and committed to the git tag so consumers installing via
+  `github:connorhoehn/realtime-modules#realtime-modules-v0.11.1` get a tarball
+  that already contains compiled artifacts. Prior tags shipped without
+  refreshed dist after `useLVSHangout` fixes and the subpath-exports patch,
+  forcing consumers to run `prepare` (which fails on alpine without a build
+  toolchain). No source/API changes — patch-only release for tag installability.
+
 ## [0.7.4] — 2026-05-21
 
 ### Added
