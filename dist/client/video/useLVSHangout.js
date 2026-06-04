@@ -474,11 +474,17 @@ function useLVSHangout(opts) {
             const existingTimer = retryTimersRef.current.get(fullPid);
             if (existingTimer)
                 clearTimeout(existingTimer);
+            // Jitter the retry delay by up to 500ms so a synchronized failure
+            // (e.g. an SFU 503 storm where every WHEP got Retry-After:1 at the
+            // same wall-clock tick) doesn't replay as a synchronized thundering
+            // herd against the same gate. Bounded scale (delay ∈ [base, base+500])
+            // keeps the user-perceived recovery latency tight.
+            const jitteredDelayMs = RETRY_DELAY_MS + Math.floor(Math.random() * 500);
             console.info('[remote-pc] scheduling auto-recovery retry', {
                 fullPid,
                 kind,
                 attempt: budget.count,
-                delayMs: RETRY_DELAY_MS,
+                delayMs: jitteredDelayMs,
             });
             const timer = setTimeout(() => {
                 retryTimersRef.current.delete(fullPid);
@@ -492,7 +498,7 @@ function useLVSHangout(opts) {
                 if (!knownProducersRef.current.has(fullPid))
                     return;
                 void openPcFor(fullPid, kind);
-            }, RETRY_DELAY_MS);
+            }, jitteredDelayMs);
             retryTimersRef.current.set(fullPid, timer);
         };
         // Publish scheduleRetry through a ref so the visibilitychange
@@ -513,7 +519,7 @@ function useLVSHangout(opts) {
                 return !t || t.readyState === 'ended';
             });
         };
-        const openPcFor = async (fullPid, kind) => {
+        const openPcFor = async (fullPid, kind, producerId) => {
             // Don't self-subscribe (defense in depth — our own publishers
             // get broadcast back via the discovery WS).
             if (fullPid === participantId)
@@ -526,8 +532,29 @@ function useLVSHangout(opts) {
             // (which fires BEFORE this body runs again in StrictMode) will
             // have already torn down its own PCs + in-flight opens, so
             // anything we see here is genuinely held by the active session.
-            if (remoteSubscribersRef.current.has(fullPid))
-                return;
+            //
+            // EXCEPTION: producer-identity swap. If a producerId is known for
+            // both the existing entry and the incoming call AND they differ,
+            // the publisher republished mid-session (same participantId, new
+            // mediasoup producer). The stale PC is bound to a dead consumer
+            // server-side; we must close + reopen rather than skip. Without
+            // this swap detection, the dead-tile self-heal path takes ~1-6s
+            // (track-ended listener OR the 5s isPcFullyDead sweep).
+            const existing = remoteSubscribersRef.current.get(fullPid);
+            if (existing) {
+                if (producerId && existing.producerId && existing.producerId !== producerId) {
+                    console.info('[remote-pc] producer-identity swap — closing stale PC', {
+                        fullPid,
+                        oldProducerId: existing.producerId,
+                        newProducerId: producerId,
+                    });
+                    cleanupPc(fullPid);
+                    // Fall through to open a fresh PC against the new producerId.
+                }
+                else {
+                    return;
+                }
+            }
             // Same idempotency for the in-flight slot — if an older epoch's
             // open is still racing through whepPublish, leave it alone. Its
             // cleanup has already flipped its cancelled flag (we did that in
@@ -782,6 +809,7 @@ function useLVSHangout(opts) {
                     authToken,
                     kind,
                     epoch: myEpoch,
+                    producerId,
                 });
                 if (inFlightOpensRef.current.get(fullPid) === flight) {
                     inFlightOpensRef.current.delete(fullPid);
@@ -897,11 +925,17 @@ function useLVSHangout(opts) {
                             if (ppid === `${participantId}:screen`)
                                 continue;
                             snapshotPids.add(ppid);
-                            if (!remoteSubscribersRef.current.has(ppid)) {
-                                const k = ppid.endsWith(':screen') ? 'screen' : 'camera';
-                                knownProducersRef.current.set(ppid, k);
-                                void openPcFor(ppid, k);
-                            }
+                            const k = ppid.endsWith(':screen') ? 'screen' : 'camera';
+                            knownProducersRef.current.set(ppid, k);
+                            const snapshotProducerId = typeof p.producerId === 'string'
+                                ? p.producerId
+                                : undefined;
+                            // openPcFor handles BOTH the "no existing PC" path (fresh
+                            // open) and the "existing PC with different producerId"
+                            // path (producer-identity swap → close stale, open fresh)
+                            // in one call. Pass the snapshot's producerId through so
+                            // post-disconnect republishes are reconciled.
+                            void openPcFor(ppid, k, snapshotProducerId);
                         }
                         // Close PCs for producers no longer in the snapshot — peer
                         // left, or screen-share stopped while we were disconnected.
@@ -946,6 +980,9 @@ function useLVSHangout(opts) {
                         mediaKind: msg.kind,
                         ourKind: kind,
                     });
+                    const eventProducerId = typeof msg.producerId === 'string'
+                        ? msg.producerId
+                        : undefined;
                     if (msg.type === 'producer.added') {
                         // Persist in the discovery snapshot so the all-tracks-ended
                         // auto-recovery path knows the producer is still live on the
@@ -954,10 +991,28 @@ function useLVSHangout(opts) {
                         // Only one PC per fullPid regardless of media kind — both
                         // camera audio+video producers on the same publisher map to
                         // the same PC (the SFU's WHEP answer carries both tracks).
-                        // openPcFor is idempotent (epoch-keyed + in-flight slot).
-                        void openPcFor(pid, kind);
+                        // openPcFor is idempotent on (pid, producerId) — a same-pid
+                        // event for a NEW producerId triggers a swap close-then-open.
+                        void openPcFor(pid, kind, eventProducerId);
                     }
                     else if (msg.type === 'producer.removed') {
+                        // Gate on producerId match. After a publisher republishes
+                        // (same pid, new producerId), the SFU emits producer.removed
+                        // for the OLD producerId — if we tear down based on pid
+                        // alone, we'd kill the freshly-swapped PC bound to the new
+                        // producerId. With the gate, stale removes are dropped.
+                        const entry = remoteSubscribersRef.current.get(pid);
+                        if (eventProducerId
+                            && entry
+                            && entry.producerId
+                            && entry.producerId !== eventProducerId) {
+                            console.info('[remote-pc] ignoring stale producer.removed for swapped producer', {
+                                pid,
+                                eventProducerId,
+                                liveProducerId: entry.producerId,
+                            });
+                            return;
+                        }
                         // Drop from the discovery snapshot first so any pending
                         // auto-recovery retry sees the producer as gone and bails.
                         knownProducersRef.current.delete(pid);
