@@ -974,6 +974,53 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         if (cancelled) return;
         try {
           const msg = JSON.parse(ev.data);
+
+          // v3.1 — `subscribed` ack carries an atomic snapshot of the
+          // current producer set (`msg.producers`). Use it to reconcile
+          // local PC state on initial connect AND on every reconnect.
+          // Without this branch the message handler short-circuits on the
+          // missing top-level `participantId`, so the snapshot was
+          // silently discarded — during a WS-disconnect window, any
+          // peer that left or screen-share that stopped would NOT be
+          // reflected via per-frame replay (those events fire at the
+          // time of the change, not on reconnect), so the local UI
+          // showed stale tiles until the ~5s health sweep reaped them.
+          if (msg && msg.type === 'subscribed' && Array.isArray(msg.producers)) {
+            const snapshotPids = new Set<string>();
+            for (const p of msg.producers) {
+              if (!p || typeof p.participantId !== 'string') continue;
+              const ppid = p.participantId;
+              // Same self-filter as the per-frame replay path.
+              if (ppid === participantId) continue;
+              if (ppid === `${participantId}:screen`) continue;
+              snapshotPids.add(ppid);
+              if (!remoteSubscribersRef.current.has(ppid)) {
+                const k: 'camera' | 'screen' =
+                  ppid.endsWith(':screen') ? 'screen' : 'camera';
+                knownProducersRef.current.set(ppid, k);
+                void openPcFor(ppid, k);
+              }
+            }
+            // Close PCs for producers no longer in the snapshot — peer
+            // left, or screen-share stopped while we were disconnected.
+            for (const existingPid of Array.from(remoteSubscribersRef.current.keys())) {
+              if (snapshotPids.has(existingPid)) continue;
+              // Don't reap self entries (defense — shouldn't appear in
+              // remoteSubscribersRef anyway, but cheap to guard).
+              if (existingPid === participantId) continue;
+              if (existingPid === `${participantId}:screen`) continue;
+              knownProducersRef.current.delete(existingPid);
+              const pendingTimer = retryTimersRef.current.get(existingPid);
+              if (pendingTimer) {
+                clearTimeout(pendingTimer);
+                retryTimersRef.current.delete(existingPid);
+              }
+              retryBudgetRef.current.delete(existingPid);
+              cleanupPc(existingPid);
+            }
+            return;
+          }
+
           const pid = msg?.participantId;
           if (typeof pid !== 'string') return;
           // Skip self — our own producers get echoed back here.

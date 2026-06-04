@@ -563,6 +563,111 @@ describe('useLVSHangout — StrictMode safety', () => {
       jest.useRealTimers();
     }
   });
+
+  it('opens WHEP PCs for producers in the `subscribed` ack snapshot', async () => {
+    // Regression for the v3.1 snapshot drop: the SFU's `subscribed` ack
+    // carries an atomic producer-set snapshot. The hook used to bail
+    // before reading it (typeof msg.participantId !== 'string'), so a
+    // peer that was already publishing at WS-open time was only picked
+    // up via the per-frame `producer.added` replay. After fix, the
+    // snapshot drives a direct openPcFor — faster + reconciles
+    // post-reconnect state too.
+    const handle: HarnessHandle = { result: null };
+    await act(async () => {
+      render(<Harness token={TOKEN} pid={PID} handle={handle} />);
+    });
+    const ws = wsInstances[wsInstances.length - 1]!;
+    await act(async () => {
+      ws.triggerOpen();
+      ws.triggerMessage({
+        type: 'subscribed',
+        channelArn: 'arn:test:channel/abc',
+        isOwner: true,
+        producers: [
+          { producerId: 'p-h-a', participantId: REMOTE_PID, kind: 'audio' },
+          { producerId: 'p-h-v', participantId: REMOTE_PID, kind: 'video' },
+        ],
+      });
+      await flush();
+    });
+    // Exactly one WHEP PC for the remote (camera audio+video collapse).
+    expect(whepPcs()).toHaveLength(1);
+  });
+
+  it('closes WHEP PCs for producers no longer in the snapshot (post-reconnect reconciliation)', async () => {
+    // Scenario: Alice + Bob are in the call. Alice's hook has WHEP PCs
+    // for both. WS drops. While disconnected, Bob leaves — the
+    // producer.removed event is NOT replayed. On reconnect the SFU
+    // sends a `subscribed` ack with only Alice in the producers array.
+    // The reconciliation MUST close Bob's stale PC so Alice's UI
+    // doesn't show a frozen-frame Bob tile for ~5s until the health
+    // sweep reaps it.
+    const handle: HarnessHandle = { result: null };
+    await act(async () => {
+      render(<Harness token={TOKEN} pid={PID} handle={handle} />);
+    });
+    const ws = wsInstances[wsInstances.length - 1]!;
+    // Open with both remotes.
+    await act(async () => {
+      ws.triggerOpen();
+      ws.triggerMessage({
+        type: 'subscribed',
+        channelArn: 'arn:test:channel/abc',
+        isOwner: true,
+        producers: [
+          { producerId: 'p-h-v', participantId: REMOTE_PID, kind: 'video' },
+          { producerId: 'p-b-v', participantId: 'bob-pid-1', kind: 'video' },
+        ],
+      });
+      await flush();
+    });
+    expect(whepPcs()).toHaveLength(2);
+
+    // Reconnect ack with Bob gone.
+    await act(async () => {
+      ws.triggerMessage({
+        type: 'subscribed',
+        channelArn: 'arn:test:channel/abc',
+        isOwner: true,
+        producers: [
+          { producerId: 'p-h-v', participantId: REMOTE_PID, kind: 'video' },
+        ],
+      });
+      await flush();
+    });
+    // Bob's PC closed; only the live PC remains open.
+    const livePcs = whepPcs().filter((p) => !p.closed);
+    expect(livePcs).toHaveLength(1);
+  });
+
+  it('filters self-producers (including :screen sub-pid) from the snapshot', async () => {
+    // Defense: the SFU snapshot already excludes self per
+    // `startsWith(selfId + ':')`, but the client must apply the same
+    // filter so a buggy server (or a future snapshot from a sibling
+    // hook instance) doesn't open a WHEP against the local user's own
+    // producers.
+    const handle: HarnessHandle = { result: null };
+    await act(async () => {
+      render(<Harness token={TOKEN} pid={PID} handle={handle} />);
+    });
+    const ws = wsInstances[wsInstances.length - 1]!;
+    await act(async () => {
+      ws.triggerOpen();
+      ws.triggerMessage({
+        type: 'subscribed',
+        channelArn: 'arn:test:channel/abc',
+        isOwner: true,
+        producers: [
+          { producerId: 'p-self-v', participantId: PID, kind: 'video' },
+          { producerId: 'p-self-s', participantId: `${PID}:screen`, kind: 'video' },
+          { producerId: 'p-r-v', participantId: REMOTE_PID, kind: 'video' },
+        ],
+      });
+      await flush();
+    });
+    // Only the remote opens a PC; self entries are filtered.
+    expect(whepPcs()).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
