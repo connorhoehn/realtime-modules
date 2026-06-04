@@ -395,6 +395,66 @@ function HangoutHarness({ handle }: { handle: HangoutHandle }) {
   return null;
 }
 
+describe('useLVSPublisher — autoStart auto-tears-down when stream is cleared', () => {
+  it('issues WHIP DELETE when the stream prop transitions to null', async () => {
+    // Regression for the screen-share teardown bug: stopScreenShare()
+    // nulls localScreenStream but the original autoStart effect only
+    // reacted to stream→present. The screen WHIP PC + SFU producer
+    // stayed alive until the parent unmounted — subscribers kept
+    // receiving the frozen last frame and the SFU held the slot.
+    // The autoStart effect now also reacts to stream→null by calling
+    // stop(), which issues WHIP DELETE + closes the PC.
+    const handle: PubHandle = { result: null };
+    const stream = makeStream();
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<PublisherHarness stream={stream} handle={handle} />);
+    });
+    // Drain the initial publish chain.
+    await act(async () => { await flush(); });
+    expect(pcInstances.length).toBe(1);
+    const pc = pcInstances[0]!;
+    await act(async () => { pc.setConnectionState('connected'); });
+    expect(handle.result!.phase).toBe('live');
+
+    const initialDeletes = fetchHandle.whipCalls.filter((c) => c.method === 'DELETE').length;
+
+    // Now clear the stream — mimics stopScreenShare() upstream.
+    await act(async () => {
+      renderResult!.rerender(<PublisherHarness stream={null} handle={handle} />);
+    });
+    await act(async () => { await flush(); });
+
+    // WHIP DELETE was issued and the PC was closed.
+    const deletes = fetchHandle.whipCalls.filter((c) => c.method === 'DELETE');
+    expect(deletes.length).toBeGreaterThan(initialDeletes);
+    expect(pc.close).toHaveBeenCalled();
+    expect(handle.result!.phase).toBe('idle');
+  });
+
+  it('is a no-op when stream→null but no PC was ever started', async () => {
+    // Defense in depth: the teardown branch must guard on `pcRef.current`
+    // so a stream that never lit up doesn't trigger a phantom DELETE.
+    const handle: PubHandle = { result: null };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<PublisherHarness stream={null} handle={handle} />);
+    });
+    await act(async () => { await flush(); });
+    expect(pcInstances.length).toBe(0);
+    const deletesBefore = fetchHandle.whipCalls.filter((c) => c.method === 'DELETE').length;
+
+    // Re-render with null still — nothing changes.
+    await act(async () => {
+      renderResult!.rerender(<PublisherHarness stream={null} handle={handle} />);
+    });
+    await act(async () => { await flush(); });
+
+    const deletesAfter = fetchHandle.whipCalls.filter((c) => c.method === 'DELETE').length;
+    expect(deletesAfter).toBe(deletesBefore);
+  });
+});
+
 describe('useLVSHangout — visibilitychange triggers recovery on hidden→visible', () => {
   const origWS = (globalThis as unknown as { WebSocket?: unknown }).WebSocket;
 

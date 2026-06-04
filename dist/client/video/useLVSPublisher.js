@@ -490,24 +490,36 @@ function useLVSPublisher(opts) {
             republishingRef.current = false;
         }
     }, [stop, start]);
-    // Auto-start when stream becomes available. Re-runs if the stream
-    // reference changes, but only kicks off when we're idle — avoids
-    // double-publishing on rerender.
+    // Auto-start when stream becomes available; auto-tear-down when it
+    // is cleared. The teardown half closes the gap where a consumer
+    // stopping screen-share (by nulling the stream prop) would leave the
+    // WHIP PC + SFU producer alive until parent unmount — subscribers
+    // would keep receiving the frozen last frame and the SFU would hold
+    // the producer slot. Re-runs if the stream reference changes; only
+    // acts when there's a transition to make.
     (0, react_1.useEffect)(() => {
         if (!autoStart)
-            return;
-        if (!stream)
-            return;
-        if (pcRef.current)
             return;
         // Suppress while republish() owns the lifecycle — it will call
         // start() itself with the correct stream override.
         if (republishingRef.current)
             return;
-        void start();
-        // We intentionally don't depend on `start` here — its identity
-        // changes when stream/participantId/etc. change, and we only want
-        // to fire when the stream itself shows up.
+        if (stream) {
+            // Stream became available — start if we're idle. Avoids
+            // double-publishing on rerender.
+            if (pcRef.current)
+                return;
+            void start();
+        }
+        else {
+            // Stream cleared — tear down if we have a live PC. Fire-and-
+            // forget; stop() handles WHIP DELETE + teardownLocal internally.
+            if (pcRef.current)
+                void stop();
+        }
+        // We intentionally don't depend on `start` / `stop` — their
+        // identities change when stream/participantId/etc. change, and we
+        // only want to fire on the stream transition itself.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [stream, autoStart]);
     // Unmount cleanup. Synchronous DELETE via keepalive + sync local
