@@ -668,6 +668,15 @@ function useLVSHangout(opts) {
                         trackKind: track.kind,
                         streamId: ev.streams[0]?.id ?? null,
                     });
+                    // Record which media kinds we've actually received so a later
+                    // producer.added for a kind we haven't seen can trigger a
+                    // fresh WHEP (covers the late-publisher race where the SFU
+                    // answered with an `a=inactive` m-line because the second
+                    // producer hadn't been added to room state yet at WHEP time).
+                    const subEntry = remoteSubscribersRef.current.get(fullPid);
+                    if (subEntry && (track.kind === 'audio' || track.kind === 'video')) {
+                        subEntry.receivedKinds.add(track.kind);
+                    }
                     setRemoteParticipants((prev) => {
                         const next = new Map(prev);
                         const existing = next.get(basePid) ?? {
@@ -832,6 +841,7 @@ function useLVSHangout(opts) {
                     kind,
                     epoch: myEpoch,
                     producerId,
+                    receivedKinds: new Set(),
                 });
                 if (inFlightOpensRef.current.get(fullPid) === flight) {
                     inFlightOpensRef.current.delete(fullPid);
@@ -1010,12 +1020,31 @@ function useLVSHangout(opts) {
                         // auto-recovery path knows the producer is still live on the
                         // SFU. Keyed by fullPid → kind (matches the openPcFor arg).
                         knownProducersRef.current.set(pid, kind);
-                        // Only one PC per fullPid regardless of media kind — both
-                        // camera audio+video producers on the same publisher map to
-                        // the same PC (the SFU's WHEP answer carries both tracks).
-                        // openPcFor's idempotency check skips when an entry already
-                        // exists, so the second producer.added (different kind, same
-                        // pid) is a no-op.
+                        // Late-publisher race: if we ALREADY have a PC for this pid
+                        // but the SFU answered our WHEP with an `a=inactive` m-line
+                        // for this media kind (because the publisher's WHIP loop
+                        // hadn't created the second producer yet), the PC's
+                        // ontrack handler never fired for this kind and the
+                        // receiver is cold. Force a fresh WHEP so the new answer
+                        // includes both producers. Detect by checking whether the
+                        // entry's `receivedKinds` covers the event's media kind.
+                        const existing = remoteSubscribersRef.current.get(pid);
+                        const eventMediaKind = typeof msg.kind === 'string' ? msg.kind : undefined;
+                        if (existing
+                            && (eventMediaKind === 'audio' || eventMediaKind === 'video')
+                            && !existing.receivedKinds.has(eventMediaKind)) {
+                            console.info('[remote-pc] late-publisher kind — reopening for fresh WHEP', {
+                                pid,
+                                missingKind: eventMediaKind,
+                                already: Array.from(existing.receivedKinds),
+                            });
+                            cleanupPc(pid);
+                            // Fall through to openPcFor which now sees no entry and
+                            // opens a fresh PC with all currently-published producers.
+                        }
+                        // Otherwise: openPcFor's idempotency check skips when an
+                        // entry already exists, so the second producer.added
+                        // (different kind, same pid) is a no-op.
                         void openPcFor(pid, kind, eventProducerId);
                     }
                     else if (msg.type === 'producer.removed') {

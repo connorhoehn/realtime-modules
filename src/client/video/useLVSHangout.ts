@@ -289,13 +289,22 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     authToken: string;
     kind: 'camera' | 'screen';
     epoch: number;
-    // mediasoup producerId at the time this PC was opened. Used by the
-    // producerId-aware reconciliation paths (snapshot reconcile +
-    // openPcFor swap branch + producer.removed gate) to detect a
-    // publisher republish that kept the participantId but got a new
-    // producerId. Undefined for entries opened before producerId was
-    // plumbed through (legacy / no-producerId WS events).
+    // mediasoup producerId at the time this PC was opened. Kept for
+    // diagnostics; the per-frame swap-detection that used it was
+    // removed 2026-06-05 (it misfired on the normal second
+    // producer.added of a multi-kind publisher).
     producerId?: string;
+    // Set of media kinds (`'audio' | 'video'`) we've actually received
+    // tracks for via the PC's `ontrack` handler. Used to detect the
+    // late-publisher race: when a WHEP arrives between audio.producer.
+    // added and video.producer.added (a ~10 ms window during the
+    // publisher's WHIP loop), the SFU answers with an `a=inactive`
+    // video m-line — audio plays but the video transceiver stays cold
+    // forever even after the publisher's video producer.added later
+    // arrives. The next producer.added for this pid checks this set
+    // and forces a fresh WHEP if its kind hasn't actually delivered
+    // tracks yet.
+    receivedKinds: Set<string>;
   }>>(new Map());
 
   // In-flight openPcFor calls — keyed by fullPid, value is the epoch of
@@ -809,6 +818,15 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             trackKind: track.kind,
             streamId: ev.streams[0]?.id ?? null,
           });
+          // Record which media kinds we've actually received so a later
+          // producer.added for a kind we haven't seen can trigger a
+          // fresh WHEP (covers the late-publisher race where the SFU
+          // answered with an `a=inactive` m-line because the second
+          // producer hadn't been added to room state yet at WHEP time).
+          const subEntry = remoteSubscribersRef.current.get(fullPid);
+          if (subEntry && (track.kind === 'audio' || track.kind === 'video')) {
+            subEntry.receivedKinds.add(track.kind);
+          }
 
           setRemoteParticipants((prev) => {
             const next = new Map(prev);
@@ -951,6 +969,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           kind,
           epoch: myEpoch,
           producerId,
+          receivedKinds: new Set<string>(),
         });
         if (inFlightOpensRef.current.get(fullPid) === flight) {
           inFlightOpensRef.current.delete(fullPid);
@@ -1115,12 +1134,35 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             // auto-recovery path knows the producer is still live on the
             // SFU. Keyed by fullPid → kind (matches the openPcFor arg).
             knownProducersRef.current.set(pid, kind);
-            // Only one PC per fullPid regardless of media kind — both
-            // camera audio+video producers on the same publisher map to
-            // the same PC (the SFU's WHEP answer carries both tracks).
-            // openPcFor's idempotency check skips when an entry already
-            // exists, so the second producer.added (different kind, same
-            // pid) is a no-op.
+
+            // Late-publisher race: if we ALREADY have a PC for this pid
+            // but the SFU answered our WHEP with an `a=inactive` m-line
+            // for this media kind (because the publisher's WHIP loop
+            // hadn't created the second producer yet), the PC's
+            // ontrack handler never fired for this kind and the
+            // receiver is cold. Force a fresh WHEP so the new answer
+            // includes both producers. Detect by checking whether the
+            // entry's `receivedKinds` covers the event's media kind.
+            const existing = remoteSubscribersRef.current.get(pid);
+            const eventMediaKind = typeof msg.kind === 'string' ? msg.kind : undefined;
+            if (
+              existing
+              && (eventMediaKind === 'audio' || eventMediaKind === 'video')
+              && !existing.receivedKinds.has(eventMediaKind)
+            ) {
+              console.info('[remote-pc] late-publisher kind — reopening for fresh WHEP', {
+                pid,
+                missingKind: eventMediaKind,
+                already: Array.from(existing.receivedKinds),
+              });
+              cleanupPc(pid);
+              // Fall through to openPcFor which now sees no entry and
+              // opens a fresh PC with all currently-published producers.
+            }
+
+            // Otherwise: openPcFor's idempotency check skips when an
+            // entry already exists, so the second producer.added
+            // (different kind, same pid) is a no-op.
             void openPcFor(pid, kind, eventProducerId);
           } else if (msg.type === 'producer.removed') {
             // Camera publishers fire producer.removed twice (audio kind +
