@@ -37,8 +37,20 @@ import { waitForIceGather } from './lib/sdp';
 
 /** Default capture constraints — 720p video + audio. Matches the IVS
  *  Stage-based useHangoutEmbed defaults so swap is visually identical. */
+// Hangout-friendly defaults. 720p uncapped + Chrome's libvpx CC ramping
+// to 2-3 Mbps was overwhelming the consumer decoder and the recording
+// ffmpeg leg ("1 second streaming, 1 second frozen" on the receiver
+// side, "max delay reached / RTP: missed N packets" in ffmpeg). For a
+// Meet/Teams-style grid we don't need 720p — 640x480 at 24 fps is a
+// clean tile and stays well under any decoder budget. Consumers can
+// override `media` for higher-fidelity surfaces (one-on-one calls,
+// screen-share captures), but the floor protects the common case.
 const DEFAULT_MEDIA: MediaStreamConstraints = {
-  video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+  video: {
+    width: { ideal: 640 },
+    height: { ideal: 480 },
+    frameRate: { ideal: 24, max: 30 },
+  },
   audio: true,
 };
 
