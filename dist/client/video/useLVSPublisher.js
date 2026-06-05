@@ -572,6 +572,29 @@ function useLVSPublisher(opts) {
             teardownLocal();
         };
     }, [teardownLocal, cancelReconnect]);
+    // Browser-level page lifecycle cleanup. React's unmount cleanup
+    // does NOT fire on Cmd+W / nav-away / tab kill — the page is
+    // destroyed before any JS gets to run cleanup. Without this hook
+    // the SFU keeps the producer alive until ICE-disconnect-grace
+    // (20 s) reaps it, so other participants see a ghost tile.
+    //
+    // `pagehide` is the modern equivalent of `beforeunload` that fires
+    // on bfcache page transitions too; it's the recommended unload
+    // signal. We fire whipTeardown synchronously — the fetch flagged
+    // `keepalive: true` survives the page destruction up to ~5 s.
+    (0, react_1.useEffect)(() => {
+        if (typeof window === 'undefined')
+            return;
+        const onPageHide = () => {
+            const resource = whipResourceRef.current;
+            const token = authTokenRef.current;
+            if (resource && token) {
+                void (0, transport_1.whipTeardown)(resource, token);
+            }
+        };
+        window.addEventListener('pagehide', onPageHide);
+        return () => { window.removeEventListener('pagehide', onPageHide); };
+    }, []);
     return {
         phase,
         error,

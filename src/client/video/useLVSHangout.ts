@@ -775,11 +775,15 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         // over the first ~5 s of the call, which is exactly the "jitter
         // at first, smooths out over time" pattern observed on the
         // hangout receiver. Hinting 0 keeps the buffer minimal from the
-        // first frame. Chromium-only API; ignore on other engines.
-        for (const t of [videoTransceiver, audioTransceiver]) {
-          const r = t.receiver as RTCRtpReceiver & { playoutDelayHint?: number };
-          try { r.playoutDelayHint = 0; } catch (_) { /* unsupported */ }
-        }
+        // first frame. Chromium-only API + test fakes may not expose
+        // receivers at all, so the whole walk is guarded.
+        try {
+          for (const t of [videoTransceiver, audioTransceiver]) {
+            if (!t || !t.receiver) continue;
+            const r = t.receiver as RTCRtpReceiver & { playoutDelayHint?: number };
+            r.playoutDelayHint = 0;
+          }
+        } catch (_) { /* unsupported */ }
 
         // Track this PC's connectionState in the shared snapshot so the
         // aggregate `connectionState` derived value can pick it up. On
@@ -1722,6 +1726,30 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     () => !!localStream && localStream.getVideoTracks().some((t) => t.readyState === 'live'),
     [localStream],
   );
+
+  // Browser-level page lifecycle cleanup. React's effect cleanup does
+  // NOT fire on Cmd+W / nav-away / tab kill — the page is destroyed
+  // before any JS gets to run. Without this hook every WHEP transport
+  // is held open server-side until the SFU's ICE-disconnect-grace
+  // (20 s) reaps it; other participants meanwhile see a frozen
+  // ghost tile for the local user (the publisher's WHIP teardown is
+  // handled inside useLVSPublisher's own pagehide hook).
+  //
+  // Fire whepTeardown for every open WHEP transport on `pagehide` —
+  // `keepalive: true` on the DELETE fetch survives page destruction
+  // up to ~5 s, plenty for the SFU to receive and dispatch.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onPageHide = () => {
+      for (const entry of remoteSubscribersRef.current.values()) {
+        if (entry.resourceUrl && entry.authToken) {
+          void whepTeardown(entry.resourceUrl, entry.authToken);
+        }
+      }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => { window.removeEventListener('pagehide', onPageHide); };
+  }, []);
 
   return {
     participants,

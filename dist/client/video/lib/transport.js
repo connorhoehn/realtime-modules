@@ -82,6 +82,13 @@ async function whipTeardown(resourceUrl, authToken, fetchImpl) {
         await f(resourceUrl, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${authToken}` },
+            // `keepalive: true` lets the request survive page unload
+            // (Cmd+W / nav-away / tab kill) up to ~5 s — without it the
+            // browser cancels the in-flight fetch the moment the page
+            // dies, the SFU never sees the DELETE, and the producer hangs
+            // on until ICE-disconnect-grace (20 s) reaps it. Payload-size
+            // limit is 64 KB; a no-body DELETE is well inside that.
+            keepalive: true,
         });
     }
     catch { /* best-effort */ }
@@ -122,6 +129,9 @@ async function whepTeardown(resourceUrl, authToken, fetchImpl) {
         await f(resourceUrl, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${authToken}` },
+            // Same rationale as whipTeardown — survive Cmd+W / tab kill so
+            // the SFU releases the consumer transport immediately.
+            keepalive: true,
         });
     }
     catch { /* best-effort */ }

@@ -632,14 +632,17 @@ function useLVSHangout(opts) {
                 // over the first ~5 s of the call, which is exactly the "jitter
                 // at first, smooths out over time" pattern observed on the
                 // hangout receiver. Hinting 0 keeps the buffer minimal from the
-                // first frame. Chromium-only API; ignore on other engines.
-                for (const t of [videoTransceiver, audioTransceiver]) {
-                    const r = t.receiver;
-                    try {
+                // first frame. Chromium-only API + test fakes may not expose
+                // receivers at all, so the whole walk is guarded.
+                try {
+                    for (const t of [videoTransceiver, audioTransceiver]) {
+                        if (!t || !t.receiver)
+                            continue;
+                        const r = t.receiver;
                         r.playoutDelayHint = 0;
                     }
-                    catch (_) { /* unsupported */ }
                 }
+                catch (_) { /* unsupported */ }
                 // Track this PC's connectionState in the shared snapshot so the
                 // aggregate `connectionState` derived value can pick it up. On
                 // 'failed' we also drive the existing scheduleRetry path (the
@@ -1640,6 +1643,30 @@ function useLVSHangout(opts) {
     // Camera state: did the local participant actually publish a live
     // video track? Drives the in-call "Turn on camera" button visibility.
     const isCameraEnabled = (0, react_1.useMemo)(() => !!localStream && localStream.getVideoTracks().some((t) => t.readyState === 'live'), [localStream]);
+    // Browser-level page lifecycle cleanup. React's effect cleanup does
+    // NOT fire on Cmd+W / nav-away / tab kill — the page is destroyed
+    // before any JS gets to run. Without this hook every WHEP transport
+    // is held open server-side until the SFU's ICE-disconnect-grace
+    // (20 s) reaps it; other participants meanwhile see a frozen
+    // ghost tile for the local user (the publisher's WHIP teardown is
+    // handled inside useLVSPublisher's own pagehide hook).
+    //
+    // Fire whepTeardown for every open WHEP transport on `pagehide` —
+    // `keepalive: true` on the DELETE fetch survives page destruction
+    // up to ~5 s, plenty for the SFU to receive and dispatch.
+    (0, react_1.useEffect)(() => {
+        if (typeof window === 'undefined')
+            return;
+        const onPageHide = () => {
+            for (const entry of remoteSubscribersRef.current.values()) {
+                if (entry.resourceUrl && entry.authToken) {
+                    void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken);
+                }
+            }
+        };
+        window.addEventListener('pagehide', onPageHide);
+        return () => { window.removeEventListener('pagehide', onPageHide); };
+    }, []);
     return {
         participants,
         isJoined,
