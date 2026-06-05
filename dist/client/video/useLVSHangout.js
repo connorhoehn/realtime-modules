@@ -611,6 +611,14 @@ function useLVSHangout(opts) {
                 }
                 if (location)
                     void (0, transport_1.whepTeardown)(location, authToken).catch(() => { });
+                // Drop our pending ref entry too, so an aborted flight doesn't
+                // leak a closed PC into remoteSubscribersRef. Only drop if it's
+                // still the pc we created in THIS flight — a newer-epoch open
+                // may have already replaced it.
+                const entry = pc ? remoteSubscribersRef.current.get(fullPid) : null;
+                if (entry && entry.pc === pc) {
+                    remoteSubscribersRef.current.delete(fullPid);
+                }
                 // Only drop the in-flight slot if it's still ours — a newer
                 // epoch may have already replaced it.
                 if (inFlightOpensRef.current.get(fullPid) === flight) {
@@ -634,6 +642,22 @@ function useLVSHangout(opts) {
                 // the WHEP reached the server with the right selector.
                 console.info('[remote-pc] open', { fullPid, kind, epoch: myEpoch, hasIce: ice.length > 0 });
                 const pc = new RTCPeerConnection({ iceServers: ice });
+                // Install a pending entry into the ref BEFORE setRemoteDescription
+                // fires `ontrack` — otherwise track.ended (which can fire within
+                // the same task drain if the SFU's consumer transport closes
+                // mid-handshake) looks up remoteSubscribersRef and gets undefined,
+                // bails silently, and we end up with a React state pointing at a
+                // MediaStream whose receivers are all ended/muted. resourceUrl +
+                // authToken are filled in below once whepPublish returns.
+                remoteSubscribersRef.current.set(fullPid, {
+                    pc,
+                    resourceUrl: '',
+                    authToken: '',
+                    kind,
+                    epoch: myEpoch,
+                    producerId,
+                    receivedKinds: new Set(),
+                });
                 // Recv-only — both camera + screen publishers are video (+ audio
                 // for camera). Add both transceivers; SFU returns inactive lines
                 // for kinds the producer doesn't have.
@@ -867,15 +891,26 @@ function useLVSHangout(opts) {
                     catch { /* */ }
                     void (0, transport_1.whepTeardown)(existingEntry.resourceUrl, existingEntry.authToken).catch(() => { });
                 }
-                remoteSubscribersRef.current.set(fullPid, {
-                    pc,
-                    resourceUrl: location,
-                    authToken,
-                    kind,
-                    epoch: myEpoch,
-                    producerId,
-                    receivedKinds: new Set(),
-                });
+                // If our pending stub is still in place (same-epoch, same pc),
+                // MUTATE it so the receivedKinds Set populated by ontrack survives.
+                // If the stub was evicted (cleanupPc fired during the handshake),
+                // bail cleanly — resurrecting a fresh entry would defeat the
+                // cleanup and leak the just-closed PC into the ref.
+                const pending = remoteSubscribersRef.current.get(fullPid);
+                if (pending && pending.pc === pc) {
+                    pending.resourceUrl = location;
+                    pending.authToken = authToken;
+                }
+                else {
+                    console.info('[remote-pc] pending stub evicted mid-handshake — bailing', {
+                        fullPid,
+                        epoch: myEpoch,
+                        hasReplacement: !!pending,
+                        replacementEpoch: pending?.epoch,
+                    });
+                    bail(pc, location, authToken);
+                    return;
+                }
                 if (inFlightOpensRef.current.get(fullPid) === flight) {
                     inFlightOpensRef.current.delete(fullPid);
                 }
