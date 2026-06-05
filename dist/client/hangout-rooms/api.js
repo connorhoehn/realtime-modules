@@ -120,13 +120,30 @@ async function listRooms(opts, query) {
         return data;
     return data?.rooms ?? [];
 }
-/** Get a single room by slug. `GET /api/rooms/:slug`. */
+/** Get a single room by slug. `GET /api/rooms/:slug`.
+ *
+ * Server returns either a bare `Room` or `{ room: Room }` — both are
+ * accepted (same dual-shape policy as `listRooms`).
+ */
 async function getRoom(opts, slug) {
-    return request(opts, 'GET', `/api/rooms/${encodeURIComponent(slug)}`);
+    const data = await request(opts, 'GET', `/api/rooms/${encodeURIComponent(slug)}`);
+    return unwrapRoom(data);
 }
-/** Create a new room. `POST /api/rooms`. */
+/** Create a new room. `POST /api/rooms`.
+ *
+ * Server returns either a bare `Room` or `{ room: Room }` — both are
+ * accepted. platform-api returns the wrapped shape; older servers and
+ * tests may return bare.
+ */
 async function createRoom(opts, input) {
-    return request(opts, 'POST', `/api/rooms`, input);
+    const data = await request(opts, 'POST', `/api/rooms`, input);
+    return unwrapRoom(data);
+}
+function unwrapRoom(data) {
+    if (data && typeof data === 'object' && 'room' in data && data.room) {
+        return data.room;
+    }
+    return data;
 }
 /** Update mutable fields on an existing room. `PATCH /api/rooms/:slug`. */
 async function updateRoom(opts, slug, patch) {

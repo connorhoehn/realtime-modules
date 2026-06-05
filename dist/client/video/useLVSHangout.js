@@ -206,6 +206,12 @@ function useLVSHangout(opts) {
     // outside the discovery effect's closure) can poke the WHEP recovery
     // path without us having to plumb scheduleRetry across closures.
     const scheduleRetryRef = (0, react_1.useRef)(null);
+    // Exposed alongside scheduleRetryRef so the visibilitychange handler
+    // can scrub React state when it tears down an unhealthy PC — without
+    // it, pc.close() ends the receiver tracks but participants[i].streams[0]
+    // still points at the now-dead MediaStream and the tile shows
+    // permanent-black.
+    const cleanupPcRef = (0, react_1.useRef)(null);
     // Render-time "now" — bumped every 1s so the `subscriberMs` field in
     // the participants memo recomputes without callers having to mount
     // their own setInterval. Resolution: ~1s. Stops bumping when the
@@ -361,7 +367,17 @@ function useLVSHangout(opts) {
             }
             // Permanent diagnostic — paired with the open log so we can grep
             // open/close transitions when remote tiles inevitably regress.
-            console.info('[remote-pc] close', { fullPid, kind: entry.kind, epoch: entry.epoch, forceDeleteBase });
+            console.info('[remote-pc] close', {
+                fullPid,
+                kind: entry.kind,
+                epoch: entry.epoch,
+                forceDeleteBase,
+                receiverStates: entry.pc.getReceivers().map(r => ({
+                    kind: r.track?.kind,
+                    ready: r.track?.readyState,
+                    muted: r.track?.muted,
+                })),
+            });
             try {
                 entry.pc.close();
             }
@@ -472,10 +488,11 @@ function useLVSHangout(opts) {
                 retryBudgetRef.current.set(fullPid, budget);
             }
             if (budget.count >= RETRY_CAP) {
-                console.info('[remote-pc] retry cap reached — giving up', {
+                console.warn('[remote-pc] retry cap reached — giving up; React state will hold dead-tracks stream until producer.removed', {
                     fullPid,
                     attempts: budget.count,
                     windowMs: now - budget.windowStart,
+                    knownProducerKind: knownProducersRef.current.get(fullPid),
                 });
                 return;
             }
@@ -518,6 +535,7 @@ function useLVSHangout(opts) {
         // it without having to re-enter this effect's closure. Reset on
         // cleanup so a fired-after-unmount visibilitychange is a no-op.
         scheduleRetryRef.current = scheduleRetry;
+        cleanupPcRef.current = cleanupPc;
         // Returns true if all receivers on the PC have a track in
         // readyState='ended' (or no tracks at all). Used by both the
         // track-ended handler and the periodic sweep to detect a fully
@@ -749,6 +767,20 @@ function useLVSHangout(opts) {
                     // SFU and a fresh openPcFor will rebind the tile within ~1s.
                     track.addEventListener('ended', () => {
                         const current = remoteSubscribersRef.current.get(fullPid);
+                        const receiverStates = current
+                            ? current.pc.getReceivers().map(r => ({
+                                kind: r.track?.kind,
+                                ready: r.track?.readyState,
+                                muted: r.track?.muted,
+                            }))
+                            : [];
+                        console.info('[remote-pc] track-ended fired', {
+                            fullPid,
+                            endedKind: track.kind,
+                            endedTrackId: track.id,
+                            hadSubEntry: !!current,
+                            receiverStates,
+                        });
                         if (!current)
                             return;
                         const stillLive = current.pc.getReceivers().some((r) => {
@@ -759,6 +791,7 @@ function useLVSHangout(opts) {
                             console.info('[remote-pc] track ended — keeping PC (other tracks live)', {
                                 fullPid,
                                 endedKind: track.kind,
+                                receiverStates,
                             });
                             return;
                         }
@@ -1080,6 +1113,14 @@ function useLVSHangout(opts) {
                         // will close the second producer cleanly via PC negotiation
                         // (tracks transition to `ended`). This matches the screen-
                         // share path's original behavior.
+                        console.info('[remote-discovery] producer.removed → cleanupPc', {
+                            pid,
+                            eventMediaKind: typeof msg.kind === 'string' ? msg.kind : undefined,
+                            eventProducerId,
+                            storedProducerId: remoteSubscribersRef.current.get(pid)?.producerId,
+                            storedKind: remoteSubscribersRef.current.get(pid)?.kind,
+                            receivedKinds: Array.from(remoteSubscribersRef.current.get(pid)?.receivedKinds ?? []),
+                        });
                         cleanupPc(pid);
                     }
                 }
@@ -1130,6 +1171,7 @@ function useLVSHangout(opts) {
             // handler can't fire it against this torn-down closure. The next
             // effect mount (StrictMode remount) will repopulate.
             scheduleRetryRef.current = null;
+            cleanupPcRef.current = null;
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
@@ -1201,15 +1243,30 @@ function useLVSHangout(opts) {
                         fullPid: k,
                         kind: entry.kind,
                         connectionState: s,
+                        receiverStates: entry.pc.getReceivers().map(r => ({
+                            kind: r.track?.kind,
+                            ready: r.track?.readyState,
+                            muted: r.track?.muted,
+                        })),
                     });
-                    // Close the PC ourselves + schedule a retry via the published
-                    // ref. When openPcFor eventually runs it'll see no entry in
-                    // remoteSubscribersRef and open a fresh PC.
-                    try {
-                        entry.pc.close();
+                    // Route through cleanupPc(forceDeleteBase=true) so React state
+                    // gets scrubbed alongside the ref + PC close — otherwise
+                    // participants[i].streams[0] keeps pointing at the just-killed
+                    // MediaStream (tracks transition to `ended` synchronously when
+                    // pc.close() runs), and the tile renders as a permanent black
+                    // rectangle with no recovery affordance until a retry succeeds.
+                    // Falls back to the inline scrub if cleanupPc isn't published
+                    // (effect torn down).
+                    if (cleanupPcRef.current) {
+                        cleanupPcRef.current(k, /* forceDeleteBase */ true);
                     }
-                    catch { /* */ }
-                    remoteSubscribersRef.current.delete(k);
+                    else {
+                        try {
+                            entry.pc.close();
+                        }
+                        catch { /* */ }
+                        remoteSubscribersRef.current.delete(k);
+                    }
                     whepConnStatesRef.current.delete(k);
                     scheduleRetryRef.current?.(k);
                     recoveredAny = true;

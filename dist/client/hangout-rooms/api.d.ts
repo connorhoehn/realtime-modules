@@ -28,9 +28,18 @@ export interface RoomApiOptions {
  * shapes are accepted. Returns `[]` when the server returns nothing.
  */
 export declare function listRooms(opts: RoomApiOptions, query?: ListRoomsQuery): Promise<Room[]>;
-/** Get a single room by slug. `GET /api/rooms/:slug`. */
+/** Get a single room by slug. `GET /api/rooms/:slug`.
+ *
+ * Server returns either a bare `Room` or `{ room: Room }` — both are
+ * accepted (same dual-shape policy as `listRooms`).
+ */
 export declare function getRoom(opts: RoomApiOptions, slug: string): Promise<Room>;
-/** Create a new room. `POST /api/rooms`. */
+/** Create a new room. `POST /api/rooms`.
+ *
+ * Server returns either a bare `Room` or `{ room: Room }` — both are
+ * accepted. platform-api returns the wrapped shape; older servers and
+ * tests may return bare.
+ */
 export declare function createRoom(opts: RoomApiOptions, input: CreateRoomInput): Promise<Room>;
 /** Update mutable fields on an existing room. `PATCH /api/rooms/:slug`. */
 export declare function updateRoom(opts: RoomApiOptions, slug: string, patch: UpdateRoomInput): Promise<Room>;
