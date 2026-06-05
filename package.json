@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.12.5",
+  "version": "0.12.6",
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",

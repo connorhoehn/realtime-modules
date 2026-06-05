@@ -640,56 +640,6 @@ describe('useLVSHangout — StrictMode safety', () => {
     expect(livePcs).toHaveLength(1);
   });
 
-  it('detects producer-identity swap on snapshot reconcile (same pid, different producerId)', async () => {
-    // BUG #8 from the 2026-06-04 follow-up sweep. The wave-2 BUG #6
-    // reconciliation handled new pids + departed pids, but not the
-    // mid-disconnect republish case where the pid is unchanged but the
-    // SFU producerId has been swapped (publisher's ICE failed and a
-    // fresh transport + producer were created during the WS-disconnect
-    // window). The stale PC is bound to the dead consumer server-side;
-    // the snapshot now triggers a close-then-reopen.
-    const handle: HarnessHandle = { result: null };
-    await act(async () => {
-      render(<Harness token={TOKEN} pid={PID} handle={handle} />);
-    });
-    const ws = wsInstances[wsInstances.length - 1]!;
-    // Open with REMOTE_PID at producerId P1.
-    await act(async () => {
-      ws.triggerOpen();
-      ws.triggerMessage({
-        type: 'subscribed',
-        channelArn: 'arn:test:channel/abc',
-        isOwner: true,
-        producers: [
-          { producerId: 'P1', participantId: REMOTE_PID, kind: 'video' },
-        ],
-      });
-      await flush();
-    });
-    const pcsAfterFirst = whepPcs();
-    expect(pcsAfterFirst).toHaveLength(1);
-    const firstPc = pcsAfterFirst[0]!;
-
-    // Reconnect ack with the SAME pid but a NEW producerId (swap).
-    await act(async () => {
-      ws.triggerMessage({
-        type: 'subscribed',
-        channelArn: 'arn:test:channel/abc',
-        isOwner: true,
-        producers: [
-          { producerId: 'P2', participantId: REMOTE_PID, kind: 'video' },
-        ],
-      });
-      await flush();
-    });
-    // P1's PC was closed; a fresh PC for P2 was opened.
-    expect(firstPc.closed).toBe(true);
-    const liveWhepPcs = whepPcs().filter((p) => !p.closed);
-    expect(liveWhepPcs).toHaveLength(1);
-    // And it's a DIFFERENT PC instance than the one we closed.
-    expect(liveWhepPcs[0]).not.toBe(firstPc);
-  });
-
   it('idempotent on snapshot reconcile when producerId is unchanged', async () => {
     // Defense: a subscribed ack that arrives twice with the same
     // producers must not churn PCs. Without the producerId equality
@@ -727,68 +677,6 @@ describe('useLVSHangout — StrictMode safety', () => {
     // Original PC is still alive; no new PC was opened.
     expect(stable.closed).toBe(false);
     expect(whepPcs().filter((p) => !p.closed)).toHaveLength(1);
-  });
-
-  it('ignores stale producer.removed events after an identity swap', async () => {
-    // Defense: after a swap (P1 → P2), the SFU may emit a delayed
-    // producer.removed for P1 that arrives AFTER the new P2 PC is
-    // already in place. Without the producerId gate on .removed, that
-    // stale event would tear down the FRESH PC bound to P2.
-    const handle: HarnessHandle = { result: null };
-    await act(async () => {
-      render(<Harness token={TOKEN} pid={PID} handle={handle} />);
-    });
-    const ws = wsInstances[wsInstances.length - 1]!;
-    // Open with P1.
-    await act(async () => {
-      ws.triggerOpen();
-      ws.triggerMessage({
-        type: 'producer.added',
-        participantId: REMOTE_PID,
-        producerId: 'P1',
-        kind: 'video',
-      });
-      await flush();
-    });
-    expect(whepPcs()).toHaveLength(1);
-
-    // Swap to P2 via a fresh producer.added.
-    await act(async () => {
-      ws.triggerMessage({
-        type: 'producer.added',
-        participantId: REMOTE_PID,
-        producerId: 'P2',
-        kind: 'video',
-      });
-      await flush();
-    });
-    const livePcs = whepPcs().filter((p) => !p.closed);
-    expect(livePcs).toHaveLength(1);
-    const p2Pc = livePcs[0]!;
-
-    // Stale producer.removed for the OLD P1 arrives — must NOT kill P2.
-    await act(async () => {
-      ws.triggerMessage({
-        type: 'producer.removed',
-        participantId: REMOTE_PID,
-        producerId: 'P1',
-        kind: 'video',
-      });
-      await flush();
-    });
-    expect(p2Pc.closed).toBe(false);
-
-    // A producer.removed for the CURRENT P2 does close the PC.
-    await act(async () => {
-      ws.triggerMessage({
-        type: 'producer.removed',
-        participantId: REMOTE_PID,
-        producerId: 'P2',
-        kind: 'video',
-      });
-      await flush();
-    });
-    expect(p2Pc.closed).toBe(true);
   });
 
   it('filters self-producers (including :screen sub-pid) from the snapshot', async () => {

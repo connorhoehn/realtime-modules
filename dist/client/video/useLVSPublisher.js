@@ -379,37 +379,6 @@ function useLVSPublisher(opts) {
             }, MEDIA_WATCHDOG_MS);
             for (const t of activeStream.getTracks())
                 pc.addTrack(t, activeStream);
-            // Cap the video sender's bitrate. Without this Chrome's libvpx
-            // congestion controller ramps the encoder to 2-3 Mbps on a
-            // healthy localhost path, which:
-            //   - bursts past the downstream decoder's frame budget on the
-            //     subscriber side -> "1 second streaming, 1 second frozen"
-            //   - overflows the recording leg's ffmpeg UDP recv buffer ->
-            //     "max delay reached" + "RTP: missed N packets"
-            //   - eats network for no perceptual gain past ~1.2 Mbps at 720p
-            // A flat cap is the simplest control. Hangout participants don't
-            // need broadcast-quality video; this matches the Meet/Teams
-            // operating range (1.0-1.5 Mbps per tile).
-            try {
-                const videoSender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
-                if (videoSender && typeof videoSender.getParameters === 'function') {
-                    const params = videoSender.getParameters();
-                    if (!params.encodings || params.encodings.length === 0) {
-                        params.encodings = [{}];
-                    }
-                    params.encodings[0].maxBitrate = 1_200_000; // 1.2 Mbps
-                    // Encoder priority + network priority hint Chrome's congestion
-                    // controller to ramp aggressively instead of the slow cold-start
-                    // ramp that causes "jitter for the first ~5s, then smooths out"
-                    // on the receiver. With these set, the encoder hits its
-                    // operating bitrate within a couple of frames of the first
-                    // PLI instead of climbing for several seconds.
-                    params.encodings[0].priority = 'high';
-                    params.encodings[0].networkPriority = 'high';
-                    await videoSender.setParameters(params);
-                }
-            }
-            catch (_e) { /* getParameters/setParameters may not be available in headless test env */ }
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             // LVS doesn't support trickle ICE — batch candidates into the offer.

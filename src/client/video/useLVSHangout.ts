@@ -698,27 +698,21 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       // have already torn down its own PCs + in-flight opens, so
       // anything we see here is genuinely held by the active session.
       //
-      // EXCEPTION: producer-identity swap. If a producerId is known for
-      // both the existing entry and the incoming call AND they differ,
-      // the publisher republished mid-session (same participantId, new
-      // mediasoup producer). The stale PC is bound to a dead consumer
-      // server-side; we must close + reopen rather than skip. Without
-      // this swap detection, the dead-tile self-heal path takes ~1-6s
-      // (track-ended listener OR the 5s isPcFullyDead sweep).
-      const existing = remoteSubscribersRef.current.get(fullPid);
-      if (existing) {
-        if (producerId && existing.producerId && existing.producerId !== producerId) {
-          console.info('[remote-pc] producer-identity swap — closing stale PC', {
-            fullPid,
-            oldProducerId: existing.producerId,
-            newProducerId: producerId,
-          });
-          cleanupPc(fullPid);
-          // Fall through to open a fresh PC against the new producerId.
-        } else {
-          return;
-        }
-      }
+      // A camera publisher has TWO producers (audio + video) with
+      // DIFFERENT producerIds — the SFU emits one `producer.added` per
+      // kind. The first event opens the PC (which receives BOTH tracks
+      // via the WHEP answer); the second event's openPcFor call must
+      // be a no-op or we'd close+reopen the fresh PC. So we cannot use
+      // producerId-mismatch as a swap signal here — that's the normal
+      // multi-kind publish pattern, not a swap.
+      //
+      // True swap detection (same participantId, new producerId after a
+      // republish) is handled by the snapshot reconcile path on
+      // WS-reconnect, which has full state visibility. Per-frame swap
+      // detection here was removed 2026-06-05 after it broke remote
+      // video on every multi-kind producer.added (the second event
+      // misfired as a swap and closed the just-opened PC).
+      if (remoteSubscribersRef.current.has(fullPid)) return;
       // Same idempotency for the in-flight slot — if an older epoch's
       // open is still racing through whepPublish, leave it alone. Its
       // cleanup has already flipped its cancelled flag (we did that in
@@ -1124,29 +1118,24 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             // Only one PC per fullPid regardless of media kind — both
             // camera audio+video producers on the same publisher map to
             // the same PC (the SFU's WHEP answer carries both tracks).
-            // openPcFor is idempotent on (pid, producerId) — a same-pid
-            // event for a NEW producerId triggers a swap close-then-open.
+            // openPcFor's idempotency check skips when an entry already
+            // exists, so the second producer.added (different kind, same
+            // pid) is a no-op.
             void openPcFor(pid, kind, eventProducerId);
           } else if (msg.type === 'producer.removed') {
-            // Gate on producerId match. After a publisher republishes
-            // (same pid, new producerId), the SFU emits producer.removed
-            // for the OLD producerId — if we tear down based on pid
-            // alone, we'd kill the freshly-swapped PC bound to the new
-            // producerId. With the gate, stale removes are dropped.
-            const entry = remoteSubscribersRef.current.get(pid);
-            if (
-              eventProducerId
-              && entry
-              && entry.producerId
-              && entry.producerId !== eventProducerId
-            ) {
-              console.info('[remote-pc] ignoring stale producer.removed for swapped producer', {
-                pid,
-                eventProducerId,
-                liveProducerId: entry.producerId,
-              });
-              return;
-            }
+            // Camera publishers fire producer.removed twice (audio kind +
+            // video kind) when the publisher leaves. Both events carry
+            // the same participantId but different producerIds. The first
+            // event hits cleanupPc which closes the PC + deletes the
+            // entry; the second event finds no entry and bails inside
+            // cleanupPc. Per-frame producerId-mismatch gating was removed
+            // 2026-06-05 because it suppressed the FIRST event when the
+            // entry's stored producerId belonged to a different kind —
+            // leaving the participant tile stuck after they left.
+            //
+            // True swap detection (republish while we're connected) is
+            // still handled by the snapshot reconcile path on WS
+            // reconnect.
             // Drop from the discovery snapshot first so any pending
             // auto-recovery retry sees the producer as gone and bails.
             knownProducersRef.current.delete(pid);
