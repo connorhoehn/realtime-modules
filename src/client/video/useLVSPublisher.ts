@@ -485,6 +485,14 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
             params.encodings = [{}];
           }
           params.encodings[0].maxBitrate = 1_200_000; // 1.2 Mbps
+          // Encoder priority + network priority hint Chrome's congestion
+          // controller to ramp aggressively instead of the slow cold-start
+          // ramp that causes "jitter for the first ~5s, then smooths out"
+          // on the receiver. With these set, the encoder hits its
+          // operating bitrate within a couple of frames of the first
+          // PLI instead of climbing for several seconds.
+          params.encodings[0].priority = 'high';
+          params.encodings[0].networkPriority = 'high';
           await videoSender.setParameters(params);
         }
       } catch (_e) { /* getParameters/setParameters may not be available in headless test env */ }

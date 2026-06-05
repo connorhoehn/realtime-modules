@@ -625,8 +625,21 @@ function useLVSHangout(opts) {
                 // Recv-only — both camera + screen publishers are video (+ audio
                 // for camera). Add both transceivers; SFU returns inactive lines
                 // for kinds the producer doesn't have.
-                pc.addTransceiver('video', { direction: 'recvonly' });
-                pc.addTransceiver('audio', { direction: 'recvonly' });
+                const videoTransceiver = pc.addTransceiver('video', { direction: 'recvonly' });
+                const audioTransceiver = pc.addTransceiver('audio', { direction: 'recvonly' });
+                // playoutDelayHint = 0 forces the browser into low-latency render
+                // mode. The default behaviour ramps up a 100-200 ms jitter buffer
+                // over the first ~5 s of the call, which is exactly the "jitter
+                // at first, smooths out over time" pattern observed on the
+                // hangout receiver. Hinting 0 keeps the buffer minimal from the
+                // first frame. Chromium-only API; ignore on other engines.
+                for (const t of [videoTransceiver, audioTransceiver]) {
+                    const r = t.receiver;
+                    try {
+                        r.playoutDelayHint = 0;
+                    }
+                    catch (_) { /* unsupported */ }
+                }
                 // Track this PC's connectionState in the shared snapshot so the
                 // aggregate `connectionState` derived value can pick it up. On
                 // 'failed' we also drive the existing scheduleRetry path (the
