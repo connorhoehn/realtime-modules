@@ -344,6 +344,11 @@ function useLVSHangout(opts) {
             // before it can publish a new entry to remoteSubscribersRef.
             const inflight = inFlightOpensRef.current.get(fullPid);
             if (inflight) {
+                console.info('[remote-pc] cleanupPc — cancelling in-flight open', {
+                    fullPid,
+                    forceDeleteBase,
+                    inflightEpoch: inflight.epoch,
+                });
                 inflight.cancelled = true;
                 inFlightOpensRef.current.delete(fullPid);
             }
@@ -617,6 +622,13 @@ function useLVSHangout(opts) {
                 // may have already replaced it.
                 const entry = pc ? remoteSubscribersRef.current.get(fullPid) : null;
                 if (entry && entry.pc === pc) {
+                    console.info('[remote-pc] bail — deleting pending stub', {
+                        fullPid,
+                        epoch: myEpoch,
+                        flightCancelled: flight.cancelled,
+                        outerCancelled: cancelled,
+                        hadResourceUrl: !!entry.resourceUrl,
+                    });
                     remoteSubscribersRef.current.delete(fullPid);
                 }
                 // Only drop the in-flight slot if it's still ours — a newer
@@ -805,8 +817,44 @@ function useLVSHangout(opts) {
                             hadSubEntry: !!current,
                             receiverStates,
                         });
-                        if (!current)
+                        if (!current) {
+                            // Ref entry already gone (silent bail or earlier cleanup).
+                            // The ontrack handler had already pushed this track into
+                            // setRemoteParticipants, so the React tile is bound to a
+                            // MediaStream whose tracks are now `ended`. Scrub the
+                            // basePid from React state so the avatar fallback renders
+                            // instead of a permanently black <video>.
+                            const basePid = fullPid.split(':')[0] ?? fullPid;
+                            console.info('[remote-pc] track-ended on orphan ref — scrubbing React state', { fullPid, basePid });
+                            setRemoteParticipants((prev) => {
+                                if (!prev.has(basePid))
+                                    return prev;
+                                const next = new Map(prev);
+                                const e = next.get(basePid);
+                                if (e) {
+                                    for (const s of e.streams) {
+                                        for (const t of s.getTracks()) {
+                                            try {
+                                                t.stop();
+                                            }
+                                            catch { /* */ }
+                                        }
+                                    }
+                                    if (e.screenStream) {
+                                        for (const t of e.screenStream.getTracks()) {
+                                            try {
+                                                t.stop();
+                                            }
+                                            catch { /* */ }
+                                        }
+                                    }
+                                }
+                                next.delete(basePid);
+                                return next;
+                            });
+                            firstSeenAtRef.current.delete(basePid);
                             return;
+                        }
                         const stillLive = current.pc.getReceivers().some((r) => {
                             const t = r.track;
                             return !!t && t.readyState === 'live';
@@ -1039,6 +1087,19 @@ function useLVSHangout(opts) {
                         }
                         // Close PCs for producers no longer in the snapshot — peer
                         // left, or screen-share stopped while we were disconnected.
+                        //
+                        // CRITICAL: Skip pids with an active in-flight open OR a
+                        // pending stub (resourceUrl still empty). A stage-WS
+                        // reconnect can race a fresh producer.added: the new
+                        // `subscribed` snapshot was captured BEFORE the producer
+                        // persisted, so the reap loop would silently cancel the
+                        // in-flight (cleanupPc → inflight.cancelled=true, no log
+                        // since the stub-or-no-stub path early-returns) and the
+                        // openPcFor's next await-boundary check would bail() the
+                        // PC after ontrack already wrote tracks into React state.
+                        // Net effect: a ghost participant with all-ended tracks
+                        // permanently stuck in the tile. Active in-flight opens
+                        // own their lifecycle — let producer.removed reap them.
                         for (const existingPid of Array.from(remoteSubscribersRef.current.keys())) {
                             if (snapshotPids.has(existingPid))
                                 continue;
@@ -1048,6 +1109,15 @@ function useLVSHangout(opts) {
                                 continue;
                             if (existingPid === `${participantId}:screen`)
                                 continue;
+                            if (inFlightOpensRef.current.has(existingPid)) {
+                                console.info('[remote-discovery] snapshot-reap: skipping in-flight open', { pid: existingPid });
+                                continue;
+                            }
+                            const existingEntry = remoteSubscribersRef.current.get(existingPid);
+                            if (existingEntry && !existingEntry.resourceUrl) {
+                                console.info('[remote-discovery] snapshot-reap: skipping pending stub', { pid: existingPid });
+                                continue;
+                            }
                             knownProducersRef.current.delete(existingPid);
                             const pendingTimer = retryTimersRef.current.get(existingPid);
                             if (pendingTimer) {
