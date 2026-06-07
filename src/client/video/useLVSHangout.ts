@@ -561,8 +561,17 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         })),
       });
       try { entry.pc.close(); } catch { /* ignore */ }
-      // Fire-and-forget DELETE — best effort.
-      void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
+      // Fire-and-forget DELETE — best effort. Guard against empty
+      // resourceUrl/authToken: the pending placeholder entry installed at
+      // line ~818 has `resourceUrl: ''` until the WHEP POST writes the real
+      // Location header. If cleanupPc fires while the POST is in flight
+      // (epoch supersede, producer.removed, unmount), `fetch('', ...)`
+      // resolves '' against `document.baseURI` → DELETE on the current
+      // page URL → 404 against a wrong route. The server-side cleanup is
+      // handled by the SFU's ICE-disconnect-grace path.
+      if (entry.resourceUrl && entry.authToken) {
+        void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
+      }
       remoteSubscribersRef.current.delete(fullPid);
       // Drop the per-PC connectionState snapshot so the aggregate doesn't
       // keep reporting 'reconnecting' for a PC that no longer exists.
@@ -770,6 +779,17 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       const flight = { epoch: myEpoch, cancelled: false };
       inFlightOpensRef.current.set(fullPid, flight);
 
+      // Combined liveness check — bail if the WS effect was torn down
+      // (cancelled), the in-flight was cancelled by cleanupPc (flight),
+      // OR producer.removed arrived during a TOCTOU window between
+      // scheduleRetry's guard at the timer-fire and the install above
+      // (knownProducersRef). The third condition is belt-and-suspenders
+      // for the "remote-peer black-screen" class: if knownProducers is
+      // already cleared by the time we reach an await, finishing the
+      // handshake would publish a PC for a peer the server says is gone.
+      const checkAlive = () =>
+        !flight.cancelled && !cancelled && knownProducersRef.current.has(fullPid);
+
       const bail = (pc: RTCPeerConnection | null, location: string | null, authToken: string) => {
         if (pc) { try { pc.close(); } catch { /* */ } }
         if (location) void whepTeardown(location, authToken).catch(() => { /* */ });
@@ -797,9 +817,9 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
 
       try {
         const authToken = await resolveAuthToken();
-        if (flight.cancelled || cancelled) { bail(null, null, authToken); return; }
+        if (!checkAlive()) { bail(null, null, authToken); return; }
         const ice = await fetchIceServers(baseUrl);
-        if (flight.cancelled || cancelled) { bail(null, null, authToken); return; }
+        if (!checkAlive()) { bail(null, null, authToken); return; }
         // Permanent diagnostic — log every parallel WHEP attempt so the
         // next regression is one browser-console scroll away. Pair with
         // SFU-side `WHEP producer found` log lines via fullPid to verify
@@ -1016,11 +1036,11 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         });
 
         const offer = await pc.createOffer();
-        if (flight.cancelled || cancelled) { bail(pc, null, authToken); return; }
+        if (!checkAlive()) { bail(pc, null, authToken); return; }
         await pc.setLocalDescription(offer);
-        if (flight.cancelled || cancelled) { bail(pc, null, authToken); return; }
+        if (!checkAlive()) { bail(pc, null, authToken); return; }
         await waitForIceGather(pc, 3000);
-        if (flight.cancelled || cancelled) { bail(pc, null, authToken); return; }
+        if (!checkAlive()) { bail(pc, null, authToken); return; }
         const sdp = pc.localDescription?.sdp;
         if (!sdp) throw new Error('failed to generate local SDP');
 
@@ -1035,9 +1055,9 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           excludeParticipantId: undefined,
           baseUrl,
         });
-        if (flight.cancelled || cancelled) { bail(pc, location, authToken); return; }
+        if (!checkAlive()) { bail(pc, location, authToken); return; }
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-        if (flight.cancelled || cancelled) { bail(pc, location, authToken); return; }
+        if (!checkAlive()) { bail(pc, location, authToken); return; }
         if (!location) {
           // No Location header — server didn't issue a WHEP resource
           // URL, so we can't DELETE on teardown. Bail with cleanup
@@ -1746,7 +1766,10 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       const entry = remoteSubscribersRef.current.get(k);
       if (!entry) continue;
       try { entry.pc.close(); } catch { /* */ }
-      void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
+      // Guard empty resourceUrl — see comment in cleanupPc above.
+      if (entry.resourceUrl && entry.authToken) {
+        void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
+      }
       remoteSubscribersRef.current.delete(k);
     }
 
