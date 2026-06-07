@@ -29,13 +29,18 @@ export class LVSApiError extends Error {
 
 /** Parse a `Retry-After` header value into a delay in seconds. Accepts
  *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").
- *  Returns null for absent/malformed/past-date inputs. */
+ *  Returns null for absent/malformed/past-date inputs.
+ *
+ *  Tolerates fractional delta-seconds ("0.5") for the SFU's 425-on-pipe-
+ *  warmup path, where the server hints sub-second backoff. RFC 7231 only
+ *  defines integer delta-seconds, but our SFU emits floats and the
+ *  lvs-client SDK already parses them — keep behavior consistent. */
 export function parseRetryAfter(headerValue: string | null): number | null {
   if (!headerValue) return null;
   const trimmed = headerValue.trim();
   if (trimmed === '') return null;
-  // Delta-seconds form
-  if (/^\d+$/.test(trimmed)) {
+  // Delta-seconds form (integer or fractional)
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
     const n = Number(trimmed);
     return Number.isFinite(n) && n >= 0 ? n : null;
   }
@@ -44,6 +49,54 @@ export function parseRetryAfter(headerValue: string | null): number | null {
   if (Number.isNaN(date)) return null;
   const deltaSec = Math.ceil((date - Date.now()) / 1000);
   return deltaSec >= 0 ? deltaSec : null;
+}
+
+/** WHEP/WHIP 425 ("Too Early") retry budget. The SFU emits 425 while a
+ *  cache-miss pod establishes its mesh-fanout pipe to the publisher pod
+ *  — the answer becomes valid within a few hundred ms. Mirrors
+ *  `~/Projects/live-video-streaming/packages/lvs-client/src/whep.js`. */
+const TOO_EARLY_MAX_ATTEMPTS = 5;
+const TOO_EARLY_DEADLINE_MS = 5_000;
+const TOO_EARLY_MIN_BACKOFF_MS = 250;
+const TOO_EARLY_MAX_BACKOFF_MS = 2_000;
+
+/** Compute the next 425 backoff in ms. Uses the server's `Retry-After`
+ *  when present, otherwise a jittered value in [250, 2000]. Exported
+ *  for test injection — production callers should not call this. */
+export function computeTooEarlyBackoffMs(
+  retryAfterSec: number | null,
+  rand: () => number = Math.random,
+): number {
+  if (retryAfterSec !== null && retryAfterSec > 0) {
+    const fromHeader = retryAfterSec * 1000;
+    return Math.max(
+      TOO_EARLY_MIN_BACKOFF_MS,
+      Math.min(TOO_EARLY_MAX_BACKOFF_MS, fromHeader),
+    );
+  }
+  // Jittered 250-2000ms when the server didn't pin a Retry-After
+  const span = TOO_EARLY_MAX_BACKOFF_MS - TOO_EARLY_MIN_BACKOFF_MS;
+  return TOO_EARLY_MIN_BACKOFF_MS + Math.floor(rand() * span);
+}
+
+/** Minimal debug-log hook for the 425 retry path. Kept local so
+ *  transport.ts stays React-free — consumers pass through their own
+ *  logger from LVSProvider / useLVS* hooks if they want observability. */
+export type TransportLog = (msg: string) => void;
+
+interface TooEarlyRetryDeps {
+  log?: TransportLog;
+  /** Override for tests: lets the suite advance fake timers without
+   *  actually sleeping. Default uses real setTimeout. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Override for tests: deterministic jitter. */
+  rand?: () => number;
+  /** Override for tests: deterministic deadline clock. */
+  now?: () => number;
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export interface WhipPublishOptions {
@@ -61,6 +114,13 @@ export interface WhipPublishOptions {
   baseUrl?: string;
   /** Optional fetch override for tests / SSR. */
   fetchImpl?: typeof fetch;
+  /** Optional debug logger — emits one line per 425 retry attempt so
+   *  the SFU's mesh-fanout-filter rollout is observable from devtools.
+   *  Silent by default. */
+  log?: TransportLog;
+  /** Test-only sleep/random/clock overrides for the 425 retry loop.
+   *  Not part of the public API surface; useLVS* hooks never pass these. */
+  __tooEarlyDeps?: TooEarlyRetryDeps;
 }
 
 export interface WhipPublishResult {
@@ -72,6 +132,72 @@ export interface WhipPublishResult {
   sfuNode: string | null;
 }
 
+/** Internal: POST an SDP offer with the 425 ("Too Early") retry loop.
+ *  The SFU returns 425 when a cache-miss pod is still establishing its
+ *  mesh-fanout pipe to the publisher pod — the answer becomes valid
+ *  within a few hundred ms. Mirrors the lvs-client SDK pattern. All
+ *  other non-2xx responses (including 4xx, 5xx, network errors) flow
+ *  straight through to the caller's existing throw path. */
+async function postSdpWith425Retry(
+  url: string,
+  body: string,
+  authToken: string,
+  f: typeof fetch,
+  flavor: 'WHIP' | 'WHEP',
+  log: TransportLog | undefined,
+  deps: TooEarlyRetryDeps,
+  fetchInit: Partial<RequestInit> = {},
+): Promise<Response> {
+  const sleep = deps.sleep ?? defaultSleep;
+  const now = deps.now ?? Date.now;
+  const rand = deps.rand ?? Math.random;
+  const startedAt = now();
+
+  let attempt = 0;
+  let lastResponse: Response | null = null;
+  for (;;) {
+    attempt += 1;
+    const r = await f(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sdp',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body,
+      ...fetchInit,
+    });
+    if (r.status !== 425) return r;
+
+    lastResponse = r;
+    const retryAfter = parseRetryAfter(r.headers.get('Retry-After'));
+    const elapsed = now() - startedAt;
+    const atAttemptCap = attempt >= TOO_EARLY_MAX_ATTEMPTS;
+    const atDeadline = elapsed >= TOO_EARLY_DEADLINE_MS;
+    if (atAttemptCap || atDeadline) {
+      if (log) {
+        log(
+          `[lvs:${flavor.toLowerCase()}] 425 retry budget exhausted `
+            + `(attempt=${attempt}, elapsed=${elapsed}ms, `
+            + `attemptCap=${atAttemptCap}, deadlineHit=${atDeadline})`,
+        );
+      }
+      return lastResponse;
+    }
+    const delayMs = computeTooEarlyBackoffMs(retryAfter, rand);
+    if (log) {
+      log(
+        `[lvs:${flavor.toLowerCase()}] 425 Too Early — retry `
+          + `attempt=${attempt}/${TOO_EARLY_MAX_ATTEMPTS} `
+          + `delayMs=${delayMs} retryAfterSec=${retryAfter ?? 'none'} `
+          + `elapsed=${elapsed}ms`,
+      );
+    }
+    // Drain the body so the connection can be reused. Best-effort.
+    try { await r.text(); } catch { /* ignore */ }
+    await sleep(delayMs);
+  }
+}
+
 export async function whipPublish(opts: WhipPublishOptions): Promise<WhipPublishResult> {
   const base = opts.baseUrl ?? '';
   let url = `${base}/api/channels/${encodeURIComponent(opts.channelArn)}/whip`;
@@ -79,14 +205,15 @@ export async function whipPublish(opts: WhipPublishOptions): Promise<WhipPublish
     url += `?participantId=${encodeURIComponent(opts.participantId)}`;
   }
   const f = opts.fetchImpl ?? fetch;
-  const r = await f(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/sdp',
-      Authorization: `Bearer ${opts.authToken}`,
-    },
-    body: opts.offerSdp,
-  });
+  const r = await postSdpWith425Retry(
+    url,
+    opts.offerSdp,
+    opts.authToken,
+    f,
+    'WHIP',
+    opts.log,
+    opts.__tooEarlyDeps ?? {},
+  );
   if (!r.ok) {
     const body = await r.text().catch(() => '');
     throw new LVSApiError(
@@ -138,6 +265,13 @@ export interface WhepPublishOptions {
   participantId?: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  /** Optional debug logger — emits one line per 425 retry attempt so
+   *  the SFU's mesh-fanout-filter rollout is observable from devtools.
+   *  Silent by default. */
+  log?: TransportLog;
+  /** Test-only sleep/random/clock overrides for the 425 retry loop.
+   *  Not part of the public API surface; useLVS* hooks never pass these. */
+  __tooEarlyDeps?: TooEarlyRetryDeps;
 }
 
 export interface WhepPublishResult {
@@ -154,15 +288,16 @@ export async function whepPublish(opts: WhepPublishOptions): Promise<WhepPublish
   if (opts.excludeParticipantId) params.push(`excludeParticipantId=${encodeURIComponent(opts.excludeParticipantId)}`);
   if (params.length) url += `?${params.join('&')}`;
   const f = opts.fetchImpl ?? fetch;
-  const r = await f(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/sdp',
-      Authorization: `Bearer ${opts.authToken}`,
-    },
-    body: opts.offerSdp,
-    redirect: 'follow',
-  });
+  const r = await postSdpWith425Retry(
+    url,
+    opts.offerSdp,
+    opts.authToken,
+    f,
+    'WHEP',
+    opts.log,
+    opts.__tooEarlyDeps ?? {},
+    { redirect: 'follow' },
+  );
   if (!r.ok) {
     const body = await r.text().catch(() => '');
     throw new LVSApiError(

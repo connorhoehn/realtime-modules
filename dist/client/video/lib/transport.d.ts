@@ -9,8 +9,31 @@ export declare class LVSApiError extends Error {
 }
 /** Parse a `Retry-After` header value into a delay in seconds. Accepts
  *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").
- *  Returns null for absent/malformed/past-date inputs. */
+ *  Returns null for absent/malformed/past-date inputs.
+ *
+ *  Tolerates fractional delta-seconds ("0.5") for the SFU's 425-on-pipe-
+ *  warmup path, where the server hints sub-second backoff. RFC 7231 only
+ *  defines integer delta-seconds, but our SFU emits floats and the
+ *  lvs-client SDK already parses them — keep behavior consistent. */
 export declare function parseRetryAfter(headerValue: string | null): number | null;
+/** Compute the next 425 backoff in ms. Uses the server's `Retry-After`
+ *  when present, otherwise a jittered value in [250, 2000]. Exported
+ *  for test injection — production callers should not call this. */
+export declare function computeTooEarlyBackoffMs(retryAfterSec: number | null, rand?: () => number): number;
+/** Minimal debug-log hook for the 425 retry path. Kept local so
+ *  transport.ts stays React-free — consumers pass through their own
+ *  logger from LVSProvider / useLVS* hooks if they want observability. */
+export type TransportLog = (msg: string) => void;
+interface TooEarlyRetryDeps {
+    log?: TransportLog;
+    /** Override for tests: lets the suite advance fake timers without
+     *  actually sleeping. Default uses real setTimeout. */
+    sleep?: (ms: number) => Promise<void>;
+    /** Override for tests: deterministic jitter. */
+    rand?: () => number;
+    /** Override for tests: deterministic deadline clock. */
+    now?: () => number;
+}
 export interface WhipPublishOptions {
     /** Channel ARN (e.g. `arn:local:ivs:channel/<uuid>`). Used to build
      *  the WHIP URL: `${baseUrl}/api/channels/:arn/whip`. */
@@ -26,6 +49,13 @@ export interface WhipPublishOptions {
     baseUrl?: string;
     /** Optional fetch override for tests / SSR. */
     fetchImpl?: typeof fetch;
+    /** Optional debug logger — emits one line per 425 retry attempt so
+     *  the SFU's mesh-fanout-filter rollout is observable from devtools.
+     *  Silent by default. */
+    log?: TransportLog;
+    /** Test-only sleep/random/clock overrides for the 425 retry loop.
+     *  Not part of the public API surface; useLVS* hooks never pass these. */
+    __tooEarlyDeps?: TooEarlyRetryDeps;
 }
 export interface WhipPublishResult {
     answerSdp: string;
@@ -55,6 +85,13 @@ export interface WhepPublishOptions {
     participantId?: string;
     baseUrl?: string;
     fetchImpl?: typeof fetch;
+    /** Optional debug logger — emits one line per 425 retry attempt so
+     *  the SFU's mesh-fanout-filter rollout is observable from devtools.
+     *  Silent by default. */
+    log?: TransportLog;
+    /** Test-only sleep/random/clock overrides for the 425 retry loop.
+     *  Not part of the public API surface; useLVS* hooks never pass these. */
+    __tooEarlyDeps?: TooEarlyRetryDeps;
 }
 export interface WhepPublishResult {
     answerSdp: string;
@@ -71,4 +108,5 @@ export interface IceServerConfig {
 /** Fetch ICE-server config from the SFU. Falls back to public STUN if
  *  the endpoint isn't reachable (matches LVS demo behavior). */
 export declare function fetchIceServers(baseUrl?: string, fetchImpl?: typeof fetch): Promise<IceServerConfig[]>;
+export {};
 //# sourceMappingURL=transport.d.ts.map
