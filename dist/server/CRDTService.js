@@ -584,8 +584,8 @@ class CRDTService {
     // ===================================================================
     // handleAwareness — delegate to AwarenessCoalescer + presence backfill
     // ===================================================================
-    async handleAwareness(clientId, { channel, update, idle }) {
-        this.logger.info(`[awareness-entry] client=${clientId} channel=${channel} hasUpdate=${!!update} idle=${idle} isDoc=${channel?.startsWith?.('doc:')}`);
+    async handleAwareness(clientId, { channel, update, idle, mode }) {
+        this.logger.info(`[awareness-entry] client=${clientId} channel=${channel} hasUpdate=${!!update} idle=${idle} mode=${mode} isDoc=${channel?.startsWith?.('doc:')}`);
         if (!this._validateChannel(channel)) {
             this.sendError(clientId, 'Channel name must be a string between 1 and 50 characters');
             return;
@@ -602,6 +602,9 @@ class CRDTService {
                 }
                 if (typeof idle === 'boolean') {
                     this.presenceService.setIdle(clientId, channel, idle);
+                }
+                if (typeof mode === 'string') {
+                    this.presenceService.setMode(clientId, channel, mode);
                 }
             }
             this.awarenessCoalescer.bufferUpdate(clientId, channel, update);

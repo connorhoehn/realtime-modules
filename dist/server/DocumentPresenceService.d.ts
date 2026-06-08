@@ -10,11 +10,16 @@
  * surface (getClientData, broadcastToAll) is used. No logic changes.
  */
 import type { MessageRouterContract } from './stores/MessageRouterContract';
+type PresenceMode = 'editor' | 'reviewer' | 'reader';
 interface UserInfo {
     userId: string;
     displayName: string;
     color: string;
     idle: boolean;
+    /** Optional editor/reviewer/reader mode. When set, downstream
+     *  consumers (e.g. the /documents list page mode badge) render a
+     *  pencil / check / eye glyph. When absent, no badge renders. */
+    mode?: PresenceMode;
 }
 declare class DocumentPresenceService {
     private messageRouter;
@@ -66,6 +71,8 @@ declare class DocumentPresenceService {
     hasClient(clientId: string, channel: string): boolean;
     /**
      * Update a client's idle state in a channel. Returns true if changed.
+     * Broadcasts on change so the /documents list page idle dot updates
+     * live (previously this only updated in-memory state).
      *
      * @param clientId
      * @param channel
@@ -73,6 +80,18 @@ declare class DocumentPresenceService {
      * @returns whether the value changed
      */
     setIdle(clientId: string, channel: string, idle: boolean): boolean;
+    /**
+     * Update a client's mode (editor/reviewer/reader) in a channel.
+     * Returns true if changed. Broadcasts on change so the /documents
+     * list page mode badge updates live. Passing undefined or a
+     * non-enum string clears the mode for this client.
+     *
+     * @param clientId
+     * @param channel
+     * @param mode
+     * @returns whether the value changed
+     */
+    setMode(clientId: string, channel: string, mode: PresenceMode | undefined): boolean;
     /**
      * Return the raw presence map (for use in handleGetDocumentPresence).
      * @returns Map<string, Map<string, UserInfo>>

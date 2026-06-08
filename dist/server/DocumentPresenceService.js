@@ -67,11 +67,20 @@ class DocumentPresenceService {
         const ctx = clientData?.userContext || clientData?.metadata?.userContext || {};
         const userId = ctx.userId || ctx.sub || clientId;
         const color = ctx.color || (ctx.email ? deriveColor(ctx.email) : deriveColor(userId));
+        // mode is optional editor/reviewer/reader. Sourced from userContext
+        // when present (set by the auth pipeline or by a future awareness
+        // wiring). If the field carries any other string, drop it — consumers
+        // expect a closed enum or absent.
+        const VALID_MODES = ['editor', 'reviewer', 'reader'];
+        const mode = (typeof ctx.mode === 'string' && VALID_MODES.includes(ctx.mode))
+            ? ctx.mode
+            : undefined;
         const userInfo = {
             userId,
             displayName: ctx.displayName || ctx.email || clientId.slice(0, 8),
             color,
             idle: false,
+            ...(mode ? { mode } : {}),
         };
         // Add to documentPresenceMap
         if (!this.documentPresenceMap.has(channel)) {
@@ -164,6 +173,40 @@ class DocumentPresenceService {
         if (!userInfo || userInfo.idle === idle)
             return false;
         userInfo.idle = idle;
+        // Push the change to listening clients (the /documents list page
+        // would otherwise sit on a stale idle reading until the next
+        // join/leave event re-broadcasts).
+        this.broadcastPresence();
+        return true;
+    }
+    /**
+     * Update a client's mode (editor/reviewer/reader) in a channel.
+     * Returns true if changed. Broadcasts on change so the /documents
+     * list page mode badge updates live.
+     *
+     * @param clientId
+     * @param channel
+     * @param mode  'editor' | 'reviewer' | 'reader' | undefined to clear
+     * @returns whether the value changed
+     */
+    setMode(clientId, channel, mode) {
+        const VALID_MODES = ['editor', 'reviewer', 'reader'];
+        const next = (typeof mode === 'string' && VALID_MODES.includes(mode))
+            ? mode
+            : undefined;
+        const channelMap = this.documentPresenceMap.get(channel);
+        if (!channelMap)
+            return false;
+        const userInfo = channelMap.get(clientId);
+        if (!userInfo)
+            return false;
+        if (userInfo.mode === next)
+            return false;
+        if (next === undefined)
+            delete userInfo.mode;
+        else
+            userInfo.mode = next;
+        this.broadcastPresence();
         return true;
     }
     /**
