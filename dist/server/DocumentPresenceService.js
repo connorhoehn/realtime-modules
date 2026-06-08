@@ -11,6 +11,20 @@
  * parameter narrows to `MessageRouterContract`. Only the documented
  * surface (getClientData, broadcastToAll) is used. No logic changes.
  */
+const PRESENCE_PALETTE = [
+    '#e53e3e', '#dd6b20', '#d69e2e', '#38a169',
+    '#319795', '#3182ce', '#805ad5', '#d53f8c',
+    '#e53e3e', '#c05621', '#b7791f', '#276749',
+];
+function deriveColor(seed) {
+    // djb2 hash — same algorithm as frontend identityToColor()
+    let h = 5381;
+    for (let i = 0; i < seed.length; i++) {
+        h = ((h << 5) + h) ^ seed.charCodeAt(i);
+        h = h >>> 0; // keep uint32
+    }
+    return PRESENCE_PALETTE[h % PRESENCE_PALETTE.length];
+}
 class DocumentPresenceService {
     messageRouter;
     logger;
@@ -51,10 +65,12 @@ class DocumentPresenceService {
             ? this.messageRouter.getClientData(clientId)
             : null;
         const ctx = clientData?.userContext || clientData?.metadata?.userContext || {};
+        const userId = ctx.userId || ctx.sub || clientId;
+        const color = ctx.color || (ctx.email ? deriveColor(ctx.email) : deriveColor(userId));
         const userInfo = {
-            userId: ctx.userId || ctx.sub || clientId,
+            userId,
             displayName: ctx.displayName || ctx.email || clientId.slice(0, 8),
-            color: ctx.color || '#3b82f6',
+            color,
             idle: false,
         };
         // Add to documentPresenceMap
