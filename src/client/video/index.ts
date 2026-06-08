@@ -38,6 +38,13 @@ export {
 } from './useLVSHangout';
 
 export {
+  LVSHangoutSessionContext,
+  LVSHangoutSessionProvider,
+  useLVSHangoutShared,
+  type LVSHangoutSessionProviderProps,
+} from './useLVSHangoutShared';
+
+export {
   useLVSRecordings,
   type UseLVSRecordingsOptions,
   type UseLVSRecordingsResult,

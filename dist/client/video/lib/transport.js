@@ -153,6 +153,17 @@ async function whipPublish(opts) {
     };
 }
 async function whipTeardown(resourceUrl, authToken, fetchImpl) {
+    // Defensive guard: an empty resourceUrl resolves against
+    // `document.baseURI` and fires DELETE at the current page route
+    // (observed: `DELETE /previews 404`). Callers SHOULD already gate on
+    // `resourceUrl && authToken`, but missing-Location or aborted-POST
+    // paths have historically slipped through. Warn loudly so the next
+    // regression is visible in console.
+    if (!resourceUrl) {
+        // eslint-disable-next-line no-console
+        console.warn('[lvs:whipTeardown] skip — empty resourceUrl');
+        return;
+    }
     const f = fetchImpl ?? fetch;
     try {
         await f(resourceUrl, {
@@ -192,6 +203,14 @@ async function whepPublish(opts) {
     };
 }
 async function whepTeardown(resourceUrl, authToken, fetchImpl) {
+    // Defensive guard — see whipTeardown above for rationale. Same foot-gun:
+    // empty resourceUrl resolves against `document.baseURI` and DELETEs the
+    // current page route.
+    if (!resourceUrl) {
+        // eslint-disable-next-line no-console
+        console.warn('[lvs:whepTeardown] skip — empty resourceUrl');
+        return;
+    }
     const f = fetchImpl ?? fetch;
     try {
         await f(resourceUrl, {

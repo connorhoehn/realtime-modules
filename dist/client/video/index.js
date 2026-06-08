@@ -5,7 +5,7 @@
 // reach for the hooks first; transport helpers are surfaced for
 // advanced cases (custom retry, headless tests).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSRecordings = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
+exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
 var LVSProvider_1 = require("./LVSProvider");
 Object.defineProperty(exports, "LVSProvider", { enumerable: true, get: function () { return LVSProvider_1.LVSProvider; } });
 Object.defineProperty(exports, "useLVSContext", { enumerable: true, get: function () { return LVSProvider_1.useLVSContext; } });
@@ -15,6 +15,10 @@ var useLVSSubscriber_1 = require("./useLVSSubscriber");
 Object.defineProperty(exports, "useLVSSubscriber", { enumerable: true, get: function () { return useLVSSubscriber_1.useLVSSubscriber; } });
 var useLVSHangout_1 = require("./useLVSHangout");
 Object.defineProperty(exports, "useLVSHangout", { enumerable: true, get: function () { return useLVSHangout_1.useLVSHangout; } });
+var useLVSHangoutShared_1 = require("./useLVSHangoutShared");
+Object.defineProperty(exports, "LVSHangoutSessionContext", { enumerable: true, get: function () { return useLVSHangoutShared_1.LVSHangoutSessionContext; } });
+Object.defineProperty(exports, "LVSHangoutSessionProvider", { enumerable: true, get: function () { return useLVSHangoutShared_1.LVSHangoutSessionProvider; } });
+Object.defineProperty(exports, "useLVSHangoutShared", { enumerable: true, get: function () { return useLVSHangoutShared_1.useLVSHangoutShared; } });
 var useLVSRecordings_1 = require("./useLVSRecordings");
 Object.defineProperty(exports, "useLVSRecordings", { enumerable: true, get: function () { return useLVSRecordings_1.useLVSRecordings; } });
 var useLVSHlsPlayer_1 = require("./useLVSHlsPlayer");

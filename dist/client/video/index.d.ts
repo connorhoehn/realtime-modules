@@ -2,6 +2,7 @@ export { LVSProvider, useLVSContext, type LVSConfig, type LVSLog, type LogLevel,
 export { useLVSPublisher, type UseLVSPublisherOptions, type UseLVSPublisherResult, type LVSPublisherStats, type LVSPhase, } from './useLVSPublisher';
 export { useLVSSubscriber, type UseLVSSubscriberOptions, type UseLVSSubscriberResult, type LVSSubscriberStats, type LVSSubscriberPhase, } from './useLVSSubscriber';
 export { useLVSHangout, type UseLVSHangoutOptions, type UseLVSHangoutResult, type HangoutParticipant, type RemoteParticipant, type HangoutConnectionState, } from './useLVSHangout';
+export { LVSHangoutSessionContext, LVSHangoutSessionProvider, useLVSHangoutShared, type LVSHangoutSessionProviderProps, } from './useLVSHangoutShared';
 export { useLVSRecordings, type UseLVSRecordingsOptions, type UseLVSRecordingsResult, type LVSRecording, type LVSRecordingSegment, } from './useLVSRecordings';
 export { useLVSHlsPlayer, type UseLVSHlsPlayerOptions, type UseLVSHlsPlayerResult, } from './useLVSHlsPlayer';
 export { useLiveCaptions, type CaptionLine, type UseLiveCaptionsOptions, } from './useLiveCaptions';

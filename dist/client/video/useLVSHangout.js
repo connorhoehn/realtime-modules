@@ -387,8 +387,17 @@ function useLVSHangout(opts) {
                 entry.pc.close();
             }
             catch { /* ignore */ }
-            // Fire-and-forget DELETE — best effort.
-            void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
+            // Fire-and-forget DELETE — best effort. Guard against empty
+            // resourceUrl/authToken: the pending placeholder entry installed at
+            // line ~818 has `resourceUrl: ''` until the WHEP POST writes the real
+            // Location header. If cleanupPc fires while the POST is in flight
+            // (epoch supersede, producer.removed, unmount), `fetch('', ...)`
+            // resolves '' against `document.baseURI` → DELETE on the current
+            // page URL → 404 against a wrong route. The server-side cleanup is
+            // handled by the SFU's ICE-disconnect-grace path.
+            if (entry.resourceUrl && entry.authToken) {
+                void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
+            }
             remoteSubscribersRef.current.delete(fullPid);
             // Drop the per-PC connectionState snapshot so the aggregate doesn't
             // keep reporting 'reconnecting' for a PC that no longer exists.
@@ -607,6 +616,15 @@ function useLVSHangout(opts) {
             // openPcFor for the same pid from racing in.
             const flight = { epoch: myEpoch, cancelled: false };
             inFlightOpensRef.current.set(fullPid, flight);
+            // Combined liveness check — bail if the WS effect was torn down
+            // (cancelled), the in-flight was cancelled by cleanupPc (flight),
+            // OR producer.removed arrived during a TOCTOU window between
+            // scheduleRetry's guard at the timer-fire and the install above
+            // (knownProducersRef). The third condition is belt-and-suspenders
+            // for the "remote-peer black-screen" class: if knownProducers is
+            // already cleared by the time we reach an await, finishing the
+            // handshake would publish a PC for a peer the server says is gone.
+            const checkAlive = () => !flight.cancelled && !cancelled && knownProducersRef.current.has(fullPid);
             const bail = (pc, location, authToken) => {
                 if (pc) {
                     try {
@@ -639,12 +657,12 @@ function useLVSHangout(opts) {
             };
             try {
                 const authToken = await resolveAuthToken();
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(null, null, authToken);
                     return;
                 }
                 const ice = await (0, transport_1.fetchIceServers)(baseUrl);
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(null, null, authToken);
                     return;
                 }
@@ -876,17 +894,17 @@ function useLVSHangout(opts) {
                     }, { once: true });
                 });
                 const offer = await pc.createOffer();
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(pc, null, authToken);
                     return;
                 }
                 await pc.setLocalDescription(offer);
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(pc, null, authToken);
                     return;
                 }
                 await (0, sdp_1.waitForIceGather)(pc, 3000);
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(pc, null, authToken);
                     return;
                 }
@@ -904,12 +922,12 @@ function useLVSHangout(opts) {
                     excludeParticipantId: undefined,
                     baseUrl,
                 });
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(pc, location, authToken);
                     return;
                 }
                 await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-                if (flight.cancelled || cancelled) {
+                if (!checkAlive()) {
                     bail(pc, location, authToken);
                     return;
                 }
@@ -1659,7 +1677,10 @@ function useLVSHangout(opts) {
                 entry.pc.close();
             }
             catch { /* */ }
-            void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
+            // Guard empty resourceUrl — see comment in cleanupPc above.
+            if (entry.resourceUrl && entry.authToken) {
+                void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
+            }
             remoteSubscribersRef.current.delete(k);
         }
         const s = localStreamRef.current;

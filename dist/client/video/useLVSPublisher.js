@@ -219,6 +219,14 @@ function useLVSPublisher(opts) {
         reconnectAttemptsRef.current = { count: 0, windowStart: 0 };
         const resource = whipResourceRef.current;
         const token = authTokenRef.current;
+        // Null the refs synchronously, BEFORE the async whipTeardown. If we
+        // wait for teardownLocal() to null them (post-await), a concurrent
+        // unmount-cleanup effect (the publisher unmount path at the end of
+        // this hook) reads the still-set refs and fires a second DELETE
+        // against the same already-reaped transport. Both 404, both swallow,
+        // but the duplicate is unnecessary load + log spam.
+        whipResourceRef.current = null;
+        authTokenRef.current = null;
         if (resource && token) {
             // Best-effort DELETE; teardown happens regardless.
             await (0, transport_1.whipTeardown)(resource, token).catch(() => { });
