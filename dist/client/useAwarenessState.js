@@ -12,6 +12,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.useAwarenessState = useAwarenessState;
 const react_1 = require("react");
 const useIdleDetector_1 = require("./useIdleDetector");
+// Page hidden for less than this is treated as transient (DevTools, Alt-Tab,
+// system dialog) — only after a sustained hidden window do we flip idle=true.
+const HIDDEN_TO_IDLE_HOLDOFF_MS = 4000;
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -49,11 +52,58 @@ function useAwarenessState(provider, initial) {
         flush();
     }, [provider, initial.userId, initial.displayName, initial.color, initial.mode, flush]);
     // ---- Idle detection — auto-broadcast idle changes -------------------------
-    const { isIdle } = (0, useIdleDetector_1.useIdleDetector)();
+    // Two sources are OR'd together:
+    //   1. useIdleDetector — activity-timeout based (default 2min of no input)
+    //   2. document visibility — page hidden for HIDDEN_TO_IDLE_HOLDOFF_MS
+    //
+    // The hold-off on hidden→idle prevents spurious idle flips from transient
+    // focus loss (DevTools open, Alt-Tab, system dialog). visible→active is
+    // immediate. The visible→active flip also cancels any pending hold-off.
+    const { isIdle: detectorIdle } = (0, useIdleDetector_1.useIdleDetector)();
+    const visibilityIdleRef = (0, react_1.useRef)(false);
+    // Force re-render when visibility-derived idle flips, so the OR effect below
+    // runs and writes the new combined state. State is the trigger; the ref is
+    // the source of truth read by the effect (avoids stale closures).
+    const [visibilityTick, setVisibilityTick] = (0, react_1.useState)(0);
     (0, react_1.useEffect)(() => {
-        stateRef.current.idle = isIdle;
+        if (typeof document === 'undefined')
+            return;
+        let holdoffTimer = null;
+        const onVisibilityChange = () => {
+            if (document.hidden) {
+                if (holdoffTimer)
+                    clearTimeout(holdoffTimer);
+                holdoffTimer = setTimeout(() => {
+                    holdoffTimer = null;
+                    if (!visibilityIdleRef.current) {
+                        visibilityIdleRef.current = true;
+                        setVisibilityTick((t) => t + 1);
+                    }
+                }, HIDDEN_TO_IDLE_HOLDOFF_MS);
+            }
+            else {
+                if (holdoffTimer) {
+                    clearTimeout(holdoffTimer);
+                    holdoffTimer = null;
+                }
+                if (visibilityIdleRef.current) {
+                    visibilityIdleRef.current = false;
+                    setVisibilityTick((t) => t + 1);
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            if (holdoffTimer)
+                clearTimeout(holdoffTimer);
+        };
+    }, []);
+    (0, react_1.useEffect)(() => {
+        const combined = detectorIdle || visibilityIdleRef.current;
+        stateRef.current.idle = combined;
         flush();
-    }, [isIdle, flush]);
+    }, [detectorIdle, visibilityTick, flush]);
     // ---- Updaters (stable references via useCallback) -------------------------
     const updateSection = (0, react_1.useCallback)((sectionId) => {
         stateRef.current.currentSectionId = sectionId;

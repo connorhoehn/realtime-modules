@@ -6,7 +6,13 @@
 //
 // Wire protocol (outbound):
 //   { service: 'crdt', action: 'update',    channel, update: <base64> }
-//   { service: 'crdt', action: 'awareness', channel, update: <base64> }
+//   { service: 'crdt', action: 'awareness', channel, update: <base64>,
+//                                           mode?: 'editor'|'reviewer'|'reader',
+//                                           idle?: boolean }
+// `mode` and `idle` are extracted from awareness local state and forwarded
+// as top-level frame fields so the server can update DocumentPresenceService
+// without re-parsing the Y.js binary blob. CRDTService.handleAwareness
+// destructures both with `typeof` guards and silently no-ops when absent.
 //
 // Wire protocol (inbound — applied via applyRemoteUpdate / applySnapshot /
 // applyAwarenessUpdate by the orchestrating hook):
@@ -69,12 +75,21 @@ export class GatewayProvider extends Observable<string> {
       this._awarenessTimer = setTimeout(() => {
         const encoded = encodeAwarenessUpdate(this.awareness, [this.awareness.clientID]);
         const b64 = toBase64(encoded);
-        this._sendMessage({
+        // Pull `mode` and `idle` from the local awareness state so the gateway's
+        // DocumentPresenceService can update without decoding the Y.js binary.
+        const localUser = (this.awareness.getLocalState() as Record<string, unknown> | null)
+          ?.user as Record<string, unknown> | undefined;
+        const mode = typeof localUser?.mode === 'string' ? localUser.mode : undefined;
+        const idle = typeof localUser?.idle === 'boolean' ? localUser.idle : undefined;
+        const msg: Record<string, unknown> = {
           service: 'crdt',
           action: 'awareness',
           channel: this.channel,
           update: b64,
-        });
+        };
+        if (mode !== undefined) msg.mode = mode;
+        if (idle !== undefined) msg.idle = idle;
+        this._sendMessage(msg);
       }, 50); // 50ms debounce — max 20 awareness updates/second
     });
   }
