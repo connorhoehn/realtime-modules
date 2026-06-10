@@ -14,9 +14,11 @@
 //   { type: 'presence:updated', channel, client: PresenceEntry }
 //   { type: 'presence:left',    channel, clientId: string }
 //
-// Outbound frames:
-//   { service: 'presence', action: 'subscribe', channel }
-//   { service: 'presence', action: 'set',       channel, status, metadata? }
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.presence.subscribe / unsubscribe / set):
+//   { service: 'presence', action: 'subscribe',   channel }
+//   { service: 'presence', action: 'unsubscribe', channel }
+//   { service: 'presence', action: 'set',         channel, status, metadata? }
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.usePresence = usePresence;
 const react_1 = require("react");
@@ -78,16 +80,34 @@ function usePresence(channel) {
     (0, react_1.useEffect)(() => {
         rosterMapRef.current = new Map();
         setRoster([]);
-        send({ service: 'presence', action: 'subscribe', channel });
+        send({
+            service: 'presence',
+            action: 'subscribe',
+            channel,
+        });
         return () => {
-            send({ service: 'presence', action: 'unsubscribe', channel });
+            send({
+                service: 'presence',
+                action: 'unsubscribe',
+                channel,
+            });
         };
     }, [channel, send]);
     const setStatus = (0, react_1.useCallback)((status) => {
-        send({ service: 'presence', action: 'set', channel: channelRef.current, status });
+        send({
+            service: 'presence',
+            action: 'set',
+            channel: channelRef.current,
+            status,
+        });
     }, [send]);
     const updateMetadata = (0, react_1.useCallback)((meta) => {
-        send({ service: 'presence', action: 'set', channel: channelRef.current, metadata: meta });
+        send({
+            service: 'presence',
+            action: 'set',
+            channel: channelRef.current,
+            metadata: meta,
+        });
     }, [send]);
     return { roster, setStatus, updateMetadata };
 }

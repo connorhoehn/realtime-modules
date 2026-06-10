@@ -24,6 +24,9 @@ import { Observable } from 'lib0/observable';
 import * as Y from 'yjs';
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness';
 import { toBase64, fromBase64 } from 'lib0/buffer';
+// Type-only import — erased at build; the EC package stays a devDependency.
+// Canonical outbound declarations: client.crdt.update / client.crdt.awareness.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 export type SendMessage = (msg: Record<string, unknown>) => void;
 
@@ -55,7 +58,7 @@ export class GatewayProvider extends Observable<string> {
         action: 'update',
         channel: this.channel,
         update: b64,
-      });
+      } satisfies ClientFramePayload<'client.crdt.update'>);
     };
     this.doc.on('update', this._updateHandler);
 
@@ -81,6 +84,12 @@ export class GatewayProvider extends Observable<string> {
           ?.user as Record<string, unknown> | undefined;
         const mode = typeof localUser?.mode === 'string' ? localUser.mode : undefined;
         const idle = typeof localUser?.idle === 'boolean' ? localUser.idle : undefined;
+        // NOTE: canonical declaration is client.crdt.awareness, which narrows
+        // `mode` to 'editor'|'reviewer'|'reader'. The client API surface
+        // (useAwarenessState.updateMode) accepts any string, and this provider
+        // forwards it verbatim — narrowing here would be a wire change, so the
+        // frame stays Record-typed. Shape conformance is asserted in
+        // test/contract/contract-conformance.test.ts instead.
         const msg: Record<string, unknown> = {
           service: 'crdt',
           action: 'awareness',

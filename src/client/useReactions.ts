@@ -13,9 +13,11 @@
 //   { type: 'reaction:new',     channel, ...Reaction }
 //   { type: 'reaction:history', channel, reactions: Reaction[] }
 //
-// Outbound frames:
-//   { service: 'reaction', action: 'react',   channel, emoji, targetId?, metadata? }
-//   { service: 'reaction', action: 'history', channel, limit: number }
+// Outbound frames (canonical declaration: @connorhoehn/event-catalog
+// client-frames — client.reaction.react; this is the ONLY frame the hook
+// sends. There is no outbound reaction-history request frame — the
+// reaction:history inbound frame arrives without a client request):
+//   { service: 'reaction', action: 'react', channel, emoji, targetId?, metadata? }
 //
 // targetId support (v0.7.6):
 //   - useReactions(channel, { targetId }) — reactions is pre-filtered to that entity
@@ -30,6 +32,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { Reaction } from './types';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 const MAX_REACTIONS = 50;
 
@@ -106,7 +110,7 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
   const react = useCallback(
     (emoji: string, reactOpts?: ReactOpts) => {
       const resolvedTargetId = reactOpts?.targetId ?? targetIdRef.current;
-      const frame: Record<string, unknown> = {
+      const frame: ClientFramePayload<'client.reaction.react'> = {
         service: 'reaction',
         action: 'react',
         channel: channelRef.current,

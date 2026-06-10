@@ -148,7 +148,11 @@ function useCRDT(options) {
         // 5. Gateway pushes latest snapshot via 'crdt:snapshot' if one exists
         // 6. onMessage handler (line 64) applies snapshot to fresh Y.Doc
         // 7. Subsequent real-time crdt:update messages apply normally
-        sendMessage({ service: 'crdt', action: 'subscribe', channel: currentChannel });
+        sendMessage({
+            service: 'crdt',
+            action: 'subscribe',
+            channel: currentChannel,
+        });
         // Cleanup: unsubscribe when channel changes or unmounts
         return () => {
             sendMessageRef.current({

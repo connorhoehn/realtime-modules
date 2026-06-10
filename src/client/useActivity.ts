@@ -10,14 +10,18 @@
 //   { type: 'activity:event',   channel, ...ActivityEvent }
 //   { type: 'activity:history', channel, events: ActivityEvent[] }
 //
-// Outbound frames:
-//   { service: 'activity', action: 'subscribe', channel }
-//   { service: 'activity', action: 'history',   channel, limit: number }
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.activity.subscribe / unsubscribe / history):
+//   { service: 'activity', action: 'subscribe',   channel }
+//   { service: 'activity', action: 'unsubscribe', channel }
+//   { service: 'activity', action: 'history',     channel, limit: number }
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { ActivityEvent } from './types';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 const DEFAULT_HISTORY_LIMIT = 50;
 
@@ -60,15 +64,28 @@ export function useActivity(channel: string): UseActivityReturn {
   // Subscribe / unsubscribe when channel changes.
   useEffect(() => {
     setEvents([]);
-    send({ service: 'activity', action: 'subscribe', channel });
+    send({
+      service: 'activity',
+      action: 'subscribe',
+      channel,
+    } satisfies ClientFramePayload<'client.activity.subscribe'>);
     return () => {
-      send({ service: 'activity', action: 'unsubscribe', channel });
+      send({
+        service: 'activity',
+        action: 'unsubscribe',
+        channel,
+      } satisfies ClientFramePayload<'client.activity.unsubscribe'>);
     };
   }, [channel, send]);
 
   const loadHistory = useCallback(
     (limit: number = DEFAULT_HISTORY_LIMIT) => {
-      send({ service: 'activity', action: 'history', channel: channelRef.current, limit });
+      send({
+        service: 'activity',
+        action: 'history',
+        channel: channelRef.current,
+        limit,
+      } satisfies ClientFramePayload<'client.activity.history'>);
     },
     [send],
   );

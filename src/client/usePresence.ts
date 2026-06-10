@@ -13,14 +13,18 @@
 //   { type: 'presence:updated', channel, client: PresenceEntry }
 //   { type: 'presence:left',    channel, clientId: string }
 //
-// Outbound frames:
-//   { service: 'presence', action: 'subscribe', channel }
-//   { service: 'presence', action: 'set',       channel, status, metadata? }
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.presence.subscribe / unsubscribe / set):
+//   { service: 'presence', action: 'subscribe',   channel }
+//   { service: 'presence', action: 'unsubscribe', channel }
+//   { service: 'presence', action: 'set',         channel, status, metadata? }
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { PresenceEntry, PresenceStatus } from './types';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 export interface UsePresenceReturn {
   roster: PresenceEntry[];
@@ -95,22 +99,40 @@ export function usePresence(channel: string): UsePresenceReturn {
   useEffect(() => {
     rosterMapRef.current = new Map();
     setRoster([]);
-    send({ service: 'presence', action: 'subscribe', channel });
+    send({
+      service: 'presence',
+      action: 'subscribe',
+      channel,
+    } satisfies ClientFramePayload<'client.presence.subscribe'>);
     return () => {
-      send({ service: 'presence', action: 'unsubscribe', channel });
+      send({
+        service: 'presence',
+        action: 'unsubscribe',
+        channel,
+      } satisfies ClientFramePayload<'client.presence.unsubscribe'>);
     };
   }, [channel, send]);
 
   const setStatus = useCallback(
     (status: PresenceStatus) => {
-      send({ service: 'presence', action: 'set', channel: channelRef.current, status });
+      send({
+        service: 'presence',
+        action: 'set',
+        channel: channelRef.current,
+        status,
+      } satisfies ClientFramePayload<'client.presence.set'>);
     },
     [send],
   );
 
   const updateMetadata = useCallback(
     (meta: Record<string, unknown>) => {
-      send({ service: 'presence', action: 'set', channel: channelRef.current, metadata: meta });
+      send({
+        service: 'presence',
+        action: 'set',
+        channel: channelRef.current,
+        metadata: meta,
+      } satisfies ClientFramePayload<'client.presence.set'>);
     },
     [send],
   );

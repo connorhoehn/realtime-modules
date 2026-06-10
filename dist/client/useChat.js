@@ -14,7 +14,8 @@
 //   { type: 'chat:joined',   channel }         // subscribe ack — ignored
 //   { type: 'chat:error',    channel, error }  // ignored (surfaced at WS layer)
 //
-// Outbound frames:
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.chat.send / client.chat.history):
 //   { service: 'chat', action: 'send',      channel, message: string }
 //   { service: 'chat', action: 'history',   channel, limit: number }
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -58,10 +59,20 @@ function useChat(channel) {
         setMessages([]);
     }, [channel]);
     const sendMessage = (0, react_1.useCallback)((text) => {
-        send({ service: 'chat', action: 'send', channel: channelRef.current, message: text });
+        send({
+            service: 'chat',
+            action: 'send',
+            channel: channelRef.current,
+            message: text,
+        });
     }, [send]);
     const loadHistory = (0, react_1.useCallback)((limit = DEFAULT_HISTORY_LIMIT) => {
-        send({ service: 'chat', action: 'history', channel: channelRef.current, limit });
+        send({
+            service: 'chat',
+            action: 'history',
+            channel: channelRef.current,
+            limit,
+        });
     }, [send]);
     return { messages, sendMessage, loadHistory };
 }

@@ -16,7 +16,8 @@
 //   videohangout:ended        — session ended by host
 //   videohangout:error        — { error: string }
 //
-// Outbound frames:
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.videohangout.*):
 //   { service: 'videohangout', action: 'start',  channel, type?, metadata? }
 //   { service: 'videohangout', action: 'join',   channel, sessionId }
 //   { service: 'videohangout', action: 'leave',  channel, sessionId }
@@ -27,6 +28,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -247,7 +250,7 @@ export function useVideoHangout(channel: string): UseVideoHangoutResult {
           channel: channelRef.current,
           ...(opts?.type ? { type: opts.type } : {}),
           ...(opts?.metadata ? { metadata: opts.metadata } : {}),
-        });
+        } satisfies ClientFramePayload<'client.videohangout.start'>);
       });
     },
     [send],
@@ -262,7 +265,7 @@ export function useVideoHangout(channel: string): UseVideoHangoutResult {
           action: 'join',
           channel: channelRef.current,
           sessionId,
-        });
+        } satisfies ClientFramePayload<'client.videohangout.join'>);
       });
     },
     [send],
@@ -276,7 +279,7 @@ export function useVideoHangout(channel: string): UseVideoHangoutResult {
       action: 'leave',
       channel: channelRef.current,
       sessionId: sess.id,
-    });
+    } satisfies ClientFramePayload<'client.videohangout.leave'>);
     setSession(null);
     setParticipants([]);
     setJoinToken(null);
@@ -290,7 +293,7 @@ export function useVideoHangout(channel: string): UseVideoHangoutResult {
       action: 'end',
       channel: channelRef.current,
       sessionId: sess.id,
-    });
+    } satisfies ClientFramePayload<'client.videohangout.end'>);
     setSession(null);
     setParticipants([]);
     setJoinToken(null);
@@ -306,7 +309,7 @@ export function useVideoHangout(channel: string): UseVideoHangoutResult {
       channel: channelRef.current,
       sessionId: sess.id,
       videoOn: videoOnRef.current,
-    });
+    } satisfies ClientFramePayload<'client.videohangout.toggle-video'>);
   }, [send]);
 
   const toggleAudio = useCallback(() => {
@@ -319,7 +322,7 @@ export function useVideoHangout(channel: string): UseVideoHangoutResult {
       channel: channelRef.current,
       sessionId: sess.id,
       audioOn: audioOnRef.current,
-    });
+    } satisfies ClientFramePayload<'client.videohangout.toggle-audio'>);
   }, [send]);
 
   return {

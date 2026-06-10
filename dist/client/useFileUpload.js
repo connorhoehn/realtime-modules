@@ -24,7 +24,8 @@
 //   fileupload:failed    — server-side failure
 //   fileupload:cancelled — cancel acknowledged
 //
-// Outbound frames:
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.fileupload.request-upload / complete / cancel):
 //   { service: 'fileupload', action: 'request-upload', channel, id, filename, size, metadata? }
 //   { service: 'fileupload', action: 'complete',        channel, id }
 //   { service: 'fileupload', action: 'cancel',          channel, id }
@@ -226,7 +227,12 @@ function useFileUpload(channel) {
         }
         abortControllersRef.current.delete(id);
         // Notify gateway that the bytes are on the storage backend.
-        send({ service: 'fileupload', action: 'complete', channel: channelRef.current, id });
+        send({
+            service: 'fileupload',
+            action: 'complete',
+            channel: channelRef.current,
+            id,
+        });
         // Return current state snapshot — caller can observe further status changes
         // (scanning → clean/infected) via the uploads array.
         const snapshot = {
@@ -254,7 +260,12 @@ function useFileUpload(channel) {
             waiter.reject(new DOMException('Upload cancelled', 'AbortError'));
         }
         // Notify gateway.
-        send({ service: 'fileupload', action: 'cancel', channel: channelRef.current, id });
+        send({
+            service: 'fileupload',
+            action: 'cancel',
+            channel: channelRef.current,
+            id,
+        });
         patch(id, { status: 'failed', error: 'Cancelled' });
     }, [send, patch]);
     // ---- removeCompleted ------------------------------------------------------

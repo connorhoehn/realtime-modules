@@ -40,6 +40,8 @@ import type {
   GatewayMessage,
   UseWebSocketReturn,
 } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 // -----------------------------------------------------------------------
 // Public API
@@ -285,7 +287,11 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   const subscribe = useCallback(
     (channel: string) => {
       channelsRef.current.add(channel);
-      send({ service: 'subscribe', action: 'subscribe', channel });
+      send({
+        service: 'subscribe',
+        action: 'subscribe',
+        channel,
+      } satisfies ClientFramePayload<'client.subscribe.subscribe'>);
     },
     [send],
   );
@@ -293,7 +299,11 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   const unsubscribe = useCallback(
     (channel: string) => {
       channelsRef.current.delete(channel);
-      send({ service: 'subscribe', action: 'unsubscribe', channel });
+      send({
+        service: 'subscribe',
+        action: 'unsubscribe',
+        channel,
+      } satisfies ClientFramePayload<'client.subscribe.unsubscribe'>);
     },
     [send],
   );
@@ -399,7 +409,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
                 service: 'subscribe',
                 action: 'subscribe',
                 channel,
-              }));
+              } satisfies ClientFramePayload<'client.subscribe.subscribe'>));
             } catch {
               // swallow — close handler will pick it up
             }

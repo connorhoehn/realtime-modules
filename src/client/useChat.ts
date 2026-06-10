@@ -13,7 +13,8 @@
 //   { type: 'chat:joined',   channel }         // subscribe ack — ignored
 //   { type: 'chat:error',    channel, error }  // ignored (surfaced at WS layer)
 //
-// Outbound frames:
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.chat.send / client.chat.history):
 //   { service: 'chat', action: 'send',      channel, message: string }
 //   { service: 'chat', action: 'history',   channel, limit: number }
 
@@ -21,6 +22,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { ChatMessage } from './types';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 export interface UseChatReturn {
   messages: ChatMessage[];
@@ -70,14 +73,24 @@ export function useChat(channel: string): UseChatReturn {
 
   const sendMessage = useCallback(
     (text: string) => {
-      send({ service: 'chat', action: 'send', channel: channelRef.current, message: text });
+      send({
+        service: 'chat',
+        action: 'send',
+        channel: channelRef.current,
+        message: text,
+      } satisfies ClientFramePayload<'client.chat.send'>);
     },
     [send],
   );
 
   const loadHistory = useCallback(
     (limit: number = DEFAULT_HISTORY_LIMIT) => {
-      send({ service: 'chat', action: 'history', channel: channelRef.current, limit });
+      send({
+        service: 'chat',
+        action: 'history',
+        channel: channelRef.current,
+        limit,
+      } satisfies ClientFramePayload<'client.chat.history'>);
     },
     [send],
   );

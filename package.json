@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.12.10",
+  "version": "0.13.0",
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -102,13 +102,13 @@
     "build": "tsc",
     "test": "jest",
     "typecheck": "tsc --noEmit",
+    "check:contract": "tsc -p tsconfig.contract.json",
     "prepare": "test -f dist/index.js || npm run build",
     "prepublishOnly": "npm run build && npm test",
     "demo": "cd demo && npm run dev",
     "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
-    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#v0.3.48",
     "distributed-core": "github:connorhoehn/distributed-core#93e891f9d21a5ae3",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
@@ -210,6 +210,7 @@
     }
   },
   "devDependencies": {
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#19907ecc8da5a678eda256cefb459333bbb7e83d",
     "@testing-library/react": "^16.3.2",
     "@tiptap/extension-collaboration": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",

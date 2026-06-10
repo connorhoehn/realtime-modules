@@ -23,7 +23,8 @@
 //   fileupload:failed    — server-side failure
 //   fileupload:cancelled — cancel acknowledged
 //
-// Outbound frames:
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.fileupload.request-upload / complete / cancel):
 //   { service: 'fileupload', action: 'request-upload', channel, id, filename, size, metadata? }
 //   { service: 'fileupload', action: 'complete',        channel, id }
 //   { service: 'fileupload', action: 'cancel',          channel, id }
@@ -31,6 +32,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -251,7 +254,7 @@ export function useFileUpload(channel: string): UseFileUploadResult {
         filename: file.name,
         size: file.size,
         ...(opts?.metadata ? { metadata: opts.metadata } : {}),
-      });
+      } satisfies ClientFramePayload<'client.fileupload.request-upload'>);
 
       // Wait for the gateway to issue the presigned URL.
       const uploadUrl = await new Promise<string>((resolve, reject) => {
@@ -281,7 +284,12 @@ export function useFileUpload(channel: string): UseFileUploadResult {
       abortControllersRef.current.delete(id);
 
       // Notify gateway that the bytes are on the storage backend.
-      send({ service: 'fileupload', action: 'complete', channel: channelRef.current, id });
+      send({
+        service: 'fileupload',
+        action: 'complete',
+        channel: channelRef.current,
+        id,
+      } satisfies ClientFramePayload<'client.fileupload.complete'>);
 
       // Return current state snapshot — caller can observe further status changes
       // (scanning → clean/infected) via the uploads array.
@@ -315,7 +323,12 @@ export function useFileUpload(channel: string): UseFileUploadResult {
         waiter.reject(new DOMException('Upload cancelled', 'AbortError'));
       }
       // Notify gateway.
-      send({ service: 'fileupload', action: 'cancel', channel: channelRef.current, id });
+      send({
+        service: 'fileupload',
+        action: 'cancel',
+        channel: channelRef.current,
+        id,
+      } satisfies ClientFramePayload<'client.fileupload.cancel'>);
       patch(id, { status: 'failed', error: 'Cancelled' });
     },
     [send, patch],

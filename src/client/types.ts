@@ -50,6 +50,13 @@ export interface UseWebSocketReturn {
 // source tree. The four feature hooks below (useChat, usePresence,
 // useReactions, useActivity) consume these shapes verbatim from the
 // gateway's outbound WS frames.
+//
+// CONTRACT GUARD (Wave A3): the canonical declarations for these shapes
+// live in @connorhoehn/event-catalog's `client-frames` subpath. These local
+// definitions stay the public API (deliberately NOT aliased so the built
+// dist carries zero event-catalog references), and drift between the two is
+// caught at compile time by test/contract/contract-conformance.test.ts
+// (`npm run check:contract`, also type-checked on every `npm test`).
 // ---------------------------------------------------------------------------
 
 /** A persisted chat message — mirror of gateway/chat/types.ts ChatMessage. */

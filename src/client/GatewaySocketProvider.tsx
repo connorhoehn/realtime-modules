@@ -29,6 +29,8 @@ import React, {
 import { useWebSocket } from './useWebSocket';
 import type { UseWebSocketHookReturn } from './useWebSocket';
 import type { GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 // ---------------------------------------------------------------------------
 // FeatureName
@@ -194,7 +196,7 @@ export function GatewaySocketProvider({
         service: 'presence',
         action: 'subscribe',
         channel: currentChannel || undefined,
-      });
+      } satisfies ClientFramePayload<'client.presence.subscribe'>);
     }
 
     if (active.includes('chat')) {
@@ -203,7 +205,7 @@ export function GatewaySocketProvider({
         service: 'chat',
         action: 'subscribe',
         channel: currentChannel || undefined,
-      });
+      } satisfies ClientFramePayload<'client.chat.subscribe'>);
     }
     // 'cursor', 'reactions', 'activity', 'agent-streaming' — each feature
     // hook manages its own subscription lifecycle. The provider registers

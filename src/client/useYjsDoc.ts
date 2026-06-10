@@ -16,6 +16,8 @@ import { useState, useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { GatewayProvider } from './GatewayProvider';
 import type { UseWebSocketReturn, GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 export interface UseYjsDocOptions {
   documentId: string;
@@ -68,7 +70,11 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
 
     // Subscribe to the channel (retry until WS is open)
     const sendSubscribe = () => {
-      ws.sendMessage({ service: 'crdt', action: 'subscribe', channel });
+      ws.sendMessage({
+        service: 'crdt',
+        action: 'subscribe',
+        channel,
+      } satisfies ClientFramePayload<'client.crdt.subscribe'>);
     };
     sendSubscribe();
     const retryTimer = setTimeout(sendSubscribe, 500);
@@ -81,7 +87,11 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
       clearTimeout(retryTimer);
       clearTimeout(retryTimer2);
 
-      ws.sendMessage({ service: 'crdt', action: 'unsubscribe', channel });
+      ws.sendMessage({
+        service: 'crdt',
+        action: 'unsubscribe',
+        channel,
+      } satisfies ClientFramePayload<'client.crdt.unsubscribe'>);
 
       const curProvider = providerRef.current;
       const curDoc = ydocRef.current;
@@ -104,7 +114,11 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
   useEffect(() => {
     const unregister = onMessage((msg: GatewayMessage) => {
       if (msg.type === 'session') {
-        ws.sendMessage({ service: 'crdt', action: 'subscribe', channel });
+        ws.sendMessage({
+          service: 'crdt',
+          action: 'subscribe',
+          channel,
+        } satisfies ClientFramePayload<'client.crdt.subscribe'>);
       }
     });
     return unregister;

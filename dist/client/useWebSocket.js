@@ -160,11 +160,19 @@ function useWebSocket(opts) {
     const sendMessage = (0, react_1.useCallback)((msg) => send(msg), [send]);
     const subscribe = (0, react_1.useCallback)((channel) => {
         channelsRef.current.add(channel);
-        send({ service: 'subscribe', action: 'subscribe', channel });
+        send({
+            service: 'subscribe',
+            action: 'subscribe',
+            channel,
+        });
     }, [send]);
     const unsubscribe = (0, react_1.useCallback)((channel) => {
         channelsRef.current.delete(channel);
-        send({ service: 'subscribe', action: 'unsubscribe', channel });
+        send({
+            service: 'subscribe',
+            action: 'unsubscribe',
+            channel,
+        });
     }, [send]);
     const publish = (0, react_1.useCallback)((channel, frame) => {
         send({ ...frame, channel });

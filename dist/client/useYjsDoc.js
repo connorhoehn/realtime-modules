@@ -60,7 +60,11 @@ function useYjsDoc(options) {
         setDocVersion((v) => v + 1);
         // Subscribe to the channel (retry until WS is open)
         const sendSubscribe = () => {
-            ws.sendMessage({ service: 'crdt', action: 'subscribe', channel });
+            ws.sendMessage({
+                service: 'crdt',
+                action: 'subscribe',
+                channel,
+            });
         };
         sendSubscribe();
         const retryTimer = setTimeout(sendSubscribe, 500);
@@ -70,7 +74,11 @@ function useYjsDoc(options) {
         return () => {
             clearTimeout(retryTimer);
             clearTimeout(retryTimer2);
-            ws.sendMessage({ service: 'crdt', action: 'unsubscribe', channel });
+            ws.sendMessage({
+                service: 'crdt',
+                action: 'unsubscribe',
+                channel,
+            });
             const curProvider = providerRef.current;
             const curDoc = ydocRef.current;
             if (curProvider) {
@@ -90,7 +98,11 @@ function useYjsDoc(options) {
     (0, react_1.useEffect)(() => {
         const unregister = onMessage((msg) => {
             if (msg.type === 'session') {
-                ws.sendMessage({ service: 'crdt', action: 'subscribe', channel });
+                ws.sendMessage({
+                    service: 'crdt',
+                    action: 'subscribe',
+                    channel,
+                });
             }
         });
         return unregister;

@@ -14,9 +14,11 @@
 //   { type: 'reaction:new',     channel, ...Reaction }
 //   { type: 'reaction:history', channel, reactions: Reaction[] }
 //
-// Outbound frames:
-//   { service: 'reaction', action: 'react',   channel, emoji, targetId?, metadata? }
-//   { service: 'reaction', action: 'history', channel, limit: number }
+// Outbound frames (canonical declaration: @connorhoehn/event-catalog
+// client-frames — client.reaction.react; this is the ONLY frame the hook
+// sends. There is no outbound reaction-history request frame — the
+// reaction:history inbound frame arrives without a client request):
+//   { service: 'reaction', action: 'react', channel, emoji, targetId?, metadata? }
 //
 // targetId support (v0.7.6):
 //   - useReactions(channel, { targetId }) — reactions is pre-filtered to that entity

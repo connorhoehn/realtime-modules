@@ -11,9 +11,11 @@
 //   { type: 'activity:event',   channel, ...ActivityEvent }
 //   { type: 'activity:history', channel, events: ActivityEvent[] }
 //
-// Outbound frames:
-//   { service: 'activity', action: 'subscribe', channel }
-//   { service: 'activity', action: 'history',   channel, limit: number }
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.activity.subscribe / unsubscribe / history):
+//   { service: 'activity', action: 'subscribe',   channel }
+//   { service: 'activity', action: 'unsubscribe', channel }
+//   { service: 'activity', action: 'history',     channel, limit: number }
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useActivity = useActivity;
 const react_1 = require("react");
@@ -51,13 +53,26 @@ function useActivity(channel) {
     // Subscribe / unsubscribe when channel changes.
     (0, react_1.useEffect)(() => {
         setEvents([]);
-        send({ service: 'activity', action: 'subscribe', channel });
+        send({
+            service: 'activity',
+            action: 'subscribe',
+            channel,
+        });
         return () => {
-            send({ service: 'activity', action: 'unsubscribe', channel });
+            send({
+                service: 'activity',
+                action: 'unsubscribe',
+                channel,
+            });
         };
     }, [channel, send]);
     const loadHistory = (0, react_1.useCallback)((limit = DEFAULT_HISTORY_LIMIT) => {
-        send({ service: 'activity', action: 'history', channel: channelRef.current, limit });
+        send({
+            service: 'activity',
+            action: 'history',
+            channel: channelRef.current,
+            limit,
+        });
     }, [send]);
     return { events, loadHistory };
 }

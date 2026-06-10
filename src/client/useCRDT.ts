@@ -13,6 +13,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import * as Y from 'yjs';
 import { encodeStateAsUpdate, applyUpdate } from 'yjs';
 import type { ConnectionState, GatewayMessage } from './types';
+// Type-only import — erased at build; the EC package stays a devDependency.
+import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
 
 // Browser-compatible base64 helpers (no Node.js Buffer)
 function b64ToBytes(b64: string): Uint8Array {
@@ -152,7 +154,11 @@ export function useCRDT(options: UseCRDTOptions): UseCRDTReturn {
     // 5. Gateway pushes latest snapshot via 'crdt:snapshot' if one exists
     // 6. onMessage handler (line 64) applies snapshot to fresh Y.Doc
     // 7. Subsequent real-time crdt:update messages apply normally
-    sendMessage({ service: 'crdt', action: 'subscribe', channel: currentChannel });
+    sendMessage({
+      service: 'crdt',
+      action: 'subscribe',
+      channel: currentChannel,
+    } satisfies ClientFramePayload<'client.crdt.subscribe'>);
 
     // Cleanup: unsubscribe when channel changes or unmounts
     return () => {
@@ -160,7 +166,7 @@ export function useCRDT(options: UseCRDTOptions): UseCRDTReturn {
         service: 'crdt',
         action: 'unsubscribe',
         channel: currentChannel,
-      });
+      } satisfies ClientFramePayload<'client.crdt.unsubscribe'>);
       setContent('');
     };
   }, [currentChannel, connectionState]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -187,7 +193,7 @@ export function useCRDT(options: UseCRDTOptions): UseCRDTReturn {
       action: 'update',
       channel: currentChannelRef.current,
       update: b64,
-    });
+    } satisfies ClientFramePayload<'client.crdt.update'>);
   }, []);
   // All deps accessed via refs — stable callback that never causes re-renders
 

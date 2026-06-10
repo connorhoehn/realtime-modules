@@ -17,7 +17,8 @@
 //   videohangout:ended        — session ended by host
 //   videohangout:error        — { error: string }
 //
-// Outbound frames:
+// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// client-frames — client.videohangout.*):
 //   { service: 'videohangout', action: 'start',  channel, type?, metadata? }
 //   { service: 'videohangout', action: 'join',   channel, sessionId }
 //   { service: 'videohangout', action: 'leave',  channel, sessionId }

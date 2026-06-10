@@ -97,6 +97,12 @@ class GatewayProvider extends observable_1.Observable {
                     ?.user;
                 const mode = typeof localUser?.mode === 'string' ? localUser.mode : undefined;
                 const idle = typeof localUser?.idle === 'boolean' ? localUser.idle : undefined;
+                // NOTE: canonical declaration is client.crdt.awareness, which narrows
+                // `mode` to 'editor'|'reviewer'|'reader'. The client API surface
+                // (useAwarenessState.updateMode) accepts any string, and this provider
+                // forwards it verbatim — narrowing here would be a wire change, so the
+                // frame stays Record-typed. Shape conformance is asserted in
+                // test/contract/contract-conformance.test.ts instead.
                 const msg = {
                     service: 'crdt',
                     action: 'awareness',
