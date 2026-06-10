@@ -5,10 +5,17 @@
 //
 // Exercises the useReactions hook via a mock GatewayContext. Covers:
 //
-// Backward-compat (no targetId):
+// Gateway-real protocol (hub#1497):
+//   - subscribe on mount / unsubscribe+resubscribe on channel change
+//   - react() sends action 'send' (gateway verb; 'react' was never accepted)
+//   - { type: 'reaction', action: 'reaction_received', data } adds an entry
+//   - reaction_received is channel-filtered via data.channel
+//   - reaction acks (reaction_sent / reaction_subscribed) are ignored
+//
+// Legacy-fallback + filtering (no targetId):
 //   - Initial state: empty reactions list
-//   - reaction:new arrives: state updates
-//   - reaction:history arrives: replaces list
+//   - reaction:new arrives: state updates (legacy flat shape)
+//   - reaction:history arrives: replaces list (legacy flat shape)
 //   - react() sends correct outbound frame (no targetId field when not set)
 //   - MAX_REACTIONS trim (51st reaction drops oldest)
 //   - Channel change resets list
@@ -113,6 +120,12 @@ function makeReactionFrame(
     ...(overrides.targetId !== undefined ? { targetId: overrides.targetId } : {}),
     ...(overrides.metadata !== undefined ? { metadata: overrides.metadata } : {}),
   } as GatewayMessage;
+}
+
+/** Outbound reaction 'send' frames only (the hook also sends lifecycle
+ * subscribe/unsubscribe frames on mount/unmount/channel change). */
+function sentReactions(sent: Record<string, unknown>[]): Record<string, unknown>[] {
+  return sent.filter((f) => f.service === 'reaction' && f.action === 'send');
 }
 
 function makeHistoryFrame(channel: string, reactions: ReactionPayload[]): GatewayMessage {
@@ -247,15 +260,119 @@ describe('useReactions — backward compat', () => {
       result.current.react('\u{1F525}');
     });
 
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
+    const frames = sentReactions(sent);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({
       service: 'reaction',
-      action: 'react',
+      action: 'send',
       channel: 'ch-1',
       emoji: '\u{1F525}',
     });
-    expect(sent[0]).not.toHaveProperty('targetId');
-    expect(sent[0]).not.toHaveProperty('metadata');
+    expect(frames[0]).not.toHaveProperty('targetId');
+    expect(frames[0]).not.toHaveProperty('metadata');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — gateway-real protocol (hub#1497)
+// ---------------------------------------------------------------------------
+
+describe('useReactions — gateway-real protocol', () => {
+  it('subscribes to the channel on mount and unsubscribes on unmount', () => {
+    const { ctx, sent } = makeGatewayContext();
+    const { unmount } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    expect(sent[0]).toMatchObject({ service: 'reaction', action: 'subscribe', channel: 'ch-1' });
+
+    unmount();
+    expect(sent[sent.length - 1]).toMatchObject({
+      service: 'reaction',
+      action: 'unsubscribe',
+      channel: 'ch-1',
+    });
+  });
+
+  it('resubscribes when the channel changes', () => {
+    const { ctx, sent } = makeGatewayContext();
+    let channel = 'ch-1';
+    const { rerender } = renderHook(() => useReactions(channel), { wrapper: makeWrapper(ctx) });
+
+    channel = 'ch-2';
+    rerender();
+
+    const lifecycle = sent.filter((f) => f.action === 'subscribe' || f.action === 'unsubscribe');
+    expect(lifecycle).toEqual([
+      expect.objectContaining({ action: 'subscribe', channel: 'ch-1' }),
+      expect.objectContaining({ action: 'unsubscribe', channel: 'ch-1' }),
+      expect.objectContaining({ action: 'subscribe', channel: 'ch-2' }),
+    ]);
+  });
+
+  it('reaction_received envelope adds an entry (Reaction nested under data)', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    act(() => {
+      emit({
+        type: 'reaction',
+        action: 'reaction_received',
+        data: {
+          id: 'r-real',
+          clientId: 'client-2',
+          channel: 'ch-1',
+          emoji: '\u{1F525}',
+          effect: 'float',
+          timestamp: '2026-06-10T10:00:00.000Z',
+        },
+      } as GatewayMessage);
+    });
+
+    expect(result.current.reactions).toHaveLength(1);
+    expect(result.current.reactions[0]!.id).toBe('r-real');
+    expect(result.current.reactions[0]!.effect).toBe('float');
+  });
+
+  it('reaction_received is channel-filtered via data.channel', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    act(() => {
+      emit({
+        type: 'reaction',
+        action: 'reaction_received',
+        data: {
+          id: 'r-other',
+          clientId: 'client-2',
+          channel: 'ch-OTHER',
+          emoji: '\u{1F525}',
+          timestamp: '2026-06-10T10:00:00.000Z',
+        },
+      } as GatewayMessage);
+    });
+
+    expect(result.current.reactions).toHaveLength(0);
+  });
+
+  it('reaction acks (reaction_sent / reaction_subscribed) are ignored', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    act(() => {
+      emit({
+        type: 'reaction',
+        action: 'reaction_sent',
+        success: true,
+        data: { reactionId: 'r-1', emoji: '\u{1F525}', channel: 'ch-1' },
+      } as GatewayMessage);
+      emit({
+        type: 'reaction',
+        action: 'reaction_subscribed',
+        success: true,
+        data: { channel: 'ch-1' },
+      } as GatewayMessage);
+    });
+
+    expect(result.current.reactions).toHaveLength(0);
   });
 });
 
@@ -368,10 +485,11 @@ describe('useReactions — react() with targetId', () => {
       result.current.react('\u{1F44D}');
     });
 
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
+    const frames = sentReactions(sent);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({
       service: 'reaction',
-      action: 'react',
+      action: 'send',
       channel: 'ch-1',
       emoji: '\u{1F44D}',
       targetId: 'article-123',
@@ -389,7 +507,7 @@ describe('useReactions — react() with targetId', () => {
       result.current.react('\u{1F525}', { targetId: 'comment-456' });
     });
 
-    expect(sent[0]).toMatchObject({ targetId: 'comment-456' });
+    expect(sentReactions(sent)[0]).toMatchObject({ targetId: 'comment-456' });
   });
 
   it('react(emoji, { targetId }) with no hook-level targetId includes targetId', () => {
@@ -400,7 +518,7 @@ describe('useReactions — react() with targetId', () => {
       result.current.react('\u{1F525}', { targetId: 'msg-789' });
     });
 
-    expect(sent[0]).toMatchObject({ targetId: 'msg-789' });
+    expect(sentReactions(sent)[0]).toMatchObject({ targetId: 'msg-789' });
   });
 
   it('react(emoji, { metadata }) includes metadata in outbound frame', () => {
@@ -411,11 +529,11 @@ describe('useReactions — react() with targetId', () => {
       result.current.react('❤️', { metadata: { source: 'article-detail-page' } });
     });
 
-    expect(sent[0]).toMatchObject({
+    expect(sentReactions(sent)[0]).toMatchObject({
       emoji: '❤️',
       metadata: { source: 'article-detail-page' },
     });
-    expect(sent[0]).not.toHaveProperty('targetId');
+    expect(sentReactions(sent)[0]).not.toHaveProperty('targetId');
   });
 
   it('react() with both hook targetId and per-call metadata includes both', () => {
@@ -429,7 +547,7 @@ describe('useReactions — react() with targetId', () => {
       result.current.react('\u{1F44D}', { metadata: { position: 'header' } });
     });
 
-    expect(sent[0]).toMatchObject({
+    expect(sentReactions(sent)[0]).toMatchObject({
       targetId: 'article-123',
       metadata: { position: 'header' },
     });
@@ -443,7 +561,7 @@ describe('useReactions — react() with targetId', () => {
       result.current.react('\u{1F525}');
     });
 
-    expect(sent[0]).not.toHaveProperty('targetId');
+    expect(sentReactions(sent)[0]).not.toHaveProperty('targetId');
   });
 });
 

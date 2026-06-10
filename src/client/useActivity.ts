@@ -40,12 +40,10 @@
 // The gateway reads `channelId` (NOT `channel`) and the history verb is
 // 'getHistory' (NOT 'history'). The frames also carry the legacy `channel`
 // field for tolerance toward servers still reading the old shape — the
-// gateway ignores unknown fields. NOTE: event-catalog's client.activity.*
-// declarations still describe the pre-0.13.1 frames (`channel`, action
-// 'history'); the subscribe/unsubscribe `satisfies` annotations remain valid
-// (both fields are sent), but the getHistory frame intentionally diverges —
-// see test/contract/contract-conformance.test.ts §4 and hub#1492 for the
-// flagged EC-side fix.
+// gateway ignores unknown fields. event-catalog v0.3.56 now declares the
+// gateway-real frames (client.activity.subscribe / unsubscribe /
+// getHistory, all keyed on `channelId`), so every send-site carries a
+// `satisfies` annotation again (hub#1497 closed the hub#1492 divergence).
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
@@ -120,8 +118,8 @@ export function useActivity(channel: string): UseActivityReturn {
   }, [onMessage]);
 
   // Subscribe / unsubscribe when channel changes. The gateway reads
-  // `channelId`; `channel` is kept for legacy-server tolerance (and keeps
-  // the EC `satisfies` check live — EC still declares the legacy field).
+  // `channelId`; `channel` is kept for legacy-server tolerance (EC v0.3.56
+  // declares it as an optional deprecated field).
   useEffect(() => {
     setEvents([]);
     send({
@@ -143,17 +141,16 @@ export function useActivity(channel: string): UseActivityReturn {
   const loadHistory = useCallback(
     (limit: number = DEFAULT_HISTORY_LIMIT) => {
       // Gateway verb is 'getHistory' with `channelId` — the gateway rejects
-      // action 'history' with "Unknown activity action". This frame
-      // deliberately diverges from EC's stale client.activity.history
-      // declaration, so no `satisfies` here (hub#1492; divergence pinned in
-      // the contract-conformance test).
+      // action 'history' with "Unknown activity action". EC v0.3.56 now
+      // declares client.activity.getHistory (hub#1497 closed the hub#1492
+      // divergence), so the `satisfies` annotation is back.
       send({
         service: 'activity',
         action: 'getHistory',
         channel: channelRef.current,
         channelId: channelRef.current,
         limit,
-      });
+      } satisfies ClientFramePayload<'client.activity.getHistory'>);
     },
     [send],
   );

@@ -270,7 +270,9 @@ describe('useChannel — reactionsTargetId', () => {
       result.current.reactions!.react('🎉');
     });
 
-    const frame = sent.find((f) => f.service === 'reaction');
+    // The hook also sends a lifecycle subscribe frame on mount — the
+    // reaction itself goes out with the gateway-real 'send' verb (hub#1497).
+    const frame = sent.find((f) => f.service === 'reaction' && f.action === 'send');
     expect(frame).toBeDefined();
     expect(frame!.targetId).toBe('msg-42');
     expect(frame!.emoji).toBe('🎉');

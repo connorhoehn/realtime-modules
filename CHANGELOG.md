@@ -14,6 +14,85 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-10
+
+Protocol-correction release (hub#1497 Part 2): three client hooks now speak
+the **gateway-real WS verbs**, verified directly against the gateway's
+installed Chat/Presence/Reaction service implementations. The previously
+sent verbs were NEVER accepted by the gateway, so no working consumer
+depended on them — but the outbound wire changes are behavior changes,
+hence a minor bump.
+
+### Changed
+
+- **useChat speaks the real chat verbs `join | leave | send | history`.**
+  The chat service rejected `subscribe` ("Unknown chat action: subscribe")
+  and requires a prior `join` before `send` ("You must join the channel
+  before sending messages"). The hook now joins its channel on mount /
+  channel change and leaves on cleanup. `join` auto-pushes recent channel
+  history from the gateway, so no explicit history request is sent on join;
+  `loadHistory(limit?)` remains for explicit re-fetch and now omits `limit`
+  when not provided (gateway default applies — EC 0.3.56 corrected `limit`
+  to optional). Inbound: the hook now parses the gateway-real envelopes
+  `{ type: 'chat', action: 'message', message }` and `{ type: 'chat',
+  action: 'history', messages }` payload-first, with the legacy flat
+  `chat:message` / `chat:history` shapes kept as a fallback.
+- **useReactions sends the real reaction verb `send`.** The reaction
+  service rejected `react` ("Unknown reaction action: react"). The hook
+  also gains the subscribe/unsubscribe lifecycle (broadcasts are only
+  delivered to subscribed clients) and parses the gateway-real inbound
+  envelope `{ type: 'reaction', action: 'reaction_received', data }`
+  (channel-filtered via `data.channel`), with the legacy flat
+  `reaction:new` / `reaction:history` shapes kept as a fallback.
+- **usePresence presence/set is gateway-correct.** The presence service
+  REQUIRES `status` ("Status is required") and reads only `{ status,
+  metadata, channels }` — the previously sent top-level `channel` was
+  silently IGNORED (deprecated in the EC declaration). `setStatus` /
+  `updateMetadata` now send `channels: [channel]` (the real pinning
+  mechanism) instead of `channel`, and `updateMetadata` carries the
+  last-known status (default `'online'`) so metadata-only updates no
+  longer error. Because the service replaces the whole entry on every set,
+  the hook also carries accumulated metadata across `setStatus` calls.
+  Inbound: the hook parses the gateway-real envelopes
+  (`presence/subscribed` roster snapshot, `presence/set` own-ack,
+  `presence/update` broadcast filtered via `presence.channels`,
+  `presence/offline` departure) with the legacy flat
+  `presence:state/joined/updated/left` shapes kept as a fallback.
+- **GatewaySocketProvider feature auto-wiring fixed.** The `chat` feature
+  now emits a `join` frame (was the never-accepted `subscribe`), and both
+  presence subscribe + chat join are skipped when no channel is set — the
+  gateway rejects channel-less frames ("Channel is required" / "Channel
+  name is required"), so the old `channel: undefined` frames only produced
+  server errors.
+- **event-catalog devDependency re-pinned to v0.3.56** (`a61596a`), which
+  corrected the `client.*` declarations against gateway ground truth.
+  `useActivity.loadHistory` regained its `satisfies` annotation now that
+  `client.activity.getHistory` is declared (closes the hub#1492 EC-side
+  divergence).
+- **NO legacy dual-sends:** the old verbs were never accepted by the
+  gateway (the only server), so the hooks send only the corrected frames.
+
+### Added
+
+- `publishConfig.registry` → `https://npm.pkg.github.com` (publish-prep).
+- New jsdom suites `test/client/useChat.test.tsx` and
+  `test/client/usePresence.test.tsx` cover the join/leave + subscribe
+  lifecycles, status/metadata carry, both inbound envelope generations,
+  and ack-frame ignoring; `useReactions.test.tsx` extended with the
+  gateway-real protocol block.
+
+### Fixed
+
+- **Contract test tracks the corrected EC 0.3.56 contract.** Frame-name pin
+  renames (`client.chat.subscribe` → `client.chat.join`,
+  `client.reaction.react` → `client.reaction.send`,
+  `client.activity.history` → `client.activity.getHistory`); Local* shapes
+  updated to the gateway-real frames (presence.subscribe channel required,
+  presence.set status required + channels[], chat.history limit optional);
+  the `_actHistDiverges` divergence pin replaced by a direct `_actHist`
+  assertion; new `_presSetStatusRequired` regression pin; runtime section
+  uses `client.reaction.send`.
+
 ## [0.13.1] — 2026-06-10
 
 ### Fixed

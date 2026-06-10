@@ -18,9 +18,12 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 //     can reach send / subscribe / connectionState / etc. without prop-drilling.
 //   - FeaturesContext exposes FeatureName[] (empty when `features` not given).
 //   - When 'presence' is in features, GatewaySocketProvider auto-subscribes
-//     to presence events on connect (emits a presence:subscribe frame).
-//   - When 'chat' is in features, the provider subscribes to the chat
-//     service channel on connect.
+//     to presence events on connect (emits a presence/subscribe frame).
+//   - When 'chat' is in features, the provider joins the chat channel on
+//     connect (gateway-real verb is 'join' — hub#1497).
+//   - Both auto-wired frames REQUIRE a channel (the gateway rejects
+//     channel-less subscribe/join), so they are skipped when no channel
+//     prop / currentChannel is set — feature hooks handle their own wiring.
 //   - Additive: omitting `features` is identical to the prior behavior where
 //     the consumer wired subscriptions manually.
 const react_1 = require("react");
@@ -102,22 +105,28 @@ function GatewaySocketProvider({ url, children, features = [], token, channel, }
         if (connectionState !== 'connected')
             return;
         const active = featuresRef.current;
+        // Both auto-wired frames require a concrete channel — the gateway
+        // rejects channel-less presence subscribe ("Channel is required") and
+        // chat join ("Channel name is required"). Without a channel, leave the
+        // wiring to the feature hooks.
+        if (!currentChannel)
+            return;
         if (active.includes('presence')) {
-            // Notify the gateway that this client wants presence events.
-            // The gateway presence service accepts a subscribe action on the
-            // 'presence' service channel.
+            // Notify the gateway that this client wants presence events for the
+            // current channel.
             send({
                 service: 'presence',
                 action: 'subscribe',
-                channel: currentChannel || undefined,
+                channel: currentChannel,
             });
         }
         if (active.includes('chat')) {
-            // Subscribe to chat messages for the current channel.
+            // Join the chat channel (gateway-real verb — hub#1497). The gateway
+            // acks with chat/joined and auto-pushes recent history.
             send({
                 service: 'chat',
-                action: 'subscribe',
-                channel: currentChannel || undefined,
+                action: 'join',
+                channel: currentChannel,
             });
         }
         // 'cursor', 'reactions', 'activity', 'agent-streaming' — each feature

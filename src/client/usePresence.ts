@@ -7,17 +7,32 @@
 //   setStatus     — send a presence:set frame with the given status
 //   updateMetadata — merge metadata into the current presence entry
 //
-// Inbound frame shapes (gateway presence service):
-//   { type: 'presence:state',   channel, clients: PresenceEntry[] }
-//   { type: 'presence:joined',  channel, client: PresenceEntry }
-//   { type: 'presence:updated', channel, client: PresenceEntry }
-//   { type: 'presence:left',    channel, clientId: string }
+// WIRE CONTRACT (gateway-real, verified against the gateway's installed
+// PresenceService.handleAction — hub#1497): the presence verbs are
+// set | get | subscribe | unsubscribe | heartbeat. `subscribe` REQUIRES a
+// channel ("Channel is required"). `set` REQUIRES status ("Status is
+// required"; valid: online|away|busy|offline) and reads only
+// { status, metadata, channels } — a top-level `channel` field is IGNORED
+// (deprecated in the EC declaration); channel pinning uses the `channels`
+// array, so the hook maps its channel to channels: [channel]. The service
+// REPLACES the whole presence entry on every set, so the hook carries the
+// last-known status + metadata on both setStatus and updateMetadata.
+//
+// Inbound frame shapes (gateway PresenceService send-backs):
+//   { type: 'presence', action: 'subscribed', channel, presence: PresenceEntry[] }
+//   { type: 'presence', action: 'set',        presence: PresenceEntry }   // own ack
+//   { type: 'presence', action: 'update',     presence: PresenceEntry }   // broadcast
+//   { type: 'presence', action: 'offline',    clientId }                  // departure
+// (update/offline carry no top-level channel — scoping comes from the
+// presence:<channel> subscription; update is filtered via presence.channels.)
+// Legacy flat shapes (presence:state / presence:joined / presence:updated /
+// presence:left) are still parsed as a fallback for non-gateway servers.
 //
 // Outbound frames (canonical declarations: @connorhoehn/event-catalog
-// client-frames — client.presence.subscribe / unsubscribe / set):
+// client-frames v0.3.56 — client.presence.subscribe / unsubscribe / set):
 //   { service: 'presence', action: 'subscribe',   channel }
 //   { service: 'presence', action: 'unsubscribe', channel }
-//   { service: 'presence', action: 'set',         channel, status, metadata? }
+//   { service: 'presence', action: 'set', status, metadata?, channels? }
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
@@ -54,9 +69,52 @@ export function usePresence(channel: string): UsePresenceReturn {
   // Register inbound handler once.
   useEffect(() => {
     const unsubscribe = onMessage((msg: GatewayMessage) => {
-      if (msg.channel !== channelRef.current) return;
-
       const raw = msg as Record<string, unknown>;
+
+      // Gateway-real envelopes: { type: 'presence', action: ... }.
+      if (msg.type === 'presence') {
+        switch (msg.action) {
+          case 'subscribed': {
+            // Roster snapshot for the subscribed channel.
+            if (msg.channel !== channelRef.current) break;
+            const list = Array.isArray(raw.presence) ? (raw.presence as unknown[]) : [];
+            rosterMapRef.current = new Map(
+              list
+                .map(asPresenceEntry)
+                .filter(Boolean)
+                .map((e) => [e!.clientId, e!] as [string, PresenceEntry]),
+            );
+            flush();
+            break;
+          }
+          case 'set':
+          case 'update': {
+            // 'set' is the own-entry ack (broadcasts exclude the sender);
+            // 'update' is the channel broadcast. Neither carries a top-level
+            // channel — filter via the entry's pinned channels list.
+            const entry = asPresenceEntry(raw.presence);
+            if (entry && entry.channels.includes(channelRef.current)) {
+              rosterMapRef.current.set(entry.clientId, entry);
+              flush();
+            }
+            break;
+          }
+          case 'offline': {
+            const clientId = typeof raw.clientId === 'string' ? raw.clientId : null;
+            if (clientId) {
+              rosterMapRef.current.delete(clientId);
+              flush();
+            }
+            break;
+          }
+          default:
+            break;
+        }
+        return;
+      }
+
+      // Legacy flat shapes (non-gateway servers) — kept as a fallback.
+      if (msg.channel !== channelRef.current) return;
 
       switch (msg.type) {
         case 'presence:state': {
@@ -113,13 +171,21 @@ export function usePresence(channel: string): UsePresenceReturn {
     };
   }, [channel, send]);
 
+  // The gateway REPLACES the whole presence entry on every set, so carry
+  // the last-known status + metadata across setStatus / updateMetadata
+  // calls (status defaults to 'online' until the first setStatus).
+  const lastStatusRef = useRef<PresenceStatus>('online');
+  const lastMetadataRef = useRef<Record<string, unknown>>({});
+
   const setStatus = useCallback(
     (status: PresenceStatus) => {
+      lastStatusRef.current = status;
       send({
         service: 'presence',
         action: 'set',
-        channel: channelRef.current,
         status,
+        metadata: lastMetadataRef.current,
+        channels: [channelRef.current],
       } satisfies ClientFramePayload<'client.presence.set'>);
     },
     [send],
@@ -127,11 +193,15 @@ export function usePresence(channel: string): UsePresenceReturn {
 
   const updateMetadata = useCallback(
     (meta: Record<string, unknown>) => {
+      lastMetadataRef.current = { ...lastMetadataRef.current, ...meta };
       send({
         service: 'presence',
         action: 'set',
-        channel: channelRef.current,
-        metadata: meta,
+        // status is REQUIRED by the gateway ("Status is required") — carry
+        // the last-known value so metadata-only updates don't error.
+        status: lastStatusRef.current,
+        metadata: lastMetadataRef.current,
+        channels: [channelRef.current],
       } satisfies ClientFramePayload<'client.presence.set'>);
     },
     [send],

@@ -13,9 +13,12 @@ export interface GatewaySocketProviderProps {
      * hooks work without manual wiring. Order is irrelevant; duplicates are
      * ignored.
      *
-     * Currently auto-wired:
-     *   - 'presence' → emits presence:subscribe on connect
-     *   - 'chat'     → emits chat:subscribe on connect
+     * Currently auto-wired (requires `channel` to be set — the gateway
+     * rejects channel-less presence subscribe / chat join frames):
+     *   - 'presence' → emits a presence/subscribe frame on connect
+     *   - 'chat'     → emits a chat/join frame on connect (hub#1497: the
+     *                  gateway chat verb is 'join'; 'subscribe' was never
+     *                  accepted)
      *
      * All other names are stored in context for useFeatures() but require no
      * provider-level subscription (the feature hooks handle their own wiring).

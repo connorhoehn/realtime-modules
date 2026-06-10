@@ -5,18 +5,34 @@
 // Returns:
 //   messages    — accumulated ChatMessage[] for the channel (newest last)
 //   sendMessage — post a text message to the channel
-//   loadHistory — fetch prior messages via the gateway HTTP history endpoint
+//   loadHistory — explicitly re-request message history over the WS
 //
-// Inbound frame shapes (gateway chat service):
-//   { type: 'chat:message',  channel, ...ChatMessage }
-//   { type: 'chat:history',  channel, messages: ChatMessage[] }
-//   { type: 'chat:joined',   channel }         // subscribe ack — ignored
-//   { type: 'chat:error',    channel, error }  // ignored (surfaced at WS layer)
+// WIRE CONTRACT (gateway-real, verified against the gateway's installed
+// ChatService.handleAction — hub#1497): the chat verbs are
+// join | leave | send | history. The previously sent 'subscribe' was NEVER
+// accepted ("Unknown chat action: subscribe"), and `send` requires a prior
+// `join` on the channel ("You must join the channel before sending
+// messages"). The hook therefore joins its channel on mount / channel
+// change and leaves on cleanup. `join` auto-pushes recent channel history
+// (chat/history frame) when any exists, so no explicit history request is
+// sent on join — loadHistory remains for explicit re-fetch.
+//
+// Inbound frame shapes (gateway ChatService send-backs):
+//   { type: 'chat', action: 'message', channel, message: ChatMessage }
+//   { type: 'chat', action: 'history', channel, messages: ChatMessage[] }
+//   { type: 'chat', action: 'joined'|'left'|'sent', channel }  // acks — ignored
+// Legacy flat shapes ({ type: 'chat:message' } / { type: 'chat:history' })
+// are still parsed as a fallback for non-gateway servers.
 //
 // Outbound frames (canonical declarations: @connorhoehn/event-catalog
-// client-frames — client.chat.send / client.chat.history):
-//   { service: 'chat', action: 'send',      channel, message: string }
-//   { service: 'chat', action: 'history',   channel, limit: number }
+// client-frames v0.3.56 — client.chat.join / client.chat.send /
+// client.chat.history; `leave` is the verified gateway verb but has no EC
+// declaration yet, so its send-site carries no `satisfies` annotation):
+//   { service: 'chat', action: 'join',    channel }
+//   { service: 'chat', action: 'leave',   channel }
+//   { service: 'chat', action: 'send',    channel, message: string }
+//   { service: 'chat', action: 'history', channel, limit?: number }
+//     (limit omitted → gateway falls back to its configured default)
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
@@ -30,8 +46,6 @@ export interface UseChatReturn {
   sendMessage: (text: string) => void;
   loadHistory: (limit?: number) => void;
 }
-
-const DEFAULT_HISTORY_LIMIT = 50;
 
 export function useChat(channel: string): UseChatReturn {
   const { send, onMessage } = useGateway();
@@ -49,15 +63,34 @@ export function useChat(channel: string): UseChatReturn {
     const unsubscribe = onMessage((msg: GatewayMessage) => {
       if (msg.channel !== channelRef.current) return;
 
+      const raw = msg as Record<string, unknown>;
+
+      // Gateway-real envelopes: { type: 'chat', action: 'message'|'history' }.
+      if (msg.type === 'chat') {
+        if (msg.action === 'message') {
+          // Broadcast — the ChatMessage is nested under `message`.
+          const entry = asChatMessageRaw(raw.message);
+          if (entry) {
+            setMessages((prev) => [...prev, entry]);
+          }
+        } else if (msg.action === 'history') {
+          // History payload (explicit request OR auto-push on join) —
+          // replace current state with the ordered list.
+          const list = Array.isArray(raw.messages) ? (raw.messages as unknown[]) : [];
+          const parsed = list.map(asChatMessageRaw).filter(Boolean) as ChatMessage[];
+          setMessages(parsed);
+        }
+        // 'joined' / 'left' / 'sent' acks need no state change.
+        return;
+      }
+
+      // Legacy flat shapes (non-gateway servers) — kept as a fallback.
       if (msg.type === 'chat:message') {
-        // Single new message broadcast — append to tail.
         const entry = asChatMessage(msg);
         if (entry) {
           setMessages((prev) => [...prev, entry]);
         }
       } else if (msg.type === 'chat:history') {
-        // History payload — replace current state with the ordered list.
-        const raw = msg as Record<string, unknown>;
         const list = Array.isArray(raw.messages) ? (raw.messages as unknown[]) : [];
         const parsed = list.map(asChatMessageRaw).filter(Boolean) as ChatMessage[];
         setMessages(parsed);
@@ -66,10 +99,25 @@ export function useChat(channel: string): UseChatReturn {
     return unsubscribe;
   }, [onMessage]);
 
-  // Reset messages when channel changes.
+  // Join / leave the chat channel when it changes. The gateway requires a
+  // join before send, and the join auto-pushes recent history (arriving as
+  // a chat/history frame), so no explicit history request is needed here.
   useEffect(() => {
     setMessages([]);
-  }, [channel]);
+    send({
+      service: 'chat',
+      action: 'join',
+      channel,
+    } satisfies ClientFramePayload<'client.chat.join'>);
+    return () => {
+      // Gateway-verified leave verb — no EC declaration yet (hub#1497).
+      send({
+        service: 'chat',
+        action: 'leave',
+        channel,
+      });
+    };
+  }, [channel, send]);
 
   const sendMessage = useCallback(
     (text: string) => {
@@ -84,13 +132,16 @@ export function useChat(channel: string): UseChatReturn {
   );
 
   const loadHistory = useCallback(
-    (limit: number = DEFAULT_HISTORY_LIMIT) => {
-      send({
+    (limit?: number) => {
+      // limit is optional pass-through — when omitted the gateway falls
+      // back to its configured default history limit.
+      const frame: ClientFramePayload<'client.chat.history'> = {
         service: 'chat',
         action: 'history',
         channel: channelRef.current,
-        limit,
-      } satisfies ClientFramePayload<'client.chat.history'>);
+      };
+      if (limit !== undefined) frame.limit = limit;
+      send(frame);
     },
     [send],
   );

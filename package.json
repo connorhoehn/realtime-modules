@@ -1,6 +1,9 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.13.1",
+  "version": "0.14.0",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
@@ -210,7 +213,7 @@
     }
   },
   "devDependencies": {
-    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#19907ecc8da5a678eda256cefb459333bbb7e83d",
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#a61596a90c3931bbbe0f850f32231b43ef656de5",
     "@testing-library/react": "^16.3.2",
     "@tiptap/extension-collaboration": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",

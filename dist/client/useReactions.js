@@ -10,15 +10,28 @@
 //   reactionsFor   — utility: filter the full reaction list by targetId
 //                    without re-subscribing
 //
-// Inbound frame shapes (gateway reaction service):
-//   { type: 'reaction:new',     channel, ...Reaction }
-//   { type: 'reaction:history', channel, reactions: Reaction[] }
+// WIRE CONTRACT (gateway-real, verified against the gateway's installed
+// ReactionService.handleAction — hub#1497): the reaction verbs are
+// subscribe | unsubscribe | send | getAvailable. The previously sent
+// 'react' was NEVER accepted ("Unknown reaction action: react"). Broadcasts
+// are only delivered to clients that subscribed to the channel, so the hook
+// subscribes on mount / channel change and unsubscribes on cleanup.
+//
+// Inbound frame shapes (gateway ReactionService send-backs):
+//   { type: 'reaction', action: 'reaction_received', data: Reaction }
+//   { type: 'reaction', action: 'reaction_subscribed'|'reaction_sent'|...,
+//     success: true, data }                          // acks — ignored
+// Legacy flat shapes ({ type: 'reaction:new' } / { type: 'reaction:history' })
+// are still parsed as a fallback for non-gateway servers. The gateway sends
+// no reaction-history frame (reactions are ephemeral).
 //
 // Outbound frames (canonical declaration: @connorhoehn/event-catalog
-// client-frames — client.reaction.react; this is the ONLY frame the hook
-// sends. There is no outbound reaction-history request frame — the
-// reaction:history inbound frame arrives without a client request):
-//   { service: 'reaction', action: 'react', channel, emoji, targetId?, metadata? }
+// client-frames v0.3.56 — client.reaction.send; subscribe/unsubscribe are
+// the verified gateway verbs but have no EC declarations yet, so those
+// send-sites carry no `satisfies` annotations):
+//   { service: 'reaction', action: 'subscribe',   channel }
+//   { service: 'reaction', action: 'unsubscribe', channel }
+//   { service: 'reaction', action: 'send', channel, emoji, targetId?, metadata? }
 //
 // targetId support (v0.7.6):
 //   - useReactions(channel, { targetId }) — reactions is pre-filtered to that entity
@@ -50,6 +63,27 @@ function useReactions(channel, opts) {
     // Register inbound handler once.
     (0, react_1.useEffect)(() => {
         const unsubscribe = onMessage((msg) => {
+            // Gateway-real envelope: { type: 'reaction', action: 'reaction_received',
+            // data: Reaction }. The frame carries no top-level channel — the
+            // Reaction in `data` does, so channel-filter on that.
+            if (msg.type === 'reaction') {
+                if (msg.action === 'reaction_received') {
+                    const raw = msg;
+                    const entry = raw.data && typeof raw.data === 'object'
+                        ? asReaction(raw.data)
+                        : null;
+                    if (entry && entry.channel === channelRef.current) {
+                        setAllReactions((prev) => {
+                            const next = [...prev, entry];
+                            return next.length > MAX_REACTIONS ? next.slice(next.length - MAX_REACTIONS) : next;
+                        });
+                    }
+                }
+                // reaction_subscribed / reaction_sent / available_reactions acks —
+                // no state change needed.
+                return;
+            }
+            // Legacy flat shapes (non-gateway servers) — kept as a fallback.
             if (msg.channel !== channelRef.current)
                 return;
             if (msg.type === 'reaction:new') {
@@ -74,15 +108,29 @@ function useReactions(channel, opts) {
         });
         return unsubscribe;
     }, [onMessage]);
-    // Reset reactions when channel changes.
+    // Subscribe / unsubscribe when channel changes — the gateway only
+    // delivers reaction broadcasts to subscribed clients. The subscribe verb
+    // is gateway-verified; no EC declaration yet (hub#1497).
     (0, react_1.useEffect)(() => {
         setAllReactions([]);
-    }, [channel]);
+        send({
+            service: 'reaction',
+            action: 'subscribe',
+            channel,
+        });
+        return () => {
+            send({
+                service: 'reaction',
+                action: 'unsubscribe',
+                channel,
+            });
+        };
+    }, [channel, send]);
     const react = (0, react_1.useCallback)((emoji, reactOpts) => {
         const resolvedTargetId = reactOpts?.targetId ?? targetIdRef.current;
         const frame = {
             service: 'reaction',
-            action: 'react',
+            action: 'send',
             channel: channelRef.current,
             emoji,
         };
