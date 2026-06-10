@@ -159,15 +159,26 @@ type LocalReactionReact = {
 type _react = Assert<Equivalent<LocalReactionReact, RemoveIndex<ClientFramePayload<'client.reaction.react'>>>>;
 type _reactUnion = Assert<Extends<LocalReactionReact, ReactionOutboundFrame>>;
 
-// activity (useActivity)
-type LocalActivitySubscribe = { service: 'activity'; action: 'subscribe'; channel: string };
-type LocalActivityUnsubscribe = { service: 'activity'; action: 'unsubscribe'; channel: string };
-type LocalActivityHistory = { service: 'activity'; action: 'history'; channel: string; limit: number };
-type _actSub = Assert<Equivalent<LocalActivitySubscribe, RemoveIndex<ClientFramePayload<'client.activity.subscribe'>>>>;
-type _actUnsub = Assert<Equivalent<LocalActivityUnsubscribe, RemoveIndex<ClientFramePayload<'client.activity.unsubscribe'>>>>;
-type _actHist = Assert<Equivalent<LocalActivityHistory, RemoveIndex<ClientFramePayload<'client.activity.history'>>>>;
+// activity (useActivity) — as of 0.13.1 the hook sends the GATEWAY-real
+// frames (hub#1492): the gateway's ActivityService reads `channelId` (not
+// `channel`) and the history verb is 'getHistory' (not 'history'). The
+// frames still carry the legacy `channel` field for old-server tolerance,
+// which keeps subscribe/unsubscribe assignable to EC's (stale) declarations.
+// The history frame's action diverges from EC by necessity — pinned as a
+// KNOWN divergence below (see note d) so an EC-side fix flips it loudly.
+type LocalActivitySubscribe = { service: 'activity'; action: 'subscribe'; channel: string; channelId: string };
+type LocalActivityUnsubscribe = { service: 'activity'; action: 'unsubscribe'; channel: string; channelId: string };
+type LocalActivityHistory = { service: 'activity'; action: 'getHistory'; channel: string; channelId: string; limit: number };
+type _actSub = Assert<Extends<LocalActivitySubscribe, ClientFramePayload<'client.activity.subscribe'>>>;
+type _actUnsub = Assert<Extends<LocalActivityUnsubscribe, ClientFramePayload<'client.activity.unsubscribe'>>>;
+// Divergence pin: the gateway-real getHistory frame must NOT satisfy EC's
+// client.activity.history (action 'history'). If EC adopts 'getHistory',
+// this flips and forces the satisfies annotation back into useActivity.
+type _actHistDiverges = Assert<
+  Equivalent<Extends<LocalActivityHistory, ClientFramePayload<'client.activity.history'>>, false>
+>;
 type _actUnion = Assert<
-  Extends<LocalActivitySubscribe | LocalActivityUnsubscribe | LocalActivityHistory, ActivityOutboundFrame>
+  Extends<LocalActivitySubscribe | LocalActivityUnsubscribe, ActivityOutboundFrame>
 >;
 
 // crdt (useCRDT / useYjsDoc / GatewayProvider)
@@ -335,16 +346,18 @@ type _featureFlag = Assert<Equivalent<LocalFeatureFlagPayload, RemoveIndex<Event
 // 4. Known divergences (documented, deliberately NOT "fixed" in Wave A3 —
 // each fix would be a runtime behavior change, not a doc/type correction).
 //
-// a) useActivity inbound envelope. The hook parses
-//      { type: 'activity:event', channel, ...ActivityEvent }   (flat)
-//      { type: 'activity:history', channel, events: [...] }
-//    but EC ground truth (matching the gateway's lifted ActivityService) is
+// a) useActivity inbound envelope — RESOLVED in 0.13.1 (hub#1492). The hook
+//    now parses the gateway-real envelopes
 //      { type: 'activity:event', payload: { eventType, detail, ... } }
 //      { type: 'activity', action: 'history', events, channelId }
-//    and the activity:event broadcast carries NO channel field. The
-//    ActivityEvent FIELD shape itself matches EC (asserted below); only the
-//    envelope diverges. Reconciling the hook is a parser behavior change —
-//    flagged for a follow-up wave, see the A3 session report.
+//    payload-first, with the old flat shapes
+//      { type: 'activity:event', channel, ...ActivityEvent }
+//      { type: 'activity:history', channel, events: [...] }
+//    kept as a legacy fallback. Live activity:event frames carry NO channel
+//    field (single global 'activity:broadcast' channel; the gateway scopes
+//    delivery via the channel subscription), so the hook accepts every
+//    activity:event on the socket and only channel-filters legacy flat
+//    frames + history responses (channelId).
 //
 // b) useChat / useReactions inbound envelopes (chat:message / chat:history /
 //    reaction:new / reaction:history, all flat) have NO hook-contract EC
@@ -356,6 +369,15 @@ type _featureFlag = Assert<Equivalent<LocalFeatureFlagPayload, RemoveIndex<Event
 //
 // c) usePresence's presence:state / presence:updated inbound frames are not
 //    yet declared in EC (only presence:joined / presence:left were added).
+//
+// d) EC's OUTBOUND client.activity.* declarations are stale vs the gateway
+//    (hub#1492): the gateway's ActivityService.handleAction reads
+//    `channelId` (not `channel`) and the history verb is 'getHistory' (not
+//    'history'). useActivity sends the gateway-real frames as of 0.13.1
+//    (dual channel+channelId fields for legacy tolerance), so subscribe/
+//    unsubscribe still satisfy EC, but the getHistory frame cannot — the
+//    `_actHistDiverges` pin in §2 asserts the NON-assignability and flips
+//    when EC adopts the real verb.
 // ---------------------------------------------------------------------------
 
 // ActivityEvent field shape vs EC's ws.activity.event payload (post-parse →

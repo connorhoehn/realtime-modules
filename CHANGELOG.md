@@ -14,6 +14,45 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-06-10
+
+### Fixed
+
+- **useActivity parses the REAL gateway envelopes (hub#1492).** The hook
+  previously parsed flat `{ type: 'activity:event', channel, ...fields }` /
+  `{ type: 'activity:history', channel, events }` frames, but the gateway's
+  ActivityService actually emits:
+  - live: `{ type: 'activity:event', payload: { eventType, detail,
+    timestamp, userId, displayName } }` — payload-wrapped, **no channel
+    field** on the envelope or payload;
+  - history: `{ type: 'activity', action: 'history', events, channelId,
+    timestamp }`.
+  The hook now parses payload-first with the old flat shapes kept as a
+  legacy fallback (old/other servers keep working mid-migration).
+  Channel-filtering decision: the gateway broadcasts every live activity
+  event to the single global `activity:broadcast` channel and scopes
+  delivery via that subscription (`sendToChannel`), so live frames are
+  accepted unfiltered; history responses are filtered by `channelId`
+  (legacy `channel` honoured), and legacy flat live frames keep their
+  channel filter.
+- **useActivity outbound frames now match what the gateway accepts.** The
+  gateway's `ActivityService.handleAction` reads `channelId` (the previous
+  `channel`-only frames were rejected with "channelId is required") and the
+  history verb is `getHistory` (`history` was rejected with "Unknown
+  activity action"). subscribe/unsubscribe/getHistory now send `channelId`
+  (plus the legacy `channel` field for old-server tolerance);
+  `loadHistory()` sends `action: 'getHistory'`. Note: history is an
+  explicit `getHistory` request — the gateway does NOT auto-send history on
+  subscribe.
+- **Contract test updated.** §2 activity block asserts the gateway-real
+  frames; the `getHistory` divergence from event-catalog's stale
+  `client.activity.history` declaration (action `'history'`) is pinned via
+  `_actHistDiverges` so an EC-side fix flips it loudly; divergence note (a)
+  marked resolved, new note (d) flags the stale EC outbound declarations.
+- New jsdom suite `test/client/useActivity.test.tsx` covers both envelope
+  generations (real payload-wrapped + legacy flat), history filtering,
+  ack-frame ignoring, and the outbound frame shapes.
+
 ## [0.13.0] — 2026-06-10
 
 ### Added
