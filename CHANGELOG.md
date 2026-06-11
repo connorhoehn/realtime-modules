@@ -14,6 +14,34 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-06-10
+
+Contract-adoption patch: adopt event-catalog v0.3.57, which backfills the
+gateway-verified verbs flagged by this library's 0.14.0 contract test
+(divergence notes c + the §2 "no EC declaration yet" carve-outs). No wire
+behavior changes — the hooks already sent these frames; they are now
+type-pinned against the canonical declarations.
+
+### Changed
+
+- **event-catalog devDependency** re-pinned to v0.3.57
+  (`6bc9e09805d732cffa05006588383732538986d4`), which declares
+  `client.chat.leave`, `client.reaction.subscribe`,
+  `client.reaction.unsubscribe`, `client.reaction.getAvailable`,
+  `client.presence.get` and `client.presence.heartbeat`.
+- **useChat** — the cleanup `leave` send-site now carries
+  `satisfies ClientFramePayload<'client.chat.leave'>` like its siblings.
+- **useReactions** — the mount/cleanup `subscribe` / `unsubscribe`
+  send-sites now carry their `satisfies ClientFramePayload<...>`
+  annotations.
+- **contract test** — divergence note (c) resolved; the outbound
+  frame-name pin covers all 31 EC declarations, and §2 directly asserts
+  chat.leave, reaction.subscribe/unsubscribe/getAvailable and
+  presence.get/heartbeat (the latter three have no hook send-site today
+  and are asserted against the EC shapes only). Divergence note (b)
+  (inbound send-back envelope declarations) remains open — the 0.3.57
+  backfill is outbound-only.
+
 ## [0.14.0] — 2026-06-10
 
 Protocol-correction release (hub#1497 Part 2): three client hooks now speak

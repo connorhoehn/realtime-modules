@@ -110,12 +110,11 @@ export function useChat(channel: string): UseChatReturn {
       channel,
     } satisfies ClientFramePayload<'client.chat.join'>);
     return () => {
-      // Gateway-verified leave verb — no EC declaration yet (hub#1497).
       send({
         service: 'chat',
         action: 'leave',
         channel,
-      });
+      } satisfies ClientFramePayload<'client.chat.leave'>);
     };
   }, [channel, send]);
 

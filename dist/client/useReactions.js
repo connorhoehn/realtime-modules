@@ -109,8 +109,7 @@ function useReactions(channel, opts) {
         return unsubscribe;
     }, [onMessage]);
     // Subscribe / unsubscribe when channel changes — the gateway only
-    // delivers reaction broadcasts to subscribed clients. The subscribe verb
-    // is gateway-verified; no EC declaration yet (hub#1497).
+    // delivers reaction broadcasts to subscribed clients.
     (0, react_1.useEffect)(() => {
         setAllReactions([]);
         send({

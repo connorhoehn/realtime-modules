@@ -98,7 +98,6 @@ function useChat(channel) {
             channel,
         });
         return () => {
-            // Gateway-verified leave verb — no EC declaration yet (hub#1497).
             send({
                 service: 'chat',
                 action: 'leave',
