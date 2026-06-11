@@ -14,6 +14,40 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-11
+
+Fix two `ChatService` wire-authz gaps found during the M3 kind validation
+(gateway commit `b6ecc59b`).
+
+### Fixed
+
+- **Gap #9 (serious) — chat sends bypassed publisher authz.**
+  `handleSendMessage` broadcasts via `messageRouter.sendToChannel` *without*
+  `excludeClientId` so the sender receives their own message (sender-echo).
+  The gateway router's publisher-authz check (control-plane CRD publisher
+  role restrictions → `AUTHZ_CHANNEL_DENIED`) was gated on `excludeClientId`,
+  so ChatRoom/RealtimeChannel CRD publisher restrictions were **never enforced
+  for chat messages**. `ChatService` now passes the sender as an explicit
+  `publisherClientId` option (`broadcastMessage(channel, data, publisherClientId)`
+  → `sendToChannel(channel, msg, null, { publisherClientId })`), decoupling the
+  AUTHZ subject from ECHO control. Echo behaviour is unchanged. Requires a
+  gateway router that honours `opts.publisherClientId` (gateway re-pinned to
+  match); older routers ignore the extra option harmlessly.
+- **Gap #10 — `handleJoinChannel` ignored subscribe denial.** It called
+  `subscribeToChannel`, discarded the `false` return, then acked
+  `{ type:'chat', action:'joined' }` and registered a local subscription even
+  when the router denied the subscribe (and had already emitted
+  `AUTHZ_CHANNEL_DENIED`). On a `false` return it now sends no joined ack and
+  registers no local subscription; `void`/`true` still means subscribed
+  (back-compat with routers that don't return a boolean).
+
+### Notes
+
+- `ChatMessageRouter.sendToChannel` / `subscribeToChannel` type surfaces
+  widened (optional `excludeClientId` + `opts.publisherClientId`; subscribe
+  may return `boolean | void`).
+- Unit coverage: `test/chat/ChatService.authz.test.ts`.
+
 ## [0.15.0] — 2026-06-11
 
 Connection-semantics change (EKS discovery finding #9, verified on a real

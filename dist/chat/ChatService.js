@@ -182,8 +182,20 @@ class ChatService {
             if (!this.authz(clientId, channel, this)) {
                 return;
             }
+            // M3 gap #10: respect the router's subscribe authz decision.
+            // subscribeToChannel returns `false` when operator-pushed channel
+            // config (RealtimeChannel/ChatRoom CRD) denies the subscribe — it
+            // has ALREADY emitted AUTHZ_CHANNEL_DENIED to the client. Previously
+            // we ignored that return, registered a local subscription anyway,
+            // and acked `{type:'chat',action:'joined'}` — telling the client it
+            // had joined a channel the gateway refused. On denial: register no
+            // local subscription, send no joined ack, skip history.
             if (this.isDistributed && this.messageRouter.subscribeToChannel) {
-                await this.messageRouter.subscribeToChannel(clientId, channel);
+                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel);
+                if (subscribed === false) {
+                    this.logger.info(`Client ${clientId} subscribe to chat channel ${channel} denied by router authz`);
+                    return;
+                }
             }
             this.clientChannels.addSubscription(clientId, channel);
             this.sendToClient(clientId, {
@@ -249,7 +261,13 @@ class ChatService {
             // Store in local cache + persist (fire-and-forget)
             this.addToChannelHistory(channel, messageData);
             this._persistMessage(messageData).catch((err) => this.logger.error('Failed to persist chat message:', err && err.message));
-            await this.broadcastMessage(channel, messageData);
+            // M3 gap #9: pass the sender as the publisher identity so the
+            // router can enforce ChatRoom/RealtimeChannel CRD publisher authz.
+            // We intentionally do NOT set excludeClientId — the sender must
+            // receive their own message (sender-echo; the swarm chat
+            // verification depends on it). Decoupling authz subject from echo
+            // is what makes both work at once.
+            await this.broadcastMessage(channel, messageData, clientId);
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'sent',
@@ -340,7 +358,7 @@ class ChatService {
             return [];
         }
     }
-    async broadcastMessage(channel, messageData) {
+    async broadcastMessage(channel, messageData, publisherClientId) {
         const broadcastMessage = {
             type: 'chat',
             action: 'message',
@@ -349,7 +367,16 @@ class ChatService {
             timestamp: new Date().toISOString(),
         };
         const redisAvailable = this.messageRouter.redisAvailable !== false;
-        await this.messageRouter.sendToChannel(channel, broadcastMessage);
+        // M3 gap #9: name the publisher so the router enforces CRD publisher
+        // authz. excludeClientId stays null → the sender still gets the echo.
+        // Older routers (sendToChannel arity < 4) ignore the extra arg
+        // harmlessly; new routers run AUTHZ whenever publisherClientId is set.
+        if (publisherClientId != null) {
+            await this.messageRouter.sendToChannel(channel, broadcastMessage, null, { publisherClientId });
+        }
+        else {
+            await this.messageRouter.sendToChannel(channel, broadcastMessage);
+        }
         if (!redisAvailable) {
             this.logger.debug(`Redis unavailable, message delivered to local clients only`);
         }

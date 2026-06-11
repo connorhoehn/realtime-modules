@@ -10,8 +10,23 @@ export interface ChatLogger {
 }
 export interface ChatMessageRouter {
     sendToClient(clientId: string, message: any): void;
-    sendToChannel(channel: string, message: any): Promise<void> | void;
-    subscribeToChannel?(clientId: string, channel: string): Promise<void> | void;
+    /**
+     * Publish to a channel. `opts.publisherClientId` (M3 gap #9) names the
+     * AUTHZ subject independently of `excludeClientId` (echo control), so the
+     * router enforces CRD publisher restrictions even when the sender is NOT
+     * excluded (sender-echo). Optional for back-compat with older routers.
+     */
+    sendToChannel(channel: string, message: any, excludeClientId?: string | null, opts?: {
+        skipCoalesce?: boolean;
+        publisherClientId?: string | null;
+    }): Promise<void> | void;
+    /**
+     * Subscribe a client to a channel. Returns `false` when operator-pushed
+     * channel config denies the subscribe (the router has already emitted
+     * AUTHZ_CHANNEL_DENIED). `void`/`true` ⇒ subscribed. handleJoinChannel
+     * (M3 gap #10) honours a `false` return: no joined ack, no local sub.
+     */
+    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     getClientData?(clientId: string): any;
     /** Optional flag — when explicitly `false`, broadcast warns about Redis. */
@@ -85,7 +100,7 @@ export declare class ChatService {
     sendChannelHistory(clientId: string, channel: string): Promise<void>;
     _persistMessage(messageData: ChatMessage): Promise<void>;
     _loadHistoryFromStore(channel: string, limit: number): Promise<ChatMessage[]>;
-    broadcastMessage(channel: string, messageData: ChatMessage): Promise<void>;
+    broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string): Promise<void>;
     generateMessageId(): string;
     sendToClient(clientId: string, message: any): void;
     sendError(clientId: string, message: string, errorCode?: string): void;
