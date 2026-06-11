@@ -193,6 +193,32 @@ are channel-scoped: they subscribe/unsubscribe automatically when the
 `./adapters/tiptap`): assumes a long-lived WebSocket to a
 `websocket-gateway` deployment.
 
+### Connection semantics (v0.15.0 — session-gated connect)
+
+The gateway silently drops inbound frames that arrive before its
+per-connection session bootstrap completes; it signals readiness with a
+`{ type: 'session', status: 'connected', clientId, sessionToken, … }`
+frame. Therefore `useWebSocket` — and everything built on it
+(`GatewaySocketProvider`, all feature hooks, the Yjs `GatewayProvider`
+path) —:
+
+- keeps `connectionState === 'connecting'` after socket open and flips
+  to `'connected'` only when the session frame arrives (EKS finding #9
+  — subscribing at `onopen` lost 100% of subscribe frames under real
+  network latency; loopback never reproduces it);
+- queues `send()` calls made while the socket is open but the session
+  is not yet established (bounded at 100 frames, drop-oldest with a
+  `console.warn`) and flushes them in order on session arrival;
+- applies the same gating on every reconnect — auto-resubscribe and
+  connected-gated feature effects wait for the NEW session frame;
+- falls back for plain (non-gateway) WS servers that never send a
+  session frame: if none arrives within `sessionTimeoutMs` (default
+  3000, option on `useWebSocket`) of open, the hook warns, transitions
+  to `'connected'` anyway, and flushes the queue — preserving the
+  legacy open-means-connected behavior. (`./server-ws`'s
+  `createWsHandler` sends the handshake, so the fallback only fires
+  against third-party servers.)
+
 **Lambda lane** (`./agent-streaming`, `./agent-streaming/client`,
 `./proxy-client`): HTTP / SSE only. `./agent-streaming` works in AWS
 Lambda via [aws-lambda-web-adapter] with a Function URL and

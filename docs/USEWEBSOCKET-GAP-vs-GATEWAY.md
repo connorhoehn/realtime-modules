@@ -11,6 +11,26 @@ library hook.
 This file is the swap-blocker checklist. When each item is closed in
 realtime-modules, tick it off; once all are closed, re-run the swap.
 
+## v3 addendum (2026-06-11 — EKS finding #9, session-gated connect)
+
+`connectionState` no longer flips to `'connected'` on `ws.onopen`. The
+gateway silently drops inbound frames received before its per-connection
+session bootstrap completes (it signals readiness with the
+`{ type: 'session' }` frame), so subscribe-at-open lost every subscribe
+frame under real network latency (14,846/14,846 frames on an EKS
+cluster; loopback open≈session never reproduces it). v3 semantics:
+
+- open → stays `'connecting'`; the `{ type: 'session' }` frame drives
+  the `'connected'` transition (and `onConnect` / auto-resubscribe).
+- `send()` while open-but-pre-session queues (bounded at 100,
+  drop-oldest with a `console.warn`) and flushes in order on session
+  arrival. The queue is per-connection-attempt: it dies with its
+  socket; connected-gated effects re-issue subscribes on reconnect.
+- Same gating applies on every reconnect.
+- Plain-server fallback: no session frame within `sessionTimeoutMs`
+  (default 3000) of open → warn + transition to `'connected'` + flush,
+  preserving legacy behavior for non-gateway servers.
+
 ## Closure summary (v2)
 
 - **G1 sessionStorage persistence** — CLOSED via opt-in `persist?: { storage, keyPrefix? }`.

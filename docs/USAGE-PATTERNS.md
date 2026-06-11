@@ -26,7 +26,12 @@ From `src/client/index.ts`:
 - `useFeatures()` — read the active `FeatureName[]` from context.
 - `useWebSocket(opts)` — low-level transport hook. Handles reconnect,
   session handshake, auto-resubscribe. Use directly when you can't
-  mount a provider (e.g. testing).
+  mount a provider (e.g. testing). Since v0.15.0 `connectionState`
+  is session-gated: it stays `'connecting'` until the gateway's
+  `{ type: 'session' }` frame arrives (not just socket open), queues
+  pre-session sends, and falls back after `sessionTimeoutMs` (default
+  3000) for plain servers that never send the handshake. See README
+  "Connection semantics".
 - `GatewayProvider` — Y.js `Observable` bridging the gateway's
   `crdt:update` / `crdt:snapshot` / `crdt:awareness` protocol.
 - `useYjsDoc(opts)` — lifecycle hook: `Y.Doc` + `GatewayProvider` +
@@ -629,7 +634,12 @@ Peer dep: `ws` (consumer-installed).
 
 The `useWebSocket` hook in `./client` speaks the same protocol — the
 `{ service, action, ... }` inbound shape and the `{ type: 'session' }`
-handshake frame are matched on both ends.
+handshake frame are matched on both ends. Since v0.15.0 the client
+treats the session frame as the connect signal (`connectionState`
+flips to `'connected'` on session, not on socket open), so servers
+built on `createWsHandler` get correct session-gated semantics for
+free. Servers that never send a session frame are covered by the
+client's `sessionTimeoutMs` fallback (default 3000 ms).
 
 ---
 

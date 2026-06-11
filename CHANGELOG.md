@@ -14,6 +14,64 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-11
+
+Connection-semantics change (EKS discovery finding #9, verified on a real
+cluster): the gateway silently DROPS any inbound frame that arrives before
+its per-connection session bootstrap completes — it signals readiness with
+the `{ type: 'session', status: 'connected', clientId, sessionToken,
+nodeId, restored }` frame. `useWebSocket` previously flipped
+`connectionState` to `'connected'` in `ws.onopen`, so on any real-latency
+network every connected-gated subscribe frame (GatewaySocketProvider
+feature auto-subscribe, useCRDT, feature hooks) was sent before the
+session frame and silently vanished — the client believed it was
+subscribed and received nothing until the next reconnect re-raced
+(14,846/14,846 subscribe frames lost on EKS). Loopback/in-process
+deployments never reproduce this because open≈session.
+
+### Changed
+
+- **useWebSocket — session-gated `'connected'`.** `ws.onopen` no longer
+  transitions `connectionState`; the hook stays `'connecting'` until the
+  `{ type: 'session' }` frame arrives (the existing handshake-capture
+  handler now owns the transition). `onConnect` and `autoResubscribe`
+  replay also fire on session establishment, not on open. The same
+  gating applies on every reconnect — connected-gated effects in
+  GatewaySocketProvider / useCRDT / feature hooks and the
+  session-frame-driven resubscribe in useYjsDoc now naturally wait for
+  the new session.
+- **useWebSocket — pre-session send queue.** `send()` calls made while
+  the socket is OPEN but the session is not yet established are queued
+  (bounded at 100 frames, drop-oldest with a `console.warn`) and flushed
+  in order on session arrival. The queue is per-connection-attempt: it
+  is dropped on close/disconnect/new-connect since connected-gated
+  effects re-issue their subscribes on the next `'connected'`
+  transition. Sends while the socket is not open remain a silent no-op
+  (unchanged).
+
+### Added
+
+- **useWebSocket — `sessionTimeoutMs` option (default 3000).** Plain
+  (non-gateway) WS servers never send a session frame and would hang in
+  `'connecting'` forever under the new gating. If no session frame
+  arrives within `sessionTimeoutMs` of socket open, the hook logs a
+  `console.warn`, transitions to `'connected'` anyway, and flushes the
+  queue — preserving the legacy open-means-connected behavior.
+  (`./server-ws`'s `createWsHandler` sends the handshake, so the
+  fallback only fires against third-party servers.)
+
+### Notes
+
+- `GatewayProvider` (Yjs) needed no change: its crdt subscribe triggers
+  live in useYjsDoc (session-frame-driven + now-queued mount-time send)
+  and useCRDT (`connectionState === 'connected'`-gated), both covered by
+  the gating + queue. `GatewaySocketProvider`'s feature auto-subscribe is
+  likewise covered — it keys off `connectionState === 'connected'`.
+- `./client/ws` re-exports the fixed hook; no surface change beyond the
+  new `sessionTimeoutMs` option.
+- Docs: README "Connection semantics", USAGE-PATTERNS notes, and a v3
+  addendum in docs/USEWEBSOCKET-GAP-vs-GATEWAY.md.
+
 ## [0.14.1] — 2026-06-10
 
 Contract-adoption patch: adopt event-catalog v0.3.57, which backfills the

@@ -44,6 +44,18 @@ export interface UseWebSocketOptions {
      * Set `true` only when this hook owns the subscribe API.
      */
     autoResubscribe?: boolean;
+    /**
+     * How long (ms) to wait after socket open for the server's
+     * `{ type: 'session' }` handshake frame before assuming the server is a
+     * plain (non-gateway) WS backend that never sends one. When the timer
+     * fires, the hook logs a console.warn, transitions to 'connected'
+     * anyway, and flushes any queued sends — preserving the legacy
+     * open-means-connected behavior for plain servers. Default 3000.
+     *
+     * Against a real gateway the session frame arrives well within this
+     * window, so the fallback never fires.
+     */
+    sessionTimeoutMs?: number;
     onMessage?: (message: GatewayMessage) => void;
     onConnect?: () => void;
     onDisconnect?: () => void;
