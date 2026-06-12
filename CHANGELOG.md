@@ -14,6 +14,37 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-06-12
+
+Adopt event-catalog 0.3.58 and resolve contract-conformance divergence note
+(b): the gateway send-back envelopes the inbound hooks parse are now fully
+declared in EC, so the contract test asserts the hooks' parsers against the
+complete send-back set instead of leaving them as TODO.
+
+### Changed
+
+- **Re-pinned `@connorhoehn/event-catalog` devDependency to 0.3.58**
+  (`#5c7a907`), which declared the gateway services' SEND-BACK envelopes per
+  the service implementations the gateway runs
+  (`dist/{chat,presence,reactions,cursor,activity,crdt}/`) — adding the
+  previously-missing `reaction/reaction_unsubscribed`, `available_reactions`
+  and `crdt:awareness` frames and reconciling `reaction_subscribed`/`sent` +
+  `ws.error` against ground truth.
+
+### Contract test (`test/contract/contract-conformance.test.ts`)
+
+- **Divergence note (b) RESOLVED.** Added §3b asserting the gateway-real
+  action-frame envelopes `useChat` / `usePresence` / `useReactions` parse
+  (`{type:'chat',action:'message'|'history'}`,
+  `{type:'presence',action:'subscribed'|'set'|'update'}`,
+  `{type:'reaction',action:'reaction_received'}`) against the EC declarations:
+  envelope discriminants (type/action/channel) pinned, and each payload slot
+  (`message` / `presence` / `data`) asserted to accept the local post-parse
+  type (`ChatMessage` / `PresenceEntry` / `Reaction`) field-wise. Also pins the
+  newly-declared `reaction_unsubscribed` / `available_reactions` ack envelopes
+  and the `crdt:awareness` coalesced-awareness frame. The former
+  "assertions remain TODO" caveat is gone.
+
 ## [0.15.1] — 2026-06-11
 
 Fix two `ChatService` wire-authz gaps found during the M3 kind validation

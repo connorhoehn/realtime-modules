@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -213,7 +213,7 @@
     }
   },
   "devDependencies": {
-    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#6bc9e09805d732cffa05006588383732538986d4",
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#5c7a907659448f81863b8ab6accfc3cdcca0fd9b",
     "@testing-library/react": "^16.3.2",
     "@tiptap/extension-collaboration": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",
