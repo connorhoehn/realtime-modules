@@ -9,7 +9,7 @@ callers.
 
 **Status.** Used by OrgIQ middleware/portal and by the gateway's admin
 frontend. Pre-1.0 (`0.x`) — subpath shapes may shift between minors;
-pin to exact git tags.
+pin to an exact published version (GitHub Packages) or git SHA.
 
 **v0.6.0 — server-side modules removed.** Earlier releases shipped
 service classes (`ChatService`, `PresenceService`, `CRDTService`,
@@ -95,15 +95,26 @@ deeply-nested components that only need one feature.
 
 ## Install
 
-The package is **not on npm** — install via a git tag pin:
+The package is published to **GitHub Packages** under the
+`@connorhoehn` scope. Add the registry to your `.npmrc`:
+
+```
+@connorhoehn:registry=https://npm.pkg.github.com
+```
+
+then pin the current version:
 
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.7"
+    "@connorhoehn/realtime-modules": "0.16.0"
   }
 }
 ```
+
+Server-to-server / SHA-pinned consumers (e.g. the gateway) may also
+pin via a git SHA — `github:connorhoehn/realtime-modules#<sha>` — when
+they need a commit ahead of the latest published version.
 
 The repo ships a pre-built `dist/` so consumers do not need to run the
 TypeScript build themselves.
@@ -288,11 +299,11 @@ Set `VITE_GATEWAY_URL=ws://localhost:4000` (and optionally
 |---|---|
 | `./client` — `GatewaySocketProvider`, `useGateway`, `useWebSocket` | Stable (in use by gateway + OrgIQ) |
 | `useChat`, `usePresence`, `useReactions`, `useActivity` | Stable (v0.7.0) |
-| `useFileUpload` | Beta (v0.7.2 — gateway-side upload service not yet wired) |
+| `useFileUpload` | Stable (v0.16.0 — gateway `FileUploadService` shipped; needs `FILEUPLOAD_TABLE` + `FILEUPLOAD_PUBLIC_BASE` env) |
 | `useVideoHangout` | Beta (v0.7.2 — LVS signaling integration deferred) |
-| `useNotifications` | Beta (v0.7.4 — gateway notification service not yet wired) |
-| `useCapability` | Beta (v0.7.5 — /api/capabilities not yet on gateway; optimistic fallback active) |
-| `useFeatureFlag` | Beta (v0.7.7 — /api/feature-flags not yet on gateway; falls back to defaultValue) |
+| `useNotifications` | Stable (v0.16.0 — gateway `NotificationService` shipped, DDB-backed; uses the gateway's DDB table prefix, no dedicated env) |
+| `useCapability` | Stable (v0.16.0 — gateway `CapabilityService` + `GET /api/capabilities` shipped; CRD-scoped, no env) |
+| `useFeatureFlag` | Stable (v0.16.0 — gateway feature-flag store + `GET /api/feature-flags/:name` shipped; seed via `FEATURE_FLAGS_JSON` env) |
 | `useCRDT`, `useYjsDoc`, `useAwarenessState`, `useIdleDetector` | Stable |
 | `useAgentStream` | Stable (v0.2.0) |
 | `./proxy-client` | Stable (v0.2.0, HMAC signing v0.7.1) |
@@ -316,9 +327,10 @@ single declaration.
 
 ## Versioning + stability
 
-`0.x` is unstable. Pin to exact git tags (e.g. `#v0.7.4`). Subpath
-shapes and hook signatures can change in any minor release. `1.0`
-will mean stable client subpath exports and stable AG-UI mapping.
+`0.x` is unstable. Pin to an exact published version (e.g. `0.16.0`)
+or a git SHA. Subpath shapes and hook signatures can change in any
+minor release. `1.0` will mean stable client subpath exports and
+stable AG-UI mapping.
 
 ---
 

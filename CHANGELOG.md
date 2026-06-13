@@ -14,6 +14,32 @@ re-run `npm run typecheck` on every bump.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-13
+
+Graduation release: the four hooks that previously shipped Beta because their
+gateway-side services did not yet exist are now **Stable** — the gateway shipped
+`FileUploadService`, `NotificationService`, `CapabilityService` (+ `GET
+/api/capabilities`), and the feature-flag store (+ `GET
+/api/feature-flags/:name`) this week, so every one of these hooks now talks to a
+real server instead of a client-side fallback. Docs-only graduation; no code or
+subpath-shape changes. Bumped as a minor per the graduation = minor convention.
+
+### Changed
+
+- **Maturity table:** `useFileUpload`, `useNotifications`, `useCapability`, and
+  `useFeatureFlag` moved from **Beta** to **Stable**. Notes corrected — the
+  former "gateway service not yet wired" reasons are all resolved — and the
+  gateway env each hook depends on is now documented:
+  - `useFileUpload` → `FILEUPLOAD_TABLE`, `FILEUPLOAD_PUBLIC_BASE`
+  - `useFeatureFlag` → `FEATURE_FLAGS_JSON` (seeds the gateway's flag store)
+  - `useNotifications` → DDB-backed via the gateway's DDB table prefix (no
+    dedicated env)
+  - `useCapability` → CRD-scoped (no env)
+- **Install section:** rewritten for GitHub Packages (`@connorhoehn:registry=
+  https://npm.pkg.github.com` + exact-version pin) instead of the stale "not on
+  npm, git-tag pin `#v0.7.4`" instructions. Versioning + status notes updated to
+  match (published version or git SHA, not git tags).
+
 ## [0.15.2] — 2026-06-12
 
 Adopt event-catalog 0.3.58 and resolve contract-conformance divergence note
