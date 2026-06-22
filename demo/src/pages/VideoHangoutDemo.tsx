@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useVideoHangout } from '@connorhoehn/realtime-modules/client';
-import type { HangoutParticipant } from '@connorhoehn/realtime-modules/client';
+import { useVideoHangout } from '@connorhoehnslalom/realtime-modules/client';
+import type { HangoutParticipant } from '@connorhoehnslalom/realtime-modules/client';
 import { DemoCard, Field, Btn, StatusBadge } from '../components/ui';
 
 const CHANNEL = 'demo:hangout-room';

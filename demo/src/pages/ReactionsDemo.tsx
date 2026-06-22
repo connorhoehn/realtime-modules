@@ -1,4 +1,4 @@
-import { useReactions } from '@connorhoehn/realtime-modules/client';
+import { useReactions } from '@connorhoehnslalom/realtime-modules/client';
 import { DemoCard, Field, Btn } from '../components/ui';
 
 const CHANNEL = 'demo:reactions-room';

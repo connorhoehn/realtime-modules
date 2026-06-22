@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GatewaySocketProvider } from '@connorhoehn/realtime-modules/client';
+import { GatewaySocketProvider } from '@connorhoehnslalom/realtime-modules/client';
 import ChatDemo from './pages/ChatDemo';
 import PresenceDemo from './pages/PresenceDemo';
 import ReactionsDemo from './pages/ReactionsDemo';

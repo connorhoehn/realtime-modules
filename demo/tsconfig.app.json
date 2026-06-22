@@ -20,8 +20,8 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@connorhoehn/realtime-modules/client": ["../src/client/index.ts"],
-      "@connorhoehn/realtime-modules": ["../src/index.ts"]
+      "@connorhoehnslalom/realtime-modules/client": ["../src/client/index.ts"],
+      "@connorhoehnslalom/realtime-modules": ["../src/index.ts"]
     }
   },
   "include": ["src"]

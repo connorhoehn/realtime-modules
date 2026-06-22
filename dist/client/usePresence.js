@@ -29,7 +29,7 @@
 // Legacy flat shapes (presence:state / presence:joined / presence:updated /
 // presence:left) are still parsed as a fallback for non-gateway servers.
 //
-// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// Outbound frames (canonical declarations: @connorhoehnslalom/event-catalog
 // client-frames v0.3.56 — client.presence.subscribe / unsubscribe / set):
 //   { service: 'presence', action: 'subscribe',   channel }
 //   { service: 'presence', action: 'unsubscribe', channel }

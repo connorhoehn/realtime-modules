@@ -7,7 +7,7 @@
 //
 // Replaces hand-rolled FE hooks like OrgIQ's `useAgUiStream.ts` (~188 LOC)
 // with a single library import. Pairs server-side with
-// `@connorhoehn/realtime-modules/agent-streaming`.
+// `@connorhoehnslalom/realtime-modules/agent-streaming`.
 //
 // Returned surface (superset of OrgIQ's shape so adoption is a 1-line swap):
 //

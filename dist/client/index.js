@@ -1,7 +1,7 @@
 "use strict";
 // realtime-modules/src/client/index.ts
 //
-// Editor-agnostic CRDT client surface for @connorhoehn/realtime-modules.
+// Editor-agnostic CRDT client surface for @connorhoehnslalom/realtime-modules.
 // Tiptap-specific code lives behind the separate `./adapters/tiptap`
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.

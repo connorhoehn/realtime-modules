@@ -1,4 +1,4 @@
-# @connorhoehn/realtime-modules
+# @connorhoehnslalom/realtime-modules
 
 Client-only realtime collaboration library for apps consuming a
 `websocket-gateway` deployment. Ships React hooks for chat, presence,
@@ -32,7 +32,7 @@ import {
   useChat,
   usePresence,
   useCRDT,
-} from '@connorhoehn/realtime-modules/client';
+} from '@connorhoehnslalom/realtime-modules/client';
 
 function MyApp() {
   return (
@@ -66,7 +66,7 @@ context via `useGateway()` and never re-establish their own socket.
 **Composite pattern — `useChannel` (v0.7.8):**
 
 ```tsx
-import { useChannel } from '@connorhoehn/realtime-modules/client';
+import { useChannel } from '@connorhoehnslalom/realtime-modules/client';
 
 function Room({ channel }: { channel: string }) {
   // All four features enabled by default; each value is T | null.
@@ -107,7 +107,7 @@ then pin the current version:
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "0.16.0"
+    "@connorhoehnslalom/realtime-modules": "0.16.0"
   }
 }
 ```
@@ -124,7 +124,7 @@ For local development against a sibling checkout:
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "file:../realtime-modules"
+    "@connorhoehnslalom/realtime-modules": "file:../realtime-modules"
   }
 }
 ```
@@ -167,7 +167,7 @@ require.
 | `./agent-streaming` | AG-UI v0.1.x SSE emitter (`agentStreamMiddleware`) | Backends streaming AI responses |
 | `./agent-streaming/client` | `useAgentStream` React hook — no Yjs dependency | Browser apps consuming agent streams |
 
-The root entry (`@connorhoehn/realtime-modules`) re-exports `./client`,
+The root entry (`@connorhoehnslalom/realtime-modules`) re-exports `./client`,
 `./agent-streaming`, and `./server-ws` for ergonomic single-import
 access. Prefer explicit subpath imports for tree-shaking.
 
@@ -250,7 +250,7 @@ Provide `serviceAuthSecret` + `serviceAuthClientId` and the client
 signs every request automatically:
 
 ```ts
-import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
+import { GatewayProxyClient } from '@connorhoehnslalom/realtime-modules/proxy-client';
 
 const client = new GatewayProxyClient({
   gatewayUrl: process.env.GATEWAY_URL!,
@@ -265,7 +265,7 @@ const { messages } = await client.getChatHistory('chat:general', { limit: 50 });
 ```
 
 The wire format (`v1.<id>.<ts>.<mac>`) is identical to
-`@connorhoehn/service-runtime`'s `signEnvelope`. The algorithm is
+`@connorhoehnslalom/service-runtime`'s `signEnvelope`. The algorithm is
 inlined using Node's built-in `crypto` — no extra runtime dep.
 
 ---
@@ -344,13 +344,13 @@ HTTP (using `./proxy-client`).
 
 | Removed (v0.6.0) | Replacement |
 | --- | --- |
-| `import { ChatService } from '@connorhoehn/realtime-modules/chat'` | `useChat(channel)` over WS, or `proxy.getChatHistory()` over HTTP |
-| `import { PresenceService } from '@connorhoehn/realtime-modules/presence'` | `usePresence(channel)` over WS, or `proxy.getPresence()` over HTTP |
-| `import { ReactionService } from '@connorhoehn/realtime-modules/reactions'` | `useReactions(channel)` over WS |
-| `import { ActivityService } from '@connorhoehn/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
-| `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
-| `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | gateway-internal; consume cursor updates through `useAwarenessState` |
-| `import { ... } from '@connorhoehn/realtime-modules/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library entry point |
+| `import { ChatService } from '@connorhoehnslalom/realtime-modules/chat'` | `useChat(channel)` over WS, or `proxy.getChatHistory()` over HTTP |
+| `import { PresenceService } from '@connorhoehnslalom/realtime-modules/presence'` | `usePresence(channel)` over WS, or `proxy.getPresence()` over HTTP |
+| `import { ReactionService } from '@connorhoehnslalom/realtime-modules/reactions'` | `useReactions(channel)` over WS |
+| `import { ActivityService } from '@connorhoehnslalom/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
+| `import { CRDTService } from '@connorhoehnslalom/realtime-modules/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
+| `import { CursorService } from '@connorhoehnslalom/realtime-modules/cursor'` | gateway-internal; consume cursor updates through `useAwarenessState` |
+| `import { ... } from '@connorhoehnslalom/realtime-modules/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library entry point |
 
 ---
 

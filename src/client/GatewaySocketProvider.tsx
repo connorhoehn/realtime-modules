@@ -33,7 +33,7 @@ import { useWebSocket } from './useWebSocket';
 import type { UseWebSocketHookReturn } from './useWebSocket';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 // ---------------------------------------------------------------------------
 // FeatureName

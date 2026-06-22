@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { usePresence } from '@connorhoehn/realtime-modules/client';
+import { usePresence } from '@connorhoehnslalom/realtime-modules/client';
 import { DemoCard, StatusBadge, Field, Btn, Select } from '../components/ui';
 
 const CHANNEL = 'demo:presence-room';

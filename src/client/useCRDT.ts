@@ -14,7 +14,7 @@ import * as Y from 'yjs';
 import { encodeStateAsUpdate, applyUpdate } from 'yjs';
 import type { ConnectionState, GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 // Browser-compatible base64 helpers (no Node.js Buffer)
 function b64ToBytes(b64: string): Uint8Array {

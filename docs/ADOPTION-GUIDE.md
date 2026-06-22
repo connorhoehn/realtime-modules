@@ -1,4 +1,4 @@
-# Adoption Guide — `@connorhoehn/realtime-modules`
+# Adoption Guide — `@connorhoehnslalom/realtime-modules`
 
 Operator-facing guide for installing the realtime-modules toolkit into
 a new app and wiring its subpath exports.
@@ -13,7 +13,7 @@ a server-side consumer, see
 
 ## 1. What `realtime-modules` is
 
-`@connorhoehn/realtime-modules` is a **client toolkit** for building
+`@connorhoehnslalom/realtime-modules` is a **client toolkit** for building
 realtime experiences — chat, presence, reactions, activity, file
 upload, video hangouts, notifications, collaborative documents, and
 agent streaming — on top of a running `websocket-gateway` deployment.
@@ -37,7 +37,7 @@ The package is **not on npm** — install via a git tag pin:
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.4"
+    "@connorhoehnslalom/realtime-modules": "github:connorhoehn/realtime-modules#v0.7.4"
   }
 }
 ```
@@ -50,7 +50,7 @@ For local development against a sibling checkout:
 ```json
 {
   "dependencies": {
-    "@connorhoehn/realtime-modules": "file:../realtime-modules"
+    "@connorhoehnslalom/realtime-modules": "file:../realtime-modules"
   }
 }
 ```
@@ -115,7 +115,7 @@ subpaths need:
 | `./adapters/tiptap` | `TiptapEditor` + `EditorToolbar` bound to Yjs `XmlFragment` | Collaborative rich-text editing |
 | `./proxy-client` | `GatewayProxyClient` — typed REST shim with optional HMAC signing | Lambda / SSR / service-to-service callers |
 
-The root entry (`@connorhoehn/realtime-modules`) re-exports `./client`,
+The root entry (`@connorhoehnslalom/realtime-modules`) re-exports `./client`,
 `./agent-streaming`, and `./server-ws` for ergonomic single-import
 access. Prefer explicit subpath imports for tree-shaking.
 
@@ -134,7 +134,7 @@ import {
   useChat,
   usePresence,
   useNotifications,
-} from '@connorhoehn/realtime-modules/client';
+} from '@connorhoehnslalom/realtime-modules/client';
 
 export function App() {
   return (
@@ -191,7 +191,7 @@ Read state is persisted in `localStorage` under
 ### 4.4 File upload
 
 ```tsx
-import { useFileUpload } from '@connorhoehn/realtime-modules/client';
+import { useFileUpload } from '@connorhoehnslalom/realtime-modules/client';
 
 function UploadPanel({ channelId }: { channelId: string }) {
   const { uploads, upload, cancel, removeCompleted } = useFileUpload(channelId);
@@ -218,7 +218,7 @@ function UploadPanel({ channelId }: { channelId: string }) {
 ### 4.5 Video hangout
 
 ```tsx
-import { useVideoHangout } from '@connorhoehn/realtime-modules/client';
+import { useVideoHangout } from '@connorhoehnslalom/realtime-modules/client';
 
 function HangoutPanel({ channelId }: { channelId: string }) {
   const {
@@ -246,9 +246,9 @@ function HangoutPanel({ channelId }: { channelId: string }) {
 
 ```tsx
 import { useGateway, useYjsDoc, useAwarenessState }
-  from '@connorhoehn/realtime-modules/client';
+  from '@connorhoehnslalom/realtime-modules/client';
 import { TiptapEditor, type CollaborationProvider }
-  from '@connorhoehn/realtime-modules/adapters/tiptap';
+  from '@connorhoehnslalom/realtime-modules/adapters/tiptap';
 
 // Must be inside a GatewaySocketProvider.
 function CollabDoc({ documentId }: { documentId: string }) {
@@ -278,7 +278,7 @@ function CollabDoc({ documentId }: { documentId: string }) {
 ### 4.7 Agent streaming
 
 ```tsx
-import { useAgentStream } from '@connorhoehn/realtime-modules/client';
+import { useAgentStream } from '@connorhoehnslalom/realtime-modules/client';
 
 function AgentChat() {
   const { messages, streamingText, isStreaming, sendMessage } = useAgentStream({
@@ -305,7 +305,7 @@ endpoints via `GatewayProxyClient` instead of holding a WebSocket.
 ### 5.1 Automatic HMAC signing (recommended)
 
 ```ts
-import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
+import { GatewayProxyClient } from '@connorhoehnslalom/realtime-modules/proxy-client';
 
 const proxy = new GatewayProxyClient({
   gatewayUrl: process.env.GATEWAY_URL!,
@@ -323,7 +323,7 @@ const { events }   = await proxy.getActivityHistory('room:42', { limit: 20 });
 ```
 
 The envelope wire format is `v1.<serviceId>.<unixTsSec>.<base64url-hmac>`,
-compatible with `@connorhoehn/service-runtime`'s `signEnvelope` /
+compatible with `@connorhoehnslalom/service-runtime`'s `signEnvelope` /
 `verifyEnvelope`. The algorithm is inlined in the proxy-client using
 Node's built-in `crypto` — no extra runtime dep.
 
@@ -360,7 +360,7 @@ aws-lambda-web-adapter + Function URL):
 
 ```ts
 import express from 'express';
-import { agentStreamMiddleware } from '@connorhoehn/realtime-modules/agent-streaming';
+import { agentStreamMiddleware } from '@connorhoehnslalom/realtime-modules/agent-streaming';
 
 const app = express();
 app.use(express.json());
@@ -389,14 +389,14 @@ app.listen(3000);
 
 ## 7. ui-components composition
 
-When `@connorhoehn/ui-components/integrations/realtime-modules` ships,
+When `@connorhoehnslalom/ui-components/integrations/realtime-modules` ships,
 it will re-export pre-composed components (e.g. `<ChatPanel>`,
 `<PresenceAvatarStack>`) that wire the hooks automatically. Until then,
 compose directly against the hooks:
 
 ```tsx
 // Manual adapter pattern — build your own composed component.
-import { useChat, usePresence } from '@connorhoehn/realtime-modules/client';
+import { useChat, usePresence } from '@connorhoehnslalom/realtime-modules/client';
 
 export function ChatPanel({ channelId }: { channelId: string }) {
   const { messages, sendMessage } = useChat(channelId);
@@ -423,7 +423,7 @@ required env vars:
 
 ```ts
 import { agentStreamingManifest }
-  from '@connorhoehn/realtime-modules/agent-streaming';
+  from '@connorhoehnslalom/realtime-modules/agent-streaming';
 
 for (const [key, meta] of Object.entries(agentStreamingManifest.envVars ?? {})) {
   if (meta.required && !process.env[key]) {

@@ -1,4 +1,4 @@
-# Feature Manifest Adoption Guide — `@connorhoehn/realtime-modules`
+# Feature Manifest Adoption Guide — `@connorhoehnslalom/realtime-modules`
 
 A developer should be able to follow this guide in under 30 minutes. Read
 `docs/ADOPTION-GUIDE.md` for the full installation walkthrough; this guide
@@ -90,9 +90,9 @@ structurally — you plug them in by name.
 ```ts
 import http from 'http';
 import express from 'express';
-import { createWsHandler } from '@connorhoehn/realtime-modules/server-ws';
-import { ChatService, InMemoryChatStore } from '@connorhoehn/realtime-modules/chat';
-import { PresenceService } from '@connorhoehn/realtime-modules/presence';
+import { createWsHandler } from '@connorhoehnslalom/realtime-modules/server-ws';
+import { ChatService, InMemoryChatStore } from '@connorhoehnslalom/realtime-modules/chat';
+import { PresenceService } from '@connorhoehnslalom/realtime-modules/presence';
 
 // 1. Your message router — must implement sendToClient + sendToChannel etc.
 //    In the gateway this is a full Redis-backed router; for a new app,
@@ -152,9 +152,9 @@ server.listen(3000);
 Read manifests to validate env and log the channel contract your server owns:
 
 ```ts
-import { ChatManifest }     from '@connorhoehn/realtime-modules/chat';
-import { PresenceManifest } from '@connorhoehn/realtime-modules/presence';
-import { CursorManifest }   from '@connorhoehn/realtime-modules/cursor';
+import { ChatManifest }     from '@connorhoehnslalom/realtime-modules/chat';
+import { PresenceManifest } from '@connorhoehnslalom/realtime-modules/presence';
+import { CursorManifest }   from '@connorhoehnslalom/realtime-modules/cursor';
 
 const FEATURES = [ChatManifest, PresenceManifest, CursorManifest];
 
@@ -181,8 +181,8 @@ collaborative editing — it pulls in `yjs` and `y-protocols`.
 
 ```tsx
 // React component — chat room example
-import { useWebSocket } from '@connorhoehn/realtime-modules/client/ws';
-import type { GatewayMessage } from '@connorhoehn/realtime-modules/client/ws';
+import { useWebSocket } from '@connorhoehnslalom/realtime-modules/client/ws';
+import type { GatewayMessage } from '@connorhoehnslalom/realtime-modules/client/ws';
 
 function ChatRoom({ roomId, authToken }: { roomId: string; authToken: string }) {
   const { connectionState, send, subscribe, unsubscribe, lastError } =
@@ -249,8 +249,8 @@ function ChatRoom({ roomId, authToken }: { roomId: string; authToken: string }) 
 For collaborative documents, use `GatewayProvider` from `./client`:
 
 ```tsx
-import { GatewayProvider } from '@connorhoehn/realtime-modules/client';
-import { useWebSocket }    from '@connorhoehn/realtime-modules/client/ws';
+import { GatewayProvider } from '@connorhoehnslalom/realtime-modules/client';
+import { useWebSocket }    from '@connorhoehnslalom/realtime-modules/client/ws';
 import * as Y from 'yjs';
 
 function CollabEditor({ docId, authToken }: { docId: string; authToken: string }) {
@@ -274,7 +274,7 @@ requests. See the gateway's `requireServiceAuthRawHttp` middleware for the
 expected format.
 
 ```ts
-import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
+import { GatewayProxyClient } from '@connorhoehnslalom/realtime-modules/proxy-client';
 
 const client = new GatewayProxyClient({
   gatewayUrl: process.env.GATEWAY_URL!,
@@ -418,8 +418,8 @@ Add an entry to `exports` in `package.json`:
 ### Step 6 — Wire the service into the gateway (or host app)
 
 ```ts
-import { NotificationService }  from '@connorhoehn/realtime-modules/notifications';
-import { NotificationsManifest } from '@connorhoehn/realtime-modules/notifications';
+import { NotificationService }  from '@connorhoehnslalom/realtime-modules/notifications';
+import { NotificationsManifest } from '@connorhoehnslalom/realtime-modules/notifications';
 
 const notificationService = new NotificationService(/* deps */);
 
@@ -443,7 +443,7 @@ console.log('Notifications channels:', NotificationsManifest.channels);
 Add tests alongside the service. For a quick sanity check:
 
 ```ts
-import { NotificationService } from '@connorhoehn/realtime-modules/notifications';
+import { NotificationService } from '@connorhoehnslalom/realtime-modules/notifications';
 
 describe('NotificationService', () => {
   it('handles subscribe action', async () => {

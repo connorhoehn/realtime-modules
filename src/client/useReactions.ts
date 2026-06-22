@@ -24,7 +24,7 @@
 // are still parsed as a fallback for non-gateway servers. The gateway sends
 // no reaction-history frame (reactions are ephemeral).
 //
-// Outbound frames (canonical declaration: @connorhoehn/event-catalog
+// Outbound frames (canonical declaration: @connorhoehnslalom/event-catalog
 // client-frames v0.3.56 — client.reaction.send; subscribe/unsubscribe are
 // the verified gateway verbs but have no EC declarations yet, so those
 // send-sites carry no `satisfies` annotations):
@@ -46,7 +46,7 @@ import { useGateway } from './GatewaySocketProvider';
 import type { Reaction } from './types';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 const MAX_REACTIONS = 50;
 

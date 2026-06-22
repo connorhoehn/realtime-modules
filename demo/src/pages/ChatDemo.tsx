@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useChat } from '@connorhoehn/realtime-modules/client';
+import { useChat } from '@connorhoehnslalom/realtime-modules/client';
 import { DemoCard, StatusBadge, Field, Btn } from '../components/ui';
 
 const CHANNEL = 'demo:chat-room';

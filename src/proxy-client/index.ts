@@ -1,7 +1,7 @@
 // realtime-modules/src/proxy-client/index.ts
 //
 // Barrel for the HTTP-shim subpath. Importable as:
-//   import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
+//   import { GatewayProxyClient } from '@connorhoehnslalom/realtime-modules/proxy-client';
 //
 // Lambda-native apps (OrgIQ, future App #3) use this to interact with
 // gateway-hosted features over REST without speaking WebSocket.

@@ -1,12 +1,12 @@
 "use strict";
-// @connorhoehn/realtime-modules — entry point.
+// @connorhoehnslalom/realtime-modules — entry point.
 //
 // This package is a client-side realtime collaboration library.
 // Feature subpaths are exposed via package.json "exports":
-//   import { ... } from '@connorhoehn/realtime-modules/client';
-//   import { ... } from '@connorhoehn/realtime-modules/server-ws';
-//   import { ... } from '@connorhoehn/realtime-modules/proxy-client';
-//   import { ... } from '@connorhoehn/realtime-modules/agent-streaming';
+//   import { ... } from '@connorhoehnslalom/realtime-modules/client';
+//   import { ... } from '@connorhoehnslalom/realtime-modules/server-ws';
+//   import { ... } from '@connorhoehnslalom/realtime-modules/proxy-client';
+//   import { ... } from '@connorhoehnslalom/realtime-modules/agent-streaming';
 //
 // Bundlers that care about tree-shaking should import from dedicated subpaths.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {

@@ -26,7 +26,7 @@ import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protoc
 import { toBase64, fromBase64 } from 'lib0/buffer';
 // Type-only import — erased at build; the EC package stays a devDependency.
 // Canonical outbound declarations: client.crdt.update / client.crdt.awareness.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 export type SendMessage = (msg: Record<string, unknown>) => void;
 

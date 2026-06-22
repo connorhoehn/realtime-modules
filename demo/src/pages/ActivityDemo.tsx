@@ -1,4 +1,4 @@
-import { useActivity } from '@connorhoehn/realtime-modules/client';
+import { useActivity } from '@connorhoehnslalom/realtime-modules/client';
 import { DemoCard, Field, Btn } from '../components/ui';
 
 const CHANNEL = 'demo:activity-room';

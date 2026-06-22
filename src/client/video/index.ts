@@ -1,4 +1,4 @@
-// Public barrel for the @connorhoehn/realtime-modules/client/video
+// Public barrel for the @connorhoehnslalom/realtime-modules/client/video
 // subpath. Consumers import the hooks + context + low-level transport
 // from here. Internal lib/* modules stay unexported — callers should
 // reach for the hooks first; transport helpers are surfaced for

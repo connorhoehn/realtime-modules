@@ -50,7 +50,7 @@ import { useGateway } from './GatewaySocketProvider';
 import type { ActivityEvent } from './types';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 const DEFAULT_HISTORY_LIMIT = 50;
 

@@ -1,4 +1,4 @@
-# Usage Patterns — `@connorhoehn/realtime-modules`
+# Usage Patterns — `@connorhoehnslalom/realtime-modules`
 
 Concrete per-subpath examples. For installation, peer deps, version
 pinning, and migration, see `./ADOPTION-GUIDE.md`.
@@ -61,7 +61,7 @@ import {
   useFileUpload,
   useVideoHangout,
   useNotifications,
-} from '@connorhoehn/realtime-modules/client';
+} from '@connorhoehnslalom/realtime-modules/client';
 
 export function App() {
   return (
@@ -115,7 +115,7 @@ each hook result to a separate subtree.
 import {
   GatewaySocketProvider,
   useChannel,
-} from '@connorhoehn/realtime-modules/client';
+} from '@connorhoehnslalom/realtime-modules/client';
 
 function Room({ channelId }: { channelId: string }) {
   // All features enabled by default.
@@ -164,7 +164,7 @@ the gateway; `reactionsFor()` lets you filter on demand from the full channel
 list without a second subscription.
 
 ```tsx
-import { useReactions } from '@connorhoehn/realtime-modules/client';
+import { useReactions } from '@connorhoehnslalom/realtime-modules/client';
 
 // Scoped hook — only reactions for this article are returned.
 function ArticleReactions({ articleId }: { articleId: string }) {
@@ -212,7 +212,7 @@ import {
   useYjsDoc,
   useAwarenessState,
   SharedTextEditor,
-} from '@connorhoehn/realtime-modules/client';
+} from '@connorhoehnslalom/realtime-modules/client';
 
 // Must be inside a GatewaySocketProvider.
 export function CollabDoc({ documentId }: { documentId: string }) {
@@ -241,7 +241,7 @@ For test fixtures or non-React entry points:
 import {
   useWebSocket,
   type GatewayMessage,
-} from '@connorhoehn/realtime-modules/client';
+} from '@connorhoehnslalom/realtime-modules/client';
 
 export function StandalonePanel({ token }: { token: string }) {
   const ws = useWebSocket({
@@ -262,7 +262,7 @@ CRDs — they represent infrastructure-level availability questions ("has the
 operator enabled chat for this tenant?").
 
 ```tsx
-import { useCapability } from '@connorhoehn/realtime-modules/client';
+import { useCapability } from '@connorhoehnslalom/realtime-modules/client';
 
 function ChatPanel({ channel }: { channel: string }) {
   const { enabled, isLoading } = useCapability('chat');
@@ -288,7 +288,7 @@ app layer, not the infrastructure/CRD layer.
 **Boolean toggle (kill-switch / gradual rollout)**
 
 ```tsx
-import { useFeatureFlag } from '@connorhoehn/realtime-modules/client';
+import { useFeatureFlag } from '@connorhoehnslalom/realtime-modules/client';
 
 function CheckoutButton() {
   const { enabled, isLoading } = useFeatureFlag('new-checkout-ui');
@@ -301,7 +301,7 @@ function CheckoutButton() {
 **Variant pattern (A/B test)**
 
 ```tsx
-import { useFeatureFlag } from '@connorhoehn/realtime-modules/client';
+import { useFeatureFlag } from '@connorhoehnslalom/realtime-modules/client';
 
 function CheckoutFlow() {
   const { variant } = useFeatureFlag('checkout-flow');
@@ -338,7 +338,7 @@ without a page refresh.
 and `y-protocols` out of the bundle entirely.
 
 ```tsx
-import { useWebSocket } from '@connorhoehn/realtime-modules/client/ws';
+import { useWebSocket } from '@connorhoehnslalom/realtime-modules/client/ws';
 
 function StatusBar() {
   const { connectionState, clientId } = useWebSocket({
@@ -379,7 +379,7 @@ From `src/agent-streaming/index.ts`:
 import {
   agentStreamMiddleware,
   type AgentStreamHandler,
-} from '@connorhoehn/realtime-modules/agent-streaming';
+} from '@connorhoehnslalom/realtime-modules/agent-streaming';
 
 const handler: AgentStreamHandler = async (req, stream, signal) => {
   const runner = await getAgentRunner(req.params.agentId);
@@ -417,7 +417,7 @@ app.post(
 
 ```ts
 import { createAgentStream }
-  from '@connorhoehn/realtime-modules/agent-streaming';
+  from '@connorhoehnslalom/realtime-modules/agent-streaming';
 
 app.post('/api/run', (req, res) => {
   const stream = createAgentStream(res, { heartbeatMs: 30_000 });
@@ -436,7 +436,7 @@ Browser-only fetch + SSE parser. No Express or Yjs dependency.
 
 ```ts
 import { streamAgentRequest }
-  from '@connorhoehn/realtime-modules/agent-streaming/client';
+  from '@connorhoehnslalom/realtime-modules/agent-streaming/client';
 
 for await (const event of streamAgentRequest('/api/agents/default/stream', {
   body: { userMessage: 'hello' },
@@ -473,9 +473,9 @@ From `src/adapters/tiptap/index.ts`:
 
 ```tsx
 import { TiptapEditor, type CollaborationProvider }
-  from '@connorhoehn/realtime-modules/adapters/tiptap';
+  from '@connorhoehnslalom/realtime-modules/adapters/tiptap';
 import { useGateway, useYjsDoc, useAwarenessState }
-  from '@connorhoehn/realtime-modules/client';
+  from '@connorhoehnslalom/realtime-modules/client';
 
 export function RichDoc({ documentId }: { documentId: string }) {
   const ws = useGateway();
@@ -532,7 +532,7 @@ From `src/proxy-client/index.ts`:
 import {
   GatewayProxyClient,
   ProxyClientHttpError,
-} from '@connorhoehn/realtime-modules/proxy-client';
+} from '@connorhoehnslalom/realtime-modules/proxy-client';
 
 const proxy = new GatewayProxyClient({
   gatewayUrl: process.env.GATEWAY_URL!,
@@ -597,7 +597,7 @@ error frame.
 
 ```ts
 import { createServer } from 'http';
-import { createWsHandler } from '@connorhoehn/realtime-modules/server-ws';
+import { createWsHandler } from '@connorhoehnslalom/realtime-modules/server-ws';
 
 const http = createServer(/* your express app */);
 

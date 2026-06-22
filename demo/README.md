@@ -70,6 +70,6 @@ code focused on each hook's own API surface.
 
 ## Architecture notes
 
-- The Vite alias in `vite.config.ts` maps `@connorhoehn/realtime-modules/client` to `../src/client/index.ts`, so the demo always runs against the live source — no package rebuild needed when editing hooks.
+- The Vite alias in `vite.config.ts` maps `@connorhoehnslalom/realtime-modules/client` to `../src/client/index.ts`, so the demo always runs against the live source — no package rebuild needed when editing hooks.
 - The demo has no test coverage; it exists purely as a visual/integration showcase.
 - Do **not** add production logic here — the demo is ephemeral scaffolding.

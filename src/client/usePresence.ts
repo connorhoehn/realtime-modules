@@ -28,7 +28,7 @@
 // Legacy flat shapes (presence:state / presence:joined / presence:updated /
 // presence:left) are still parsed as a fallback for non-gateway servers.
 //
-// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// Outbound frames (canonical declarations: @connorhoehnslalom/event-catalog
 // client-frames v0.3.56 — client.presence.subscribe / unsubscribe / set):
 //   { service: 'presence', action: 'subscribe',   channel }
 //   { service: 'presence', action: 'unsubscribe', channel }
@@ -39,7 +39,7 @@ import { useGateway } from './GatewaySocketProvider';
 import type { PresenceEntry, PresenceStatus } from './types';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 export interface UsePresenceReturn {
   roster: PresenceEntry[];

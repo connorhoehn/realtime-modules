@@ -8,8 +8,8 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@connorhoehn/realtime-modules/client': path.resolve(__dirname, '../src/client/index.ts'),
-      '@connorhoehn/realtime-modules': path.resolve(__dirname, '../src/index.ts'),
+      '@connorhoehnslalom/realtime-modules/client': path.resolve(__dirname, '../src/client/index.ts'),
+      '@connorhoehnslalom/realtime-modules': path.resolve(__dirname, '../src/index.ts'),
     },
   },
 });

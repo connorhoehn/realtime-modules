@@ -1,4 +1,4 @@
-# Releasing `@connorhoehn/realtime-modules`
+# Releasing `@connorhoehnslalom/realtime-modules`
 
 Manual release recipe. Keep it boring.
 

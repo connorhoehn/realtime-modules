@@ -1,7 +1,7 @@
 "use strict";
 // realtime-modules/src/server-ws/index.ts
 //
-// @connorhoehn/realtime-modules/server-ws — barrel export.
+// @connorhoehnslalom/realtime-modules/server-ws — barrel export.
 //
 // Wave 3 — server-side WebSocket handler factory paired with the
 // ./client useWebSocket hook. Lazy-loads `ws` so consumers without

@@ -1,7 +1,7 @@
 /**
  * FeatureManifest for the agent-streaming (AG-UI server emitter) feature.
  *
- * Surfaced via `@connorhoehn/realtime-modules/agent-streaming`. Consumers
+ * Surfaced via `@connorhoehnslalom/realtime-modules/agent-streaming`. Consumers
  * (gateway, OrgIQ middleware, etc.) declare this in their feature registry
  * to advertise the route contract + env-var surface without pulling in
  * AgentStreamImpl internals.

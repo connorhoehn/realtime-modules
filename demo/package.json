@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@connorhoehn/realtime-modules": "file:..",
+    "@connorhoehnslalom/realtime-modules": "file:..",
     "react": "^19.0.0",
     "react-dom": "^19.2.6"
   },

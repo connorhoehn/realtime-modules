@@ -23,7 +23,7 @@
 //   fileupload:failed    — server-side failure
 //   fileupload:cancelled — cancel acknowledged
 //
-// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// Outbound frames (canonical declarations: @connorhoehnslalom/event-catalog
 // client-frames — client.fileupload.request-upload / complete / cancel):
 //   { service: 'fileupload', action: 'request-upload', channel, id, filename, size, metadata? }
 //   { service: 'fileupload', action: 'complete',        channel, id }
@@ -33,7 +33,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 // ---------------------------------------------------------------------------
 // Public types

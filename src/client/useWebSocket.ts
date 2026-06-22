@@ -55,7 +55,7 @@ import type {
   UseWebSocketReturn,
 } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 // -----------------------------------------------------------------------
 // Public API

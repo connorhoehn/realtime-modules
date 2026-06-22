@@ -28,10 +28,10 @@
 //
 // HMAC SIGNING — when `serviceAuthSecret` + `serviceAuthClientId` are
 // provided, the client computes the X-Service-Auth header automatically on
-// every request, using the same v1 envelope as @connorhoehn/service-runtime.
+// every request, using the same v1 envelope as @connorhoehnslalom/service-runtime.
 // The algorithm is inlined here (uses Node built-in `crypto`) so the
 // proxy-client subpath has zero extra runtime dependencies. Callers that
-// want the canonical implementation can list @connorhoehn/service-runtime as
+// want the canonical implementation can list @connorhoehnslalom/service-runtime as
 // an optional peer dep and use signEnvelope directly — the wire format is
 // identical. Pipeline status query remains a future addition.
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -39,7 +39,7 @@ exports.GatewayProxyClient = void 0;
 const crypto_1 = require("crypto");
 const types_1 = require("./types");
 // ---------------------------------------------------------------------------
-// Inline HMAC signing — wire-format compatible with @connorhoehn/service-runtime
+// Inline HMAC signing — wire-format compatible with @connorhoehnslalom/service-runtime
 // signEnvelope. Format: v1.<serviceId>.<unixTsSec>.<base64url(HMAC-SHA256)>
 // Payload is canonicalised (sorted-keys JSON for objects, raw string otherwise).
 // ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ function _base64url(buf) {
 }
 /**
  * Build an X-Service-Auth header value. Wire-format identical to
- * @connorhoehn/service-runtime's signEnvelope (v1 envelope).
+ * @connorhoehnslalom/service-runtime's signEnvelope (v1 envelope).
  * Used internally by GatewayProxyClient when serviceAuthSecret is configured.
  */
 function _buildServiceAuthHeader(payload, secret, serviceId) {

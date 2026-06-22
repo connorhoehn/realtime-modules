@@ -24,7 +24,7 @@
 // Legacy flat shapes ({ type: 'chat:message' } / { type: 'chat:history' })
 // are still parsed as a fallback for non-gateway servers.
 //
-// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// Outbound frames (canonical declarations: @connorhoehnslalom/event-catalog
 // client-frames v0.3.56 — client.chat.join / client.chat.send /
 // client.chat.history; `leave` is the verified gateway verb but has no EC
 // declaration yet, so its send-site carries no `satisfies` annotation):
@@ -39,7 +39,7 @@ import { useGateway } from './GatewaySocketProvider';
 import type { ChatMessage } from './types';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
-import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
+import type { ClientFramePayload } from '@connorhoehnslalom/event-catalog/client-frames';
 
 export interface UseChatReturn {
   messages: ChatMessage[];

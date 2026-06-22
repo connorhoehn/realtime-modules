@@ -52,7 +52,7 @@ export interface UseWebSocketReturn {
 // gateway's outbound WS frames.
 //
 // CONTRACT GUARD (Wave A3): the canonical declarations for these shapes
-// live in @connorhoehn/event-catalog's `client-frames` subpath. These local
+// live in @connorhoehnslalom/event-catalog's `client-frames` subpath. These local
 // definitions stay the public API (deliberately NOT aliased so the built
 // dist carries zero event-catalog references), and drift between the two is
 // caught at compile time by test/contract/contract-conformance.test.ts

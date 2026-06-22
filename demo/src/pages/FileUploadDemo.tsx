@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { useFileUpload } from '@connorhoehn/realtime-modules/client';
-import type { FileUploadState } from '@connorhoehn/realtime-modules/client';
+import { useFileUpload } from '@connorhoehnslalom/realtime-modules/client';
+import type { FileUploadState } from '@connorhoehnslalom/realtime-modules/client';
 import { DemoCard, Field, Btn, StatusBadge } from '../components/ui';
 
 const CHANNEL = 'demo:upload-room';

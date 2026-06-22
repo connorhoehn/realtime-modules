@@ -1,7 +1,7 @@
 "use strict";
 // realtime-modules/src/client/hangout-rooms/index.ts
 //
-// Public barrel for the @connorhoehn/realtime-modules/client/hangout-rooms
+// Public barrel for the @connorhoehnslalom/realtime-modules/client/hangout-rooms
 // subpath. Consumer apps (gateway frontend, OrgIQ, etc.) import the
 // hooks + types from here. The REST `api.ts` functions are also
 // re-exported so non-React callers (SSR, scripts) can use the same

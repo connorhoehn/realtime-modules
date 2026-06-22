@@ -24,7 +24,7 @@
 //   fileupload:failed    — server-side failure
 //   fileupload:cancelled — cancel acknowledged
 //
-// Outbound frames (canonical declarations: @connorhoehn/event-catalog
+// Outbound frames (canonical declarations: @connorhoehnslalom/event-catalog
 // client-frames — client.fileupload.request-upload / complete / cancel):
 //   { service: 'fileupload', action: 'request-upload', channel, id, filename, size, metadata? }
 //   { service: 'fileupload', action: 'complete',        channel, id }
