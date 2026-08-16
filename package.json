@@ -112,7 +112,7 @@
     "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
-    "distributed-core": "github:connorhoehn/distributed-core#93e891f9d21a5ae3",
+    "distributed-core": "github:connorhoehn/distributed-core#edcf6912656548b6487e697ce36d054d6bc44762",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
   },
@@ -213,7 +213,7 @@
     }
   },
   "devDependencies": {
-    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#5c7a907659448f81863b8ab6accfc3cdcca0fd9b",
+    "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#474ed44e6df286e92abaaeb705fcd79e871178b5",
     "@testing-library/react": "^16.3.2",
     "@tiptap/extension-collaboration": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",
