@@ -112,7 +112,7 @@
     "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
-    "distributed-core": "github:connorhoehn/distributed-core#edcf6912656548b6487e697ce36d054d6bc44762",
+    "distributed-core": "github:connorhoehn/distributed-core#6d980ce55033a9fb3a040d2268a0e8231f57b1e8",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
   },
