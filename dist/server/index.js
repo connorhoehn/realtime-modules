@@ -34,7 +34,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.LocalRealtimeRouter = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -61,4 +61,25 @@ Object.defineProperty(exports, "crdtManifest", { enumerable: true, get: function
 var factory_1 = require("./factory");
 Object.defineProperty(exports, "createRealtimeServer", { enumerable: true, get: function () { return factory_1.createRealtimeServer; } });
 Object.defineProperty(exports, "inMemoryAdapters", { enumerable: true, get: function () { return factory_1.inMemoryAdapters; } });
+// ---- pluggable composition layer (v0.19.0) ------------------------------------
+// attachRealtime + defineFeature + the thirteen built-in features, plus the
+// swappable router contract. See attach.ts for the design principles.
+var attach_1 = require("./attach");
+Object.defineProperty(exports, "attachRealtime", { enumerable: true, get: function () { return attach_1.attachRealtime; } });
+Object.defineProperty(exports, "defineFeature", { enumerable: true, get: function () { return attach_1.defineFeature; } });
+Object.defineProperty(exports, "chat", { enumerable: true, get: function () { return attach_1.chat; } });
+Object.defineProperty(exports, "presence", { enumerable: true, get: function () { return attach_1.presence; } });
+Object.defineProperty(exports, "cursor", { enumerable: true, get: function () { return attach_1.cursor; } });
+Object.defineProperty(exports, "reactions", { enumerable: true, get: function () { return attach_1.reactions; } });
+Object.defineProperty(exports, "activity", { enumerable: true, get: function () { return attach_1.activity; } });
+Object.defineProperty(exports, "social", { enumerable: true, get: function () { return attach_1.social; } });
+Object.defineProperty(exports, "calls", { enumerable: true, get: function () { return attach_1.calls; } });
+Object.defineProperty(exports, "ingest", { enumerable: true, get: function () { return attach_1.ingest; } });
+Object.defineProperty(exports, "pipeline", { enumerable: true, get: function () { return attach_1.pipeline; } });
+Object.defineProperty(exports, "typedDocuments", { enumerable: true, get: function () { return attach_1.typedDocuments; } });
+Object.defineProperty(exports, "rooms", { enumerable: true, get: function () { return attach_1.rooms; } });
+Object.defineProperty(exports, "notifications", { enumerable: true, get: function () { return attach_1.notifications; } });
+Object.defineProperty(exports, "fileUploads", { enumerable: true, get: function () { return attach_1.fileUploads; } });
+var router_1 = require("./router");
+Object.defineProperty(exports, "LocalRealtimeRouter", { enumerable: true, get: function () { return router_1.LocalRealtimeRouter; } });
 //# sourceMappingURL=index.js.map

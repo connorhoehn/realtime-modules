@@ -53,3 +53,39 @@ export {
     type FeaturePlugin,
     type RealtimeServerOptions,
 } from './factory';
+
+// ---- pluggable composition layer (v0.19.0) ------------------------------------
+// attachRealtime + defineFeature + the thirteen built-in features, plus the
+// swappable router contract. See attach.ts for the design principles.
+export {
+    attachRealtime,
+    defineFeature,
+    chat,
+    presence,
+    cursor,
+    reactions,
+    activity,
+    social,
+    calls,
+    ingest,
+    pipeline,
+    typedDocuments,
+    rooms,
+    notifications,
+    fileUploads,
+} from './attach';
+export type {
+    AttachRealtimeOptions,
+    FeatureContext,
+    RealtimeFeature,
+    RealtimeHandle,
+} from './attach';
+export {
+    LocalRealtimeRouter,
+} from './router';
+export type {
+    RealtimeRouter,
+    RouterLogger,
+    ChannelAuthorize,
+    FeaturePlugin as RealtimeFeaturePlugin,
+} from './router';

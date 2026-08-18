@@ -102,4 +102,12 @@ export interface WsHandlerHandle {
     listClients(): string[];
     /** Send a JSON frame to one client. Returns false if not connected. */
     sendToClient(clientId: string, frame: Record<string, unknown>): boolean;
+    /**
+     * Auth context captured for this client at upgrade time (whatever the
+     * `auth` callback returned), or null when unknown/disconnected. Lets a
+     * router derive user identity locally — presence display names,
+     * fileupload's uploader attribution, call's user-targeted routing all
+     * read identity through this.
+     */
+    getClientContext(clientId: string): WsAuthContext | null;
 }

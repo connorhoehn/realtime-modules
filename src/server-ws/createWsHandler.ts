@@ -244,6 +244,9 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             wsSend(entry.ws, JSON.stringify(frame));
             return true;
         },
+        getClientContext(clientId: string) {
+            return clients.get(clientId)?.ctx ?? null;
+        },
         async dispose(): Promise<void> {
             // Remove our upgrade listener (best-effort across http.Server APIs).
             const removeFn = (server as any).removeListener || (server as any).off;

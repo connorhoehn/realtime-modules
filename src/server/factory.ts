@@ -451,6 +451,24 @@ const FEATURE_REGISTRY: Record<string, ServiceFactory> = {
         return new PipelineWsRouter({ messageRouter: router, logger: NOOP_LOGGER });
     },
 
+    room: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { RoomService } = require('../room/RoomService') as typeof import('../room/RoomService');
+        return new RoomService({ messageRouter: router as any, logger: NOOP_LOGGER });
+    },
+
+    notification: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { NotificationService } = require('../notification/NotificationService') as typeof import('../notification/NotificationService');
+        return new NotificationService({ messageRouter: router as any, logger: NOOP_LOGGER, redisClient: null });
+    },
+
+    fileupload: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { FileUploadService } = require('../fileupload/FileUploadService') as typeof import('../fileupload/FileUploadService');
+        return new FileUploadService({ messageRouter: router as any, logger: NOOP_LOGGER });
+    },
+
     'typed-documents': (router) => {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { DocumentEventsService } = require('../typed-documents/DocumentEventsService') as typeof import('../typed-documents/DocumentEventsService');

@@ -217,6 +217,9 @@ function createWsHandler(opts) {
             (0, transport_1.wsSend)(entry.ws, JSON.stringify(frame));
             return true;
         },
+        getClientContext(clientId) {
+            return clients.get(clientId)?.ctx ?? null;
+        },
         async dispose() {
             // Remove our upgrade listener (best-effort across http.Server APIs).
             const removeFn = server.removeListener || server.off;

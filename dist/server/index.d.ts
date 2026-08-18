@@ -13,4 +13,8 @@ export { MemoryHotCache, MemoryMetadataStore, MemorySnapshotStore, } from './sto
 export * as config from './config';
 export { crdtManifest } from './manifest';
 export { createRealtimeServer, inMemoryAdapters, type AdapterMap, type AdapterConfig, type PerFeatureAdapters, type FeaturePlugin, type RealtimeServerOptions, } from './factory';
+export { attachRealtime, defineFeature, chat, presence, cursor, reactions, activity, social, calls, ingest, pipeline, typedDocuments, rooms, notifications, fileUploads, } from './attach';
+export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHandle, } from './attach';
+export { LocalRealtimeRouter, } from './router';
+export type { RealtimeRouter, RouterLogger, ChannelAuthorize, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 //# sourceMappingURL=index.d.ts.map

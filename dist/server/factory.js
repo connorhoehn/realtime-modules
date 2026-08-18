@@ -315,6 +315,21 @@ const FEATURE_REGISTRY = {
         const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter');
         return new PipelineWsRouter({ messageRouter: router, logger: NOOP_LOGGER });
     },
+    room: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { RoomService } = require('../room/RoomService');
+        return new RoomService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
+    notification: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { NotificationService } = require('../notification/NotificationService');
+        return new NotificationService({ messageRouter: router, logger: NOOP_LOGGER, redisClient: null });
+    },
+    fileupload: (router) => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { FileUploadService } = require('../fileupload/FileUploadService');
+        return new FileUploadService({ messageRouter: router, logger: NOOP_LOGGER });
+    },
     'typed-documents': (router) => {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { DocumentEventsService } = require('../typed-documents/DocumentEventsService');
