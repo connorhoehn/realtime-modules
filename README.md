@@ -17,7 +17,7 @@ exact published version (GitHub Packages) or git SHA.
 
 | You are building… | Use |
 |---|---|
-| A server that terminates WebSockets and runs realtime features | `./server-ws` (WS handler factory) + the service subpaths: `./chat`, `./presence`, `./activity`, `./cursor`, `./reactions`, `./social`, `./call`, `./ingest`, `./pipeline`, `./typed-documents`, `./server` (CRDT/doc stack) |
+| A server that terminates WebSockets and runs realtime features | `./server-ws` (WS handler factory) + the service subpaths: `./chat`, `./presence`, `./activity`, `./cursor`, `./reactions`, `./social`, `./call`, `./ingest`, `./pipeline`, `./typed-documents`, `./server` (CRDT/doc stack), `./room`, `./notification`, `./fileupload` |
 | A React app on top of a gateway deployment | `./client` hooks (+ `@connorhoehn/ui-components` for the UI layer, which wraps these hooks) |
 | Video hangouts (WHIP/WHEP against an SFU) | `./client/video`, `./client/hangout-rooms` |
 | Agent / LLM streaming UX | `./agent-streaming` (server), `./agent-streaming/client` |

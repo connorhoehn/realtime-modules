@@ -1,0 +1,16 @@
+// realtime-modules/src/notification/constants.ts
+//
+// Notification-service tunables. Kept local to the notification module
+// (rather than in the shared src/config/constants.ts) so this feature is
+// self-contained — the whole surface lands under one directory.
+//
+// Caps mirror the activity-feed precedent (ACTIVITY_MAX_HISTORY_ITEMS = 200)
+// because notifications are the same recent-window inbox shape. The TTL is
+// 30 days: long enough that a user returning after a week still sees their
+// unread set, short enough that abandoned inboxes self-reap.
+
+/** Max notifications retained per user. Older entries are trimmed on add. */
+export const NOTIFICATION_MAX_PER_USER = 200;
+
+/** Rolling TTL (seconds) refreshed on every write. 30 days. */
+export const NOTIFICATION_TTL_SEC = 30 * 24 * 60 * 60;
