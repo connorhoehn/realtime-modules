@@ -1,4 +1,5 @@
 export { NotificationService } from './NotificationService';
+export type { NotificationServiceOpts } from './NotificationService';
 export { RedisNotificationStore } from './RedisNotificationStore';
 export type { NotificationRedisClient } from './RedisNotificationStore';
 export * from './types';

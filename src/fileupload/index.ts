@@ -15,4 +15,11 @@ export type {
     FileUploadRow,
 } from './FileUploadService';
 export { InMemoryFileUploadMetadataStore } from './FileUploadService';
-export { FileBlobStore, resolveMaxBytes, sanitizeUploadId } from './FileBlobStore';
+export {
+    FileBlobStore,
+    resolveMaxBytes,
+    resolveBlobDir,
+    sanitizeUploadId,
+    DEFAULT_BLOB_DIR,
+    DEFAULT_MAX_BYTES,
+} from './FileBlobStore';
