@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.19.0 — 2026-08-18
+
+The pluggable composition layer. The unit of adoption is the FEATURE — you
+attach capabilities to an http.Server you already have:
+
+    attachRealtime(httpServer, { features: [chat(), presence(), rooms()] })
+
+- **`attachRealtime` + `defineFeature`** (`./server`): open registry — the
+  thirteen built-ins (chat, presence, cursor, reactions, activity, social,
+  calls, ingest, pipeline, typedDocuments, rooms, notifications,
+  fileUploads) are ordinary `defineFeature` calls; app-defined features
+  plug in identically. À-la-carte composition is enforced by a test matrix
+  (13 solo boots over real WebSockets, all 78 pairs, zero interference with
+  the host app's HTTP routes).
+- **`RealtimeRouter`** exported contract (union of the per-service router
+  slices, M3 authz semantics included) + `LocalRealtimeRouter`, the
+  zero-infra single-process default with identity from the WS auth context
+  and a `ChannelAuthorize` hook (subscribe + publish). Multi-node: swap the
+  transport via `attachRealtime({ router })`, not the features.
+- **`server-ws`**: `WsHandlerHandle.getClientContext` exposes the auth
+  context so routers can derive identity locally.
+- **Recipes** (`docs/recipes/`): one page per capability — attach, hook,
+  ui-components surface, graduation path.
+- **Guardrails**: `verify:exports` runs inside `build` (subpaths backed
+  both directions: exports→dist and dist→src); `smoke:features` attaches
+  all 13 features against the BUILT dist.
+- **Tags normalized** to semantic `vX.Y.Z` (prefixed `realtime-modules-v*`
+  purged; mapping in `docs/releases/tag-normalization-2026-08-18.md`).
+
+
 ## 0.18.0 — 2026-08-18
 
 The server side comes home. Four services extracted from websocket-gateway
