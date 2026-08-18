@@ -14,8 +14,6 @@
 //   - WS handleAction for the 5-action protocol.
 //   - Targeted user routing via MessageRouterContract.getClientsByUserId,
 //     plus broadcast fallback when no targets are supplied.
-//   - Legacy single-target `targetUserId` coerced into 1-element
-//     `targetUserIds`.
 //
 // Left behind in gateway:
 //   - enforceChannelPermission authz interceptor — replaced by the
@@ -26,6 +24,11 @@
 //     Consumers expose a `recordCallAction` callback via CallConfig.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ALLOWED_CALL_ACTIONS = void 0;
+exports.isParticipantStateBroadcast = isParticipantStateBroadcast;
+/** Type guard for participant-state / user-status payloads. */
+function isParticipantStateBroadcast(p) {
+    return typeof p === 'object' && p !== null;
+}
 /** Verbs accepted by `handleAction`. Exposed for consumer dispatch tables. */
 exports.ALLOWED_CALL_ACTIONS = new Set([
     'invite',
@@ -33,5 +36,7 @@ exports.ALLOWED_CALL_ACTIONS = new Set([
     'declined',
     'cancelled',
     'ended',
+    'participant-state',
+    'user-status',
 ]);
 //# sourceMappingURL=types.js.map
