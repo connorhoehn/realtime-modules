@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.18.0 — 2026-08-18
+
+The server side comes home. Four services extracted from websocket-gateway
+into first-class subpaths (the gateway now consumes them through thin shims):
+
+- **`./call`** (breaking): replaced the v0.6-era ancestor with the evolved
+  implementation the gateway had grown 5.5x in-tree — invite dedup,
+  InMemory/Redis call-state stores, cross-node departure pub/sub, sweeper
+  leadership. New `CallServiceOptions.withSpan` tracing seam (pass-through
+  default; this library does not depend on distributed-core).
+- **`./room`** (new): RoomService + InMemory/Redis room-state stores.
+  Metric hooks are injected via `RoomServiceOptions.metrics` (no-op default).
+- **`./notification`** (new): NotificationService + RedisNotificationStore,
+  moved verbatim (already dependency-pure).
+- **`./fileupload`** (new): FileUploadService + FileBlobStore. Metadata
+  persistence is the `FileUploadMetadataStore` interface (in-memory default;
+  the gateway's DynamoDB repository satisfies it structurally). Channel
+  authz is an injected hook — **default allows everything**; multi-tenant
+  deployments must wire their interceptor.
+
+## 0.17.0 — 2026-08-18
+
+Restored the 11 server-module sources deleted at v0.6.0 (the "client-only"
+turn was never completed — consumers kept importing the compiled output,
+which shipped without source for ten minors). Three dist-only patches
+back-ported to TypeScript (chat publisher authz, presence mode, presence
+colors). Build is now self-cleaning so dist/ can never outlive src/ again.
+
+
 All notable changes to `@connorhoehn/realtime-modules` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
