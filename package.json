@@ -90,6 +90,10 @@
       "types": "./dist/call/index.d.ts",
       "default": "./dist/call/index.js"
     },
+    "./room": {
+      "types": "./dist/room/index.d.ts",
+      "default": "./dist/room/index.js"
+    },
     "./typed-documents": {
       "types": "./dist/typed-documents/index.d.ts",
       "default": "./dist/typed-documents/index.js"
