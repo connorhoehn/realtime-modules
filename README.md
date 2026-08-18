@@ -13,6 +13,15 @@ middleware/portal (aws-agentcore), and live-video-streaming's UI.
 Pre-1.0 (`0.x`) — subpath shapes may shift between minors; pin to an
 exact published version (GitHub Packages) or git SHA.
 
+## Recipes
+
+**[docs/recipes/](./docs/recipes/README.md)** — one page per capability:
+attach on the server (3 lines), one client hook, one ui-components surface,
+and the graduation path from in-memory defaults to production stores. The
+composition layer is `attachRealtime` + `defineFeature` from `./server`;
+features compose à la carte (every one works alone and in any pair —
+enforced by the attach test matrix).
+
 ## What to use where
 
 | You are building… | Use |
