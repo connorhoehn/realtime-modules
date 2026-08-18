@@ -71,8 +71,6 @@ declare class DocumentPresenceService {
     hasClient(clientId: string, channel: string): boolean;
     /**
      * Update a client's idle state in a channel. Returns true if changed.
-     * Broadcasts on change so the /documents list page idle dot updates
-     * live (previously this only updated in-memory state).
      *
      * @param clientId
      * @param channel
@@ -88,7 +86,7 @@ declare class DocumentPresenceService {
      *
      * @param clientId
      * @param channel
-     * @param mode
+     * @param mode  'editor' | 'reviewer' | 'reader' | undefined to clear
      * @returns whether the value changed
      */
     setMode(clientId: string, channel: string, mode: PresenceMode | undefined): boolean;

@@ -1,26 +1,44 @@
 # @connorhoehn/realtime-modules
 
-Client-only realtime collaboration library for apps consuming a
-`websocket-gateway` deployment. Ships React hooks for chat, presence,
-reactions, activity, file upload, video hangouts, and notifications;
-an AG-UI / SSE agent-streaming surface; a Tiptap collaborative editor
-adapter; and a typed REST proxy client for Lambda / server-to-server
-callers.
+Full-stack realtime collaboration library — the "webstack" layer apps
+build on. Server-side services (`ChatService`, `PresenceService`,
+`CRDTService`, `ReactionService`, `ActivityService`, …) plus React
+hooks for chat, presence, reactions, activity, file upload, video
+hangouts, and notifications; an AG-UI / SSE agent-streaming surface; a
+Tiptap collaborative editor adapter; and a typed REST proxy client for
+Lambda / server-to-server callers.
 
-**Status.** Used by OrgIQ middleware/portal and by the gateway's admin
-frontend. Pre-1.0 (`0.x`) — subpath shapes may shift between minors;
-pin to an exact published version (GitHub Packages) or git SHA.
+**Status.** Powers `websocket-gateway` (server + frontend), OrgIQ
+middleware/portal (aws-agentcore), and live-video-streaming's UI.
+Pre-1.0 (`0.x`) — subpath shapes may shift between minors; pin to an
+exact published version (GitHub Packages) or git SHA.
 
-**v0.6.0 — server-side modules removed.** Earlier releases shipped
-service classes (`ChatService`, `PresenceService`, `CRDTService`,
-`ReactionService`, …) under `./server`, `./chat`, `./presence`,
-`./cursor`, `./activity`, `./reactions`, `./ingest`, `./pipeline`,
-`./social`, `./call`, `./typed-documents`. Those now live **in-tree in
-the `websocket-gateway` repo** and are no longer reusable libraries.
-This package is now client-only.
+## What to use where
 
-See **[Migration from v0.5.x](#migration-from-v05x)** below if you
-were a server-side consumer.
+| You are building… | Use |
+|---|---|
+| A server that terminates WebSockets and runs realtime features | `./server-ws` (WS handler factory) + the service subpaths: `./chat`, `./presence`, `./activity`, `./cursor`, `./reactions`, `./social`, `./call`, `./ingest`, `./pipeline`, `./typed-documents`, `./server` (CRDT/doc stack) |
+| A React app on top of a gateway deployment | `./client` hooks (+ `@connorhoehn/ui-components` for the UI layer, which wraps these hooks) |
+| Video hangouts (WHIP/WHEP against an SFU) | `./client/video`, `./client/hangout-rooms` |
+| Agent / LLM streaming UX | `./agent-streaming` (server), `./agent-streaming/client` |
+| Lambda / server-to-server calls into a gateway | `./proxy-client` |
+| Durable persistence behind the services | Implement the store interfaces (`ChatStore`, `MetadataStore`, `SnapshotStore`, `HotCache`) in YOUR app — in-memory defaults ship here; DynamoDB/Redis adapters live with the app that owns those tables (see websocket-gateway's `realtime-fanout/*/adapters`) |
+
+Layering: `ui-components → realtime-modules → (service-runtime,
+event-catalog)`. Apps (websocket-gateway, live-video-streaming,
+aws-agentcore) sit on top and contribute deployment glue + persistence
+adapters, not service logic.
+
+**History note (v0.6.0–v0.16.x).** v0.6.0 declared this package
+"client-only" and deleted the server-side sources, intending to move
+them in-tree to websocket-gateway. The move never completed: the
+compiled output stayed here, the gateway kept importing the subpaths,
+and for ten minor versions the server surface shipped WITHOUT source.
+v0.17.0 restored the sources from history (with the three fixes that
+had been patched into `dist/` directly: chat publisher authz, presence
+mode plumbing, presence color derivation) and made the build
+self-cleaning so `dist/` can never outlive `src/` again. The server
+modules are a supported, first-class surface.
 
 ---
 

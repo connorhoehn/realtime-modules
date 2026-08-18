@@ -1,10 +1,10 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
-  "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
+  "description": "Realtime feature toolkit \u2014 UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -102,14 +102,15 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "test": "jest",
     "typecheck": "tsc --noEmit",
     "check:contract": "tsc -p tsconfig.contract.json",
     "prepare": "test -f dist/index.js || npm run build",
     "prepublishOnly": "npm run build && npm test",
     "demo": "cd demo && npm run dev",
-    "demo:build": "cd demo && npm run build"
+    "demo:build": "cd demo && npm run build",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "distributed-core": "github:connorhoehn/distributed-core#b6f38f57b781a8bf74ff9e31a35b6062f7193dc9",

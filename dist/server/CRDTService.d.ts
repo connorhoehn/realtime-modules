@@ -91,10 +91,11 @@ declare class CRDTService {
     handleGetSnapshot(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
-    handleAwareness(clientId: string, { channel, update, idle }: {
+    handleAwareness(clientId: string, { channel, update, idle, mode }: {
         channel: string;
         update: string;
         idle?: boolean;
+        mode?: string;
     }): Promise<void>;
     handleDisconnect(clientId: string): Promise<void>;
     onClientDisconnect(clientId: string): Promise<void>;

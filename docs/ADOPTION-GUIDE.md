@@ -3,11 +3,12 @@
 Operator-facing guide for installing the realtime-modules toolkit into
 a new app and wiring its subpath exports.
 
-**v0.6.0+:** this package is **client-only**. Server-side service
-classes (`CRDTService`, `ChatService`, `PresenceService`, etc.) were
-removed and live in-tree in the `websocket-gateway` repo. If you were
-a server-side consumer, see
-[Migration from v0.5.x](#migration-from-v05x) at the bottom.
+**v0.17.0+:** this package is **full-stack** again. Server-side
+service classes (`CRDTService`, `ChatService`, `PresenceService`, etc.)
+are supported first-class surface — v0.6.0's "client-only" turn was
+never completed (the gateway kept consuming these subpaths throughout)
+and was reversed in v0.17.0. See the README's "What to use where"
+table for the layer map.
 
 ---
 
