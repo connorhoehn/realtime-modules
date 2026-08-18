@@ -4,7 +4,7 @@
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
-  "description": "Realtime feature toolkit \u2014 UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
+  "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -49,6 +49,50 @@
     "./server-ws": {
       "types": "./dist/server-ws/index.d.ts",
       "default": "./dist/server-ws/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "default": "./dist/server/index.js"
+    },
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "default": "./dist/chat/index.js"
+    },
+    "./presence": {
+      "types": "./dist/presence/index.d.ts",
+      "default": "./dist/presence/index.js"
+    },
+    "./activity": {
+      "types": "./dist/activity/index.d.ts",
+      "default": "./dist/activity/index.js"
+    },
+    "./cursor": {
+      "types": "./dist/cursor/index.d.ts",
+      "default": "./dist/cursor/index.js"
+    },
+    "./ingest": {
+      "types": "./dist/ingest/index.d.ts",
+      "default": "./dist/ingest/index.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline/index.d.ts",
+      "default": "./dist/pipeline/index.js"
+    },
+    "./reactions": {
+      "types": "./dist/reactions/index.d.ts",
+      "default": "./dist/reactions/index.js"
+    },
+    "./social": {
+      "types": "./dist/social/index.d.ts",
+      "default": "./dist/social/index.js"
+    },
+    "./call": {
+      "types": "./dist/call/index.d.ts",
+      "default": "./dist/call/index.js"
+    },
+    "./typed-documents": {
+      "types": "./dist/typed-documents/index.d.ts",
+      "default": "./dist/typed-documents/index.js"
     }
   },
   "files": [
@@ -58,15 +102,14 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm run clean && tsc",
+    "build": "tsc",
     "test": "jest",
     "typecheck": "tsc --noEmit",
     "check:contract": "tsc -p tsconfig.contract.json",
     "prepare": "test -f dist/index.js || npm run build",
     "prepublishOnly": "npm run build && npm test",
     "demo": "cd demo && npm run dev",
-    "demo:build": "cd demo && npm run build",
-    "clean": "rm -rf dist"
+    "demo:build": "cd demo && npm run build"
   },
   "dependencies": {
     "distributed-core": "github:connorhoehn/distributed-core#b6f38f57b781a8bf74ff9e31a35b6062f7193dc9",
