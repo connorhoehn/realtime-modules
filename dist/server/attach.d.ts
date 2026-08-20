@@ -11,6 +11,13 @@ export interface FeatureContext {
 /** A pluggable realtime capability: manifest + service factory. */
 export interface RealtimeFeature {
     manifest: FeatureManifest;
+    /**
+     * Wire routing key — the `service` field clients put on their frames.
+     * Defaults to `manifest.name`; set explicitly when the two differ
+     * (the CRDT feature's manifest identity is 'document-sharing' but every
+     * client hook addresses `service: 'crdt'`).
+     */
+    serviceName?: string;
     /** Instantiate the feature's WS service against the shared context. */
     create(ctx: FeatureContext): WsService;
 }
@@ -52,6 +59,12 @@ export declare function fileUploads(opts?: {
     publicBaseUrl?: string;
     maxBytes?: number;
     authz?: import('../fileupload/FileUploadService').FileUploadServiceOptions['authz'];
+}): RealtimeFeature;
+export declare function collabDocs(opts?: {
+    snapshotStore?: import('./stores/SnapshotStore').SnapshotStore;
+    metadataStore?: import('./stores/MetadataStore').MetadataStore;
+    hotCache?: import('./stores/SnapshotStore').HotCache | null;
+    authz?: import('./CRDTService').CRDTServiceOpts['authz'];
 }): RealtimeFeature;
 export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services' | 'server'> {
     /** The capabilities to attach. Built-ins and defineFeature() results mix freely. */

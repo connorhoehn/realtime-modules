@@ -16,7 +16,7 @@ matrix, all 78 pairs).
 | Calls / invites | [calls](./calls.md) | `calls()` | `useVideoHangout` |
 | Notifications | [notifications](./notifications.md) | `notifications()` | `useNotifications` |
 | File uploads | [file-uploads](./file-uploads.md) | `fileUploads()` | `useFileUpload` |
-| Collab documents | [collab-docs](./collab-docs.md) | (via `./server`) | `useCRDT` |
+| Collab documents | [collab-docs](./collab-docs.md) | `collabDocs()` | `useCRDT` |
 
 Authoring your own capability: `defineFeature({ manifest, create })` — it
 plugs in identically to the built-ins. See `src/server/attach.ts`.

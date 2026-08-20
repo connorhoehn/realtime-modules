@@ -52,6 +52,7 @@ exports.typedDocuments = typedDocuments;
 exports.rooms = rooms;
 exports.notifications = notifications;
 exports.fileUploads = fileUploads;
+exports.collabDocs = collabDocs;
 exports.attachRealtime = attachRealtime;
 const createWsHandler_1 = require("../server-ws/createWsHandler");
 const router_1 = require("./router");
@@ -213,6 +214,24 @@ function fileUploads(opts = {}) {
         },
     });
 }
+function collabDocs(opts = {}) {
+    return defineFeature({
+        manifest: require('./manifest').crdtManifest,
+        serviceName: 'crdt', // wire key clients address; manifest identity is 'document-sharing'
+        create: ({ router, logger }) => {
+            const { CRDTService } = require('./CRDTService');
+            const { MemorySnapshotStore, MemoryHotCache, MemoryMetadataStore } = require('./stores/MemoryStore');
+            return new CRDTService({
+                messageRouter: router,
+                logger: logger,
+                snapshotStore: opts.snapshotStore ?? new MemorySnapshotStore(),
+                metadataStore: opts.metadataStore ?? new MemoryMetadataStore(),
+                hotCache: opts.hotCache === undefined ? new MemoryHotCache() : opts.hotCache,
+                authz: opts.authz,
+            });
+        },
+    });
+}
 /**
  * Attach realtime features to an EXISTING http(s).Server.
  *
@@ -227,7 +246,7 @@ function attachRealtime(server, opts) {
     const services = {};
     const manifests = [];
     for (const feature of features) {
-        const name = feature.manifest.name;
+        const name = feature.serviceName ?? feature.manifest.name;
         if (services[name]) {
             throw new Error(`attachRealtime: duplicate feature '${name}'`);
         }
@@ -248,6 +267,26 @@ function attachRealtime(server, opts) {
         },
     });
     router._setHandle?.(handle);
-    return Object.assign(Object.create(null), handle, { router, services, manifests });
+    // Lifecycle-aware dispose: services with a shutdown()/stop() get it
+    // called before the WS handler tears down — CRDT flushes snapshots,
+    // sweep/eviction timers clear. Best-effort per service; one feature's
+    // teardown failure never blocks the rest.
+    const baseDispose = handle.dispose.bind(handle);
+    const dispose = async () => {
+        for (const [name, svc] of Object.entries(services)) {
+            const s = svc;
+            try {
+                if (typeof s.shutdown === 'function')
+                    await s.shutdown();
+                else if (typeof s.stop === 'function')
+                    await s.stop();
+            }
+            catch (err) {
+                log.warn(`[attachRealtime] '${name}' teardown failed`, err);
+            }
+        }
+        await baseDispose();
+    };
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose });
 }
 //# sourceMappingURL=attach.js.map

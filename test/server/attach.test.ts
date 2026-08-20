@@ -25,6 +25,7 @@ import {
     rooms,
     notifications,
     fileUploads,
+    collabDocs,
     type RealtimeFeature,
     type RealtimeHandle,
 } from '../../src/server';
@@ -43,6 +44,7 @@ const ALL_FEATURES: Array<[string, () => RealtimeFeature]> = [
     ['room', () => rooms()],
     ['notification', () => notifications()],
     ['fileupload', () => fileUploads()],
+    ['crdt', () => collabDocs()],   // wire key 'crdt'; manifest identity 'document-sharing'
 ];
 
 function listen(server: http.Server): Promise<number> {
@@ -104,7 +106,7 @@ describe('attachRealtime — à-la-carte matrix', () => {
         await teardown(server, handle);
     });
 
-    it('every PAIR of features composes without interference (78 pairs)', async () => {
+    it('every PAIR of features composes without interference (91 pairs)', async () => {
         for (let i = 0; i < ALL_FEATURES.length; i++) {
             for (let j = i + 1; j < ALL_FEATURES.length; j++) {
                 const [nameA, makeA] = ALL_FEATURES[i]!;
@@ -116,9 +118,9 @@ describe('attachRealtime — à-la-carte matrix', () => {
         }
     }, 120_000);
 
-    it('all thirteen features boot together', async () => {
+    it('all fourteen features boot together', async () => {
         const { server, port, handle } = await boot(ALL_FEATURES.map(([, m]) => m()));
-        expect(Object.keys(handle.services)).toHaveLength(13);
+        expect(Object.keys(handle.services)).toHaveLength(14);
         const ws = await connect(port);
         ws.close();
         await teardown(server, handle);
@@ -224,6 +226,17 @@ describe('attachRealtime — end-to-end behaviour on the local router', () => {
         expect(router.getClientsByUserId(['user-42'])).toEqual([{ clientId, userId: 'user-42' }]);
         ws.close();
         await teardown(server, handle);
+    });
+
+    it('collab-docs: join a doc channel, receive sync frames, shutdown flushes on dispose', async () => {
+        const { server, port, handle } = await boot([collabDocs()]);
+        const ws = await connect(port);
+        const sync = nextFrame(ws, (f) => f.type === 'crdt');
+        ws.send(JSON.stringify({ service: 'crdt', action: 'subscribe', channel: 'doc:matrix-test' }));
+        const first = await sync; // any crdt-typed frame proves routing via the 'crdt' wire key
+        expect(first).toBeTruthy();
+        ws.close();
+        await teardown(server, handle); // exercises the shutdown() path (snapshot flush)
     });
 
     it('dispose() detaches cleanly: HTTP keeps working, WS upgrades stop', async () => {

@@ -13,6 +13,7 @@ const server = require('../dist/server/index.js');
 const {
     attachRealtime, chat, presence, cursor, reactions, activity, social,
     calls, ingest, pipeline, typedDocuments, rooms, notifications, fileUploads,
+    collabDocs,
 } = server;
 
 const FEATURES = [
@@ -21,6 +22,7 @@ const FEATURES = [
     ['call', calls], ['ingest', ingest], ['pipeline-ws', pipeline],
     ['typed-documents', typedDocuments], ['room', rooms],
     ['notification', notifications], ['fileupload', fileUploads],
+    ['crdt', collabDocs],
 ];
 
 const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv.address().port)));
@@ -70,4 +72,4 @@ for (const [name, make] of FEATURES) {
 }
 
 if (failures) { console.error(`smoke-features FAILED (${failures})`); process.exit(1); }
-console.log('smoke-features passed: 13 features attach + round-trip against built dist.');
+console.log('smoke-features passed: 14 features attach + round-trip against built dist.');

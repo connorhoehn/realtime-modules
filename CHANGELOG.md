@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.20.0 — 2026-08-20
+
+- **`collabDocs()`** — the fourteenth built-in feature; CRDT document sync
+  is now attachable like everything else (in-memory snapshot/metadata/
+  hot-cache defaults, `authz` + store seams for production). The matrix
+  grows to 14 solo boots and 91 pairs, plus a live subscribe round-trip.
+- **`RealtimeFeature.serviceName`** — explicit wire routing key when it
+  differs from the manifest identity (CRDT's manifest is
+  'document-sharing'; every client hook addresses `service: 'crdt'`).
+- **Lifecycle-aware `dispose()`** — services exposing `shutdown()`/`stop()`
+  get them called before the WS listener detaches (CRDT flushes snapshots);
+  best-effort per service.
+
+
 ## 0.19.0 — 2026-08-18
 
 The pluggable composition layer. The unit of adoption is the FEATURE — you

@@ -61,6 +61,13 @@ export interface FeatureContext {
 /** A pluggable realtime capability: manifest + service factory. */
 export interface RealtimeFeature {
     manifest: FeatureManifest;
+    /**
+     * Wire routing key — the `service` field clients put on their frames.
+     * Defaults to `manifest.name`; set explicitly when the two differ
+     * (the CRDT feature's manifest identity is 'document-sharing' but every
+     * client hook addresses `service: 'crdt'`).
+     */
+    serviceName?: string;
     /** Instantiate the feature's WS service against the shared context. */
     create(ctx: FeatureContext): WsService;
 }
@@ -262,6 +269,30 @@ export function fileUploads(opts: {
     });
 }
 
+export function collabDocs(opts: {
+    snapshotStore?: import('./stores/SnapshotStore').SnapshotStore;
+    metadataStore?: import('./stores/MetadataStore').MetadataStore;
+    hotCache?: import('./stores/SnapshotStore').HotCache | null;
+    authz?: import('./CRDTService').CRDTServiceOpts['authz'];
+} = {}): RealtimeFeature {
+    return defineFeature({
+        manifest: require('./manifest').crdtManifest,
+        serviceName: 'crdt', // wire key clients address; manifest identity is 'document-sharing'
+        create: ({ router, logger }) => {
+            const { CRDTService } = require('./CRDTService') as typeof import('./CRDTService');
+            const { MemorySnapshotStore, MemoryHotCache, MemoryMetadataStore } = require('./stores/MemoryStore') as any;
+            return new CRDTService({
+                messageRouter: router as any,
+                logger: logger as any,
+                snapshotStore: opts.snapshotStore ?? new MemorySnapshotStore(),
+                metadataStore: opts.metadataStore ?? new MemoryMetadataStore(),
+                hotCache: opts.hotCache === undefined ? new MemoryHotCache() : opts.hotCache,
+                authz: opts.authz,
+            });
+        },
+    });
+}
+
 /* eslint-enable @typescript-eslint/no-var-requires */
 
 // ---- attachRealtime -------------------------------------------------------------
@@ -306,7 +337,7 @@ export function attachRealtime(
     const services: Record<string, WsService> = {};
     const manifests: FeatureManifest[] = [];
     for (const feature of features) {
-        const name = feature.manifest.name;
+        const name = feature.serviceName ?? feature.manifest.name;
         if (services[name]) {
             throw new Error(`attachRealtime: duplicate feature '${name}'`);
         }
@@ -327,5 +358,23 @@ export function attachRealtime(
 
     router._setHandle?.(handle);
 
-    return Object.assign(Object.create(null), handle, { router, services, manifests });
+    // Lifecycle-aware dispose: services with a shutdown()/stop() get it
+    // called before the WS handler tears down — CRDT flushes snapshots,
+    // sweep/eviction timers clear. Best-effort per service; one feature's
+    // teardown failure never blocks the rest.
+    const baseDispose = handle.dispose.bind(handle);
+    const dispose = async (): Promise<void> => {
+        for (const [name, svc] of Object.entries(services)) {
+            const s = svc as { shutdown?: () => Promise<void> | void; stop?: () => Promise<void> | void };
+            try {
+                if (typeof s.shutdown === 'function') await s.shutdown();
+                else if (typeof s.stop === 'function') await s.stop();
+            } catch (err) {
+                log.warn(`[attachRealtime] '${name}' teardown failed`, err);
+            }
+        }
+        await baseDispose();
+    };
+
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose });
 }

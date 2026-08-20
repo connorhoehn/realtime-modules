@@ -2,46 +2,53 @@
 
 > Plug `collab-docs` into an app you already have. Three steps + a graduation path.
 
-Yjs document sync with snapshots, awareness, presence and idle eviction. The one capability not yet packaged as an attach feature — wire CRDTService from `./server` alongside attachRealtime (they share the router); see the swarm-server pattern in websocket-gateway/scripts/ws-swarm-server.js.
+Yjs document sync with snapshots, versions, awareness, presence and idle
+eviction. As of v0.20.0 this is a first-class attach feature — no manual
+CRDTService wiring. Wire frames address `service: "crdt"` (`subscribe`,
+`update`, `awareness`, `getSnapshot`, `saveVersion`, `restoreSnapshot`, …).
 
 ## 1 — Server (attach to your existing http.Server)
 
 ```ts
 import http from 'http';
-import { attachRealtime } from '@connorhoehn/realtime-modules/server';
+import { attachRealtime, collabDocs } from '@connorhoehn/realtime-modules/server';
 
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
-    features: [/* CRDT: see below — wired via ./server, not a built-in yet */],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    features: [collabDocs()],
+    auth: async (req) => ({ userId: await verifyToken(req) }),   // presence names/colors
 });
 httpServer.listen(3000);
 ```
 
-Add more capabilities by adding entries to `features` — nothing else changes.
+`realtime.dispose()` shuts the document stack down cleanly (snapshot flush
+included) before detaching the WS listener.
 
 ## 2 — Client (React hook)
 
 ```tsx
-// useCRDT / useYjsDoc, and adapters/tiptap for a drop-in editor
+// useCRDT / useYjsDoc — or skip straight to the editor adapter below.
 ```
-
-Point the client at the same origin (`/realtime` by default). All hooks share
-one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.
 
 ## 3 — UI (ui-components)
 
-Use **TiptapEditor via @connorhoehn/realtime-modules/adapters/tiptap**. Per the frontend discipline: never hand-roll the surface —
-if a composite is missing, add it to ui-components first.
+Use **TiptapEditor via `@connorhoehn/realtime-modules/adapters/tiptap`** —
+it bootstraps the Y.Doc + provider stack internally. Per the frontend
+discipline: if a needed editor composite is missing, add it to
+ui-components first.
 
 ## Graduate to production
 
-Zero-config uses in-memory state (single process, non-durable). To graduate:
+Zero-config uses the in-memory store trio (single process, non-durable):
 
 ```ts
-new CRDTService({ snapshotStore, hotCache, metadataStore, … })  // in-memory versions ship in ./server's inMemoryAdapters()
+collabDocs({
+    snapshotStore: myDurableSnapshotStore,   // SnapshotStore — the gateway's DdbSnapshotStore is the reference
+    metadataStore: myMetadataStore,          // MetadataStore — DdbMetadataStore pattern
+    hotCache: myRedisHotCache,               // HotCache | null — RedisHotCache pattern
+    authz: (clientId, channel, svc) => canAccess(clientId, channel),
+})
 ```
 
-Multi-node? Swap the transport, not the features: pass a Redis-backed
-`RealtimeRouter` via `attachRealtime(server, { router })` — the
-websocket-gateway MessageRouter is the reference implementation.
+Multi-node? Swap the transport, not the feature: pass a Redis-backed
+`RealtimeRouter` via `attachRealtime(server, { router })`.

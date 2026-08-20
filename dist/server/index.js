@@ -34,7 +34,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LocalRealtimeRouter = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -80,6 +80,7 @@ Object.defineProperty(exports, "typedDocuments", { enumerable: true, get: functi
 Object.defineProperty(exports, "rooms", { enumerable: true, get: function () { return attach_1.rooms; } });
 Object.defineProperty(exports, "notifications", { enumerable: true, get: function () { return attach_1.notifications; } });
 Object.defineProperty(exports, "fileUploads", { enumerable: true, get: function () { return attach_1.fileUploads; } });
+Object.defineProperty(exports, "collabDocs", { enumerable: true, get: function () { return attach_1.collabDocs; } });
 var router_1 = require("./router");
 Object.defineProperty(exports, "LocalRealtimeRouter", { enumerable: true, get: function () { return router_1.LocalRealtimeRouter; } });
 //# sourceMappingURL=index.js.map

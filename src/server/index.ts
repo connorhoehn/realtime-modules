@@ -73,6 +73,7 @@ export {
     rooms,
     notifications,
     fileUploads,
+    collabDocs,
 } from './attach';
 export type {
     AttachRealtimeOptions,
