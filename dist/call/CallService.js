@@ -277,7 +277,7 @@ class CallService {
         //    lobbies) doesn't drop the second.
         let totalNotified = 0;
         for (const callId of candidateCallIds) {
-            await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName)
+            await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName, evt.callContinues === true)
                 .then((n) => { totalNotified += n; })
                 .catch((e) => this.logger.warn(`[CallService] cross-node notify loop failed for ${callId}: ${e?.message ?? e}`));
         }
@@ -289,7 +289,7 @@ class CallService {
      * filters to local-live clientIds, sends synthetic `ended`, and
      * cleans local state. Returns the count of notified peers.
      */
-    async notifyLocalPeersOfDeparture(callId, departedClientId, fallbackCallerId, fallbackLobbyName) {
+    async notifyLocalPeersOfDeparture(callId, departedClientId, fallbackCallerId, fallbackLobbyName, callContinues = false) {
         let participantClientIds = [];
         let callerId = fallbackCallerId;
         let lobbyName = fallbackLobbyName;
@@ -335,21 +335,39 @@ class CallService {
             }
         }
         if (localPeers.length === 0) {
-            if (localState)
+            // F1 — a continuing call must NOT be torn down just because
+            // this node happens to host no other participants.
+            if (localState && !callContinues)
                 this.forgetCall(callId);
+            if (localState && callContinues)
+                localState.participantClientIds.delete(departedClientId);
             return 0;
         }
-        const envelope = {
-            type: 'call',
-            action: 'ended',
-            data: {
-                callId,
-                callerId,
-                lobbyName,
-                reason: 'peer-disconnected',
-            },
-            timestamp: new Date().toISOString(),
-        };
+        const envelope = callContinues
+            ? {
+                type: 'call',
+                action: 'user-status',
+                data: {
+                    callId,
+                    callerId,
+                    lobbyName,
+                    status: 'left',
+                    userId: null,
+                    reason: 'peer-disconnected',
+                },
+                timestamp: new Date().toISOString(),
+            }
+            : {
+                type: 'call',
+                action: 'ended',
+                data: {
+                    callId,
+                    callerId,
+                    lobbyName,
+                    reason: 'peer-disconnected',
+                },
+                timestamp: new Date().toISOString(),
+            };
         for (const peerClientId of localPeers) {
             try {
                 await Promise.resolve(this.messageRouter.sendToClient(peerClientId, envelope));
@@ -358,7 +376,13 @@ class CallService {
                 this.logger.warn(`[CallService] cross-node notify failed for peer ${peerClientId} of call ${callId}: ${e?.message ?? e}`);
             }
         }
-        this.forgetCall(callId);
+        if (callContinues) {
+            if (localState)
+                localState.participantClientIds.delete(departedClientId);
+        }
+        else {
+            this.forgetCall(callId);
+        }
         return localPeers.length;
     }
     /** Stop the cross-node subscription. Called on service shutdown. */
@@ -674,7 +698,19 @@ class CallService {
         }, { tracerName: 'gateway' });
     }
     async handleCallEvent(clientId, action, data) {
-        const payload = data ?? {};
+        // Envelope tolerance (2026-08-21): accept BOTH the flat shape the
+        // frontend sends ({service:'call', action, callId, lobbyName, ...})
+        // and the nested shape ({service:'call', action, data:{callId,...}})
+        // that raw WS clients (e2e harness, external integrators) use.
+        // Before this, nested invites silently failed the callId/lobbyName
+        // requirement with an error frame most callers never read — every
+        // invite-driven e2e journey died at step one.
+        let payload = data ?? {};
+        const nested = payload.data;
+        if (payload.callId == null && payload.lobbyName == null
+            && nested && typeof nested === 'object' && !Array.isArray(nested)) {
+            payload = { ...nested, ...payload };
+        }
         const callId = payload.callId;
         const lobbyName = payload.lobbyName;
         // Normalize routing targets — accept either `targetUserIds: string[]`
@@ -1158,20 +1194,66 @@ class CallService {
             // handleCrossNodeDeparted will notify its own local peers.
             let callerIdForPayload = '';
             let lobbyNameForPayload = '';
+            // F1 (2026-08-21) — participant-grain departure. The previous
+            // implementation unconditionally broadcast a synthetic `ended`
+            // and forgetCall()'d the whole call for EVERY disconnect: in a
+            // 3-person call the first person to drop (or refresh!) deleted
+            // server state for everyone and kicked every surviving peer.
+            // Compute how many participants remain (cluster view preferred,
+            // local cache fallback) and only tear the call down when the
+            // departure leaves <=1 participant — otherwise the survivors
+            // get a `user-status: left` and the call lives on, which is
+            // what multi-party calls and refresh-rejoin both require.
+            let remainingAfterDeparture = 0;
+            if (this.stateStore) {
+                try {
+                    const view = await this.stateStore.getCall(callId);
+                    if (view) {
+                        remainingAfterDeparture = view.participantClientIds
+                            .filter((cid) => cid !== clientId).length;
+                        callerIdForPayload = view.callerId || callerIdForPayload;
+                        lobbyNameForPayload = view.lobbyName || lobbyNameForPayload;
+                    }
+                }
+                catch { /* fall through to local cache */ }
+            }
+            if (state) {
+                const localRemaining = Array.from(state.participantClientIds)
+                    .filter((cid) => cid !== clientId).length;
+                remainingAfterDeparture = Math.max(remainingAfterDeparture, localRemaining);
+            }
+            const callContinues = remainingAfterDeparture >= 2;
             if (state) {
                 callerIdForPayload = state.callerId;
                 lobbyNameForPayload = state.lobbyName;
-                const envelope = {
-                    type: 'call',
-                    action: 'ended',
-                    data: {
-                        callId,
-                        callerId: state.callerId,
-                        lobbyName: state.lobbyName,
-                        reason: 'peer-disconnected',
-                    },
-                    timestamp: new Date().toISOString(),
-                };
+                const departedUserId = (typeof this.messageRouter.getUserIdForClient === 'function'
+                    ? this.messageRouter.getUserIdForClient(clientId)
+                    : null) ?? null;
+                const envelope = callContinues
+                    ? {
+                        type: 'call',
+                        action: 'user-status',
+                        data: {
+                            callId,
+                            callerId: state.callerId,
+                            lobbyName: state.lobbyName,
+                            status: 'left',
+                            userId: departedUserId,
+                            reason: 'peer-disconnected',
+                        },
+                        timestamp: new Date().toISOString(),
+                    }
+                    : {
+                        type: 'call',
+                        action: 'ended',
+                        data: {
+                            callId,
+                            callerId: state.callerId,
+                            lobbyName: state.lobbyName,
+                            reason: 'peer-disconnected',
+                        },
+                        timestamp: new Date().toISOString(),
+                    };
                 for (const peerClientId of state.participantClientIds) {
                     if (peerClientId === clientId)
                         continue;
@@ -1182,7 +1264,7 @@ class CallService {
                         this.logger.warn(`CallService.handleDisconnect: failed to notify peer ${peerClientId} of ${clientId}'s exit from ${callId}: ${e?.message ?? e}`);
                     }
                 }
-                this.logger.info(`CallService: client ${clientId} dropped; sent synthetic 'ended' to ${state.participantClientIds.size - 1} local peer(s) of call ${callId}`);
+                this.logger.info(`CallService: client ${clientId} dropped; sent ${callContinues ? "'user-status: left'" : "synthetic 'ended'"} to ${state.participantClientIds.size - 1} local peer(s) of call ${callId} (remaining=${remainingAfterDeparture})`);
             }
             else if (this.stateStore) {
                 // Cluster-only entry — pull authoritative metadata so the
@@ -1209,6 +1291,7 @@ class CallService {
                         departedClientId: clientId,
                         callerId: callerIdForPayload,
                         lobbyName: lobbyNameForPayload,
+                        callContinues,
                     };
                     await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)));
                     // Structured info log on successful publish: operators need
@@ -1236,18 +1319,38 @@ class CallService {
                     });
                 }
             }
-            this.forgetCall(callId);
-            // forgetCall above is a no-op when local state is missing
-            // (cluster-only callId). Ensure cluster-wide cleanup still
-            // fires so peer nodes can converge on a terminal state.
-            if (!this.activeCalls.has(callId) && this.stateStore) {
-                if (typeof this.stateStore.removeClientFromCall === 'function') {
-                    void this.stateStore.removeClientFromCall(clientId, callId)
-                        .catch((e) => this.logger.warn(`[CallService] stateStore.removeClientFromCall failed for ${clientId}/${callId}: ${e?.message ?? e}`));
+            if (callContinues) {
+                // F1 — participant-grain removal: drop ONLY the departed
+                // client; the call (and every other participant's state)
+                // survives. This is the same removal the clean-exit
+                // `ended`/`declined` path performs.
+                if (state)
+                    state.participantClientIds.delete(clientId);
+                if (this.stateStore) {
+                    if (typeof this.stateStore.removeClientFromCall === 'function') {
+                        void this.stateStore.removeClientFromCall(clientId, callId)
+                            .catch((e) => this.logger.warn(`[CallService] stateStore.removeClientFromCall failed for ${clientId}/${callId}: ${e?.message ?? e}`));
+                    }
+                    else {
+                        void this.stateStore.removeParticipant(callId, clientId)
+                            .catch((e) => this.logger.warn(`[CallService] stateStore.removeParticipant failed for ${callId}/${clientId}: ${e?.message ?? e}`));
+                    }
                 }
-                else {
-                    void this.stateStore.removeParticipant(callId, clientId)
-                        .catch((e) => this.logger.warn(`[CallService] stateStore.removeParticipant failed for ${callId}/${clientId}: ${e?.message ?? e}`));
+            }
+            else {
+                this.forgetCall(callId);
+                // forgetCall above is a no-op when local state is missing
+                // (cluster-only callId). Ensure cluster-wide cleanup still
+                // fires so peer nodes can converge on a terminal state.
+                if (!this.activeCalls.has(callId) && this.stateStore) {
+                    if (typeof this.stateStore.removeClientFromCall === 'function') {
+                        void this.stateStore.removeClientFromCall(clientId, callId)
+                            .catch((e) => this.logger.warn(`[CallService] stateStore.removeClientFromCall failed for ${clientId}/${callId}: ${e?.message ?? e}`));
+                    }
+                    else {
+                        void this.stateStore.removeParticipant(callId, clientId)
+                            .catch((e) => this.logger.warn(`[CallService] stateStore.removeParticipant failed for ${callId}/${clientId}: ${e?.message ?? e}`));
+                    }
                 }
             }
         }
