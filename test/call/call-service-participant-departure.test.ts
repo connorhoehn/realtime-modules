@@ -108,3 +108,22 @@ describe('CallService — participant-grain departure (F1)', () => {
     await svc.dispose();
   });
 });
+
+describe('CallService — nested envelope tolerance', () => {
+  test('invite with payload nested under data still registers and routes', async () => {
+    const router = makeRouter({ 'c-hank': 'u-hank', 'c-bob': 'u-bob' });
+    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    await svc.handleCallEvent('c-hank', 'invite', {
+      data: {
+        callId: 'nested-1', lobbyName: 'dm:u-hank:u-bob', callerId: 'u-hank',
+        targetUserIds: ['u-bob'],
+      },
+    } as any);
+    const invites = router.sent.filter(
+      (s) => s.clientId === 'c-bob' && s.message?.action === 'invite',
+    );
+    expect(invites).toHaveLength(1);
+    expect(invites[0]!.message.data.callId).toBe('nested-1');
+    await svc.dispose();
+  });
+});

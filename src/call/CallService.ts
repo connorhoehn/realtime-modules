@@ -745,7 +745,21 @@ export class CallService {
         action: CallAction,
         data: CallInvite | null | undefined,
     ): Promise<void> {
-        const payload: CallInvite = data ?? {};
+        // Envelope tolerance (2026-08-21): accept BOTH the flat shape the
+        // frontend sends ({service:'call', action, callId, lobbyName, ...})
+        // and the nested shape ({service:'call', action, data:{callId,...}})
+        // that raw WS clients (e2e harness, external integrators) use.
+        // Before this, nested invites silently failed the callId/lobbyName
+        // requirement with an error frame most callers never read — every
+        // invite-driven e2e journey died at step one.
+        let payload: CallInvite = data ?? {};
+        const nested = (payload as { data?: unknown }).data;
+        if (
+            payload.callId == null && payload.lobbyName == null
+            && nested && typeof nested === 'object' && !Array.isArray(nested)
+        ) {
+            payload = { ...(nested as CallInvite), ...payload };
+        }
         const callId = payload.callId;
         const lobbyName = payload.lobbyName;
 
