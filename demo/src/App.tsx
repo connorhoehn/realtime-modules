@@ -11,7 +11,12 @@ import VideoHangoutDemo from './pages/VideoHangoutDemo';
 // Env config
 // ---------------------------------------------------------------------------
 
-const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL as string | undefined;
+// Zero-config default: same-origin /realtime, proxied by vite to the demo
+// server (`npm run dev` starts both). VITE_GATEWAY_URL still overrides for
+// pointing at a real gateway deployment.
+const DEMO_USER = `demo-${Math.random().toString(36).slice(2, 6)}`;
+const DEFAULT_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/realtime?user=${DEMO_USER}`;
+const GATEWAY_URL = (import.meta.env.VITE_GATEWAY_URL as string | undefined) ?? DEFAULT_URL;
 const AUTH_TOKEN = import.meta.env.VITE_AUTH_TOKEN as string | undefined;
 const VERSION = '0.7.3';
 
