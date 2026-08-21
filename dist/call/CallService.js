@@ -650,6 +650,111 @@ class CallService {
             this.activeInvitesByUserId.delete(userId);
         this.logger.info(`[CallService] replayed ${replayed} invites to clientId=${clientId} userId=${userId}`);
     }
+    /**
+     * F3 (2026-08-21) — answer a `status` query: "is there an active call
+     * in this lobby?" Reply goes to the sender only, as an `active-call`
+     * envelope. Resolution order: local activeCalls cache (fast path,
+     * covers single-node), then the stateStore lobby index (cluster-wide,
+     * liveness-filtered through getCall).
+     */
+    async handleStatusQuery(clientId, payload) {
+        const lobbyName = typeof payload.lobbyName === 'string' ? payload.lobbyName : '';
+        if (!lobbyName) {
+            this.sendError(clientId, 'lobbyName is required on status');
+            return;
+        }
+        const now = Date.now();
+        let foundCallId = null;
+        let callerId = '';
+        let callerName = null;
+        let startedAt = null;
+        let participantClientIds = [];
+        let targetUserIds = [];
+        // Local cache first. Skip expired unaccepted invites — they are
+        // dead air even if the sweep timer hasn't reaped them yet.
+        for (const [id, state] of this.activeCalls) {
+            if (state.lobbyName !== lobbyName && state.originalLobbyName !== lobbyName)
+                continue;
+            if (typeof state.inviteExpiresAt === 'number'
+                && now > state.inviteExpiresAt
+                && !this.acceptedCallIds.has(id))
+                continue;
+            if (state.participantClientIds.size === 0)
+                continue;
+            foundCallId = id;
+            callerId = state.callerId;
+            callerName = state.originalCallerName ?? null;
+            startedAt = state.invitedAt ?? null;
+            participantClientIds = Array.from(state.participantClientIds);
+            targetUserIds = (state.originalTargetUserIds ?? state.targetUserIds).slice();
+            break;
+        }
+        // Cluster-wide fallback via the lobby index.
+        if (!foundCallId && this.stateStore && typeof this.stateStore.getCallIdsByLobby === 'function') {
+            try {
+                const ids = await this.stateStore.getCallIdsByLobby(lobbyName);
+                for (const id of ids) {
+                    const view = await this.stateStore.getCall(id);
+                    if (!view || view.participantClientIds.length === 0)
+                        continue;
+                    foundCallId = id;
+                    callerId = view.callerId;
+                    callerName = view.callerName ?? null;
+                    startedAt = view.invitedAt ?? null;
+                    participantClientIds = view.participantClientIds.slice();
+                    targetUserIds = view.targetUserIds.slice();
+                    break;
+                }
+            }
+            catch (e) {
+                this.logger.warn(`[CallService] status lobby lookup failed for ${lobbyName}: ${e?.message ?? e}`);
+            }
+        }
+        const data = { lobbyName, active: !!foundCallId };
+        if (foundCallId) {
+            // Best-effort participant userIds: reverse-map live clientIds
+            // (local router knowledge), fall back to caller + invitees.
+            const userIds = new Set();
+            if (typeof this.messageRouter.getUserIdForClient === 'function') {
+                for (const cid of participantClientIds) {
+                    try {
+                        const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(cid));
+                        if (uid)
+                            userIds.add(uid);
+                    }
+                    catch { /* */ }
+                }
+            }
+            if (userIds.size === 0) {
+                if (callerId)
+                    userIds.add(callerId);
+                for (const uid of targetUserIds)
+                    if (uid)
+                        userIds.add(uid);
+            }
+            data.callId = foundCallId;
+            data.callerId = callerId;
+            if (callerName)
+                data.callerName = callerName;
+            if (typeof startedAt === 'number' && startedAt > 0) {
+                data.startedAt = new Date(startedAt).toISOString();
+            }
+            data.participantCount = participantClientIds.length;
+            data.participantUserIds = Array.from(userIds);
+        }
+        const envelope = {
+            type: 'call',
+            action: 'active-call',
+            data: data,
+            timestamp: new Date().toISOString(),
+        };
+        try {
+            await Promise.resolve(this.messageRouter.sendToClient(clientId, envelope));
+        }
+        catch (e) {
+            this.logger.warn(`[CallService] active-call reply failed for ${clientId}: ${e?.message ?? e}`);
+        }
+    }
     async handleAction(clientId, action, data) {
         // Wrap the whole action in a per-verb span so the trace UI shows
         // `call.invite` / `call.accepted` / etc. rather than just a single
@@ -718,6 +823,15 @@ class CallService {
         const targetUserIds = this.normalizeTargetUserIds(payload);
         if (action === 'invite' && (!callId || !lobbyName)) {
             this.sendError(clientId, 'callId and lobbyName are required on invite');
+            return;
+        }
+        // F3 (2026-08-21) — `status` is a query, not a signaling verb:
+        // reply to the SENDER ONLY with an `active-call` envelope and
+        // stop. Lets a freshly-connected client (never invited, or
+        // reconnecting after a refresh) discover an in-progress call in
+        // a lobby before deciding to join.
+        if (action === 'status') {
+            await this.handleStatusQuery(clientId, payload);
             return;
         }
         // W3 — RoomService bridge. participant-state + user-status are
@@ -860,6 +974,27 @@ class CallService {
             || action === 'accepted');
         if (shouldRegister) {
             this.registerParticipant(callId, clientId, callerId, resolvedLobbyName, targetUserIds);
+            // F2/F3 — durable discovery indexes, fire-and-forget. The
+            // userId index is what survives a page refresh (new tab =
+            // new clientId, so the clientId reverse-index misses); the
+            // lobby index powers the `status` query for non-invitees.
+            if (this.stateStore) {
+                let senderUserId = action === 'invite' ? callerId : '';
+                if (!senderUserId && typeof this.messageRouter.getUserIdForClient === 'function') {
+                    try {
+                        senderUserId = (await Promise.resolve(this.messageRouter.getUserIdForClient(clientId))) ?? '';
+                    }
+                    catch { /* best-effort */ }
+                }
+                if (senderUserId && typeof this.stateStore.registerUserCall === 'function') {
+                    void this.stateStore.registerUserCall(senderUserId, callId, CallService.ACCEPTED_CALL_TTL_SEC)
+                        .catch((e) => this.logger.warn(`[CallService] registerUserCall failed for ${senderUserId}/${callId}: ${e?.message ?? e}`));
+                }
+                if (resolvedLobbyName && typeof this.stateStore.registerLobbyCall === 'function') {
+                    void this.stateStore.registerLobbyCall(resolvedLobbyName, callId, CallService.ACCEPTED_CALL_TTL_SEC)
+                        .catch((e) => this.logger.warn(`[CallService] registerLobbyCall failed for ${resolvedLobbyName}/${callId}: ${e?.message ?? e}`));
+                }
+            }
             if (action === 'invite') {
                 const state = this.activeCalls.get(callId);
                 if (state) {

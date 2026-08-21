@@ -35,7 +35,17 @@ export type CallAction =
     | 'participant-state'
     /** In-call broadcast: presence-style status (in-call, on-hold).
      *  Receivers can dim sidebars, suppress invites, etc. */
-    | 'user-status';
+    | 'user-status'
+    /** F3 (2026-08-21) — client → server query: "is there an active call
+     *  in this lobby?" Server replies to the SENDER ONLY with an
+     *  `active-call` envelope (never broadcast). Lets a freshly connected
+     *  client discover an in-progress group call it was never invited to
+     *  (or reconnect-discover one it left) without any HTTP roundtrip. */
+    | 'status'
+    /** F3 — server → client reply to `status`. data: { lobbyName,
+     *  active, callId?, callerId?, callerName?, startedAt?,
+     *  participantCount?, participantUserIds? }. */
+    | 'active-call';
 
 /**
  * Wire-form payload supplied by the FE alongside a call action. All

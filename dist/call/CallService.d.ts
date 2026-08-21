@@ -153,6 +153,14 @@ export declare class CallService {
      *  the window, false on duplicate. */
     private checkRecentInviteLocal;
     replayActiveInvitesForUser(clientId: string, userId: string): Promise<void>;
+    /**
+     * F3 (2026-08-21) — answer a `status` query: "is there an active call
+     * in this lobby?" Reply goes to the sender only, as an `active-call`
+     * envelope. Resolution order: local activeCalls cache (fast path,
+     * covers single-node), then the stateStore lobby index (cluster-wide,
+     * liveness-filtered through getCall).
+     */
+    private handleStatusQuery;
     handleAction(clientId: string, action: string, data: CallInvite | null | undefined): Promise<void>;
     handleCallEvent(clientId: string, action: CallAction, data: CallInvite | null | undefined): Promise<void>;
     /**

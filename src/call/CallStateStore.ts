@@ -155,6 +155,34 @@ export interface CallStateStore {
      * disconnect. Implementations may delegate to getCallIdsByClient.
      */
     getCallsForClient?(clientId: string): Promise<string[]>;
+
+    // ─────────────────────────────────────────────────────────────────
+    // F2/F3 (2026-08-21) — discovery indexes. Both are append-only with
+    // a TTL safety net: readers MUST liveness-filter every returned
+    // callId through getCall (null view = stale entry, skip). No removal
+    // on disconnect/forget is required, which keeps the write paths
+    // fire-and-forget and race-free.
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * F2 — durable userId → callIds index. The clientId index breaks on
+     * page refresh: the new tab has a NEW clientId, so
+     * getCallIdsByClient(newClientId) is empty and the resume dialog
+     * never fires. This index keys on the stable userId instead.
+     */
+    registerUserCall?(userId: string, callId: string, ttlSec: number): Promise<void>;
+    /** F2 — callIds this userId has participated in (may include stale
+     *  entries; liveness-filter through getCall). */
+    getCallIdsByUser?(userId: string): Promise<string[]>;
+
+    /**
+     * F3 — lobbyName → callIds index so a freshly-connected client can
+     * ask "is there an active call in this lobby?" without ever having
+     * been invited. Same liveness-filter contract as the user index.
+     */
+    registerLobbyCall?(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
+    /** F3 — candidate callIds for a lobby (liveness-filter through getCall). */
+    getCallIdsByLobby?(lobbyName: string): Promise<string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +208,10 @@ export class InMemoryCallStateStore implements CallStateStore {
     private acceptedCalls = new Map<string, number>();
     // PR-W2.1 — recent-invites dedup. Value is the expiry millis.
     private recentInvites = new Map<string, number>();
+    // F2/F3 — discovery indexes (userId → callIds, lobbyName → callIds).
+    // Append-only; readers liveness-filter through getCall.
+    private userToCalls = new Map<string, Set<string>>();
+    private lobbyToCalls = new Map<string, Set<string>>();
 
     async registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void> {
         let state = this.activeCalls.get(callId);
@@ -222,6 +254,40 @@ export class InMemoryCallStateStore implements CallStateStore {
     async getCallIdsByClient(clientId: string): Promise<string[]> {
         const calls = this.clientToCalls.get(clientId);
         return calls ? Array.from(calls) : [];
+    }
+
+    async registerUserCall(userId: string, callId: string, _ttlSec: number): Promise<void> {
+        let set = this.userToCalls.get(userId);
+        if (!set) { set = new Set(); this.userToCalls.set(userId, set); }
+        set.add(callId);
+    }
+
+    async getCallIdsByUser(userId: string): Promise<string[]> {
+        const set = this.userToCalls.get(userId);
+        if (!set) return [];
+        // Opportunistic prune: drop ids whose call no longer exists so
+        // the in-memory sets don't grow unbounded in long-lived nodes.
+        for (const id of Array.from(set)) {
+            if (!this.activeCalls.has(id)) set.delete(id);
+        }
+        if (set.size === 0) { this.userToCalls.delete(userId); return []; }
+        return Array.from(set);
+    }
+
+    async registerLobbyCall(lobbyName: string, callId: string, _ttlSec: number): Promise<void> {
+        let set = this.lobbyToCalls.get(lobbyName);
+        if (!set) { set = new Set(); this.lobbyToCalls.set(lobbyName, set); }
+        set.add(callId);
+    }
+
+    async getCallIdsByLobby(lobbyName: string): Promise<string[]> {
+        const set = this.lobbyToCalls.get(lobbyName);
+        if (!set) return [];
+        for (const id of Array.from(set)) {
+            if (!this.activeCalls.has(id)) set.delete(id);
+        }
+        if (set.size === 0) { this.lobbyToCalls.delete(lobbyName); return []; }
+        return Array.from(set);
     }
 
     async setInviteMetadata(
@@ -418,6 +484,9 @@ const CALL_KEY_PREFIX = 'call:active:';
 const CLIENT_KEY_PREFIX = 'client:calls:';
 // PR-W2.1 — three new key prefixes for the migrated registries.
 const USER_INVITES_PREFIX = 'call:invites:user:';   // hash: callId → expiresAtMs
+// F2/F3 — discovery indexes (sets of callIds; liveness-filtered on read).
+const USER_CALLS_PREFIX = 'call:user:';             // set: callIds a userId joined
+const LOBBY_CALLS_PREFIX = 'call:lobby:';           // set: callIds in a lobbyName
 const ACCEPTED_KEY_PREFIX = 'call:accepted:';        // string: SETNX with TTL
 const RECENT_INVITE_PREFIX = 'call:recent-invite:'; // string: SETNX with TTL
 const TTL_SECONDS = 4 * 60 * 60;
@@ -596,6 +665,26 @@ export class RedisCallStateStore implements CallStateStore {
             } catch { /* best-effort */ }
         }
         try { await this.expire(callKey, TTL_SECONDS); } catch { /* */ }
+    }
+
+    async registerUserCall(userId: string, callId: string, ttlSec: number): Promise<void> {
+        const key = `${USER_CALLS_PREFIX}${userId}`;
+        await this.sadd(key, callId);
+        await this.expire(key, ttlSec);
+    }
+
+    async getCallIdsByUser(userId: string): Promise<string[]> {
+        return this.smembers(`${USER_CALLS_PREFIX}${userId}`);
+    }
+
+    async registerLobbyCall(lobbyName: string, callId: string, ttlSec: number): Promise<void> {
+        const key = `${LOBBY_CALLS_PREFIX}${lobbyName}`;
+        await this.sadd(key, callId);
+        await this.expire(key, ttlSec);
+    }
+
+    async getCallIdsByLobby(lobbyName: string): Promise<string[]> {
+        return this.smembers(`${LOBBY_CALLS_PREFIX}${lobbyName}`);
     }
 
     async getCallIdsByClient(clientId: string): Promise<string[]> {

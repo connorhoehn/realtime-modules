@@ -102,6 +102,24 @@ export interface CallStateStore {
      * disconnect. Implementations may delegate to getCallIdsByClient.
      */
     getCallsForClient?(clientId: string): Promise<string[]>;
+    /**
+     * F2 — durable userId → callIds index. The clientId index breaks on
+     * page refresh: the new tab has a NEW clientId, so
+     * getCallIdsByClient(newClientId) is empty and the resume dialog
+     * never fires. This index keys on the stable userId instead.
+     */
+    registerUserCall?(userId: string, callId: string, ttlSec: number): Promise<void>;
+    /** F2 — callIds this userId has participated in (may include stale
+     *  entries; liveness-filter through getCall). */
+    getCallIdsByUser?(userId: string): Promise<string[]>;
+    /**
+     * F3 — lobbyName → callIds index so a freshly-connected client can
+     * ask "is there an active call in this lobby?" without ever having
+     * been invited. Same liveness-filter contract as the user index.
+     */
+    registerLobbyCall?(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
+    /** F3 — candidate callIds for a lobby (liveness-filter through getCall). */
+    getCallIdsByLobby?(lobbyName: string): Promise<string[]>;
 }
 export declare class InMemoryCallStateStore implements CallStateStore {
     private activeCalls;
@@ -109,12 +127,18 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     private invitesByUser;
     private acceptedCalls;
     private recentInvites;
+    private userToCalls;
+    private lobbyToCalls;
     registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
     removeParticipant(callId: string, clientId: string): Promise<{
         remaining: number;
     } | null>;
     getCall(callId: string): Promise<ActiveCallStateView | null>;
     getCallIdsByClient(clientId: string): Promise<string[]>;
+    registerUserCall(userId: string, callId: string, _ttlSec: number): Promise<void>;
+    getCallIdsByUser(userId: string): Promise<string[]>;
+    registerLobbyCall(lobbyName: string, callId: string, _ttlSec: number): Promise<void>;
+    getCallIdsByLobby(lobbyName: string): Promise<string[]>;
     setInviteMetadata(callId: string, meta: {
         invitedAt?: number;
         callerName?: string;
@@ -172,6 +196,10 @@ export declare class RedisCallStateStore implements CallStateStore {
         invitedAt?: number;
         callerName?: string;
     }): Promise<void>;
+    registerUserCall(userId: string, callId: string, ttlSec: number): Promise<void>;
+    getCallIdsByUser(userId: string): Promise<string[]>;
+    registerLobbyCall(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
+    getCallIdsByLobby(lobbyName: string): Promise<string[]>;
     getCallIdsByClient(clientId: string): Promise<string[]>;
     forgetCall(callId: string): Promise<void>;
     stats(): Promise<{
