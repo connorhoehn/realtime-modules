@@ -664,6 +664,17 @@ class CallService {
             return;
         }
         const now = Date.now();
+        // Ghost-call guard: call state has a 4h safety TTL, so a call whose
+        // every participant crashed away (specs, tab kills) lingers in the
+        // registries long after anyone can be joined. Liveness-filter
+        // participants through the router's three-state isClientLive
+        // (true=live, false=dead-local, null=unknown/cross-node → trust);
+        // a call with zero surviving participants is NOT active.
+        const liveParticipants = (ids) => {
+            if (typeof this.messageRouter.isClientLive !== 'function')
+                return ids;
+            return ids.filter((cid) => this.messageRouter.isClientLive(cid) !== false);
+        };
         let foundCallId = null;
         let callerId = '';
         let callerName = null;
@@ -679,13 +690,14 @@ class CallService {
                 && now > state.inviteExpiresAt
                 && !this.acceptedCallIds.has(id))
                 continue;
-            if (state.participantClientIds.size === 0)
+            const alive = liveParticipants(Array.from(state.participantClientIds));
+            if (alive.length === 0)
                 continue;
             foundCallId = id;
             callerId = state.callerId;
             callerName = state.originalCallerName ?? null;
             startedAt = state.invitedAt ?? null;
-            participantClientIds = Array.from(state.participantClientIds);
+            participantClientIds = alive;
             targetUserIds = (state.originalTargetUserIds ?? state.targetUserIds).slice();
             break;
         }
@@ -695,13 +707,16 @@ class CallService {
                 const ids = await this.stateStore.getCallIdsByLobby(lobbyName);
                 for (const id of ids) {
                     const view = await this.stateStore.getCall(id);
-                    if (!view || view.participantClientIds.length === 0)
+                    if (!view)
+                        continue;
+                    const alive = liveParticipants(view.participantClientIds);
+                    if (alive.length === 0)
                         continue;
                     foundCallId = id;
                     callerId = view.callerId;
                     callerName = view.callerName ?? null;
                     startedAt = view.invitedAt ?? null;
-                    participantClientIds = view.participantClientIds.slice();
+                    participantClientIds = alive;
                     targetUserIds = view.targetUserIds.slice();
                     break;
                 }

@@ -172,3 +172,24 @@ describe('CallStateStore — userId call index (F2)', () => {
     expect(await store.getCallIdsByUser!('u-alice')).toEqual([]);
   });
 });
+
+describe('CallService — status ghost-call guard', () => {
+  test('a call whose every participant is dead-local is not reported active', async () => {
+    const router = makeRouter(users);
+    // isClientLive: everyone dead.
+    (router as any).isClientLive = () => false;
+    const svc = await activeGroupCall(router);
+    await svc.handleCallEvent('c-zed', 'status', { lobbyName: 'global-hangout' });
+    expect(router.sent[0]!.message.data.active).toBe(false);
+    await svc.dispose();
+  });
+
+  test('cross-node (unknown) participants are trusted as live', async () => {
+    const router = makeRouter(users);
+    (router as any).isClientLive = () => null; // unknown — trust
+    const svc = await activeGroupCall(router);
+    await svc.handleCallEvent('c-zed', 'status', { lobbyName: 'global-hangout' });
+    expect(router.sent[0]!.message.data.active).toBe(true);
+    await svc.dispose();
+  });
+});
