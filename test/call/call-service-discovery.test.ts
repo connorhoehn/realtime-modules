@@ -68,11 +68,16 @@ async function activeGroupCall(router: ReturnType<typeof makeRouter>, store?: In
 }
 
 describe('CallService — status query (F3)', () => {
-  test('non-participant gets active-call with call metadata', async () => {
+  test('non-participant gets active-call with call metadata (via handleAction gate)', async () => {
     const router = makeRouter(users);
     const svc = await activeGroupCall(router);
 
-    await svc.handleCallEvent('c-zed', 'status', { lobbyName: 'global-hangout' });
+    // Through handleAction — the consumer entry point — so the
+    // ALLOWED_CALL_ACTIONS gate is part of the regression surface
+    // (the verb was initially missing from the set: handleCallEvent
+    // worked in tests while every real client got 'Unknown call
+    // action: status').
+    await svc.handleAction('c-zed', 'status', { lobbyName: 'global-hangout' });
 
     const replies = router.sent.filter((s) => s.clientId === 'c-zed');
     expect(replies).toHaveLength(1);

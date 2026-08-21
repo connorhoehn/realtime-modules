@@ -38,5 +38,8 @@ exports.ALLOWED_CALL_ACTIONS = new Set([
     'ended',
     'participant-state',
     'user-status',
+    // F3 — client→server query verb. `active-call` (the reply) is
+    // deliberately NOT accepted here: it's server→client only.
+    'status',
 ]);
 //# sourceMappingURL=types.js.map
