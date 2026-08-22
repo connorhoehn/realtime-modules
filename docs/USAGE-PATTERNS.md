@@ -647,7 +647,7 @@ client's `sessionTimeoutMs` fallback (default 3000 ms).
 
 - **Server-side service classes** — `CRDTService`, `ChatService`,
   `PresenceService`, `ReactionService`, `ActivityService` all live in
-  `websocket-gateway/src/`. Consume them through the gateway WS
+  `realtime-examples/src/`. Consume them through the gateway WS
   protocol (client hooks) or REST (`./proxy-client`).
 - **Cross-node fan-out** — every `*MessageRouter` interface in the
   gateway is a contract; the gateway supplies its own Redis pub/sub
@@ -657,4 +657,4 @@ client's `sessionTimeoutMs` fallback (default 3000 ms).
   service-auth headers. The rest is application logic.
 - **DDB / Redis client lifecycle** — gateway adapters own their
   clients. Reference implementations at
-  `websocket-gateway/src/realtime-fanout/crdt/adapters/`.
+  `realtime-examples/src/realtime-fanout/crdt/adapters/`.

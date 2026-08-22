@@ -1,6 +1,6 @@
 // useLVSHangout — composite WebRTC hangout hook built on the LVS
 // (live-video-streaming) WHIP+WHEP primitives. Drop-in replacement for
-// the IVS-Stage-based useHangoutEmbed in websocket-gateway/frontend.
+// the IVS-Stage-based useHangoutEmbed in realtime-examples/frontend.
 //
 // Contract: caller passes a participant token (the platform-api join
 // response) + a per-tab participantId + a display name. The hook:

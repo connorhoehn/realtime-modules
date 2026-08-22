@@ -4,7 +4,7 @@
 // ARN separately.
 //
 // Lifted from the existing inline `decodeArnFromToken` in
-// websocket-gateway/frontend/src/lib/video/useHangoutEmbed.ts.
+// realtime-examples/frontend/src/lib/video/useHangoutEmbed.ts.
 
 export interface DecodedToken {
   sub?: string;

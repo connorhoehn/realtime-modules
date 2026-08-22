@@ -364,7 +364,7 @@ stable AG-UI mapping.
 ## Migration from v0.5.x
 
 If you depended on a server-side subpath in v0.5.x or earlier, the
-service class you imported now lives in `websocket-gateway/src/`. The
+service class you imported now lives in `realtime-examples/src/`. The
 canonical fix is to **delete the import and consume the feature
 through gateway** — either over WS (using the client hooks) or over
 HTTP (using `./proxy-client`).

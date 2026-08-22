@@ -439,7 +439,7 @@ for (const [key, meta] of Object.entries(agentStreamingManifest.envVars ?? {})) 
 
 - **Server-side service classes.** `CRDTService`, `ChatService`,
   `PresenceService`, `ReactionService`, `ActivityService`, etc. all
-  live in `websocket-gateway/src/`. Consume them through the gateway
+  live in `realtime-examples/src/`. Consume them through the gateway
   WS protocol (client hooks) or HTTP (`./proxy-client`).
 - **Express routes** (beyond `agentStreamMiddleware`). All other
   features are plain service classes in the gateway.
@@ -474,7 +474,7 @@ breakages surface as TS errors, not runtime crashes.
 ## Migration from v0.5.x
 
 If you depended on a server-side subpath in v0.5.x or earlier, the
-service class now lives in `websocket-gateway/src/`. The canonical fix
+service class now lives in `realtime-examples/src/`. The canonical fix
 is to **delete the import** and consume the feature through gateway —
 either via WS (client hooks) or HTTP (`./proxy-client`).
 

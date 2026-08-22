@@ -541,7 +541,7 @@ Server-side services removed; client-only release.
   server subpaths (`./chat`, `./presence`, `./reactions`, `./activity`,
   `./server`, `./cursor`, `./ingest`, `./pipeline`, `./social`, `./call`,
   `./typed-documents`) removed from the package. These moved in-tree to
-  `websocket-gateway/src/`. Package is now client-library-only: `./client`,
+  `realtime-examples/src/`. Package is now client-library-only: `./client`,
   `./client/ws`, `./agent-streaming`, `./agent-streaming/client`,
   `./proxy-client`, `./server-ws`, `./adapters/tiptap`.
 - Pruned orphan tests that referenced removed server exports.
