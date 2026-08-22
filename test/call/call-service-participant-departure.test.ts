@@ -42,7 +42,9 @@ function makeRouter(userByClient: Record<string, string>) {
 }
 
 async function threePersonCall(router: ReturnType<typeof makeRouter>) {
-  const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+  // rejoinGraceMs: 0 → legacy immediate-teardown semantics; the grace
+  // behavior has its own suite below.
+  const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0 });
   await svc.handleCallEvent('c-alice', 'invite', {
     callId: 'call-1', lobbyName: 'global-hangout', callerId: 'u-alice',
     targetUserIds: ['u-bob', 'u-carol'],
@@ -89,7 +91,7 @@ describe('CallService — participant-grain departure (F1)', () => {
 
   test('2-person call still ends on disconnect (legacy UX preserved)', async () => {
     const router = makeRouter(users);
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0 });
     await svc.handleCallEvent('c-alice', 'invite', {
       callId: 'call-2', lobbyName: 'dm:u-alice:u-bob', callerId: 'u-alice',
       targetUserIds: ['u-bob'],
@@ -125,5 +127,84 @@ describe('CallService — nested envelope tolerance', () => {
     expect(invites).toHaveLength(1);
     expect(invites[0]!.message.data.callId).toBe('nested-1');
     await svc.dispose();
+  });
+});
+
+
+describe('CallService — rejoin grace (F2, 2026-08-22)', () => {
+  const users = { 'c-alice': 'u-alice', 'c-bob': 'u-bob', 'c-bob2': 'u-bob' };
+
+  async function twoPersonCall(router: ReturnType<typeof makeRouter>, graceMs: number) {
+    const svc = new CallService({
+      messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: graceMs,
+    });
+    await svc.handleCallEvent('c-alice', 'invite', {
+      callId: 'call-g', lobbyName: 'dm:u-alice:u-bob', callerId: 'u-alice',
+      targetUserIds: ['u-bob'],
+    });
+    await svc.handleCallEvent('c-bob', 'accepted', {
+      callId: 'call-g', lobbyName: 'dm:u-alice:u-bob', callerId: 'u-alice',
+      targetUserIds: ['u-alice'],
+    });
+    router.sent.length = 0;
+    return svc;
+  }
+
+  test('2-person disconnect defers the end: survivor gets user-status left with rejoinGraceMs', async () => {
+    const router = makeRouter(users);
+    const svc = await twoPersonCall(router, 60_000);
+
+    await svc.handleDisconnect('c-bob');
+
+    const aliceFrames = router.sent.filter((s) => s.clientId === 'c-alice');
+    expect(aliceFrames.some((s) => s.message?.action === 'ended')).toBe(false);
+    const left = aliceFrames.find((s) => s.message?.action === 'user-status');
+    expect(left).toBeDefined();
+    expect(left!.message.data.status).toBe('left');
+    expect(left!.message.data.rejoinGraceMs).toBe(60_000);
+    await svc.dispose();
+  });
+
+  test('grace expiry with no rejoin ends the call', async () => {
+    jest.useFakeTimers();
+    try {
+      const router = makeRouter(users);
+      const svc = await twoPersonCall(router, 5_000);
+      await svc.handleDisconnect('c-bob');
+      router.sent.length = 0;
+
+      await jest.advanceTimersByTimeAsync(5_100);
+
+      const aliceFrames = router.sent.filter((s) => s.clientId === 'c-alice');
+      expect(aliceFrames.some(
+        (s) => s.message?.action === 'ended' && s.message?.data?.reason === 'rejoin-grace-expired',
+      )).toBe(true);
+      await svc.dispose();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('re-registration within grace cancels the deferred end', async () => {
+    jest.useFakeTimers();
+    try {
+      const router = makeRouter(users);
+      const svc = await twoPersonCall(router, 5_000);
+      await svc.handleDisconnect('c-bob');
+      router.sent.length = 0;
+
+      // Bob's refreshed tab rejoins (new clientId, same user).
+      await svc.handleCallEvent('c-bob2', 'accepted', {
+        callId: 'call-g', lobbyName: 'dm:u-alice:u-bob', callerId: 'u-alice',
+        targetUserIds: ['u-alice'],
+      });
+      await jest.advanceTimersByTimeAsync(10_000);
+
+      const endeds = router.sent.filter((s) => s.message?.action === 'ended');
+      expect(endeds).toHaveLength(0);
+      await svc.dispose();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

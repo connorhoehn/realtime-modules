@@ -276,6 +276,17 @@ export interface CallServiceOptions {
     logger: CallLogger;
     config?: CallConfig;
     /**
+     * F2 (2026-08-22) — rejoin grace. When a disconnect would leave a
+     * call with <=1 participants, the call is NOT torn down immediately:
+     * survivors get `user-status: left` (with `rejoinGraceMs` in the
+     * data) and the synthetic `ended` + forgetCall fire only if nobody
+     * re-registers into the call within this window. This is what makes
+     * a page refresh survivable in a 1:1 call — the refreshed side
+     * comes back to a resume dialog / discovery banner instead of a
+     * dead lobby. 0 disables (legacy immediate teardown). Default 30s.
+     */
+    rejoinGraceMs?: number;
+    /**
      * Optional CallStateStore implementation. When provided, CallService
      * delegates per-call state to it (Redis-backed for multi-replica
      * durability). When undefined, falls back to per-process in-memory

@@ -123,6 +123,11 @@ class CallService {
      * + recordCleanupSkipped('call_invite', ...).
      */
     sweeperIsLeader = null;
+    /** F2 — pending end-of-call timers for calls in the rejoin grace
+     *  window (disconnect left <=1 participants; teardown deferred so a
+     *  refreshing peer can come back). callId → timer. */
+    rejoinGraceTimers = new Map();
+    rejoinGraceMs = 30_000;
     onSweepSkipped = null;
     _withSpan;
     constructor(opts) {
@@ -137,6 +142,9 @@ class CallService {
         this.crossNodePubSub = opts.crossNodePubSub ?? null;
         this.stateStore = opts.stateStore ?? null;
         this.sweeperIsLeader = opts.sweeperIsLeader ?? null;
+        if (typeof opts.rejoinGraceMs === 'number' && opts.rejoinGraceMs >= 0) {
+            this.rejoinGraceMs = opts.rejoinGraceMs;
+        }
         this.onSweepSkipped = opts.onSweepSkipped ?? null;
         this._withSpan = opts.withSpan ?? _passthroughWithSpan;
         const config = opts.config ?? {};
@@ -387,6 +395,9 @@ class CallService {
     }
     /** Stop the cross-node subscription. Called on service shutdown. */
     async dispose() {
+        for (const t of this.rejoinGraceTimers.values())
+            clearTimeout(t);
+        this.rejoinGraceTimers.clear();
         if (this.crossNodeUnsubscribe) {
             try {
                 this.crossNodeUnsubscribe();
@@ -438,6 +449,14 @@ class CallService {
      * invite, refreshed to 4h once accepted.
      */
     registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds) {
+        // F2 — a (re)registration during the rejoin grace window saves
+        // the call: cancel the deferred teardown.
+        const pendingEnd = this.rejoinGraceTimers.get(callId);
+        if (pendingEnd) {
+            clearTimeout(pendingEnd);
+            this.rejoinGraceTimers.delete(callId);
+            this.logger.info(`[CallService] rejoin within grace — cancelled deferred end for ${callId}`);
+        }
         let state = this.activeCalls.get(callId);
         if (!state) {
             state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set() };
@@ -1373,13 +1392,21 @@ class CallService {
                 remainingAfterDeparture = Math.max(remainingAfterDeparture, localRemaining);
             }
             const callContinues = remainingAfterDeparture >= 2;
+            // F2 — rejoin grace: a departure that would END the call
+            // (<=1 remaining) defers teardown so a refreshing peer can
+            // re-register. Treated like a continue for envelope +
+            // participant-removal purposes; the synthetic ended fires
+            // from the grace timer only if nobody comes back.
+            const graceDeferred = !callContinues
+                && this.rejoinGraceMs > 0
+                && remainingAfterDeparture >= 1;
             if (state) {
                 callerIdForPayload = state.callerId;
                 lobbyNameForPayload = state.lobbyName;
                 const departedUserId = (typeof this.messageRouter.getUserIdForClient === 'function'
                     ? this.messageRouter.getUserIdForClient(clientId)
                     : null) ?? null;
-                const envelope = callContinues
+                const envelope = (callContinues || graceDeferred)
                     ? {
                         type: 'call',
                         action: 'user-status',
@@ -1390,6 +1417,7 @@ class CallService {
                             status: 'left',
                             userId: departedUserId,
                             reason: 'peer-disconnected',
+                            ...(graceDeferred ? { rejoinGraceMs: this.rejoinGraceMs } : {}),
                         },
                         timestamp: new Date().toISOString(),
                     }
@@ -1414,7 +1442,7 @@ class CallService {
                         this.logger.warn(`CallService.handleDisconnect: failed to notify peer ${peerClientId} of ${clientId}'s exit from ${callId}: ${e?.message ?? e}`);
                     }
                 }
-                this.logger.info(`CallService: client ${clientId} dropped; sent ${callContinues ? "'user-status: left'" : "synthetic 'ended'"} to ${state.participantClientIds.size - 1} local peer(s) of call ${callId} (remaining=${remainingAfterDeparture})`);
+                this.logger.info(`CallService: client ${clientId} dropped; sent ${(callContinues || graceDeferred) ? "'user-status: left'" : "synthetic 'ended'"} to ${state.participantClientIds.size - 1} local peer(s) of call ${callId} (remaining=${remainingAfterDeparture}${graceDeferred ? `, rejoin grace ${this.rejoinGraceMs}ms` : ''})`);
             }
             else if (this.stateStore) {
                 // Cluster-only entry — pull authoritative metadata so the
@@ -1441,7 +1469,10 @@ class CallService {
                         departedClientId: clientId,
                         callerId: callerIdForPayload,
                         lobbyName: lobbyNameForPayload,
-                        callContinues,
+                        // Grace-deferred counts as continuing for peers —
+                        // they prune the departed client; the final ended
+                        // (if the grace expires) fans out from this node.
+                        callContinues: callContinues || graceDeferred,
                     };
                     await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)));
                     // Structured info log on successful publish: operators need
@@ -1469,7 +1500,10 @@ class CallService {
                     });
                 }
             }
-            if (callContinues) {
+            if (graceDeferred) {
+                this.scheduleGraceEnd(callId, clientId);
+            }
+            if (callContinues || graceDeferred) {
                 // F1 — participant-grain removal: drop ONLY the departed
                 // client; the call (and every other participant's state)
                 // survives. This is the same removal the clean-exit
@@ -1505,6 +1539,74 @@ class CallService {
             }
         }
         this.clientToCalls.delete(clientId);
+    }
+    /**
+     * F2 — deferred end-of-call. Fires rejoinGraceMs after a departure
+     * left the call with <=1 participants and nobody re-registered.
+     * Sends the synthetic `ended` to whoever is still around, fans the
+     * terminal departure cross-node, and forgets the call.
+     */
+    scheduleGraceEnd(callId, departedClientId) {
+        const existing = this.rejoinGraceTimers.get(callId);
+        if (existing)
+            clearTimeout(existing);
+        const timer = setTimeout(() => {
+            this.rejoinGraceTimers.delete(callId);
+            void (async () => {
+                const state = this.activeCalls.get(callId);
+                // Re-check: a rejoin that raced the timer (or a clean
+                // ended) may have already resolved the call.
+                let remaining = state ? state.participantClientIds.size : 0;
+                if (this.stateStore) {
+                    try {
+                        const view = await this.stateStore.getCall(callId);
+                        if (view)
+                            remaining = Math.max(remaining, view.participantClientIds.length);
+                    }
+                    catch { /* local view stands */ }
+                }
+                if (remaining >= 2)
+                    return; // rejoined — call lives
+                const envelope = {
+                    type: 'call',
+                    action: 'ended',
+                    data: {
+                        callId,
+                        callerId: state?.callerId ?? '',
+                        lobbyName: state?.lobbyName ?? '',
+                        reason: 'rejoin-grace-expired',
+                    },
+                    timestamp: new Date().toISOString(),
+                };
+                if (state) {
+                    for (const peerClientId of state.participantClientIds) {
+                        try {
+                            await Promise.resolve(this.messageRouter.sendToClient(peerClientId, envelope));
+                        }
+                        catch { /* best-effort */ }
+                    }
+                }
+                if (this.crossNodePubSub) {
+                    try {
+                        const payload = {
+                            callId,
+                            departedClientId,
+                            callerId: state?.callerId ?? '',
+                            lobbyName: state?.lobbyName ?? '',
+                            callContinues: false,
+                        };
+                        await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)));
+                    }
+                    catch { /* best-effort */ }
+                }
+                this.logger.info(`[CallService] rejoin grace expired — call ${callId} ended`);
+                this.forgetCall(callId);
+            })();
+        }, this.rejoinGraceMs);
+        if (typeof timer.unref === 'function')
+            timer.unref();
+        this.rejoinGraceTimers.set(callId, timer);
+        this.logger.info(`[CallService] call ${callId} entering rejoin grace (${this.rejoinGraceMs}ms) after ${departedClientId} dropped`);
     }
     sendError(clientId, message) {
         if (!this.messageRouter)

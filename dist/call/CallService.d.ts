@@ -67,6 +67,11 @@ export declare class CallService {
      * + recordCleanupSkipped('call_invite', ...).
      */
     private sweeperIsLeader;
+    /** F2 — pending end-of-call timers for calls in the rejoin grace
+     *  window (disconnect left <=1 participants; teardown deferred so a
+     *  refreshing peer can come back). callId → timer. */
+    private rejoinGraceTimers;
+    private rejoinGraceMs;
     private onSweepSkipped;
     private readonly _withSpan;
     constructor(opts: CallServiceOptions);
@@ -188,6 +193,13 @@ export declare class CallService {
      * manually. Best-effort: failures to deliver are logged, not retried.
      */
     handleDisconnect(clientId: string): Promise<void>;
+    /**
+     * F2 — deferred end-of-call. Fires rejoinGraceMs after a departure
+     * left the call with <=1 participants and nobody re-registered.
+     * Sends the synthetic `ended` to whoever is still around, fans the
+     * terminal departure cross-node, and forgets the call.
+     */
+    private scheduleGraceEnd;
     sendError(clientId: string, message: string): void;
     getStats(): {
         stateful: true;
