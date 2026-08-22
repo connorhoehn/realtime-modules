@@ -115,6 +115,22 @@ class InMemoryCallStateStore {
         }
         return Array.from(set);
     }
+    async forgetLobbyCall(lobbyName, callId) {
+        const set = this.lobbyToCalls.get(lobbyName);
+        if (!set)
+            return;
+        set.delete(callId);
+        if (set.size === 0)
+            this.lobbyToCalls.delete(lobbyName);
+    }
+    async forgetUserCall(userId, callId) {
+        const set = this.userToCalls.get(userId);
+        if (!set)
+            return;
+        set.delete(callId);
+        if (set.size === 0)
+            this.userToCalls.delete(userId);
+    }
     async setInviteMetadata(callId, meta) {
         const state = this.activeCalls.get(callId);
         if (!state)
@@ -511,6 +527,12 @@ class RedisCallStateStore {
     }
     async getCallIdsByLobby(lobbyName) {
         return this.smembers(`${LOBBY_CALLS_PREFIX}${lobbyName}`);
+    }
+    async forgetLobbyCall(lobbyName, callId) {
+        await this.srem(`${LOBBY_CALLS_PREFIX}${lobbyName}`, callId);
+    }
+    async forgetUserCall(userId, callId) {
+        await this.srem(`${USER_CALLS_PREFIX}${userId}`, callId);
     }
     async getCallIdsByClient(clientId) {
         const clientKey = this.clientKey(clientId);

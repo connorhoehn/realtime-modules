@@ -193,3 +193,75 @@ describe('CallService — status ghost-call guard', () => {
     await svc.dispose();
   });
 });
+
+// ─── J2 (2026-08-22): a clean hang-up must not leave a joinable call ────────
+//
+// Operator-reported: "when you close out the hangout and refresh, it still
+// presents that a chat is open and you can join it." Two causes — the rejoin
+// grace outlived an EXPLICIT terminal verb, and forgetCall left the call in
+// the F2/F3 discovery indexes.
+
+describe('CallService — terminal verbs beat the rejoin grace (J2)', () => {
+  const users = { 'c-alice': 'u-alice', 'c-bob': 'u-bob' };
+
+  async function twoPersonCall(router: ReturnType<typeof makeRouter>, store?: InMemoryCallStateStore) {
+    const svc = new CallService({
+      messageRouter: router,
+      logger: new NoopLogger() as any,
+      rejoinGraceMs: 30_000,
+      ...(store ? { stateStore: store } : {}),
+    });
+    await svc.handleCallEvent('c-alice', 'invite', {
+      callId: 'call-j2', lobbyName: 'global-hangout', callerId: 'u-alice',
+      targetUserIds: ['u-bob'],
+    });
+    await svc.handleCallEvent('c-bob', 'accepted', {
+      callId: 'call-j2', lobbyName: 'global-hangout', callerId: 'u-alice',
+      targetUserIds: ['u-alice'],
+    });
+    router.sent.length = 0;
+    return svc;
+  }
+
+  test('hanging up cancels a pending grace — status goes inactive immediately', async () => {
+    const router = makeRouter(users);
+    const svc = await twoPersonCall(router);
+
+    // Bob's tab drops (refresh-shaped) → call enters the rejoin grace.
+    await svc.handleDisconnect('c-bob');
+    router.sent.length = 0;
+    await svc.handleAction('c-alice', 'status', { lobbyName: 'global-hangout' });
+    expect(router.sent[0]!.message.data.active).toBe(true); // grace holding it
+
+    // Alice then hangs up explicitly. That is a decision, not a hiccup.
+    await svc.handleCallEvent('c-alice', 'ended', {
+      callId: 'call-j2', lobbyName: 'global-hangout', callerId: 'u-alice',
+    });
+    router.sent.length = 0;
+
+    await svc.handleAction('c-alice', 'status', { lobbyName: 'global-hangout' });
+    expect(router.sent[0]!.message.data.active).toBe(false);
+    await svc.dispose();
+  });
+
+  test('forgetCall evicts the call from the lobby and user indexes', async () => {
+    const store = new InMemoryCallStateStore();
+    const router = makeRouter(users);
+    const svc = await twoPersonCall(router, store);
+
+    expect(await store.getCallIdsByLobby!('global-hangout')).toContain('call-j2');
+    expect(await store.getCallIdsByUser!('u-alice')).toContain('call-j2');
+
+    // Both sides hang up — the last one forgets the call.
+    await svc.handleCallEvent('c-alice', 'ended', {
+      callId: 'call-j2', lobbyName: 'global-hangout', callerId: 'u-alice',
+    });
+    await svc.handleCallEvent('c-bob', 'ended', {
+      callId: 'call-j2', lobbyName: 'global-hangout', callerId: 'u-bob',
+    });
+
+    expect(await store.getCallIdsByLobby!('global-hangout')).not.toContain('call-j2');
+    expect(await store.getCallIdsByUser!('u-alice')).not.toContain('call-j2');
+    await svc.dispose();
+  });
+});

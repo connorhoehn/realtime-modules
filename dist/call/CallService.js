@@ -515,8 +515,37 @@ class CallService {
         }
         this.activeCalls.delete(callId);
         this.acceptedCallIds.delete(callId);
+        // J2 — also drop any pending grace for a call we are forgetting
+        // outright, so a late timer can't resurrect a terminal decision.
+        const pendingGrace = this.rejoinGraceTimers.get(callId);
+        if (pendingGrace) {
+            clearTimeout(pendingGrace);
+            this.rejoinGraceTimers.delete(callId);
+        }
         this.clearInviteRegistryForCall(callId);
         void this.clearInviteRegistryForCallStore(callId);
+        // J2 — evict from the F2/F3 discovery indexes. They were
+        // append-only with a 4h TTL: readers liveness-filter, so this
+        // was not supposed to leak, but leaving forgotten calls in the
+        // lobby index widened every window where a filter said "keep".
+        if (this.stateStore) {
+            if (typeof this.stateStore.forgetLobbyCall === 'function' && state.lobbyName) {
+                void this.stateStore.forgetLobbyCall(state.lobbyName, callId)
+                    .catch(() => { });
+            }
+            if (typeof this.stateStore.forgetUserCall === 'function') {
+                const users = new Set([
+                    ...(state.originalTargetUserIds ?? state.targetUserIds ?? []),
+                    ...(state.callerId ? [state.callerId] : []),
+                ]);
+                for (const uid of users) {
+                    if (!uid)
+                        continue;
+                    void this.stateStore.forgetUserCall(uid, callId)
+                        .catch(() => { });
+                }
+            }
+        }
         // W11 — mirror to durable store.
         if (this.stateStore) {
             void this.stateStore.forgetCall(callId)
@@ -1123,6 +1152,17 @@ class CallService {
             }
         }
         if (callId && (action === 'ended' || action === 'declined' || action === 'cancelled')) {
+            // J2 (2026-08-22) — a TERMINAL verb is an explicit decision:
+            // it must supersede the rejoin grace. Without this, hanging
+            // up cleanly and refreshing still found the call alive for
+            // the rest of the grace window, so discovery/resume kept
+            // offering a call the user had just left.
+            const pendingGrace = this.rejoinGraceTimers.get(callId);
+            if (pendingGrace) {
+                clearTimeout(pendingGrace);
+                this.rejoinGraceTimers.delete(callId);
+                this.logger.info(`[CallService] ${action} cancelled the rejoin grace for ${callId}`);
+            }
             this.clearInviteRegistryForCall(callId);
             void this.clearInviteRegistryForCallStore(callId);
             // Drop this client from the call; if it was the last

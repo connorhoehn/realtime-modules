@@ -183,6 +183,13 @@ export interface CallStateStore {
     registerLobbyCall?(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
     /** F3 — candidate callIds for a lobby (liveness-filter through getCall). */
     getCallIdsByLobby?(lobbyName: string): Promise<string[]>;
+
+    /** J2 — evict a callId from the lobby index (called by forgetCall).
+     *  Idempotent; the indexes remain liveness-filtered on read, so this
+     *  is hygiene rather than correctness. */
+    forgetLobbyCall?(lobbyName: string, callId: string): Promise<void>;
+    /** J2 — evict a callId from a user's index. Idempotent. */
+    forgetUserCall?(userId: string, callId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +295,20 @@ export class InMemoryCallStateStore implements CallStateStore {
         }
         if (set.size === 0) { this.lobbyToCalls.delete(lobbyName); return []; }
         return Array.from(set);
+    }
+
+    async forgetLobbyCall(lobbyName: string, callId: string): Promise<void> {
+        const set = this.lobbyToCalls.get(lobbyName);
+        if (!set) return;
+        set.delete(callId);
+        if (set.size === 0) this.lobbyToCalls.delete(lobbyName);
+    }
+
+    async forgetUserCall(userId: string, callId: string): Promise<void> {
+        const set = this.userToCalls.get(userId);
+        if (!set) return;
+        set.delete(callId);
+        if (set.size === 0) this.userToCalls.delete(userId);
     }
 
     async setInviteMetadata(
@@ -685,6 +706,14 @@ export class RedisCallStateStore implements CallStateStore {
 
     async getCallIdsByLobby(lobbyName: string): Promise<string[]> {
         return this.smembers(`${LOBBY_CALLS_PREFIX}${lobbyName}`);
+    }
+
+    async forgetLobbyCall(lobbyName: string, callId: string): Promise<void> {
+        await this.srem(`${LOBBY_CALLS_PREFIX}${lobbyName}`, callId);
+    }
+
+    async forgetUserCall(userId: string, callId: string): Promise<void> {
+        await this.srem(`${USER_CALLS_PREFIX}${userId}`, callId);
     }
 
     async getCallIdsByClient(clientId: string): Promise<string[]> {

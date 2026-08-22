@@ -120,6 +120,12 @@ export interface CallStateStore {
     registerLobbyCall?(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
     /** F3 — candidate callIds for a lobby (liveness-filter through getCall). */
     getCallIdsByLobby?(lobbyName: string): Promise<string[]>;
+    /** J2 — evict a callId from the lobby index (called by forgetCall).
+     *  Idempotent; the indexes remain liveness-filtered on read, so this
+     *  is hygiene rather than correctness. */
+    forgetLobbyCall?(lobbyName: string, callId: string): Promise<void>;
+    /** J2 — evict a callId from a user's index. Idempotent. */
+    forgetUserCall?(userId: string, callId: string): Promise<void>;
 }
 export declare class InMemoryCallStateStore implements CallStateStore {
     private activeCalls;
@@ -139,6 +145,8 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     getCallIdsByUser(userId: string): Promise<string[]>;
     registerLobbyCall(lobbyName: string, callId: string, _ttlSec: number): Promise<void>;
     getCallIdsByLobby(lobbyName: string): Promise<string[]>;
+    forgetLobbyCall(lobbyName: string, callId: string): Promise<void>;
+    forgetUserCall(userId: string, callId: string): Promise<void>;
     setInviteMetadata(callId: string, meta: {
         invitedAt?: number;
         callerName?: string;
@@ -200,6 +208,8 @@ export declare class RedisCallStateStore implements CallStateStore {
     getCallIdsByUser(userId: string): Promise<string[]>;
     registerLobbyCall(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
     getCallIdsByLobby(lobbyName: string): Promise<string[]>;
+    forgetLobbyCall(lobbyName: string, callId: string): Promise<void>;
+    forgetUserCall(userId: string, callId: string): Promise<void>;
     getCallIdsByClient(clientId: string): Promise<string[]>;
     forgetCall(callId: string): Promise<void>;
     stats(): Promise<{

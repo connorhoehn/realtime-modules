@@ -5,7 +5,7 @@
 // ARN separately.
 //
 // Lifted from the existing inline `decodeArnFromToken` in
-// websocket-gateway/frontend/src/lib/video/useHangoutEmbed.ts.
+// realtime-examples/frontend/src/lib/video/useHangoutEmbed.ts.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.decodeJwt = decodeJwt;
 exports.decodeArn = decodeArn;
