@@ -1,4 +1,9 @@
 import { type CallAction, type CallInvite, type CallLogger, type CallMessageRouter, type CallServiceOptions } from './types';
+/** Dedup identity for an invite: the call PLUS who is being rung.
+ *  Broadcast invites (no targets) collapse to the callId, which is the
+ *  old behaviour and correct for them — a broadcast re-fired within the
+ *  window really is a duplicate. */
+export declare function inviteDedupKey(callId: string, targetUserIds: string[]): string;
 export declare class CallService {
     private static INVITE_TTL_MS;
     private static INVITE_SWEEP_INTERVAL_MS;
@@ -156,6 +161,8 @@ export declare class CallService {
      *  Mirrors the original Map-based behaviour for when stateStore is
      *  null. Returns true if this is the first invite seen for callId in
      *  the window, false on duplicate. */
+    /** `key` is an inviteDedupKey() — (callId, audience), never a bare
+     *  callId. See the call site for why the audience is part of it. */
     private checkRecentInviteLocal;
     replayActiveInvitesForUser(clientId: string, userId: string): Promise<void>;
     /**

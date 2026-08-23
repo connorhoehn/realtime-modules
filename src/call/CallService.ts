@@ -71,6 +71,17 @@ const CROSS_NODE_DEPARTED_TOPIC = 'call:client-departed';
  *  double-click + slow-network retry, short enough to allow a legit
  *  re-invite after a brief call-restart. */
 const INVITE_DEDUP_WINDOW_MS = 5000;
+
+
+/** Dedup identity for an invite: the call PLUS who is being rung.
+ *  Broadcast invites (no targets) collapse to the callId, which is the
+ *  old behaviour and correct for them — a broadcast re-fired within the
+ *  window really is a duplicate. */
+export function inviteDedupKey(callId: string, targetUserIds: string[]): string {
+    if (!targetUserIds || targetUserIds.length === 0) return callId;
+    return `${callId}|${[...targetUserIds].sort().join(',')}`;
+}
+
 const INVITE_DEDUP_MAX_ENTRIES = 10_000;
 
 interface CrossNodeDepartedPayload {
@@ -632,11 +643,13 @@ export class CallService {
      *  Mirrors the original Map-based behaviour for when stateStore is
      *  null. Returns true if this is the first invite seen for callId in
      *  the window, false on duplicate. */
-    private checkRecentInviteLocal(callId: string): boolean {
+    /** `key` is an inviteDedupKey() — (callId, audience), never a bare
+     *  callId. See the call site for why the audience is part of it. */
+    private checkRecentInviteLocal(key: string): boolean {
         const now = Date.now();
-        const lastSeen = this.recentInvites.get(callId);
+        const lastSeen = this.recentInvites.get(key);
         if (lastSeen && (now - lastSeen) < INVITE_DEDUP_WINDOW_MS) return false;
-        this.recentInvites.set(callId, now);
+        this.recentInvites.set(key, now);
         // Cheap pruning: when over the bound, drop the expired entries.
         if (this.recentInvites.size > INVITE_DEDUP_MAX_ENTRIES) {
             const cutoff = now - INVITE_DEDUP_WINDOW_MS;
@@ -991,26 +1004,35 @@ export class CallService {
             }
         }
 
-        // P5.1 — dedup duplicate invites within a 5s window. Same callId
-        // arriving twice = slow double-click or WS retry; suppress so
-        // receivers don't re-ring. PR-W2.1: this check is now cluster-wide
-        // via CallStateStore.markRecentInvite (SETNX with TTL). Falls back
-        // to the in-memory Map when stateStore is null or doesn't
-        // implement the dedup op.
+        // P5.1 — dedup duplicate invites within a 5s window. The SAME
+        // invite arriving twice = slow double-click or WS retry; suppress
+        // so receivers don't re-ring. PR-W2.1: this check is now
+        // cluster-wide via CallStateStore.markRecentInvite (SETNX with
+        // TTL). Falls back to the in-memory Map when stateStore is null
+        // or doesn't implement the dedup op.
+        //
+        // The key is (callId, audience), NOT callId alone. A call invites
+        // more people over its lifetime — "add someone to the call I'm
+        // already on" reuses the callId by design, so that it rings into
+        // THIS call rather than starting a rival one. Keying on callId
+        // alone made every mid-call invite issued within the window look
+        // like a double-click and vanish server-side, with the caller
+        // seeing no error.
         if (action === 'invite' && callId) {
             let isFirstInvite = true;
             const windowSec = Math.ceil(INVITE_DEDUP_WINDOW_MS / 1000);
+            const dedupKey = inviteDedupKey(callId, targetUserIds);
             if (this.stateStore && typeof this.stateStore.markRecentInvite === 'function') {
                 try {
-                    isFirstInvite = await this.stateStore.markRecentInvite(callId, windowSec);
+                    isFirstInvite = await this.stateStore.markRecentInvite(dedupKey, windowSec);
                 } catch (e: any) {
                     this.logger.warn(
                         `[CallService] markRecentInvite failed for ${callId}: ${e?.message ?? e} — falling back to local dedup`,
                     );
-                    isFirstInvite = this.checkRecentInviteLocal(callId);
+                    isFirstInvite = this.checkRecentInviteLocal(dedupKey);
                 }
             } else {
-                isFirstInvite = this.checkRecentInviteLocal(callId);
+                isFirstInvite = this.checkRecentInviteLocal(dedupKey);
             }
             if (!isFirstInvite) {
                 let wouldHaveBeenRecipients = 0;
