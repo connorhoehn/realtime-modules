@@ -614,6 +614,98 @@ export class CallService {
         }
     }
 
+    /** UX audit 2026-08-24 — reap a call that exists only in the durable
+     *  store (local cache cold) and whose every registered participant is
+     *  provably dead. Mirrors the index-hygiene part of forgetCall for
+     *  the store-only case: lobby index, per-user resume index, invite
+     *  registry, and the call hash itself. */
+    private async reapDeadStoredCall(
+        callId: string,
+        lobbyName: string,
+        view: import('./CallStateStore').ActiveCallStateView,
+    ): Promise<void> {
+        if (!this.stateStore) return;
+        this.logger.info(`[CallService] status query reaped dead stored call ${callId} in lobby ${lobbyName}`);
+        if (typeof this.stateStore.forgetLobbyCall === 'function') {
+            try { await this.stateStore.forgetLobbyCall(lobbyName, callId); } catch { /* best-effort */ }
+        }
+        if (typeof this.stateStore.forgetUserCall === 'function') {
+            const users = new Set<string>([
+                ...(view.targetUserIds ?? []),
+                ...(view.callerId ? [view.callerId] : []),
+            ]);
+            for (const uid of users) {
+                if (!uid) continue;
+                try { await this.stateStore.forgetUserCall(uid, callId); } catch { /* best-effort */ }
+            }
+        }
+        if (typeof this.stateStore.clearInviteForUser === 'function') {
+            for (const uid of view.targetUserIds ?? []) {
+                if (!uid) continue;
+                try { await this.stateStore.clearInviteForUser(uid, callId); } catch { /* best-effort */ }
+            }
+        }
+        try { await this.stateStore.forgetCall(callId); } catch { /* best-effort */ }
+        this.acceptedCallIds.delete(callId);
+    }
+
+    /**
+     * UX audit 2026-08-24 — `forget` verb: durable per-user dismissal.
+     * The sender says "stop offering me callId"; we remove THEIR resume
+     * index + invite-registry entries so the ResumeCallDialog cannot
+     * resurrect for this user in any future session. Other participants'
+     * indexes are untouched — a call the peer is still happily in keeps
+     * offering THEM resume. Acked to the sender with a `forgotten`
+     * envelope so clients (and e2e) can await completion.
+     */
+    private async handleForgetRequest(clientId: string, payload: CallInvite): Promise<void> {
+        const callId = typeof payload.callId === 'string' ? payload.callId : '';
+        if (!callId) {
+            this.sendError(clientId, 'callId is required on forget');
+            return;
+        }
+        let userId = '';
+        if (typeof this.messageRouter.getUserIdForClient === 'function') {
+            try {
+                userId = (await Promise.resolve(this.messageRouter.getUserIdForClient(clientId))) ?? '';
+            } catch { /* best-effort */ }
+        }
+        // Fall back to the payload's callerId when the router can't
+        // resolve identity (SKIP_AUTH dev setups) — worst case a client
+        // clears its OWN claimed identity's index, which is exactly the
+        // dismissal semantic anyway.
+        if (!userId && typeof payload.callerId === 'string') userId = payload.callerId;
+
+        if (userId && this.stateStore) {
+            if (typeof this.stateStore.forgetUserCall === 'function') {
+                try { await this.stateStore.forgetUserCall(userId, callId); } catch (e: any) {
+                    this.logger.warn(`[CallService] forgetUserCall failed for ${userId}/${callId}: ${e?.message ?? e}`);
+                }
+            }
+            if (typeof this.stateStore.clearInviteForUser === 'function') {
+                try { await this.stateStore.clearInviteForUser(userId, callId); } catch { /* best-effort */ }
+            }
+        }
+        // Local invite-replay registry for this user too.
+        if (userId) {
+            const localSet = this.activeInvitesByUserId.get(userId);
+            if (localSet) {
+                localSet.delete(callId);
+                if (localSet.size === 0) this.activeInvitesByUserId.delete(userId);
+            }
+        }
+        this.logger.info(`[CallService] forget: cleared resume/invite indexes of call ${callId} for user ${userId || '<unknown>'}`);
+        const envelope: CallEvent = {
+            type: 'call',
+            action: 'forgotten',
+            data: { callId, forgotten: true } as CallInvite,
+            timestamp: new Date().toISOString(),
+        };
+        try {
+            await Promise.resolve(this.messageRouter.sendToClient(clientId, envelope));
+        } catch { /* ack is best-effort */ }
+    }
+
     private clearInviteRegistryForCall(callId: string): void {
         // Local fallback path — still maintained for the no-stateStore
         // case. When stateStore is wired, the cluster-wide clear happens
@@ -782,6 +874,14 @@ export class CallService {
 
         // Local cache first. Skip expired unaccepted invites — they are
         // dead air even if the sweep timer hasn't reaped them yet.
+        // UX audit 2026-08-24 — dead calls found here are REAPED, not just
+        // skipped. A stale entry whose every participant is provably dead
+        // (isClientLive === false) used to linger for the full 4h TTL,
+        // resurrecting ResumeCallDialogs and discovery banners in every
+        // fresh session. A status query is the natural touch-point: the
+        // moment we can prove "nobody is actually in this call", clear
+        // the lobby + user indexes so it stops haunting the UI.
+        const deadLocalCallIds: string[] = [];
         for (const [id, state] of this.activeCalls) {
             if (state.lobbyName !== lobbyName && state.originalLobbyName !== lobbyName) continue;
             if (
@@ -790,7 +890,13 @@ export class CallService {
                 && !this.acceptedCallIds.has(id)
             ) continue;
             const alive = liveParticipants(Array.from(state.participantClientIds));
-            if (alive.length === 0) continue;
+            if (alive.length === 0) {
+                // Only provably-dead: participants existed and every one
+                // failed the liveness probe. (Zero-participant states are
+                // dead by definition.)
+                deadLocalCallIds.push(id);
+                continue;
+            }
             foundCallId = id;
             callerId = state.callerId;
             callerName = state.originalCallerName ?? null;
@@ -799,6 +905,13 @@ export class CallService {
             targetUserIds = (state.originalTargetUserIds ?? state.targetUserIds).slice();
             break;
         }
+        // Reap the provably-dead locals outside the iteration (forgetCall
+        // mutates activeCalls). forgetCall also clears the F2/F3 lobby +
+        // user discovery indexes — that's the point.
+        for (const id of deadLocalCallIds) {
+            this.logger.info(`[CallService] status query reaped dead call ${id} in lobby ${lobbyName}`);
+            this.forgetCall(id);
+        }
 
         // Cluster-wide fallback via the lobby index.
         if (!foundCallId && this.stateStore && typeof this.stateStore.getCallIdsByLobby === 'function') {
@@ -806,9 +919,23 @@ export class CallService {
                 const ids = await this.stateStore.getCallIdsByLobby(lobbyName);
                 for (const id of ids) {
                     const view = await this.stateStore.getCall(id);
-                    if (!view) continue;
+                    if (!view) {
+                        // Call hash expired but the lobby index still points
+                        // at it — index hygiene, best-effort.
+                        if (typeof this.stateStore.forgetLobbyCall === 'function') {
+                            void this.stateStore.forgetLobbyCall(lobbyName, id).catch(() => { /* */ });
+                        }
+                        continue;
+                    }
                     const alive = liveParticipants(view.participantClientIds);
-                    if (alive.length === 0) continue;
+                    if (alive.length === 0) {
+                        // Provably dead (every registered participant failed
+                        // the local liveness probe — cross-node/unknown
+                        // clients return null and count as alive, so this
+                        // never reaps a call that lives on a peer node).
+                        await this.reapDeadStoredCall(id, lobbyName, view);
+                        continue;
+                    }
                     foundCallId = id;
                     callerId = view.callerId;
                     callerName = view.callerName ?? null;
@@ -952,6 +1079,14 @@ export class CallService {
         // a lobby before deciding to join.
         if (action === 'status') {
             await this.handleStatusQuery(clientId, payload);
+            return;
+        }
+
+        // UX audit 2026-08-24 — `forget` is likewise a sender-scoped
+        // verb, not a signaling broadcast: durable dismissal of a
+        // resumable call for THIS user only.
+        if (action === 'forget') {
+            await this.handleForgetRequest(clientId, payload);
             return;
         }
 

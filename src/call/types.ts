@@ -45,7 +45,18 @@ export type CallAction =
     /** F3 — server → client reply to `status`. data: { lobbyName,
      *  active, callId?, callerId?, callerName?, startedAt?,
      *  participantCount?, participantUserIds? }. */
-    | 'active-call';
+    | 'active-call'
+    /** UX audit 2026-08-24 — client → server: "stop offering ME this
+     *  call". Durable dismissal of a resume/discovery surface: removes
+     *  the sender's userId → callId index entry (and the invite-replay
+     *  registry entry) so a dismissed stale call can never resurrect a
+     *  ResumeCallDialog in a fresh session. Scoped to the SENDER's
+     *  indexes only — other participants' state is untouched, and the
+     *  call itself is only fully reaped when it has no live
+     *  participants left. data: { callId }. */
+    | 'forget'
+    /** Server → client ack for `forget`. data: { callId, forgotten: true }. */
+    | 'forgotten';
 
 /**
  * Wire-form payload supplied by the FE alongside a call action. All
@@ -388,4 +399,8 @@ export const ALLOWED_CALL_ACTIONS: ReadonlySet<CallAction> = new Set<CallAction>
     // F3 — client→server query verb. `active-call` (the reply) is
     // deliberately NOT accepted here: it's server→client only.
     'status',
+    // UX audit 2026-08-24 — durable per-user dismissal of a resumable
+    // call. `forgotten` (the ack) is server→client only, like
+    // `active-call`.
+    'forget',
 ]);
