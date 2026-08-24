@@ -28,7 +28,7 @@
 // The internal HMAC-signed endpoint can be added later without
 // changing RoomService's public surface.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CROSS_NODE_ROOM_TOPIC = exports.ALLOWED_ROOM_ACTIONS = void 0;
+exports.CROSS_NODE_ROOM_TOPIC = exports.ROOM_ANNOUNCE_EVENTS = exports.ALLOWED_ROOM_ACTIONS = void 0;
 /** Verbs accepted by `handleAction`. Exposed for consumer dispatch tables. */
 exports.ALLOWED_ROOM_ACTIONS = new Set([
     'subscribe-index',
@@ -37,7 +37,10 @@ exports.ALLOWED_ROOM_ACTIONS = new Set([
     'unsubscribe',
     'join',
     'leave',
+    'announce',
 ]);
+/** Lifecycle events relayable via `announce`. */
+exports.ROOM_ANNOUNCE_EVENTS = ['created', 'updated', 'archived'];
 /** Topic naming pattern for cross-node room events. */
 exports.CROSS_NODE_ROOM_TOPIC = 'room:event';
 //# sourceMappingURL=types.js.map

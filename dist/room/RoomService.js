@@ -231,6 +231,31 @@ class RoomService {
                     await this.handleMemberLeft(slug, userId, clientId, 'explicit');
                     return;
                 }
+                case 'announce': {
+                    // UX audit 2026-08-24 — relay a room lifecycle event
+                    // (created/updated/archived) the sender just performed
+                    // via REST to every rooms:index subscriber, so other
+                    // users' sidebars pick up new rooms without a reload.
+                    // Announcement, not authority: the REST API stays the
+                    // rooms-list source of truth; receivers merge locally.
+                    const slug = typeof payload.slug === 'string' ? payload.slug : '';
+                    const event = typeof payload.event === 'string' ? payload.event : '';
+                    if (!slug) {
+                        this.sendError(clientId, 'slug is required on announce');
+                        return;
+                    }
+                    if (!types_1.ROOM_ANNOUNCE_EVENTS.includes(event)) {
+                        this.sendError(clientId, `announce event must be one of ${types_1.ROOM_ANNOUNCE_EVENTS.join('/')}`);
+                        return;
+                    }
+                    const room = payload.room && typeof payload.room === 'object' && !Array.isArray(payload.room)
+                        ? payload.room
+                        : undefined;
+                    await this.handleLifecycleAnnounce(slug, event, room, 
+                    /* excludeClientId */ clientId, 
+                    /* replicate */ true);
+                    return;
+                }
             }
         }
         catch (error) {
@@ -475,6 +500,48 @@ class RoomService {
             }
         }
     }
+    /**
+     * Fan a lifecycle event (created/updated/archived) out to every
+     * rooms:index subscriber on this node, excluding the announcing
+     * client (their own hook already merged the REST response), and
+     * optionally replicate to peer nodes.
+     */
+    async handleLifecycleAnnounce(slug, event, room, excludeClientId, replicate) {
+        const envelope = {
+            type: 'room',
+            action: event,
+            data: { slug, ...(room ? { room } : {}) },
+            timestamp: new Date().toISOString(),
+        };
+        for (const cid of this.indexSubscribers) {
+            if (excludeClientId && cid === excludeClientId)
+                continue;
+            try {
+                await Promise.resolve(this.messageRouter.sendToClient(cid, envelope));
+            }
+            catch (e) {
+                this.logger.warn(`[RoomService] lifecycle fan-out send failed for ${cid}/${slug}: ${e?.message ?? e}`);
+            }
+        }
+        this.logger.info(`[room] lifecycle ${event} announced`, { slug, subscriberCount: this.indexSubscribers.size });
+        if (replicate && this.crossNodePubSub) {
+            try {
+                const payload = {
+                    verb: 'lifecycle',
+                    slug,
+                    clientId: excludeClientId ?? '',
+                    userId: '',
+                    event,
+                    ...(room ? { room } : {}),
+                    sourceNodeId: this.nodeId ?? undefined,
+                };
+                await Promise.resolve(this.crossNodePubSub.publish(types_1.CROSS_NODE_ROOM_TOPIC, JSON.stringify(payload)));
+            }
+            catch (e) {
+                this.logger.warn(`[RoomService] cross-node publish failed for lifecycle ${event} ${slug}: ${e?.message ?? e}`);
+            }
+        }
+    }
     // -----------------------------------------------------------------
     // Cross-node mirroring
     // -----------------------------------------------------------------
@@ -482,7 +549,18 @@ class RoomService {
         // Loop-suppression: ignore our own publishes.
         if (evt.sourceNodeId && this.nodeId && evt.sourceNodeId === this.nodeId)
             return;
-        if (!evt.slug || !evt.clientId)
+        if (!evt.slug)
+            return;
+        // Lifecycle relays carry no member clientId — mirror to local
+        // index subscribers without re-replicating (the origin node
+        // already published cluster-wide).
+        if (evt.verb === 'lifecycle') {
+            if (!evt.event)
+                return;
+            await this.handleLifecycleAnnounce(evt.slug, evt.event, evt.room, /* exclude */ null, /* replicate */ false);
+            return;
+        }
+        if (!evt.clientId)
             return;
         // A peer node's mutation invalidates our cached occupancy for
         // this slug — next reader must re-query the state-store.

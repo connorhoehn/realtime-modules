@@ -71,6 +71,13 @@ export declare class RoomService {
      * `handleDisconnect` alias below.
      */
     handleDisconnect(clientId: string): Promise<void>;
+    /**
+     * Fan a lifecycle event (created/updated/archived) out to every
+     * rooms:index subscriber on this node, excluding the announcing
+     * client (their own hook already merged the REST response), and
+     * optionally replicate to peer nodes.
+     */
+    private handleLifecycleAnnounce;
     private handleCrossNodeEvent;
     private fanOutToRoomSubscribers;
     private schedulePendingDelta;

@@ -150,6 +150,22 @@ export declare class CallService {
      *  explicit API ensures in-memory stub implementations that don't
      *  share that internal state still get cleaned. */
     private forgetCall;
+    /** UX audit 2026-08-24 — reap a call that exists only in the durable
+     *  store (local cache cold) and whose every registered participant is
+     *  provably dead. Mirrors the index-hygiene part of forgetCall for
+     *  the store-only case: lobby index, per-user resume index, invite
+     *  registry, and the call hash itself. */
+    private reapDeadStoredCall;
+    /**
+     * UX audit 2026-08-24 — `forget` verb: durable per-user dismissal.
+     * The sender says "stop offering me callId"; we remove THEIR resume
+     * index + invite-registry entries so the ResumeCallDialog cannot
+     * resurrect for this user in any future session. Other participants'
+     * indexes are untouched — a call the peer is still happily in keeps
+     * offering THEM resume. Acked to the sender with a `forgotten`
+     * envelope so clients (and e2e) can await completion.
+     */
+    private handleForgetRequest;
     private clearInviteRegistryForCall;
     /** PR-W2.1 — cluster-wide clear of the per-user invite registry.
      *  We don't keep a reverse callId→userIds index in Redis (would

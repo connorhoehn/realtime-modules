@@ -1,7 +1,19 @@
 /** Verbs allowed on the room WS surface. */
-export type RoomAction = 'subscribe-index' | 'unsubscribe-index' | 'subscribe' | 'unsubscribe' | 'join' | 'leave';
+export type RoomAction = 'subscribe-index' | 'unsubscribe-index' | 'subscribe' | 'unsubscribe' | 'join' | 'leave'
+/** UX audit 2026-08-24 — client → server relay of a room lifecycle
+ *  change the client just performed via REST (created/archived/
+ *  updated). The gateway fans the event out to every rooms:index
+ *  subscriber (all nodes) so other users' sidebars update without a
+ *  reload. This is an ANNOUNCEMENT, not authority: the rooms list's
+ *  source of truth stays the REST API — receivers merely merge/
+ *  refetch. Payload: { event: 'created'|'updated'|'archived', slug,
+ *  room? (full entity passthrough) }. */
+ | 'announce';
 /** Verbs accepted by `handleAction`. Exposed for consumer dispatch tables. */
 export declare const ALLOWED_ROOM_ACTIONS: ReadonlySet<RoomAction>;
+/** Lifecycle events relayable via `announce`. */
+export declare const ROOM_ANNOUNCE_EVENTS: readonly ["created", "updated", "archived"];
+export type RoomAnnounceEvent = (typeof ROOM_ANNOUNCE_EVENTS)[number];
 /**
  * Wire-form payload supplied by the FE alongside a room action. All
  * fields are optional at this layer — `subscribe`/`unsubscribe` enforce
@@ -69,9 +81,21 @@ export type RoomServerEvent = {
 } | {
     type: 'room';
     action: 'created';
+    /** `room` — full entity passthrough from the announcing client's
+     *  REST create response, so receivers can merge without a
+     *  refetch (useHangoutRooms's room.created case needs it). */
     data: {
         slug: string;
-        name: string;
+        name?: string;
+        room?: Record<string, unknown>;
+    };
+    timestamp: string;
+} | {
+    type: 'room';
+    action: 'updated';
+    data: {
+        slug: string;
+        room?: Record<string, unknown>;
     };
     timestamp: string;
 } | {
@@ -79,6 +103,7 @@ export type RoomServerEvent = {
     action: 'archived';
     data: {
         slug: string;
+        room?: Record<string, unknown>;
     };
     timestamp: string;
 };
@@ -145,13 +170,17 @@ export interface RoomMemberLocal {
  * mirror its local Map state and fan out to its own subscribers.
  */
 export interface CrossNodeRoomEvent {
-    verb: 'member-joined' | 'member-left';
+    verb: 'member-joined' | 'member-left' | 'lifecycle';
     slug: string;
     clientId: string;
     userId: string;
     displayName?: string;
     participantId?: string;
     sourceNodeId?: string;
+    /** verb === 'lifecycle' only — which lifecycle event to relay. */
+    event?: RoomAnnounceEvent;
+    /** verb === 'lifecycle' only — full room entity passthrough. */
+    room?: Record<string, unknown>;
 }
 /** Topic naming pattern for cross-node room events. */
 export declare const CROSS_NODE_ROOM_TOPIC = "room:event";

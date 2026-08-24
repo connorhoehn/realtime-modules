@@ -41,5 +41,9 @@ exports.ALLOWED_CALL_ACTIONS = new Set([
     // F3 — client→server query verb. `active-call` (the reply) is
     // deliberately NOT accepted here: it's server→client only.
     'status',
+    // UX audit 2026-08-24 — durable per-user dismissal of a resumable
+    // call. `forgotten` (the ack) is server→client only, like
+    // `active-call`.
+    'forget',
 ]);
 //# sourceMappingURL=types.js.map

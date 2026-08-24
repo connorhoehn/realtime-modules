@@ -16,7 +16,18 @@ export type CallAction = 'invite' | 'accepted' | 'declined' | 'cancelled' | 'end
 /** F3 — server → client reply to `status`. data: { lobbyName,
  *  active, callId?, callerId?, callerName?, startedAt?,
  *  participantCount?, participantUserIds? }. */
- | 'active-call';
+ | 'active-call'
+/** UX audit 2026-08-24 — client → server: "stop offering ME this
+ *  call". Durable dismissal of a resume/discovery surface: removes
+ *  the sender's userId → callId index entry (and the invite-replay
+ *  registry entry) so a dismissed stale call can never resurrect a
+ *  ResumeCallDialog in a fresh session. Scoped to the SENDER's
+ *  indexes only — other participants' state is untouched, and the
+ *  call itself is only fully reaped when it has no live
+ *  participants left. data: { callId }. */
+ | 'forget'
+/** Server → client ack for `forget`. data: { callId, forgotten: true }. */
+ | 'forgotten';
 /**
  * Wire-form payload supplied by the FE alongside a call action. All
  * fields are optional at this layer — `invite` enforces callId+lobbyName
