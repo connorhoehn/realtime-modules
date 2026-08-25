@@ -21,7 +21,9 @@
 //     epoch-seconds, +90d). The store contract preserves channel +
 //     messageId as the addressing pair; TTL semantics are an adapter
 //     concern (InMemoryChatStore keeps everything for the process
-//     lifetime).
+//     lifetime). v0.23.0 adds optional `userId` (authenticated sender
+//     subject) to the message envelope — adapters must round-trip it
+//     verbatim when present (InMemoryChatStore's whole-object clone does).
 //
 //   - `listMessages` returns chronological order (oldest first), matching
 //     `ChatService.getChannelHistory`'s post-`.reverse()` shape. The DDB

@@ -63,6 +63,12 @@ export interface UseWebSocketReturn {
 export interface ChatMessage {
   id: string;
   clientId: string;
+  /**
+   * Authenticated user id of the sender (auth subject, stable across
+   * reconnects) — distinct from the per-connection `clientId`. Present
+   * only when the server's ChatService runs an identityResolver.
+   */
+  userId?: string;
   channel: string;
   message: string;
   metadata?: Record<string, unknown>;

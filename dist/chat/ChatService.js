@@ -41,6 +41,7 @@ const lru_cache_1 = require("lru-cache");
 const distributed_core_1 = require("distributed-core");
 const SubscriptionTracker_1 = require("./SubscriptionTracker");
 const ChatStore_1 = require("./ChatStore");
+const dmChannels_1 = require("./dmChannels");
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 const DEFAULT_MAX_METADATA_KEYS = 20;
 const DEFAULT_MAX_METADATA_SIZE = 4096;
@@ -53,6 +54,8 @@ const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
 // ---- Inlined error helpers (gateway/utils/error-codes.ts replacement) -----
 const ErrorCodes = {
     SERVICE_INTERNAL_ERROR: 'SERVICE_INTERNAL_ERROR',
+    /** Sender is not (or cannot be proven to be) a member of a dm channel. */
+    CHAT_DM_FORBIDDEN: 'CHAT_DM_FORBIDDEN',
 };
 function createErrorResponse(code, message, context = {}) {
     return { error: { code, message, ...context } };
@@ -86,6 +89,9 @@ class ChatService {
     metricsCollector;
     chatStore;
     authz;
+    identityResolver;
+    enforceDmMembership;
+    onDmMessage;
     clientChannels;
     channelCaches;
     maxMessagesPerChannel;
@@ -110,6 +116,11 @@ class ChatService {
         this.metricsCollector = opts.metricsCollector ?? null;
         this.chatStore = opts.chatStore ?? new ChatStore_1.InMemoryChatStore();
         this.authz = opts.authz ?? (() => true);
+        this.identityResolver = opts.identityResolver ?? null;
+        // DM enforcement defaults ON exactly when an identity source exists;
+        // consumers can force it either way explicitly.
+        this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
+        this.onDmMessage = opts.onDmMessage ?? null;
         this.maxMessagesPerChannel = opts.maxMessagesPerChannel ?? DEFAULT_MAX_MESSAGES_PER_CHANNEL;
         this.maxMessageLength = opts.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH;
         this.maxChannelNameLength = opts.maxChannelNameLength ?? DEFAULT_MAX_CHANNEL_NAME_LENGTH;
@@ -182,6 +193,12 @@ class ChatService {
             if (!this.authz(clientId, channel, this)) {
                 return;
             }
+            // DM membership gate (v0.23.0) — fail-closed on member-addressed
+            // dm channels. Runs before the router subscribe so a forbidden
+            // client never acquires a distributed subscription.
+            if (!this._checkDmMembership(clientId, channel, this._resolveIdentity(clientId))) {
+                return;
+            }
             // M3 gap #10: respect the router's subscribe authz decision.
             // subscribeToChannel returns `false` when operator-pushed channel
             // config (RealtimeChannel/ChatRoom CRD) denies the subscribe — it
@@ -249,10 +266,30 @@ class ChatService {
             this.sendError(clientId, 'You must join the channel before sending messages');
             return;
         }
+        // Resolve identity ONCE — feeds both the dm-membership gate and
+        // the userId stamp below.
+        const identity = this._resolveIdentity(clientId);
+        // DM membership gate (v0.23.0) — send is checked independently of
+        // join (subscriptions can predate enforcement being enabled).
+        if (!this._checkDmMembership(clientId, channel, identity)) {
+            return;
+        }
         try {
+            if (identity && identity.userId) {
+                // Merge resolver-provided presentation hints into metadata
+                // ONLY where the sender didn't already provide them —
+                // sender-provided metadata always wins.
+                if (identity.displayName !== undefined && metadata.displayName === undefined) {
+                    metadata.displayName = identity.displayName;
+                }
+                if (identity.avatarUrl !== undefined && metadata.avatarUrl === undefined) {
+                    metadata.avatarUrl = identity.avatarUrl;
+                }
+            }
             const messageData = {
                 id: this.generateMessageId(),
                 clientId,
+                ...(identity && identity.userId ? { userId: identity.userId } : {}),
                 channel,
                 message,
                 metadata,
@@ -275,6 +312,21 @@ class ChatService {
                 channel,
                 timestamp: messageData.timestamp,
             });
+            // DM activity seam (v0.23.0) — fire-and-forget observer after a
+            // successful dm send. Exceptions never fail the send path.
+            if (this.onDmMessage && (0, dmChannels_1.isDmChatChannel)(channel)) {
+                try {
+                    this.onDmMessage({
+                        channel,
+                        // Hashed chat:dmg: channels are non-reversible → [].
+                        members: (0, dmChannels_1.dmChannelMembers)(channel) ?? [],
+                        message: messageData,
+                    });
+                }
+                catch (hookErr) {
+                    this.logger.error('onDmMessage hook threw (ignored):', hookErr);
+                }
+            }
             this.logger.info(`Message sent by client ${clientId} to channel ${channel}`);
         }
         catch (error) {
@@ -380,6 +432,44 @@ class ChatService {
         if (!redisAvailable) {
             this.logger.debug(`Redis unavailable, message delivered to local clients only`);
         }
+    }
+    /**
+     * Resolve the sender identity for a connection, or null. A throwing
+     * resolver is logged and treated as "no identity" — which the dm gate
+     * below turns into a fail-closed rejection.
+     */
+    _resolveIdentity(clientId) {
+        if (!this.identityResolver)
+            return null;
+        try {
+            return this.identityResolver(clientId) ?? null;
+        }
+        catch (err) {
+            this.logger.error(`identityResolver threw for client ${clientId}:`, err);
+            return null;
+        }
+    }
+    /**
+     * DM membership gate. Returns true when the operation may proceed.
+     * Only member-addressed dm channels (`chat:dm:` with parseable member
+     * list) are enforced; hashed `chat:dmg:` and non-dm channels always
+     * pass. FAIL-CLOSED: on an enforced channel, a sender with no
+     * resolvable userId is rejected.
+     */
+    _checkDmMembership(clientId, channel, identity) {
+        if (!this.enforceDmMembership)
+            return true;
+        if (!(0, dmChannels_1.isDmChatChannel)(channel))
+            return true;
+        const members = (0, dmChannels_1.dmChannelMembers)(channel);
+        if (!members)
+            return true; // chat:dmg: / malformed — membership not derivable here
+        const userId = identity?.userId;
+        if (!userId || !members.includes(userId)) {
+            this.sendError(clientId, 'You are not a member of this direct-message channel', ErrorCodes.CHAT_DM_FORBIDDEN);
+            return false;
+        }
+        return true;
     }
     generateMessageId() {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);

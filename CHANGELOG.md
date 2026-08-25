@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.23.0 — 2026-08-25
+
+Person-to-person DM support in the chat layer (`./chat`):
+
+- **`ChatMessage.userId?`** — first-class authenticated-subject identity
+  on messages, distinct from the per-connection `clientId`. Stamped at
+  send time by the new `identityResolver` ChatService option, which also
+  merges `displayName`/`avatarUrl` into metadata where the sender didn't
+  provide them (sender-provided metadata wins). No resolver ⇒ behavior
+  unchanged. `useChat` surfaces the field client-side.
+- **dm channel helpers** (`dmChannels.ts`, exported from `./chat`):
+  `isDmChatChannel` / `dmChatChannelFor` / `dmChannelMembers`. Canonical
+  form `chat:dm:<sorted userIds>`; names past 100 chars fall back to the
+  hashed, non-reversible `chat:dmg:<sha1[0..24)>` group form.
+- **`enforceDmMembership`** ChatService option (defaults ON when an
+  identityResolver is present) — join/send on member-addressed dm
+  channels is gated on the resolved userId, fail-closed, rejecting with
+  error code `CHAT_DM_FORBIDDEN`. Non-dm channels unaffected.
+- **`onDmMessage`** seam — fire-and-forget observer after successful dm
+  sends (parsed members; `[]` for hashed group channels), for
+  conversations indexes / notification fan-out in consumers.
+
 ## 0.20.0 — 2026-08-20
 
 - **`collabDocs()`** — the fourteenth built-in feature; CRDT document sync

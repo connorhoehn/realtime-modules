@@ -7,6 +7,12 @@
  *     (`messageId` attribute) in the gateway DDB adapter.
  *   - `clientId` is the connection id of the sender, NOT the user id. The
  *     gateway authz layer maps it to a user upstream of the service.
+ *   - `userId` (added v0.23.0) is the AUTHENTICATED SUBJECT of the sender
+ *     (e.g. `dev-hank`) — stable across reconnects, unlike `clientId`
+ *     which is minted per WebSocket connection. It is stamped by
+ *     ChatService at send time when an `identityResolver` is configured;
+ *     messages sent without a resolver (and all pre-v0.23.0 history)
+ *     simply lack the field, so it is optional everywhere.
  *   - `channel` is the DDB partition key (`channelId` attribute).
  *   - `metadata` is JSON-stringified at the storage boundary and
  *     truncated by `validateMetadata` (key count + serialized size caps).
@@ -17,6 +23,14 @@
 export interface ChatMessage {
     id: string;
     clientId: string;
+    /**
+     * Authenticated user id of the sender (the auth subject, e.g.
+     * `dev-hank`). Distinct from `clientId`, which is a per-CONNECTION id
+     * that changes on every reconnect. Present only when the owning
+     * ChatService was configured with an `identityResolver` that yielded
+     * a userId for the sending connection.
+     */
+    userId?: string;
     channel: string;
     message: string;
     metadata?: Record<string, unknown>;

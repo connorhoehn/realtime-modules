@@ -147,6 +147,7 @@ function asChatMessageRaw(raw) {
     return {
         id: m.id,
         clientId: m.clientId,
+        userId: typeof m.userId === 'string' ? m.userId : undefined,
         channel: m.channel,
         message: m.message,
         metadata: typeof m.metadata === 'object' && m.metadata !== null
