@@ -1,10 +1,10 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
-  "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
+  "description": "Realtime feature toolkit \u2014 UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

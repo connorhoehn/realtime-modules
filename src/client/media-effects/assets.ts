@@ -29,8 +29,13 @@ export interface MediaEffectsAssets {
 
 export const DEFAULT_WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm';
+// The LANDSCAPE variant (144x256) is the video-call model: trained for
+// 16:9 webcam framing with better temporal stability on silhouette
+// contours than the square 256x256 general model (operator feedback
+// 2026-08-25: "choppy on the contours"). Same ImageSegmenter API,
+// same confidence-mask output.
 export const DEFAULT_SEGMENTER_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite';
+  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/1/selfie_segmenter_landscape.tflite';
 export const DEFAULT_FACE_LANDMARKER_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
