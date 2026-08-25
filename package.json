@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.20.1",
+  "version": "0.21.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -32,6 +32,10 @@
     "./client/video": {
       "types": "./dist/client/video/index.d.ts",
       "default": "./dist/client/video/index.js"
+    },
+    "./client/media-effects": {
+      "types": "./dist/client/media-effects/index.d.ts",
+      "default": "./dist/client/media-effects/index.js"
     },
     "./client/hangout-rooms": {
       "types": "./dist/client/hangout-rooms/index.d.ts",
@@ -127,6 +131,7 @@
     "smoke:features": "node scripts/smoke-features.mjs"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.34",
     "distributed-core": "github:connorhoehn/distributed-core#b6f38f57b781a8bf74ff9e31a35b6062f7193dc9",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
