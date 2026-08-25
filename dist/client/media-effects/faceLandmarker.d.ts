@@ -13,6 +13,12 @@ export declare const LANDMARK: {
     readonly UPPER_LIP_TOP: 0;
     readonly LOWER_LIP_BOTTOM: 17;
 };
+/**
+ * Module-level warmup: kick the WASM + model download without needing a
+ * FaceTracker instance. Safe to call repeatedly (keyed singleton loader);
+ * SSR-safe: no-op without window/document.
+ */
+export declare function warmupFaceLandmarker(): Promise<void>;
 export declare class FaceTracker {
     private landmarker;
     private lastLandmarks;

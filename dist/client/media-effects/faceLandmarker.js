@@ -37,6 +37,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FaceTracker = exports.LANDMARK = void 0;
+exports.warmupFaceLandmarker = warmupFaceLandmarker;
 const assets_1 = require("./assets");
 let landmarkerPromise = null;
 let landmarkerKey = null;
@@ -85,11 +86,22 @@ exports.LANDMARK = {
     UPPER_LIP_TOP: 0,
     LOWER_LIP_BOTTOM: 17,
 };
+/**
+ * Module-level warmup: kick the WASM + model download without needing a
+ * FaceTracker instance. Safe to call repeatedly (keyed singleton loader);
+ * SSR-safe: no-op without window/document.
+ */
+function warmupFaceLandmarker() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        return Promise.resolve();
+    }
+    return loadLandmarker().then(() => undefined).catch(() => undefined);
+}
 class FaceTracker {
     landmarker = null;
     lastLandmarks = null;
     warmup() {
-        return loadLandmarker().then(() => undefined).catch(() => undefined);
+        return warmupFaceLandmarker();
     }
     /**
      * Run landmark detection on the current video frame. Returns normalized

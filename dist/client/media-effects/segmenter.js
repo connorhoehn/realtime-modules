@@ -45,6 +45,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PersonSegmenter = void 0;
 exports.shapeConfidence = shapeConfidence;
+exports.warmupSegmenter = warmupSegmenter;
 const assets_1 = require("./assets");
 let segmenterPromise = null;
 let segmenterKey = null;
@@ -90,13 +91,26 @@ function loadSegmenter() {
 function shapeConfidence(p) {
     return Math.max(0, Math.min(1, 1.8 * p - 0.4));
 }
+/**
+ * Module-level warmup: kick the WASM + model download without needing a
+ * PersonSegmenter instance (the app calls this when the effects UI opens,
+ * before any effect is selected, so first selection doesn't freeze on
+ * model init). Safe to call repeatedly — the loader is a keyed singleton.
+ * SSR-safe: no-op without window/document.
+ */
+function warmupSegmenter() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        return Promise.resolve();
+    }
+    return loadSegmenter().then(() => undefined).catch(() => undefined);
+}
 class PersonSegmenter {
     segmenter = null;
     maskCanvas = null;
     maskCtx = null;
     imageData = null;
     warmup() {
-        return loadSegmenter().then(() => undefined).catch(() => undefined);
+        return warmupSegmenter();
     }
     /**
      * Run segmentation on the current video frame. Returns a canvas whose

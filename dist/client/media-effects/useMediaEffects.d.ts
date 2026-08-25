@@ -2,7 +2,7 @@ import { type FilterPreset } from './presets';
 import { type FaceSprite } from './faceSprites';
 import { type BackgroundOption } from './backgrounds';
 import { type MediaEffectsAssets } from './assets';
-import { type BackgroundMode } from './engine';
+import { type BackgroundMode, type WarmupTarget } from './engine';
 export interface UseMediaEffectsOptions {
     /** Self-hosted MediaPipe asset URLs; applied before any model load. */
     assets?: MediaEffectsAssets;
@@ -27,6 +27,12 @@ export interface MediaEffectsController {
     setBackgroundMode(mode: BackgroundMode): void;
     setBackgroundImageUrl(url: string | null): void;
     setFaceSpriteId(id: string | null): void;
+    /**
+     * Preload MediaPipe models (fire-and-forget) — call when the effects UI
+     * opens so the first selection doesn't freeze on model init. Safe to
+     * call repeatedly; SSR-safe no-op. Default target: 'all'.
+     */
+    warmup(target?: WarmupTarget): void;
     /** setSource + return current output (=== input while inactive). */
     attach(track: MediaStreamTrack): MediaStreamTrack;
     /** New stream: audio tracks pass through, video track replaced via attach(). */

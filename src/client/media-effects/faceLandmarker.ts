@@ -66,12 +66,24 @@ export const LANDMARK = {
   LOWER_LIP_BOTTOM: 17,
 } as const;
 
+/**
+ * Module-level warmup: kick the WASM + model download without needing a
+ * FaceTracker instance. Safe to call repeatedly (keyed singleton loader);
+ * SSR-safe: no-op without window/document.
+ */
+export function warmupFaceLandmarker(): Promise<void> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve();
+  }
+  return loadLandmarker().then(() => undefined).catch(() => undefined);
+}
+
 export class FaceTracker {
   private landmarker: FaceLandmarker | null = null;
   private lastLandmarks: NormalizedLandmark[] | null = null;
 
   warmup(): Promise<void> {
-    return loadLandmarker().then(() => undefined).catch(() => undefined);
+    return warmupFaceLandmarker();
   }
 
   /**

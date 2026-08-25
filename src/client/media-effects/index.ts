@@ -32,11 +32,13 @@ export {
 export {
   PersonSegmenter,
   shapeConfidence,
+  warmupSegmenter,
 } from './segmenter';
 
 export {
   FaceTracker,
   LANDMARK,
+  warmupFaceLandmarker,
 } from './faceLandmarker';
 
 export {
@@ -47,8 +49,12 @@ export {
 
 export {
   MediaEffectsEngine,
+  MASK_EMA_ALPHA,
+  MASK_FEATHER_PX,
+  SEGMENT_FRAME_INTERVAL,
   type BackgroundMode,
   type OutputChangeListener,
+  type WarmupTarget,
 } from './engine';
 
 export {

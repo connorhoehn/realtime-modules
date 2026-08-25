@@ -29,11 +29,33 @@
 // it (getUserMedia) and owns its lifecycle. Only pipeline-created canvas
 // tracks are stopped on teardown.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MediaEffectsEngine = void 0;
+exports.MediaEffectsEngine = exports.SEGMENT_FRAME_INTERVAL = exports.MASK_FEATHER_PX = exports.MASK_EMA_ALPHA = void 0;
 const presets_1 = require("./presets");
 const segmenter_1 = require("./segmenter");
 const faceLandmarker_1 = require("./faceLandmarker");
 const faceSprites_1 = require("./faceSprites");
+/**
+ * Temporal smoothing weight for the segmentation mask. Each fresh mask is
+ * composited into maskSmoothCanvas at this alpha over the previous smoothed
+ * contents — an exponential moving average that suppresses the per-frame
+ * contour flicker users reported as "choppy". Range (0, 1]: higher = more
+ * responsive, lower = smoother.
+ */
+exports.MASK_EMA_ALPHA = 0.45;
+/**
+ * Feather radius (px) applied when the smoothed mask cuts out the person
+ * (`destination-in` draw). Softens the silhouette edge so it isn't
+ * hard/blocky against the blurred or replaced background.
+ */
+exports.MASK_FEATHER_PX = 3;
+/**
+ * Run person segmentation every Nth drawn frame; the in-between frames
+ * reuse the smoothed mask (the EMA makes the reuse invisible). Segmentation
+ * is the dominant per-frame CPU cost, and halving its rate removes most of
+ * the jitter. The FaceLandmarker still runs every frame — sprite tracking
+ * must not lag the face.
+ */
+exports.SEGMENT_FRAME_INTERVAL = 2;
 class MediaEffectsEngine {
     source = null;
     filterId = 'none';
@@ -178,6 +200,7 @@ class MediaEffectsEngine {
         // the track's real dimensions differ (rotation, constraint changes).
         const bgCanvas = this.createCanvas(width, height);
         const personCanvas = this.createCanvas(width, height);
+        const maskSmoothCanvas = this.createCanvas(width, height);
         const outputCtx = outputCanvas.getContext?.('2d') ?? null;
         const stream = this.captureCanvasStream(outputCanvas);
         const outputTrack = stream?.getVideoTracks?.()[0] ?? null;
@@ -186,6 +209,10 @@ class MediaEffectsEngine {
             outputCanvas,
             bgCanvas,
             personCanvas,
+            maskSmoothCanvas,
+            maskSeeded: false,
+            lastMask: null,
+            frameIndex: 0,
             outputCtx,
             rafId: 0,
             stream,
@@ -255,8 +282,12 @@ class MediaEffectsEngine {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
         if (vw && vh && (outputCanvas.width !== vw || outputCanvas.height !== vh)) {
-            outputCanvas.width = bgCanvas.width = personCanvas.width = vw;
-            outputCanvas.height = bgCanvas.height = personCanvas.height = vh;
+            outputCanvas.width = bgCanvas.width = personCanvas.width = p.maskSmoothCanvas.width = vw;
+            outputCanvas.height = bgCanvas.height = personCanvas.height = p.maskSmoothCanvas.height = vh;
+            // Resizing wipes the smooth canvas; re-seed from the next fresh mask
+            // (alpha 1) instead of EMA-fading in from transparent.
+            p.maskSeeded = false;
+            p.lastMask = null;
         }
         const w = outputCanvas.width;
         const h = outputCanvas.height;
@@ -265,14 +296,31 @@ class MediaEffectsEngine {
         let composited = false;
         if (bgMode === 'blur' || bgMode === 'image') {
             const ts = this.now() - p.startTimeMs;
-            let maskCanvas = null;
-            try {
-                maskCanvas = p.segmenter.segment(video, ts);
+            // Frame pacing: segmentForVideo is the dominant CPU cost, so run it
+            // only every SEGMENT_FRAME_INTERVAL-th drawn frame once a mask
+            // exists; skipped frames reuse the smoothed mask (the EMA makes the
+            // reuse invisible). Until the first mask lands (model still loading)
+            // we try every frame so the effect starts as soon as possible.
+            const tick = p.frameIndex++;
+            const due = tick % this.segmentFrameInterval() === 0;
+            if (due || !p.lastMask) {
+                let fresh = null;
+                try {
+                    fresh = p.segmenter.segment(video, ts);
+                }
+                catch {
+                    // Failed segmentation frame → reuse the previous mask (or fall
+                    // back to a plain filtered draw if we never had one).
+                    fresh = null;
+                }
+                if (fresh) {
+                    p.lastMask = fresh;
+                    this.blendMaskIntoSmooth(p, fresh, w, h);
+                }
             }
-            catch {
-                // Failed segmentation frame → fall back to plain filtered draw.
-                maskCanvas = null;
-            }
+            // Prefer the temporally-smoothed mask; fall back to the raw mask
+            // when the smooth canvas has no usable 2d context.
+            const maskCanvas = p.maskSeeded ? p.maskSmoothCanvas : p.lastMask;
             if (maskCanvas) {
                 // Background layer: blurred frame or a user-chosen cover-fit image.
                 const bgCtx = bgCanvas.getContext('2d');
@@ -298,8 +346,12 @@ class MediaEffectsEngine {
                     personCtx.filter = cssFilter;
                     personCtx.drawImage(video, 0, 0, w, h);
                     personCtx.filter = 'none';
+                    // Feathered cutout: blurring the (smoothed) mask at draw time
+                    // softens the silhouette edge instead of leaving it hard/blocky.
                     personCtx.globalCompositeOperation = 'destination-in';
+                    personCtx.filter = `blur(${exports.MASK_FEATHER_PX}px)`;
                     personCtx.drawImage(maskCanvas, 0, 0, w, h);
+                    personCtx.filter = 'none';
                     personCtx.globalCompositeOperation = 'source-over';
                 }
                 outputCtx.filter = 'none';
@@ -331,6 +383,53 @@ class MediaEffectsEngine {
                     // Sprite failures never take down the composited frame.
                 }
             }
+        }
+    }
+    /**
+     * Composite a fresh segmentation mask into the EMA accumulator.
+     *
+     * First mask after build/resize seeds the canvas with a full-alpha copy
+     * so effects don't fade in from nothing. After that each fresh mask is
+     * blended at MASK_EMA_ALPHA: previous contents are first faded by
+     * (1 - alpha) via a destination-out fill, then the new mask is drawn
+     * source-over at alpha. The pre-fade matters — a bare source-over at
+     * partial alpha can only ever *raise* per-pixel alpha, which would leave
+     * permanent ghost silhouettes wherever the person used to be.
+     */
+    blendMaskIntoSmooth(p, mask, w, h) {
+        const ctx = p.maskSmoothCanvas.getContext?.('2d') ?? null;
+        if (!ctx)
+            return;
+        if (!p.maskSeeded) {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1;
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(mask, 0, 0, w, h);
+            p.maskSeeded = true;
+            return;
+        }
+        ctx.globalAlpha = exports.MASK_EMA_ALPHA;
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(mask, 0, 0, w, h);
+        ctx.globalAlpha = 1;
+    }
+    // -------------------------------------------------------------- warmup
+    /**
+     * Preload MediaPipe models before any effect is selected — call when the
+     * effects UI opens so the first toggle doesn't freeze on model init.
+     * Fire-and-forget, safe to call repeatedly (keyed singleton loaders),
+     * SSR-safe (no-op without window/document), and works before any
+     * pipeline exists (module-level loaders, not pipeline instances).
+     */
+    warmup(target = 'all') {
+        if (target === 'segmentation' || target === 'all') {
+            void this.warmupSegmentation();
+        }
+        if (target === 'faces' || target === 'all') {
+            void this.warmupFaces();
         }
     }
     // ------------------------------------------------------------ listeners
@@ -374,6 +473,18 @@ class MediaEffectsEngine {
     }
     createSegmenter() {
         return new segmenter_1.PersonSegmenter();
+    }
+    /** Segmentation pacing divisor; overridable in tests. */
+    segmentFrameInterval() {
+        return exports.SEGMENT_FRAME_INTERVAL;
+    }
+    /** Module-level segmenter loader trigger; overridable in tests. */
+    warmupSegmentation() {
+        return (0, segmenter_1.warmupSegmenter)();
+    }
+    /** Module-level face-landmarker loader trigger; overridable in tests. */
+    warmupFaces() {
+        return (0, faceLandmarker_1.warmupFaceLandmarker)();
     }
     createFaceTracker() {
         return new faceLandmarker_1.FaceTracker();

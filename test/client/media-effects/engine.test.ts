@@ -11,8 +11,15 @@
 //   - the source track is NEVER stopped by the engine (caller owns it)
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { MediaEffectsEngine } from '../../../src/client/media-effects/engine';
+import {
+  MediaEffectsEngine,
+  MASK_EMA_ALPHA,
+  MASK_FEATHER_PX,
+  SEGMENT_FRAME_INTERVAL,
+} from '../../../src/client/media-effects/engine';
+import { warmupSegmenter } from '../../../src/client/media-effects/segmenter';
 import type { PersonSegmenter } from '../../../src/client/media-effects/segmenter';
+import { warmupFaceLandmarker } from '../../../src/client/media-effects/faceLandmarker';
 import type { FaceTracker } from '../../../src/client/media-effects/faceLandmarker';
 
 class FakeTrack {
@@ -99,7 +106,7 @@ class TestEngine extends MediaEffectsEngine {
 
   protected override loadBackgroundImage(): void { /* no-op in tests */ }
 
-  protected override requestFrame(): number {
+  protected override requestFrame(_cb: FrameRequestCallback): number {
     this.framesRequested++;
     return this.framesRequested;
   }
@@ -136,7 +143,7 @@ describe('MediaEffectsEngine state machine', () => {
     engine.setFilter('warm');
 
     expect(engine.isActive()).toBe(true);
-    expect(engine.canvasesCreated).toBe(3); // output + bg + person
+    expect(engine.canvasesCreated).toBe(4); // output + bg + person + maskSmooth
     expect(engine.framesRequested).toBeGreaterThan(0);
     const canvasTrack = engine.canvasTracks[0].asTrack();
     expect(engine.getOutputTrack()).toBe(canvasTrack);
@@ -154,7 +161,7 @@ describe('MediaEffectsEngine state machine', () => {
 
     expect(engine.getOutputTrack()).toBe(out);
     expect(outputs.length).toBe(emissions);
-    expect(engine.canvasesCreated).toBe(3); // no second pipeline
+    expect(engine.canvasesCreated).toBe(4); // no second pipeline
   });
 
   it('tears down and reverts to raw on the active→inactive edge', () => {
@@ -232,7 +239,7 @@ describe('MediaEffectsEngine state machine', () => {
     expect(engine.getOutputTrack()).toBeNull();
 
     engine.setSource(raw.asTrack());
-    expect(engine.canvasesCreated).toBe(3);
+    expect(engine.canvasesCreated).toBe(4);
     expect(engine.getOutputTrack()).toBe(engine.canvasTracks[0].asTrack());
   });
 
@@ -242,5 +249,243 @@ describe('MediaEffectsEngine state machine', () => {
     unsub();
     engine.setSource(raw.asTrack());
     expect(seen).toEqual([]);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Mask smoothing constants — exported tuning knobs consumers may read.
+
+describe('mask smoothing constants', () => {
+  it('MASK_EMA_ALPHA is a blend weight in (0, 1]', () => {
+    expect(MASK_EMA_ALPHA).toBeGreaterThan(0);
+    expect(MASK_EMA_ALPHA).toBeLessThanOrEqual(1);
+  });
+
+  it('MASK_FEATHER_PX is a positive pixel radius', () => {
+    expect(MASK_FEATHER_PX).toBeGreaterThan(0);
+  });
+
+  it('SEGMENT_FRAME_INTERVAL is a positive integer', () => {
+    expect(Number.isInteger(SEGMENT_FRAME_INTERVAL)).toBe(true);
+    expect(SEGMENT_FRAME_INTERVAL).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Draw-loop behavior: segmentation frame pacing + smoothed-mask compositing.
+// A subclass with a "ready" fake video, recording 2d contexts, and a manual
+// tick() (requestFrame captures the RAF callback instead of scheduling)
+// lets these tests step the draw loop frame by frame in plain node.
+
+interface CtxOp {
+  op: 'drawImage' | 'fillRect' | 'clearRect';
+  image?: unknown;
+  filter: string;
+  alpha: number;
+  gco: string;
+}
+
+interface RecordingCtx {
+  filter: string;
+  globalAlpha: number;
+  globalCompositeOperation: string;
+  fillStyle: string;
+  ops: CtxOp[];
+  drawImage: (image: unknown) => void;
+  fillRect: () => void;
+  clearRect: () => void;
+}
+
+function makeRecordingCtx(): RecordingCtx {
+  const ctx: RecordingCtx = {
+    filter: 'none',
+    globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
+    fillStyle: '',
+    ops: [],
+    drawImage(image: unknown) {
+      ctx.ops.push({ op: 'drawImage', image, filter: ctx.filter, alpha: ctx.globalAlpha, gco: ctx.globalCompositeOperation });
+    },
+    fillRect() {
+      ctx.ops.push({ op: 'fillRect', filter: ctx.filter, alpha: ctx.globalAlpha, gco: ctx.globalCompositeOperation });
+    },
+    clearRect() {
+      ctx.ops.push({ op: 'clearRect', filter: ctx.filter, alpha: ctx.globalAlpha, gco: ctx.globalCompositeOperation });
+    },
+  };
+  return ctx;
+}
+
+class DrawTestEngine extends TestEngine {
+  ctxs: RecordingCtx[] = [];
+  fakeCanvases: Array<{ width: number; height: number }> = [];
+  private pendingFrame: FrameRequestCallback | null = null;
+
+  protected override createVideoElement(_track: MediaStreamTrack): HTMLVideoElement {
+    return {
+      readyState: 2,
+      videoWidth: 640,
+      videoHeight: 480,
+      pause: jest.fn(),
+      srcObject: null,
+    } as unknown as HTMLVideoElement;
+  }
+
+  protected override createCanvas(width: number, height: number): HTMLCanvasElement {
+    this.canvasesCreated++;
+    const ctx = makeRecordingCtx();
+    this.ctxs.push(ctx);
+    const canvas = { width, height, getContext: () => ctx };
+    this.fakeCanvases.push(canvas);
+    return canvas as unknown as HTMLCanvasElement;
+  }
+
+  protected override requestFrame(cb: FrameRequestCallback): number {
+    this.framesRequested++;
+    this.pendingFrame = cb;
+    return this.framesRequested;
+  }
+
+  /** Run exactly one draw-loop iteration. */
+  tick(): void {
+    const cb = this.pendingFrame;
+    this.pendingFrame = null;
+    cb?.(0);
+  }
+
+  // Creation order in buildPipeline: output, bg, person, maskSmooth.
+  get personCtx(): RecordingCtx { return this.ctxs[2]; }
+  get maskSmoothCanvas(): unknown { return this.fakeCanvases[3]; }
+  get maskSmoothCtx(): RecordingCtx { return this.ctxs[3]; }
+}
+
+describe('segmentation pacing and mask smoothing (draw loop)', () => {
+  let engine: DrawTestEngine;
+  let raw: FakeTrack;
+  let mask: object;
+
+  beforeEach(() => {
+    engine = new DrawTestEngine();
+    raw = new FakeTrack();
+    mask = { fake: 'mask' };
+    engine.setSource(raw.asTrack());
+    engine.setBackgroundMode('blur');
+  });
+
+  it('with SEGMENT_FRAME_INTERVAL=2, segment() runs on ticks 0,2,4 and skipped ticks reuse the mask', () => {
+    expect(SEGMENT_FRAME_INTERVAL).toBe(2); // pacing assumption of this test
+    const seg = engine.segmenters[0];
+    seg.segment.mockReturnValue(mask);
+
+    for (let i = 0; i < 6; i++) engine.tick();
+
+    expect(seg.segment).toHaveBeenCalledTimes(3); // ticks 0, 2, 4
+    // Every tick still composited a person cutout (destination-in draw) —
+    // the skipped ticks reused the smoothed mask instead of segmenting.
+    const cutouts = engine.personCtx.ops.filter((o) => o.op === 'drawImage' && o.gco === 'destination-in');
+    expect(cutouts).toHaveLength(6);
+  });
+
+  it('keeps trying every frame while the model is still loading (segment → null)', () => {
+    const seg = engine.segmenters[0];
+    seg.segment.mockReturnValue(null);
+
+    for (let i = 0; i < 4; i++) engine.tick();
+
+    // No mask yet → no pacing: retry each frame so blur starts ASAP.
+    expect(seg.segment).toHaveBeenCalledTimes(4);
+    expect(engine.personCtx.ops).toHaveLength(0); // nothing composited
+  });
+
+  it('cuts out the person with the SMOOTHED mask, feathered by MASK_FEATHER_PX', () => {
+    engine.segmenters[0].segment.mockReturnValue(mask);
+    engine.tick();
+
+    const cutout = engine.personCtx.ops.find((o) => o.gco === 'destination-in');
+    expect(cutout).toBeDefined();
+    expect(cutout!.image).toBe(engine.maskSmoothCanvas); // smoothed, not raw
+    expect(cutout!.filter).toBe(`blur(${MASK_FEATHER_PX}px)`);
+    // Filter reset after the mask draw.
+    expect(engine.personCtx.filter).toBe('none');
+  });
+
+  it('seeds the smooth canvas with a full-alpha copy, then blends at MASK_EMA_ALPHA', () => {
+    engine.segmenters[0].segment.mockReturnValue(mask);
+    engine.tick(); // tick 0: seed
+    engine.tick(); // tick 1: reuse (no blend)
+    engine.tick(); // tick 2: fresh mask → EMA blend
+
+    const ops = engine.maskSmoothCtx.ops;
+    // Seed: cleared then drawn at alpha 1.
+    expect(ops[0]).toMatchObject({ op: 'clearRect', alpha: 1 });
+    expect(ops[1]).toMatchObject({ op: 'drawImage', image: mask, alpha: 1, gco: 'source-over' });
+    // Blend: previous contents faded (destination-out) then the fresh mask
+    // drawn source-over, both at MASK_EMA_ALPHA.
+    expect(ops[2]).toMatchObject({ op: 'fillRect', alpha: MASK_EMA_ALPHA, gco: 'destination-out' });
+    expect(ops[3]).toMatchObject({ op: 'drawImage', image: mask, alpha: MASK_EMA_ALPHA, gco: 'source-over' });
+    expect(ops).toHaveLength(4); // nothing blended on the skipped tick
+  });
+});
+
+// --------------------------------------------------------------------------
+// warmup(): preloads models via module-level loader seams, before any
+// pipeline exists.
+
+class WarmupProbeEngine extends TestEngine {
+  segWarmups = 0;
+  faceWarmups = 0;
+
+  protected override warmupSegmentation(): Promise<void> {
+    this.segWarmups++;
+    return Promise.resolve();
+  }
+
+  protected override warmupFaces(): Promise<void> {
+    this.faceWarmups++;
+    return Promise.resolve();
+  }
+}
+
+describe('warmup()', () => {
+  let engine: WarmupProbeEngine;
+
+  beforeEach(() => {
+    engine = new WarmupProbeEngine();
+  });
+
+  it("warmup('segmentation') triggers only the segmenter loader", () => {
+    engine.warmup('segmentation');
+    expect(engine.segWarmups).toBe(1);
+    expect(engine.faceWarmups).toBe(0);
+  });
+
+  it("warmup('faces') triggers only the landmarker loader", () => {
+    engine.warmup('faces');
+    expect(engine.segWarmups).toBe(0);
+    expect(engine.faceWarmups).toBe(1);
+  });
+
+  it("defaults to 'all' and triggers both — with no source or pipeline", () => {
+    engine.warmup();
+    expect(engine.segWarmups).toBe(1);
+    expect(engine.faceWarmups).toBe(1);
+    expect(engine.canvasesCreated).toBe(0); // still no pipeline
+  });
+
+  it('is safe to call repeatedly', () => {
+    engine.warmup('all');
+    engine.warmup('all');
+    engine.warmup('segmentation');
+    expect(engine.segWarmups).toBe(3);
+    expect(engine.faceWarmups).toBe(2);
+  });
+
+  it('module-level loaders are SSR-safe: resolve as no-ops without window', () => {
+    // jest node environment has no window/document.
+    expect(typeof window).toBe('undefined');
+    return Promise.all([
+      expect(warmupSegmenter()).resolves.toBeUndefined(),
+      expect(warmupFaceLandmarker()).resolves.toBeUndefined(),
+    ]).then(() => undefined);
   });
 });

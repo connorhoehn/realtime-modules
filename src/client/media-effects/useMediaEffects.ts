@@ -17,7 +17,7 @@ import { FILTER_PRESETS, type FilterPreset } from './presets';
 import { FACE_SPRITES, type FaceSprite } from './faceSprites';
 import { getBuiltInBackgrounds, type BackgroundOption } from './backgrounds';
 import { setMediaEffectsAssets, type MediaEffectsAssets } from './assets';
-import { MediaEffectsEngine, type BackgroundMode } from './engine';
+import { MediaEffectsEngine, type BackgroundMode, type WarmupTarget } from './engine';
 import {
   DEFAULT_EFFECTS_SETTINGS,
   readPersistedSettings,
@@ -50,6 +50,12 @@ export interface MediaEffectsController {
   setBackgroundMode(mode: BackgroundMode): void;
   setBackgroundImageUrl(url: string | null): void;
   setFaceSpriteId(id: string | null): void;
+  /**
+   * Preload MediaPipe models (fire-and-forget) — call when the effects UI
+   * opens so the first selection doesn't freeze on model init. Safe to
+   * call repeatedly; SSR-safe no-op. Default target: 'all'.
+   */
+  warmup(target?: WarmupTarget): void;
   /** setSource + return current output (=== input while inactive). */
   attach(track: MediaStreamTrack): MediaStreamTrack;
   /** New stream: audio tracks pass through, video track replaced via attach(). */
@@ -140,6 +146,12 @@ export function useMediaEffects(opts?: UseMediaEffectsOptions): MediaEffectsCont
     engineRef.current?.setFaceSpriteId(id);
   }, [update]);
 
+  const warmup = useCallback((target: WarmupTarget = 'all') => {
+    // Engine.warmup delegates to module-level loaders, so this works
+    // before any source attaches or pipeline exists.
+    getEngine().warmup(target);
+  }, [getEngine]);
+
   const attach = useCallback((track: MediaStreamTrack): MediaStreamTrack => {
     const engine = getEngine();
     engine.setSource(track);
@@ -192,12 +204,13 @@ export function useMediaEffects(opts?: UseMediaEffectsOptions): MediaEffectsCont
     setBackgroundMode,
     setBackgroundImageUrl,
     setFaceSpriteId,
+    warmup,
     attach,
     processStream,
     detach,
   }), [
     settings, active, outputTrack, backgrounds,
     setFilter, setBackgroundMode, setBackgroundImageUrl, setFaceSpriteId,
-    attach, processStream, detach,
+    warmup, attach, processStream, detach,
   ]);
 }

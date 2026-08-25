@@ -91,6 +91,11 @@ function useMediaEffects(opts) {
         update({ faceSpriteId: id });
         engineRef.current?.setFaceSpriteId(id);
     }, [update]);
+    const warmup = (0, react_1.useCallback)((target = 'all') => {
+        // Engine.warmup delegates to module-level loaders, so this works
+        // before any source attaches or pipeline exists.
+        getEngine().warmup(target);
+    }, [getEngine]);
     const attach = (0, react_1.useCallback)((track) => {
         const engine = getEngine();
         engine.setSource(track);
@@ -138,13 +143,14 @@ function useMediaEffects(opts) {
         setBackgroundMode,
         setBackgroundImageUrl,
         setFaceSpriteId,
+        warmup,
         attach,
         processStream,
         detach,
     }), [
         settings, active, outputTrack, backgrounds,
         setFilter, setBackgroundMode, setBackgroundImageUrl, setFaceSpriteId,
-        attach, processStream, detach,
+        warmup, attach, processStream, detach,
     ]);
 }
 //# sourceMappingURL=useMediaEffects.js.map
