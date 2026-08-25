@@ -97,6 +97,10 @@ export class ReactionService {
     availableReactions: Record<string, AvailableReaction>;
 
     private authorizeChannel: (clientId: string, channel: string) => boolean;
+    private identityResolver:
+        | ((clientId: string) => { userId?: string; displayName?: string } | null | undefined)
+        | null;
+    private onReaction: ((reaction: Reaction) => void | Promise<void>) | null;
 
     constructor(opts: ReactionServiceOptions) {
         if (!opts || !opts.logger) {
@@ -113,6 +117,8 @@ export class ReactionService {
             ? { ...config.availableReactions }
             : { ...DEFAULT_AVAILABLE_REACTIONS };
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
+        this.identityResolver = config.identityResolver ?? null;
+        this.onReaction = config.onReaction ?? null;
 
         this.clientChannels = new SubscriptionTracker();
         this.reactionHistory = new Map();
@@ -227,7 +233,14 @@ export class ReactionService {
             emoji,
             position = null,
             metadata = {},
-        }: { channel: string; emoji: string; position?: unknown; metadata?: Record<string, unknown> },
+            targetId,
+        }: {
+            channel: string;
+            emoji: string;
+            position?: unknown;
+            metadata?: Record<string, unknown>;
+            targetId?: unknown;
+        },
     ): Promise<void> {
         if (!channel || !emoji) {
             this.sendError(clientId, 'Channel and emoji are required');
@@ -239,6 +252,10 @@ export class ReactionService {
             return;
         }
 
+        // Sender identity is resolved at send time (never trusted from the
+        // frame). A throwing resolver is logged and treated as "no identity".
+        const identity = this._resolveIdentity(clientId);
+
         const reaction: Reaction = {
             id: this.generateReactionId(),
             clientId,
@@ -249,6 +266,15 @@ export class ReactionService {
             metadata,
             timestamp: new Date().toISOString(),
         };
+        // `targetId` rides the inbound frame top-level (see useReactions) and
+        // is carried onto the broadcast verbatim — opaque passthrough.
+        if (targetId !== undefined) {
+            reaction.targetId = targetId;
+        }
+        if (identity) {
+            if (identity.userId !== undefined) reaction.userId = identity.userId;
+            if (identity.displayName !== undefined) reaction.displayName = identity.displayName;
+        }
 
         if (!this.reactionHistory.has(channel)) {
             this.reactionHistory.set(channel, []);
@@ -279,7 +305,44 @@ export class ReactionService {
             timestamp: reaction.timestamp,
         });
 
+        // Post-broadcast tap — fire-and-forget; a failing hook never blocks
+        // or fails the send path (ack is already on the wire above).
+        this._emitReaction(reaction);
+
         this.logger.info(`Client ${clientId} sent reaction ${emoji} in channel: ${channel}`);
+    }
+
+    /**
+     * Resolve the sender identity for a connection, or null. A throwing
+     * resolver is logged and treated as "no identity" (mirrors
+     * ChatService._resolveIdentity semantics).
+     */
+    _resolveIdentity(clientId: string): { userId?: string; displayName?: string } | null {
+        if (!this.identityResolver) return null;
+        try {
+            return this.identityResolver(clientId) ?? null;
+        } catch (err) {
+            this.logger.error(`identityResolver threw for client ${clientId}:`, err);
+            return null;
+        }
+    }
+
+    /**
+     * Invoke the configured `onReaction` tap. Sync throws are caught and
+     * logged; rejected promises are .catch-ed and logged. Never awaited.
+     */
+    _emitReaction(reaction: Reaction): void {
+        if (!this.onReaction) return;
+        try {
+            const result = this.onReaction(reaction);
+            if (result && typeof (result as Promise<void>).catch === 'function') {
+                (result as Promise<void>).catch((err) => {
+                    this.logger.error(`onReaction hook rejected for reaction ${reaction.id}:`, err);
+                });
+            }
+        } catch (err) {
+            this.logger.error(`onReaction hook threw for reaction ${reaction.id}:`, err);
+        }
     }
 
     async handleGetAvailableReactions(clientId: string): Promise<void> {

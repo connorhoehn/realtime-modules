@@ -24,6 +24,8 @@ export declare class ReactionService {
     isDistributed: boolean;
     availableReactions: Record<string, AvailableReaction>;
     private authorizeChannel;
+    private identityResolver;
+    private onReaction;
     constructor(opts: ReactionServiceOptions);
     /**
      * Discard transient in-memory reaction-aggregator state for a room.
@@ -42,12 +44,27 @@ export declare class ReactionService {
     handleUnsubscribeFromReactions(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
-    handleSendReaction(clientId: string, { channel, emoji, position, metadata, }: {
+    handleSendReaction(clientId: string, { channel, emoji, position, metadata, targetId, }: {
         channel: string;
         emoji: string;
         position?: unknown;
         metadata?: Record<string, unknown>;
+        targetId?: unknown;
     }): Promise<void>;
+    /**
+     * Resolve the sender identity for a connection, or null. A throwing
+     * resolver is logged and treated as "no identity" (mirrors
+     * ChatService._resolveIdentity semantics).
+     */
+    _resolveIdentity(clientId: string): {
+        userId?: string;
+        displayName?: string;
+    } | null;
+    /**
+     * Invoke the configured `onReaction` tap. Sync throws are caught and
+     * logged; rejected promises are .catch-ed and logged. Never awaited.
+     */
+    _emitReaction(reaction: Reaction): void;
     handleGetAvailableReactions(clientId: string): Promise<void>;
     generateReactionId(): string;
     broadcastToLocalChannel(channel: string, message: unknown): void;

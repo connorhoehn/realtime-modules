@@ -14,6 +14,19 @@ export interface Reaction {
     metadata: Record<string, unknown>;
     /** ISO-8601 — generation timestamp. */
     timestamp: string;
+    /**
+     * Stable user id stamped at send time when an `identityResolver` is
+     * configured; null/absent otherwise (anonymous or unresolvable sender).
+     */
+    userId?: string | null;
+    /** Human-readable sender name stamped alongside `userId`. */
+    displayName?: string;
+    /**
+     * Opaque per-target discriminator forwarded verbatim from the inbound
+     * send frame (the client hook sends it top-level; see useReactions).
+     * The service never interprets it — clients filter on it.
+     */
+    targetId?: unknown;
 }
 /**
  * One row of the available-reactions catalog. `effect` is a free-form
@@ -48,6 +61,24 @@ export interface ReactionConfig {
      * policy they like (RBAC, OAuth scopes, room ownership, etc.).
      */
     authorizeChannel?: (clientId: string, channel: string) => boolean;
+    /**
+     * Sender-identity hook. Called at send time to stamp `userId` /
+     * `displayName` onto the broadcast Reaction. A throwing resolver is
+     * logged and treated as "no identity" (mirrors ChatService semantics);
+     * null/undefined results are tolerated. Default: no stamping.
+     */
+    identityResolver?: (clientId: string) => {
+        userId?: string;
+        displayName?: string;
+    } | null | undefined;
+    /**
+     * Post-broadcast tap. Invoked AFTER the reaction has been fanned out,
+     * fire-and-forget: sync throws are caught and logged, rejected promises
+     * are .catch-ed and logged — a failing hook can never block or fail the
+     * send path (the success ack is already on the wire). Consumers use it
+     * for durable capture (e.g. gateway publishing call:reaction.recorded).
+     */
+    onReaction?: (reaction: Reaction) => void | Promise<void>;
 }
 /**
  * The MessageRouter slice ReactionService needs. Kept narrow on purpose:
