@@ -47,13 +47,6 @@ const Y = __importStar(require("yjs"));
 // Using y-prosemirror's key would never match the actual sync plugin state.
 const y_tiptap_1 = require("@tiptap/y-tiptap");
 const EditorToolbar_1 = __importDefault(require("./EditorToolbar"));
-// Suppress known Tiptap compat warning (collaboration has its own undo/redo)
-const origWarn = console.warn;
-console.warn = (...args) => {
-    if (typeof args[0] === 'string' && args[0].includes('extension-collaboration'))
-        return;
-    origWarn(...args);
-};
 // ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
@@ -240,20 +233,29 @@ function CursorOverlay({ cursors, editorView, containerEl }) {
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
-function TiptapEditor({ fragment, ydoc, provider, user, editable = true, placeholder: placeholderText = 'Start typing...', sectionId, onUpdateCursorInfo, }) {
+function TiptapEditor({ fragment, ydoc, provider, user, editable = true, placeholder: placeholderText = 'Start typing...', sectionId, onUpdateCursorInfo, extensions: extraExtensions, }) {
+    // Deliberately memoized on [ydoc, fragment] ONLY. `placeholderText` and
+    // `extraExtensions` are read from the closure of whichever render last ran
+    // this factory, so a caller passing an inline array gets a stable editor
+    // instead of a collab session that is destroyed and rebuilt on every parent
+    // render. See the `extensions` prop docs for the stability contract.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const extensions = (0, react_1.useMemo)(() => [
-        starter_kit_1.default.configure({ history: false }),
+    const allExtensions = (0, react_1.useMemo)(() => [
+        // `history` is the v2 key, `undoRedo` the v3 key for the same StarterKit
+        // sub-extension; passing both disables ProseMirror's local undo stack on
+        // either major, which is required when Collaboration supplies its own.
+        starter_kit_1.default.configure({ history: false, undoRedo: false }),
         extension_task_list_1.default,
         extension_task_item_1.default.configure({ nested: true }),
         extension_placeholder_1.default.configure({ placeholder: placeholderText }),
         extension_collaboration_1.default.configure({ document: ydoc, fragment }),
+        ...(extraExtensions ?? []),
         // eslint-disable-next-line react-hooks/exhaustive-deps
     ], [ydoc, fragment]);
     const editor = (0, react_2.useEditor)({
-        extensions,
+        extensions: allExtensions,
         editable,
-    }, [extensions]);
+    }, [allExtensions]);
     // ---- Custom cursor overlay using awareness directly ----
     const [remoteCursors, setRemoteCursors] = (0, react_1.useState)([]);
     const editorAreaRef = (0, react_1.useRef)(null);
@@ -309,7 +311,11 @@ function TiptapEditor({ fragment, ydoc, provider, user, editable = true, placeho
             }
         });
         setRemoteCursors(cursors);
-    }, [provider, editor]);
+        // `sectionId` is read above to filter peers down to this section's editor.
+        // Without it here the callback keeps the id it was created with, so after a
+        // section change the overlay draws the OLD section's carets and hides the
+        // new one's — exactly inverted.
+    }, [provider, editor, sectionId]);
     // Update local cursor position in awareness when selection changes
     (0, react_1.useEffect)(() => {
         if (!editor?.view || !provider?.awareness)
@@ -336,6 +342,13 @@ function TiptapEditor({ fragment, ydoc, provider, user, editable = true, placeho
         handleTransaction();
         return () => {
             editor.off('selectionUpdate', handleTransaction);
+            // Clear the caret we published. Without this it survives in awareness
+            // pointing into a section that no longer exists, so peers keep drawing a
+            // ghost until awareness times this client out — or indefinitely, if the
+            // client stays connected and simply stops moving. setLocalStateField
+            // touches only `cursor`; identity/presence written by the host page and
+            // by `onUpdateCursorInfo` are left alone.
+            provider.awareness.setLocalStateField('cursor', null);
         };
     }, [editor, provider, sectionId]);
     // Listen for remote awareness changes — only on awareness 'change', NOT editor 'update'

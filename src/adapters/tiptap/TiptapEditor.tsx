@@ -7,6 +7,7 @@
 
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import type { Extensions } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
@@ -21,12 +22,18 @@ import type { Awareness } from 'y-protocols/awareness';
 import { ySyncPluginKey, absolutePositionToRelativePosition, relativePositionToAbsolutePosition } from '@tiptap/y-tiptap';
 import EditorToolbar from './EditorToolbar';
 
-// Suppress known Tiptap compat warning (collaboration has its own undo/redo)
-const origWarn = console.warn;
-console.warn = (...args: unknown[]) => {
-  if (typeof args[0] === 'string' && args[0].includes('extension-collaboration')) return;
-  origWarn(...args);
-};
+// NOTE: this module used to reassign the GLOBAL `console.warn` at import time,
+// permanently and without restoring it, to swallow the Tiptap
+// "@tiptap/extension-collaboration comes with its own history support" warning.
+// Importing this file patched the console of the entire host app.
+//
+// The warning was real, but the cause was a stale config key: Tiptap v2 named
+// StarterKit's history sub-extension `history`, v3 renamed it to `undoRedo`, so
+// `StarterKit.configure({ history: false })` silently stopped disabling it on
+// the v3 peer this package declares — leaving ProseMirror's local undo stack
+// live alongside the Y.js one. Configuring `undoRedo: false` (below) fixes the
+// conflict for real and the warning goes away on its own. Both keys are passed
+// so a v2 consumer keeps working. Do not patch the host's console.
 
 /** Minimal provider shape needed by awareness. */
 export interface CollaborationProvider {
@@ -45,6 +52,23 @@ export interface TiptapEditorProps {
   /** Merge-safe awareness updater for cursor display info (name + color).
    *  When provided, replaces the direct setLocalStateField write. */
   onUpdateCursorInfo?: (name: string, color: string) => void;
+  /**
+   * Extra Tiptap extensions (nodes, marks, plugins) appended to the built-in
+   * list. This is the supported way to add a feature such as track-changes /
+   * redlining without forking the editor — the collab wiring, cursor overlay
+   * and toolbar stay here.
+   *
+   * ⚠️ **Schema-affecting extensions must be stable for the editor's lifetime.**
+   * ProseMirror builds its schema once, at editor construction, so a mark or
+   * node added later cannot take effect. This array is therefore read only when
+   * the editor is (re)built — i.e. when `ydoc` or `fragment` change — exactly
+   * like `placeholder`. Passing a fresh inline array on every render is safe
+   * and will NOT tear down the collab session, but it also means later edits to
+   * the array are ignored until the document itself changes. Decide the
+   * extension set before mounting; if you truly must swap schemas, remount the
+   * editor with a new `key`.
+   */
+  extensions?: Extensions;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,21 +318,31 @@ export default function TiptapEditor({
   placeholder: placeholderText = 'Start typing...',
   sectionId,
   onUpdateCursorInfo,
+  extensions: extraExtensions,
 }: TiptapEditorProps) {
+  // Deliberately memoized on [ydoc, fragment] ONLY. `placeholderText` and
+  // `extraExtensions` are read from the closure of whichever render last ran
+  // this factory, so a caller passing an inline array gets a stable editor
+  // instead of a collab session that is destroyed and rebuilt on every parent
+  // render. See the `extensions` prop docs for the stability contract.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const extensions = useMemo(() => [
-    StarterKit.configure({ history: false } as any),
+  const allExtensions = useMemo(() => [
+    // `history` is the v2 key, `undoRedo` the v3 key for the same StarterKit
+    // sub-extension; passing both disables ProseMirror's local undo stack on
+    // either major, which is required when Collaboration supplies its own.
+    StarterKit.configure({ history: false, undoRedo: false } as any),
     TaskList,
     TaskItem.configure({ nested: true }),
     Placeholder.configure({ placeholder: placeholderText }),
     Collaboration.configure({ document: ydoc, fragment }),
+    ...(extraExtensions ?? []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [ydoc, fragment]);
 
   const editor = useEditor({
-    extensions,
+    extensions: allExtensions,
     editable,
-  }, [extensions]);
+  }, [allExtensions]);
 
   // ---- Custom cursor overlay using awareness directly ----
   const [remoteCursors, setRemoteCursors] = useState<RemoteCursorInfo[]>([]);
@@ -374,7 +408,11 @@ export default function TiptapEditor({
     });
 
     setRemoteCursors(cursors);
-  }, [provider, editor]);
+    // `sectionId` is read above to filter peers down to this section's editor.
+    // Without it here the callback keeps the id it was created with, so after a
+    // section change the overlay draws the OLD section's carets and hides the
+    // new one's — exactly inverted.
+  }, [provider, editor, sectionId]);
 
   // Update local cursor position in awareness when selection changes
   useEffect(() => {
@@ -404,6 +442,13 @@ export default function TiptapEditor({
 
     return () => {
       editor.off('selectionUpdate', handleTransaction);
+      // Clear the caret we published. Without this it survives in awareness
+      // pointing into a section that no longer exists, so peers keep drawing a
+      // ghost until awareness times this client out — or indefinitely, if the
+      // client stays connected and simply stops moving. setLocalStateField
+      // touches only `cursor`; identity/presence written by the host page and
+      // by `onUpdateCursorInfo` are left alone.
+      provider.awareness.setLocalStateField('cursor', null);
     };
   }, [editor, provider, sectionId]);
 
