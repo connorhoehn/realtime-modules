@@ -28,8 +28,21 @@ export interface CaptionLine {
 
 export interface UseLiveCaptionsOptions {
   /** Scope captions to this call. Caption envelopes for other calls
-   *  in the same WS are ignored. */
-  callId: string | null;
+   *  in the same WS are ignored. Optional when `channel` is given. */
+  callId?: string | null;
+  /**
+   * Scope captions to a WS channel instead of a call.
+   *
+   * The live-captions sidecar is a generic speech-to-text service — its
+   * `X-Channel-Arn` is free-form and the gateway relay fans every
+   * `captions:*` publish out to `captions:<sha1(key)[:24]>`. Ambient
+   * (non-call) capture therefore produces caption frames with no `callId`
+   * at all, and the call-scoped filter below would drop every one of them.
+   * Pass the channel and lines are matched on the frame's `channel` field.
+   *
+   * When both are given, `channel` wins.
+   */
+  channel?: string | null;
   /** Subscribe to the gateway WS. Returns an unsubscribe fn. */
   subscribe: (handler: (msg: unknown) => void) => () => void;
   /** Maximum lines retained in memory. Default 50. */
@@ -39,10 +52,13 @@ export interface UseLiveCaptionsOptions {
 interface CaptionMessage {
   type?: string;
   action?: string;
+  channel?: string;
   data?: {
     callId?: string;
     id?: string;
     speakerId?: string;
+    /** The sidecar's own field name for the same thing. */
+    participantId?: string;
     speakerName?: string;
     text?: string;
     at?: string;
@@ -52,22 +68,29 @@ interface CaptionMessage {
 
 export function useLiveCaptions({
   callId,
+  channel,
   subscribe,
   maxLines = 50,
 }: UseLiveCaptionsOptions): CaptionLine[] {
   const [lines, setLines] = useState<CaptionLine[]>([]);
+  const scope = channel ?? callId ?? null;
 
   useEffect(() => {
-    if (!callId) return;
+    if (!scope) return;
     const unregister = subscribe((msg: unknown) => {
       const m = msg as CaptionMessage;
       if (m?.type !== 'caption') return;
       const d = m.data ?? {};
-      if (d.callId !== callId) return;
-      if (typeof d.text !== 'string' || !d.id || !d.speakerId) return;
+      if (channel) {
+        if (m.channel !== channel) return;
+      } else if (d.callId !== callId) {
+        return;
+      }
+      const speakerId = d.speakerId ?? d.participantId;
+      if (typeof d.text !== 'string' || !d.id || !speakerId) return;
       const line: CaptionLine = {
         id: d.id,
-        speakerId: d.speakerId,
+        speakerId,
         speakerName: d.speakerName,
         text: d.text,
         at: d.at ?? new Date().toISOString(),
@@ -87,10 +110,10 @@ export function useLiveCaptions({
       });
     });
     return unregister;
-  }, [callId, subscribe, maxLines]);
+  }, [scope, callId, channel, subscribe, maxLines]);
 
-  // Drop captions when callId changes (new call).
-  useEffect(() => { setLines([]); }, [callId]);
+  // Drop captions when the scope changes (new call, or new capture channel).
+  useEffect(() => { setLines([]); }, [scope]);
 
   return lines;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -32,6 +32,10 @@
     "./client/video": {
       "types": "./dist/client/video/index.d.ts",
       "default": "./dist/client/video/index.js"
+    },
+    "./client/voice": {
+      "types": "./dist/client/voice/index.d.ts",
+      "default": "./dist/client/voice/index.js"
     },
     "./client/media-effects": {
       "types": "./dist/client/media-effects/index.d.ts",

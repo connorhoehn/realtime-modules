@@ -18,23 +18,30 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useLiveCaptions = useLiveCaptions;
 const react_1 = require("react");
-function useLiveCaptions({ callId, subscribe, maxLines = 50, }) {
+function useLiveCaptions({ callId, channel, subscribe, maxLines = 50, }) {
     const [lines, setLines] = (0, react_1.useState)([]);
+    const scope = channel ?? callId ?? null;
     (0, react_1.useEffect)(() => {
-        if (!callId)
+        if (!scope)
             return;
         const unregister = subscribe((msg) => {
             const m = msg;
             if (m?.type !== 'caption')
                 return;
             const d = m.data ?? {};
-            if (d.callId !== callId)
+            if (channel) {
+                if (m.channel !== channel)
+                    return;
+            }
+            else if (d.callId !== callId) {
                 return;
-            if (typeof d.text !== 'string' || !d.id || !d.speakerId)
+            }
+            const speakerId = d.speakerId ?? d.participantId;
+            if (typeof d.text !== 'string' || !d.id || !speakerId)
                 return;
             const line = {
                 id: d.id,
-                speakerId: d.speakerId,
+                speakerId,
                 speakerName: d.speakerName,
                 text: d.text,
                 at: d.at ?? new Date().toISOString(),
@@ -55,9 +62,9 @@ function useLiveCaptions({ callId, subscribe, maxLines = 50, }) {
             });
         });
         return unregister;
-    }, [callId, subscribe, maxLines]);
-    // Drop captions when callId changes (new call).
-    (0, react_1.useEffect)(() => { setLines([]); }, [callId]);
+    }, [scope, callId, channel, subscribe, maxLines]);
+    // Drop captions when the scope changes (new call, or new capture channel).
+    (0, react_1.useEffect)(() => { setLines([]); }, [scope]);
     return lines;
 }
 //# sourceMappingURL=useLiveCaptions.js.map

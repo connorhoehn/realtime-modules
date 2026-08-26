@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.27.0 — 2026-08-26
+
+Ambient voice capture — push-to-talk transcription on any page, not just in
+a call. New subpath `./client/voice`.
+
+- **`useVoiceCapture`** — getUserMedia → AudioWorklet → 16 kHz mono s16le →
+  POSTed to an authenticated proxy in front of the live-captions sidecar;
+  transcripts come back over the existing gateway `caption` fan-out. Audio
+  does NOT ride the WebSocket (the gateway coerces frames to UTF-8 strings).
+  The MediaStreamTrack is released on every stop, including error and unmount
+  paths, so the OS recording indicator can never disagree with the UI. Audio
+  is never retained — only the transcript.
+- **`ContextFrame`** (`contextFrame.ts`) — the published contract for WHERE an
+  utterance attaches. The target is latched from the screen at the instant of
+  the press and never re-decided; the release sample can only ever set
+  `contextSplit` and withdraw `autoAttach`. Five-rung ladder (selection →
+  focused section → viewport-dominant → route entity → none) with a matching
+  confidence tier, and an anchor triple that degrades relPos → sectionId →
+  quote. Rules pick the target; a model may only pick the action.
+- **`subscribeTranscripts` / `TranscriptReadyEvent`** — `{ text, context,
+  t0_ms, t1_ms, outcome, lines, speechMs }` delivered to every sink. The
+  comment path is one subscriber, not a privileged one.
+- **`UtteranceAggregator`** — rejoins the several caption lines the sidecar
+  emits for one thought (it cuts ASR windows at a hard 3.0 s), ordered by the
+  emitter's per-participant `seq`. Reports `lost` when speech was sent and no
+  transcript came back — the only observable signal that the sidecar's
+  bounded, metric-less ASR queue dropped a window.
+- **`attachTranscriptAsComment`** — reference sink, posting to the existing
+  document-comments endpoint at section grain.
+- **`useLiveCaptions`** now accepts a `channel` in place of `callId`, so
+  non-call captures are no longer filtered out by the call-scoped guard, and
+  accepts the sidecar's own `participantId` field name.
+
 ## 0.23.0 — 2026-08-25
 
 Person-to-person DM support in the chat layer (`./chat`):
