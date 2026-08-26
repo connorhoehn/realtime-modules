@@ -9,7 +9,7 @@
 // the client root barrel: it pulls @mediapipe/tasks-vision types and is
 // only relevant to camera-publishing surfaces.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useMediaEffects = exports.DEFAULT_EFFECTS_SETTINGS = exports.writePersistedSettings = exports.readPersistedSettings = exports.SEGMENT_FRAME_INTERVAL = exports.MASK_FEATHER_PX = exports.MASK_EMA_ALPHA = exports.MediaEffectsEngine = exports.getSpriteById = exports.FACE_SPRITES = exports.warmupFaceLandmarker = exports.LANDMARK = exports.FaceTracker = exports.warmupSegmenter = exports.shapeConfidence = exports.PersonSegmenter = exports.DEFAULT_FACE_LANDMARKER_MODEL_URL = exports.DEFAULT_SEGMENTER_MODEL_URL = exports.DEFAULT_WASM_BASE = exports.getMediaEffectsAssets = exports.setMediaEffectsAssets = exports.getBuiltInBackgrounds = exports.getFilterById = exports.DEFAULT_FILTER = exports.FILTER_PRESETS = void 0;
+exports.useMediaEffects = exports.DEFAULT_EFFECTS_SETTINGS = exports.mediaEffectsSettingsEqual = exports.writePersistedSettings = exports.readPersistedSettings = exports.SEGMENT_FRAME_INTERVAL = exports.MASK_FEATHER_PX = exports.MASK_EMA_ALPHA = exports.MediaEffectsEngine = exports.getSpriteById = exports.FACE_SPRITES = exports.warmupFaceLandmarker = exports.LANDMARK = exports.FaceTracker = exports.warmupSegmenter = exports.shapeConfidence = exports.PersonSegmenter = exports.DEFAULT_FACE_LANDMARKER_MODEL_URL = exports.DEFAULT_SEGMENTER_MODEL_URL = exports.DEFAULT_WASM_BASE = exports.getMediaEffectsAssets = exports.setMediaEffectsAssets = exports.getBuiltInBackgrounds = exports.getFilterById = exports.DEFAULT_FILTER = exports.FILTER_PRESETS = void 0;
 var presets_1 = require("./presets");
 Object.defineProperty(exports, "FILTER_PRESETS", { enumerable: true, get: function () { return presets_1.FILTER_PRESETS; } });
 Object.defineProperty(exports, "DEFAULT_FILTER", { enumerable: true, get: function () { return presets_1.DEFAULT_FILTER; } });
@@ -41,6 +41,7 @@ Object.defineProperty(exports, "SEGMENT_FRAME_INTERVAL", { enumerable: true, get
 var persistence_1 = require("./persistence");
 Object.defineProperty(exports, "readPersistedSettings", { enumerable: true, get: function () { return persistence_1.readPersistedSettings; } });
 Object.defineProperty(exports, "writePersistedSettings", { enumerable: true, get: function () { return persistence_1.writePersistedSettings; } });
+Object.defineProperty(exports, "mediaEffectsSettingsEqual", { enumerable: true, get: function () { return persistence_1.mediaEffectsSettingsEqual; } });
 Object.defineProperty(exports, "DEFAULT_EFFECTS_SETTINGS", { enumerable: true, get: function () { return persistence_1.DEFAULT_EFFECTS_SETTINGS; } });
 var useMediaEffects_1 = require("./useMediaEffects");
 Object.defineProperty(exports, "useMediaEffects", { enumerable: true, get: function () { return useMediaEffects_1.useMediaEffects; } });

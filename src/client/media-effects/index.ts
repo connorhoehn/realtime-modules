@@ -60,7 +60,9 @@ export {
 export {
   readPersistedSettings,
   writePersistedSettings,
+  mediaEffectsSettingsEqual,
   DEFAULT_EFFECTS_SETTINGS,
+  type MediaEffectsSettings,
   type PersistedEffectsSettings,
   type SettingsStorage,
 } from './persistence';

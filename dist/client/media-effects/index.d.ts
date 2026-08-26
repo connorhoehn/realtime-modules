@@ -5,6 +5,6 @@ export { PersonSegmenter, shapeConfidence, warmupSegmenter, } from './segmenter'
 export { FaceTracker, LANDMARK, warmupFaceLandmarker, } from './faceLandmarker';
 export { FACE_SPRITES, getSpriteById, type FaceSprite, } from './faceSprites';
 export { MediaEffectsEngine, MASK_EMA_ALPHA, MASK_FEATHER_PX, SEGMENT_FRAME_INTERVAL, type BackgroundMode, type OutputChangeListener, type WarmupTarget, } from './engine';
-export { readPersistedSettings, writePersistedSettings, DEFAULT_EFFECTS_SETTINGS, type PersistedEffectsSettings, type SettingsStorage, } from './persistence';
+export { readPersistedSettings, writePersistedSettings, mediaEffectsSettingsEqual, DEFAULT_EFFECTS_SETTINGS, type MediaEffectsSettings, type PersistedEffectsSettings, type SettingsStorage, } from './persistence';
 export { useMediaEffects, type UseMediaEffectsOptions, type MediaEffectsController, } from './useMediaEffects';
 //# sourceMappingURL=index.d.ts.map

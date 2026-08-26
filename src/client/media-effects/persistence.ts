@@ -14,11 +14,32 @@ import { getSpriteById } from './faceSprites';
 import type { BackgroundOption } from './backgrounds';
 import type { BackgroundMode } from './engine';
 
-export interface PersistedEffectsSettings {
+/**
+ * The complete set of user-selectable effect settings — the unit that both
+ * the live (committed) state and the preview `draft` are made of, and the
+ * exact shape written to localStorage under `persistKey`.
+ */
+export interface MediaEffectsSettings {
   filterId: string;
   backgroundMode: BackgroundMode;
   backgroundImageUrl: string | null;
   faceSpriteId: string | null;
+}
+
+/** Historical name for {@link MediaEffectsSettings}; kept for consumers. */
+export type PersistedEffectsSettings = MediaEffectsSettings;
+
+/** Field-wise comparison — drives `MediaEffectsController.isDirty`. */
+export function mediaEffectsSettingsEqual(
+  a: MediaEffectsSettings,
+  b: MediaEffectsSettings,
+): boolean {
+  return (
+    a.filterId === b.filterId &&
+    a.backgroundMode === b.backgroundMode &&
+    a.backgroundImageUrl === b.backgroundImageUrl &&
+    a.faceSpriteId === b.faceSpriteId
+  );
 }
 
 export const DEFAULT_EFFECTS_SETTINGS: PersistedEffectsSettings = {

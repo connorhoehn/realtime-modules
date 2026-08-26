@@ -11,10 +11,18 @@
 // or pointing the background at a URL we no longer ship.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_EFFECTS_SETTINGS = void 0;
+exports.mediaEffectsSettingsEqual = mediaEffectsSettingsEqual;
 exports.readPersistedSettings = readPersistedSettings;
 exports.writePersistedSettings = writePersistedSettings;
 const presets_1 = require("./presets");
 const faceSprites_1 = require("./faceSprites");
+/** Field-wise comparison — drives `MediaEffectsController.isDirty`. */
+function mediaEffectsSettingsEqual(a, b) {
+    return (a.filterId === b.filterId &&
+        a.backgroundMode === b.backgroundMode &&
+        a.backgroundImageUrl === b.backgroundImageUrl &&
+        a.faceSpriteId === b.faceSpriteId);
+}
 exports.DEFAULT_EFFECTS_SETTINGS = {
     filterId: 'none',
     backgroundMode: 'none',
