@@ -46,7 +46,11 @@ export type FeatureName =
   | 'cursor'
   | 'reactions'
   | 'activity'
-  | 'agent-streaming';
+  | 'agent-streaming'
+  // File transfer. Named here because the WS side of an upload is a real
+  // service (request-upload / complete / cancel + the channel broadcasts);
+  // only the bytes leave the socket.
+  | 'fileupload';
 
 // ---------------------------------------------------------------------------
 // Props
