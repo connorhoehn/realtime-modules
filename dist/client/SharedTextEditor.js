@@ -83,8 +83,13 @@ function SharedTextEditor({ content, applyLocalEdit, disabled = false, hasConfli
                     lineHeight: 1.6,
                     outline: 'none',
                     overflowY: 'auto',
-                    background: disabled ? '#f8fafc' : '#ffffff',
-                    color: '#1e293b',
+                    // Tokens, not literals: this contenteditable was the last light
+                    // surface on /previews in dark mode. Fallbacks are the previous
+                    // literals, so light mode is byte-identical.
+                    background: disabled
+                        ? 'var(--color-surface-inset, #f8fafc)'
+                        : 'var(--color-surface, #ffffff)',
+                    color: 'var(--color-text-primary, #1e293b)',
                 } }), disabled && ((0, jsx_runtime_1.jsx)("p", { style: { color: '#9ca3af', margin: '0.25rem 0 0', fontSize: '0.8rem' }, children: "Disconnected \u2014 reconnect to edit" }))] }));
 }
 //# sourceMappingURL=SharedTextEditor.js.map

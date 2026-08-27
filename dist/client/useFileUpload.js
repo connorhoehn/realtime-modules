@@ -236,8 +236,16 @@ function useFileUpload(channel, options = {}) {
                         dropTransfer(transferId);
                         const downloadUrl = typeof raw.downloadUrl === 'string' ? raw.downloadUrl : '';
                         if (downloadUrl) {
+                            let mine = false;
+                            for (const mapped of transferIdsRef.current.values()) {
+                                if (mapped === transferId) {
+                                    mine = true;
+                                    break;
+                                }
+                            }
                             optionsRef.current.onComplete?.({
                                 transferId,
+                                mine,
                                 actor: typeof raw.actor === 'string' ? raw.actor : 'someone',
                                 uploader: typeof raw.uploader === 'string' ? raw.uploader : '',
                                 filename: typeof raw.filename === 'string' ? raw.filename : 'file',

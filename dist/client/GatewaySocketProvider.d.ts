@@ -2,7 +2,7 @@ import React, { type ReactNode } from 'react';
 import type { UseWebSocketHookReturn } from './useWebSocket';
 import type { GatewayMessage } from './types';
 /** All feature identifiers that GatewaySocketProvider knows how to activate. */
-export type FeatureName = 'chat' | 'presence' | 'cursor' | 'reactions' | 'activity' | 'agent-streaming';
+export type FeatureName = 'chat' | 'presence' | 'cursor' | 'reactions' | 'activity' | 'agent-streaming' | 'fileupload';
 export interface GatewaySocketProviderProps {
     /** WebSocket endpoint URL, e.g. ws://localhost:4000 */
     url: string;

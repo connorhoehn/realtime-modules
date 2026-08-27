@@ -98,6 +98,23 @@ export interface FileUploadServiceOptions {
      */
     publicBaseUrl?: string;
     maxBytes?: number;
+    /**
+     * Mint the storage id for a new upload.
+     *
+     * Default: a bare `randomUUID()`. A multi-tenant deployment should supply
+     * a TENANT-SCOPED key instead (distributed-core's `mintContentKey`
+     * produces `<tenant>|<uuid>`), because a tenant that lives in the key
+     * makes isolation structural: a lookup for the wrong tenant is a
+     * different partition, so there is nothing for a future query to forget.
+     * The alternative — a tenant ATTRIBUTE plus a filter on every read — is
+     * one forgotten `where` away from a silent cross-tenant leak.
+     *
+     * The returned id is opaque to this service: it becomes the metadata
+     * primary key, the blob key, and the `:uploadId` path segment (URL-encoded
+     * on the way out, decoded on the way in), so any character is acceptable
+     * as long as the supplied blobStore can key on it.
+     */
+    mintUploadId?: (clientId: string) => string;
 }
 /** What the channel is allowed to know about a transfer in progress. */
 interface ActiveTransfer {
@@ -126,6 +143,7 @@ export declare class FileUploadService {
     private readonly authz;
     private publicBaseUrl;
     readonly maxBytes: number;
+    private readonly mintUploadId;
     /**
      * Correlation index: maps a client's request-upload `id` (the hook's
      * in-flight key) to the SERVER-minted storage uploadId. The hook sends the

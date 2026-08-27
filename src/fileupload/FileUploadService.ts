@@ -145,6 +145,23 @@ export interface FileUploadServiceOptions {
      */
     publicBaseUrl?: string;
     maxBytes?: number;
+    /**
+     * Mint the storage id for a new upload.
+     *
+     * Default: a bare `randomUUID()`. A multi-tenant deployment should supply
+     * a TENANT-SCOPED key instead (distributed-core's `mintContentKey`
+     * produces `<tenant>|<uuid>`), because a tenant that lives in the key
+     * makes isolation structural: a lookup for the wrong tenant is a
+     * different partition, so there is nothing for a future query to forget.
+     * The alternative — a tenant ATTRIBUTE plus a filter on every read — is
+     * one forgotten `where` away from a silent cross-tenant leak.
+     *
+     * The returned id is opaque to this service: it becomes the metadata
+     * primary key, the blob key, and the `:uploadId` path segment (URL-encoded
+     * on the way out, decoded on the way in), so any character is acceptable
+     * as long as the supplied blobStore can key on it.
+     */
+    mintUploadId?: (clientId: string) => string;
 }
 
 const ALLOWED_ACTIONS = new Set(['request-upload', 'complete', 'cancel']);
@@ -194,6 +211,7 @@ export class FileUploadService {
     private readonly authz: (service: FileUploadService, clientId: string, channel: string) => boolean;
     private publicBaseUrl: string;
     readonly maxBytes: number;
+    private readonly mintUploadId: (clientId: string) => string;
 
     /**
      * Correlation index: maps a client's request-upload `id` (the hook's
@@ -229,6 +247,7 @@ export class FileUploadService {
         this.authz = opts.authz ?? (() => true);
         this.publicBaseUrl = (opts.publicBaseUrl ?? process.env.FILEUPLOAD_PUBLIC_BASE ?? '').replace(/\/+$/, '');
         this.maxBytes = opts.maxBytes ?? resolveMaxBytes();
+        this.mintUploadId = opts.mintUploadId ?? (() => randomUUID());
     }
 
     /** Build the HTTP url (PUT for upload, GET for download — same path). */
@@ -431,7 +450,7 @@ export class FileUploadService {
         // for the wire (the hook keys urlWaiters/patch by it) via the
         // correlation map + the persisted row.correlationId.
         const correlationId = id;
-        const uploadId = randomUUID();
+        const uploadId = this.mintUploadId(clientId);
         // ---------------------------------------------------------------------
 
         // Persist the pending row BEFORE issuing the URL so the HTTP PUT

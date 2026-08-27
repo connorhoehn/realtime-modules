@@ -86,6 +86,7 @@ class FileUploadService {
     authz;
     publicBaseUrl;
     maxBytes;
+    mintUploadId;
     /**
      * Correlation index: maps a client's request-upload `id` (the hook's
      * in-flight key) to the SERVER-minted storage uploadId. The hook sends the
@@ -118,6 +119,7 @@ class FileUploadService {
         this.authz = opts.authz ?? (() => true);
         this.publicBaseUrl = (opts.publicBaseUrl ?? process.env.FILEUPLOAD_PUBLIC_BASE ?? '').replace(/\/+$/, '');
         this.maxBytes = opts.maxBytes ?? (0, FileBlobStore_1.resolveMaxBytes)();
+        this.mintUploadId = opts.mintUploadId ?? (() => (0, crypto_1.randomUUID)());
     }
     /** Build the HTTP url (PUT for upload, GET for download — same path). */
     uploadUrlFor(uploadId) {
@@ -295,7 +297,7 @@ class FileUploadService {
         // for the wire (the hook keys urlWaiters/patch by it) via the
         // correlation map + the persisted row.correlationId.
         const correlationId = id;
-        const uploadId = (0, crypto_1.randomUUID)();
+        const uploadId = this.mintUploadId(clientId);
         // ---------------------------------------------------------------------
         // Persist the pending row BEFORE issuing the URL so the HTTP PUT
         // handler can authorize against it. If the DDB write fails we fail
