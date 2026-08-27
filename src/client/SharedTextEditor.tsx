@@ -142,8 +142,13 @@ export function SharedTextEditor({ content, applyLocalEdit, disabled = false, ha
           lineHeight: 1.6,
           outline: 'none',
           overflowY: 'auto',
-          background: disabled ? '#f8fafc' : '#ffffff',
-          color: '#1e293b',
+          // Tokens, not literals: this contenteditable was the last light
+          // surface on /previews in dark mode. Fallbacks are the previous
+          // literals, so light mode is byte-identical.
+          background: disabled
+            ? 'var(--color-surface-inset, #f8fafc)'
+            : 'var(--color-surface, #ffffff)',
+          color: 'var(--color-text-primary, #1e293b)',
         }}
       />
       {disabled && (
