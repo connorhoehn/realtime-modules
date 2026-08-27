@@ -152,6 +152,35 @@ const ALLOWED_ACTIONS = new Set(['request-upload', 'complete', 'cancel']);
 const MAX_FILENAME_LEN = 255;
 const CHANNEL_PATTERN = /^[a-zA-Z0-9_:-]{1,50}$/;
 
+/**
+ * Hard cap on the inline placeholder a sender may attach to a transfer.
+ *
+ * The placeholder is a deliberate luxury: a few-pixel data-URI thumbnail that
+ * lets everyone in the channel see WHAT is arriving while the real bytes are
+ * still moving. It is also an amplification vector — one sender writes it
+ * once, and the gateway copies it to every subscriber. 16 KiB is roughly a
+ * 32x32 JPEG, comfortably enough to be recognisable and small enough that
+ * fanning it out to a large channel is not an event in itself.
+ */
+const MAX_PREVIEW_CHARS = 16 * 1024;
+
+/** What the channel is allowed to know about a transfer in progress. */
+interface ActiveTransfer {
+    uploadId: string;
+    correlationId: string;
+    clientId: string;
+    channel: string;
+    uploader: string;
+    /** Human-facing attribution. Falls back to the uploader's user id. */
+    actor: string;
+    filename: string;
+    size: number;
+    contentType?: string;
+    preview?: string;
+    width?: number;
+    height?: number;
+}
+
 export class FileUploadService {
     // Public so `enforceChannelPermission` can resolve them off the service
     // instance (it reads service.messageRouter / .logger / .metricsCollector /
@@ -177,6 +206,19 @@ export class FileUploadService {
      * row.correlationId is the durable fallback (cross-node / post-restart).
      */
     private correlationToUploadId = new Map<string, string>();
+
+    /**
+     * In-flight transfers keyed by the SERVER-minted uploadId — the state the
+     * channel is allowed to watch.
+     *
+     * This index exists because the interesting half of "share a file" is the
+     * half before it arrives. The HTTP byte-transfer layer knows how many
+     * bytes have landed but nothing about who is watching; this service knows
+     * the channel and the actor but never sees a byte. The entry is the join
+     * between them: `publishProgress`/`publishSettled` are the seam the HTTP
+     * layer calls, and everything the channel sees is derived from here.
+     */
+    private activeTransfers = new Map<string, ActiveTransfer>();
 
     constructor(opts: FileUploadServiceOptions) {
         this.messageRouter = opts.messageRouter;
@@ -355,6 +397,29 @@ export class FileUploadService {
             ? (data.metadata as Record<string, unknown>)
             : undefined;
 
+        // Presentation hints the sender supplies so the CHANNEL has something
+        // to render before any bytes exist. All of it is untrusted display
+        // data: it decides what a placeholder looks like, never what gets
+        // stored, served, or authorized.
+        const displayName = typeof metadata?.displayName === 'string'
+            ? metadata.displayName.slice(0, 80)
+            : '';
+        const contentType = typeof metadata?.contentType === 'string'
+            ? metadata.contentType.slice(0, 120)
+            : undefined;
+        const rawPreview = typeof metadata?.preview === 'string' ? metadata.preview : '';
+        // Only a self-contained data URI — a remote URL here would turn every
+        // subscriber's browser into a request against a sender-chosen host.
+        const preview = rawPreview.startsWith('data:image/') && rawPreview.length <= MAX_PREVIEW_CHARS
+            ? rawPreview
+            : undefined;
+        const width = typeof metadata?.width === 'number' && metadata.width > 0
+            ? Math.floor(metadata.width)
+            : undefined;
+        const height = typeof metadata?.height === 'number' && metadata.height > 0
+            ? Math.floor(metadata.height)
+            : undefined;
+
         const uploader = this.uploaderFor(clientId);
 
         // ---- server-minted storage id (security) ----------------------------
@@ -392,14 +457,132 @@ export class FileUploadService {
 
         // The reply echoes the CLIENT correlation id as `id` (so the hook's
         // url-waiter resolves) but the uploadUrl carries the SERVER-minted
-        // storage id — the browser PUTs/GETs against the minted path.
+        // storage id — the browser PUTs/GETs against the minted path. The
+        // minted id also travels as `transferId` so the sender's hook can key
+        // its local entry the same way every OTHER participant will.
         void this.messageRouter.sendToClient(clientId, {
             type: 'fileupload:url',
             channel,
             id: correlationId,
+            transferId: uploadId,
             uploadUrl: this.uploadUrlFor(uploadId),
             timestamp: new Date().toISOString(),
         });
+
+        // ---- announce to the CHANNEL ----------------------------------------
+        // Everything above this line is a private conversation between one
+        // browser and the gateway. This is where the feature stops being a
+        // file picker: every subscriber learns, right now, that a named person
+        // is sending a named file of a known size — before a single byte of it
+        // has been transferred.
+        //
+        // Publishing the server-minted id here is safe: the row is still
+        // 'pending', so GET 404s until the bytes land; PUT is refused for
+        // anyone but the uploader; and `complete` already broadcasts a
+        // download URL containing this same id to this same audience.
+        const active: ActiveTransfer = {
+            uploadId,
+            correlationId,
+            clientId,
+            channel,
+            uploader,
+            actor: displayName || uploader,
+            filename,
+            size,
+            ...(contentType ? { contentType } : {}),
+            ...(preview ? { preview } : {}),
+            ...(width ? { width } : {}),
+            ...(height ? { height } : {}),
+        };
+        this.activeTransfers.set(uploadId, active);
+
+        void this.messageRouter.sendToChannel(
+            channel,
+            {
+                type: 'fileupload:started',
+                channel,
+                transferId: uploadId,
+                id: correlationId,
+                actor: active.actor,
+                uploader,
+                filename,
+                size,
+                ...(contentType ? { contentType } : {}),
+                ...(preview ? { preview } : {}),
+                ...(width ? { width } : {}),
+                ...(height ? { height } : {}),
+                timestamp: new Date().toISOString(),
+            },
+            null,
+            { publisherClientId: clientId },
+        );
+    }
+
+    /**
+     * Progress, as counted by whoever is RECEIVING the bytes.
+     *
+     * Called by the HTTP transfer layer, never by the browser. A
+     * sender-reported percentage is unfalsifiable — a client could claim 99%
+     * forever, or claim a completion for a transfer that never happened, and
+     * every observer would believe it. Counting on the receiving side makes
+     * progress a fact rather than a claim.
+     *
+     * The caller is responsible for coalescing (see distributed-core's
+     * TransferRegistry): a naive per-socket-read call here would multiply
+     * hundreds of frames per second by every subscriber in the channel.
+     */
+    publishProgress(uploadId: string, transferred: number): void {
+        const active = this.activeTransfers.get(uploadId);
+        if (!active) return;
+        void this.messageRouter.sendToChannel(
+            active.channel,
+            {
+                type: 'fileupload:progress',
+                channel: active.channel,
+                transferId: uploadId,
+                id: active.correlationId,
+                actor: active.actor,
+                transferred,
+                size: active.size,
+                timestamp: new Date().toISOString(),
+            },
+            null,
+            { publisherClientId: active.clientId },
+        );
+    }
+
+    /**
+     * Terminate a transfer from the HTTP side (too large, write failed, the
+     * sender vanished).
+     *
+     * This has to reach the whole channel, not just the sender: every other
+     * participant has a progress bar on screen for this transfer, and without
+     * a terminal frame it sits at whatever percentage it reached, forever.
+     */
+    publishSettled(uploadId: string, phase: 'failed' | 'cancelled', error?: string): void {
+        const active = this.activeTransfers.get(uploadId);
+        if (!active) return;
+        this.activeTransfers.delete(uploadId);
+        void this.messageRouter.sendToChannel(
+            active.channel,
+            {
+                type: phase === 'cancelled' ? 'fileupload:cancelled' : 'fileupload:failed',
+                channel: active.channel,
+                transferId: uploadId,
+                id: active.correlationId,
+                actor: active.actor,
+                error: error ?? (phase === 'cancelled' ? 'Cancelled' : 'Upload failed'),
+                timestamp: new Date().toISOString(),
+            },
+            null,
+            { publisherClientId: active.clientId },
+        );
+    }
+
+    /** The channel + actor a transfer belongs to, for the HTTP layer's own
+     *  bookkeeping. Returns null once the transfer has settled. */
+    describeTransfer(uploadId: string): ActiveTransfer | null {
+        return this.activeTransfers.get(uploadId) ?? null;
     }
 
     private async handleComplete(clientId: string, channel: string, id: string): Promise<void> {
@@ -453,15 +636,29 @@ export class FileUploadService {
         // (sender-echo — the hook patches its own upload row off it). The wire
         // `id` is the client correlation id (what the hook patches by); the
         // downloadUrl carries the server-minted storage id.
+        const active = this.activeTransfers.get(uploadId);
+        this.activeTransfers.delete(uploadId);
+
         void this.messageRouter.sendToChannel(
             channel,
             {
                 type: 'fileupload:complete',
                 channel,
                 id,
+                // Peers never saw the correlation id; they have been tracking
+                // this transfer by the minted id since `fileupload:started`,
+                // so the completion has to carry it or their in-flight row
+                // never resolves and the file appears as a duplicate.
+                transferId: uploadId,
+                actor: active?.actor ?? row.uploader,
+                uploader: row.uploader,
                 downloadUrl: this.uploadUrlFor(uploadId),
                 filename: row.filename,
                 size: row.size,
+                contentType: row.contentType ?? active?.contentType,
+                ...(active?.width ? { width: active.width } : {}),
+                ...(active?.height ? { height: active.height } : {}),
+                ...(active?.preview ? { preview: active.preview } : {}),
                 timestamp: new Date().toISOString(),
             },
             null,
@@ -491,6 +688,9 @@ export class FileUploadService {
                 await this.blobStore.delete(uploadId);
             }
             this.correlationToUploadId.delete(this.correlationKey(clientId, channel, id));
+            // Retract the announcement. Observers were told this file was on
+            // its way; they are owed the news that it is not.
+            this.publishSettled(uploadId, 'cancelled');
         }
 
         this.metricsCollector?.recordMetric?.('FileUpload.cancelled', 1);
@@ -515,6 +715,15 @@ export class FileUploadService {
         const prefix = `${clientId}::`;
         for (const key of Array.from(this.correlationToUploadId.keys())) {
             if (key.startsWith(prefix)) this.correlationToUploadId.delete(key);
+        }
+        // A sender who closes the tab mid-upload leaves a progress bar frozen
+        // at whatever percentage it reached in EVERY other participant's UI —
+        // there is no other event that would ever clear it. Publishing the
+        // terminal frame is the only thing that lets observers move on.
+        for (const active of Array.from(this.activeTransfers.values())) {
+            if (active.clientId === clientId) {
+                this.publishSettled(active.uploadId, 'failed', 'sender disconnected');
+            }
         }
     }
 }

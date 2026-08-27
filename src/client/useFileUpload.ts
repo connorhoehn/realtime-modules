@@ -50,10 +50,53 @@ export interface FileUploadState {
   error?: string;
 }
 
+/**
+ * A transfer happening in this channel — possibly somebody else's.
+ *
+ * This is the type that makes the feature feel live. `uploads` below is the
+ * viewer's own outbox and always was; `transfers` is the shared truth about
+ * what is moving through the channel right now, assembled from the server's
+ * `fileupload:started` / `:progress` / terminal broadcasts. Without it a
+ * recipient's UI has nothing to render until a completed file drops in fully
+ * formed.
+ */
+export interface ChannelTransfer {
+  /** Server-minted id. Stable across every participant, unlike the
+   *  per-client correlation id, so everyone keys the same transfer alike. */
+  transferId: string;
+  /** Human-facing attribution, so a recipient reads "Ada is sending…". */
+  actor: string;
+  /** Authed user id of the sender — the reliable identity for "is this mine". */
+  uploader: string;
+  name: string;
+  size: number;
+  /** Bytes the SERVER has counted. Never a client's self-report. */
+  transferred: number;
+  phase: 'started' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
+  contentType?: string;
+  /** Sender's inline data-URI placeholder, shown while bytes are in flight. */
+  preview?: string;
+  width?: number;
+  height?: number;
+  error?: string;
+  /** Present once the transfer completes. */
+  downloadUrl?: string;
+}
+
 export interface UseFileUploadResult {
+  /** The viewer's own uploads, keyed by their local correlation id. */
   uploads: FileUploadState[];
+  /**
+   * Every transfer in flight in this channel, the viewer's own included,
+   * keyed by the server-minted transfer id. Settled transfers are dropped as
+   * soon as they settle — a completed one becomes a message attachment, and a
+   * failed one has already been reported.
+   */
+  transfers: ChannelTransfer[];
   upload(file: File, opts?: { metadata?: Record<string, unknown> }): Promise<FileUploadState>;
   cancel(id: string): void;
+  /** Cancel by the server-minted transfer id (what the UI renders). */
+  cancelTransfer(transferId: string): void;
   removeCompleted(): void;
 }
 
@@ -118,9 +161,95 @@ function xhrPut(
 // Hook implementation
 // ---------------------------------------------------------------------------
 
-export function useFileUpload(channel: string): UseFileUploadResult {
+export interface UseFileUploadOptions {
+  /**
+   * Fires once for every transfer that lands in this channel — the viewer's
+   * own and everybody else's.
+   *
+   * The hook deliberately does not decide what a completed upload MEANS. In a
+   * chat it becomes a message attachment; in a document it becomes an
+   * embedded figure. The consumer owns that, and receiving the same event on
+   * every client is what lets each of them render the result at the same
+   * moment without a refetch.
+   */
+  onComplete?: (transfer: CompletedTransfer) => void;
+  /** Attribution shown to other participants ("Ada is sending…"). */
+  displayName?: string;
+  /**
+   * Longest edge, in pixels, of the inline placeholder generated for image
+   * uploads. Small on purpose: it is broadcast to every subscriber before the
+   * real bytes move. 0 disables placeholder generation.
+   */
+  previewMaxEdge?: number;
+}
+
+export interface CompletedTransfer {
+  transferId: string;
+  actor: string;
+  uploader: string;
+  filename: string;
+  size: number;
+  contentType: string;
+  downloadUrl: string;
+  width?: number;
+  height?: number;
+  preview?: string;
+}
+
+/**
+ * Downscale an image file to a tiny data URI.
+ *
+ * This is what lets a recipient see WHAT is arriving rather than a grey box
+ * with a percentage. It runs on the sender before the upload starts, costs one
+ * canvas draw, and rides the `fileupload:started` broadcast. Returns undefined
+ * for anything that is not a decodable image — a placeholder is a nicety, and
+ * failing to make one must never block the actual upload.
+ */
+async function makePreview(file: File, maxEdge: number): Promise<string | undefined> {
+  if (maxEdge <= 0 || !file.type.startsWith('image/')) return undefined;
+  if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') return undefined;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    return canvas.toDataURL('image/jpeg', 0.5);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Intrinsic dimensions, so a recipient's layout reserves the right space
+ *  before the full image has downloaded and stops reflowing on arrival. */
+async function measure(file: File): Promise<{ width?: number; height?: number }> {
+  if (!file.type.startsWith('image/') || typeof createImageBitmap !== 'function') return {};
+  try {
+    const bitmap = await createImageBitmap(file);
+    const dims = { width: bitmap.width, height: bitmap.height };
+    bitmap.close?.();
+    return dims;
+  } catch {
+    return {};
+  }
+}
+
+export function useFileUpload(channel: string, options: UseFileUploadOptions = {}): UseFileUploadResult {
   const { send, onMessage } = useGateway();
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  });
   const [uploads, setUploads] = useState<FileUploadState[]>([]);
+  const [transfers, setTransfers] = useState<ChannelTransfer[]>([]);
+  /** correlation id -> server transfer id, for the viewer's own uploads. */
+  const transferIdsRef = useRef<Map<string, string>>(new Map());
 
   const channelRef = useRef(channel);
   useEffect(() => {
@@ -141,6 +270,52 @@ export function useFileUpload(channel: string): UseFileUploadResult {
     );
   }, []);
 
+  /**
+   * Upsert a channel transfer by its server-minted id.
+   *
+   * Upsert rather than patch because these frames can genuinely arrive out of
+   * order for a participant who joined mid-transfer: the first thing they see
+   * may be a `:progress`, with no `:started` ever addressed to them. Treating
+   * that as "unknown transfer, ignore" is how a recipient ends up watching
+   * nothing happen.
+   */
+  const upsertTransfer = useCallback(
+    (transferId: string, delta: Partial<ChannelTransfer>) => {
+      setTransfers((prev) => {
+        const idx = prev.findIndex((t) => t.transferId === transferId);
+        if (idx === -1) {
+          return [
+            ...prev,
+            {
+              transferId,
+              actor: 'someone',
+              uploader: '',
+              name: 'file',
+              size: 0,
+              transferred: 0,
+              phase: 'started',
+              ...delta,
+            } as ChannelTransfer,
+          ];
+        }
+        const next = prev.slice();
+        // Progress is monotonic on the wire, but a late-delivered older frame
+        // would still walk the bar backwards. Clamp it here too.
+        const merged = { ...next[idx], ...delta };
+        if (typeof delta.transferred === 'number') {
+          merged.transferred = Math.max(next[idx].transferred, delta.transferred);
+        }
+        next[idx] = merged;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const dropTransfer = useCallback((transferId: string) => {
+    setTransfers((prev) => prev.filter((t) => t.transferId !== transferId));
+  }, []);
+
   // Register inbound handler once.
   useEffect(() => {
     const unsubscribe = onMessage((msg: GatewayMessage) => {
@@ -149,11 +324,75 @@ export function useFileUpload(channel: string): UseFileUploadResult {
 
       const raw = msg as Record<string, unknown>;
       const id = typeof raw.id === 'string' ? raw.id : null;
+      const transferId = typeof raw.transferId === 'string' ? raw.transferId : null;
+
+      // ---- channel-wide transfer lifecycle --------------------------------
+      // These frames are BROADCASTS: every subscriber gets them, including
+      // participants who are not uploading anything. They are handled before
+      // the correlation-id gate below, because a recipient has no correlation
+      // id for somebody else's upload and would otherwise drop the frame.
+      if (transferId) {
+        switch (msg.type) {
+          case 'fileupload:started':
+            upsertTransfer(transferId, {
+              actor: typeof raw.actor === 'string' ? raw.actor : 'someone',
+              uploader: typeof raw.uploader === 'string' ? raw.uploader : '',
+              name: typeof raw.filename === 'string' ? raw.filename : 'file',
+              size: typeof raw.size === 'number' ? raw.size : 0,
+              transferred: 0,
+              phase: 'started',
+              ...(typeof raw.contentType === 'string' ? { contentType: raw.contentType } : {}),
+              ...(typeof raw.preview === 'string' ? { preview: raw.preview } : {}),
+              ...(typeof raw.width === 'number' ? { width: raw.width } : {}),
+              ...(typeof raw.height === 'number' ? { height: raw.height } : {}),
+            });
+            break;
+          case 'fileupload:progress':
+            upsertTransfer(transferId, {
+              phase: 'transferring',
+              ...(typeof raw.actor === 'string' ? { actor: raw.actor } : {}),
+              ...(typeof raw.transferred === 'number' ? { transferred: raw.transferred } : {}),
+              ...(typeof raw.size === 'number' && raw.size > 0 ? { size: raw.size } : {}),
+            });
+            break;
+          case 'fileupload:complete': {
+            // The transfer row retires here; the consumer turns the completed
+            // frame into a durable message attachment. Leaving it in the
+            // in-flight list would double-render the file.
+            dropTransfer(transferId);
+            const downloadUrl = typeof raw.downloadUrl === 'string' ? raw.downloadUrl : '';
+            if (downloadUrl) {
+              optionsRef.current.onComplete?.({
+                transferId,
+                actor: typeof raw.actor === 'string' ? raw.actor : 'someone',
+                uploader: typeof raw.uploader === 'string' ? raw.uploader : '',
+                filename: typeof raw.filename === 'string' ? raw.filename : 'file',
+                size: typeof raw.size === 'number' ? raw.size : 0,
+                contentType:
+                  typeof raw.contentType === 'string' ? raw.contentType : 'application/octet-stream',
+                downloadUrl,
+                ...(typeof raw.width === 'number' ? { width: raw.width } : {}),
+                ...(typeof raw.height === 'number' ? { height: raw.height } : {}),
+                ...(typeof raw.preview === 'string' ? { preview: raw.preview } : {}),
+              });
+            }
+            break;
+          }
+          case 'fileupload:failed':
+          case 'fileupload:cancelled':
+            dropTransfer(transferId);
+            break;
+          default:
+            break;
+        }
+      }
+
       if (!id) return;
 
       switch (msg.type) {
         case 'fileupload:url': {
           const uploadUrl = typeof raw.uploadUrl === 'string' ? raw.uploadUrl : undefined;
+          if (transferId) transferIdsRef.current.set(id, transferId);
           // Resolve the waiting upload() promise.
           const waiter = urlWaitersRef.current.get(id);
           if (waiter && uploadUrl) {
@@ -210,11 +449,13 @@ export function useFileUpload(channel: string): UseFileUploadResult {
       }
     });
     return unsubscribe;
-  }, [onMessage, patch]);
+  }, [onMessage, patch, upsertTransfer, dropTransfer]);
 
   // Reset uploads when channel changes.
   useEffect(() => {
     setUploads([]);
+    setTransfers([]);
+    transferIdsRef.current.clear();
     abortControllersRef.current.clear();
     urlWaitersRef.current.clear();
   }, [channel]);
@@ -245,7 +486,17 @@ export function useFileUpload(channel: string): UseFileUploadResult {
 
       setUploads((prev) => [...prev, initial]);
 
-      // Request a presigned upload URL from the gateway.
+      // Build the presentation hints BEFORE asking for a URL, so the
+      // `fileupload:started` broadcast the gateway fans out already carries
+      // the placeholder. Generating it after would mean every recipient sees
+      // a grey box first and a thumbnail second — two renders for one event.
+      const { previewMaxEdge = 32, displayName } = optionsRef.current;
+      const [preview, dims] = await Promise.all([
+        makePreview(file, previewMaxEdge),
+        measure(file),
+      ]);
+
+      // Request an upload URL from the gateway.
       send({
         service: 'fileupload',
         action: 'request-upload',
@@ -253,7 +504,13 @@ export function useFileUpload(channel: string): UseFileUploadResult {
         id,
         filename: file.name,
         size: file.size,
-        ...(opts?.metadata ? { metadata: opts.metadata } : {}),
+        metadata: {
+          contentType: file.type || 'application/octet-stream',
+          ...(displayName ? { displayName } : {}),
+          ...(preview ? { preview } : {}),
+          ...dims,
+          ...(opts?.metadata ?? {}),
+        },
       } satisfies ClientFramePayload<'client.fileupload.request-upload'>);
 
       // Wait for the gateway to issue the presigned URL.
@@ -344,5 +601,20 @@ export function useFileUpload(channel: string): UseFileUploadResult {
     );
   }, []);
 
-  return { uploads, upload, cancel, removeCompleted };
+  /** Cancel by the id the UI actually renders (the server-minted one). */
+  const cancelTransfer = useCallback(
+    (transferId: string) => {
+      for (const [correlationId, mapped] of transferIdsRef.current) {
+        if (mapped === transferId) {
+          cancel(correlationId);
+          return;
+        }
+      }
+      // Not ours to cancel — a recipient has no authority over somebody
+      // else's upload, and the server would refuse anyway.
+    },
+    [cancel],
+  );
+
+  return { uploads, transfers, upload, cancel, cancelTransfer, removeCompleted };
 }
