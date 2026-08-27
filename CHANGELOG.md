@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.28.0 — 2026-08-26
+
+Collaborative diagramming — an Excalidraw ↔ Yjs binding. New subpath
+`./adapters/excalidraw`.
+
+- **`ExcalidrawYjsBinding`** — binds an Excalidraw scene to a Y.Doc as a keyed
+  `Y.Map<elementId, Y.Map<prop>>`. Since Excalidraw 0.17 carries z-order on the
+  element as a fractional `index`, ordering is just another property and no
+  ordering CRDT is needed — read sorts by `index`. One Y.Map per element means
+  two people dragging two shapes write disjoint keys and both edits survive;
+  two people editing the same shape land on per-property LWW. Deletes are
+  tombstones (`isDeleted: true`), never key removal.
+- **`useCollaborativeDiagram`** — owns the binding lifecycle and publishes
+  pointers on the EXISTING awareness channel under a top-level `diagram` key
+  (sibling of `user` / `cursor` / `call` — nesting under `user` would be
+  clobbered by `useAwarenessState`'s whole-object flush). Throttled to 50ms.
+- **No new sync machinery.** Transport, snapshots, hot cache, idle eviction,
+  cross-node fan-out and authz all come from the existing `useYjsDoc` /
+  `GatewayProvider` / `CRDTService` stack, which is schema-agnostic. A diagram
+  is just a differently-shaped Y.Doc on a `doc:` channel.
+- **No `@excalidraw/excalidraw` dependency.** The binding is typed
+  structurally against `{ id, version, versionNonce, index }`, so `./client`
+  stays as light as it was and an Excalidraw major cannot break this package.
+
 ## 0.27.0 — 2026-08-26
 
 Ambient voice capture — push-to-talk transcription on any page, not just in

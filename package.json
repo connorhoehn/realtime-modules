@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -49,6 +49,10 @@
     "./adapters/tiptap": {
       "types": "./dist/adapters/tiptap/index.d.ts",
       "default": "./dist/adapters/tiptap/index.js"
+    },
+    "./adapters/excalidraw": {
+      "types": "./dist/adapters/excalidraw/index.d.ts",
+      "default": "./dist/adapters/excalidraw/index.js"
     },
     "./proxy-client": {
       "types": "./dist/proxy-client/index.d.ts",
