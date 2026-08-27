@@ -105,12 +105,13 @@ function useChat(channel) {
             });
         };
     }, [channel, send]);
-    const sendMessage = (0, react_1.useCallback)((text) => {
+    const sendMessage = (0, react_1.useCallback)((text, metadata) => {
         send({
             service: 'chat',
             action: 'send',
             channel: channelRef.current,
             message: text,
+            ...(metadata ? { metadata } : {}),
         });
     }, [send]);
     const loadHistory = (0, react_1.useCallback)((limit) => {

@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -53,6 +53,10 @@ Object.defineProperty(exports, "useActivity", { enumerable: true, get: function 
 // useVideoHangout: LVS signaling layer — returns joinToken for <Stage> (web-broadcast-shim).
 var useFileUpload_1 = require("./useFileUpload");
 Object.defineProperty(exports, "useFileUpload", { enumerable: true, get: function () { return useFileUpload_1.useFileUpload; } });
+// useAttachmentSrc: authenticated download URL -> renderable object URL. The
+// download route needs a bearer header and an <img> cannot send one.
+var useAttachmentSrc_1 = require("./useAttachmentSrc");
+Object.defineProperty(exports, "useAttachmentSrc", { enumerable: true, get: function () { return useAttachmentSrc_1.useAttachmentSrc; } });
 var useVideoHangout_1 = require("./useVideoHangout");
 Object.defineProperty(exports, "useVideoHangout", { enumerable: true, get: function () { return useVideoHangout_1.useVideoHangout; } });
 // v0.7.4 — useNotifications: user-scoped notification inbox that listens for

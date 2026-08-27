@@ -85,7 +85,18 @@ export type { UseActivityReturn } from './useActivity';
 // useFileUpload: presigned-URL upload with XHR progress + server-side AV scan state.
 // useVideoHangout: LVS signaling layer — returns joinToken for <Stage> (web-broadcast-shim).
 export { useFileUpload } from './useFileUpload';
-export type { FileUploadState, UseFileUploadResult } from './useFileUpload';
+export type {
+  ChannelTransfer,
+  CompletedTransfer,
+  FileUploadState,
+  UseFileUploadOptions,
+  UseFileUploadResult,
+} from './useFileUpload';
+
+// useAttachmentSrc: authenticated download URL -> renderable object URL. The
+// download route needs a bearer header and an <img> cannot send one.
+export { useAttachmentSrc } from './useAttachmentSrc';
+export type { UseAttachmentSrcOptions, UseAttachmentSrcResult } from './useAttachmentSrc';
 
 export { useVideoHangout } from './useVideoHangout';
 export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
