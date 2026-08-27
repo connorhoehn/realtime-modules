@@ -99,6 +99,22 @@ export interface FileUploadServiceOptions {
     publicBaseUrl?: string;
     maxBytes?: number;
 }
+/** What the channel is allowed to know about a transfer in progress. */
+interface ActiveTransfer {
+    uploadId: string;
+    correlationId: string;
+    clientId: string;
+    channel: string;
+    uploader: string;
+    /** Human-facing attribution. Falls back to the uploader's user id. */
+    actor: string;
+    filename: string;
+    size: number;
+    contentType?: string;
+    preview?: string;
+    width?: number;
+    height?: number;
+}
 export declare class FileUploadService {
     messageRouter: RouterLike;
     logger: LoggerLike;
@@ -121,6 +137,18 @@ export declare class FileUploadService {
      * row.correlationId is the durable fallback (cross-node / post-restart).
      */
     private correlationToUploadId;
+    /**
+     * In-flight transfers keyed by the SERVER-minted uploadId — the state the
+     * channel is allowed to watch.
+     *
+     * This index exists because the interesting half of "share a file" is the
+     * half before it arrives. The HTTP byte-transfer layer knows how many
+     * bytes have landed but nothing about who is watching; this service knows
+     * the channel and the actor but never sees a byte. The entry is the join
+     * between them: `publishProgress`/`publishSettled` are the seam the HTTP
+     * layer calls, and everything the channel sees is derived from here.
+     */
+    private activeTransfers;
     constructor(opts: FileUploadServiceOptions);
     /** Build the HTTP url (PUT for upload, GET for download — same path). */
     uploadUrlFor(uploadId: string): string;
@@ -162,6 +190,32 @@ export declare class FileUploadService {
      */
     handleAction(clientId: string, action: string, data: Record<string, unknown>): Promise<void>;
     private handleRequestUpload;
+    /**
+     * Progress, as counted by whoever is RECEIVING the bytes.
+     *
+     * Called by the HTTP transfer layer, never by the browser. A
+     * sender-reported percentage is unfalsifiable — a client could claim 99%
+     * forever, or claim a completion for a transfer that never happened, and
+     * every observer would believe it. Counting on the receiving side makes
+     * progress a fact rather than a claim.
+     *
+     * The caller is responsible for coalescing (see distributed-core's
+     * TransferRegistry): a naive per-socket-read call here would multiply
+     * hundreds of frames per second by every subscriber in the channel.
+     */
+    publishProgress(uploadId: string, transferred: number): void;
+    /**
+     * Terminate a transfer from the HTTP side (too large, write failed, the
+     * sender vanished).
+     *
+     * This has to reach the whole channel, not just the sender: every other
+     * participant has a progress bar on screen for this transfer, and without
+     * a terminal frame it sits at whatever percentage it reached, forever.
+     */
+    publishSettled(uploadId: string, phase: 'failed' | 'cancelled', error?: string): void;
+    /** The channel + actor a transfer belongs to, for the HTTP layer's own
+     *  bookkeeping. Returns null once the transfer has settled. */
+    describeTransfer(uploadId: string): ActiveTransfer | null;
     private handleComplete;
     private handleCancel;
     /**

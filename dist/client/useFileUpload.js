@@ -78,12 +78,64 @@ function xhrPut(url, file, onProgress, signal) {
         }
     });
 }
-// ---------------------------------------------------------------------------
-// Hook implementation
-// ---------------------------------------------------------------------------
-function useFileUpload(channel) {
+/**
+ * Downscale an image file to a tiny data URI.
+ *
+ * This is what lets a recipient see WHAT is arriving rather than a grey box
+ * with a percentage. It runs on the sender before the upload starts, costs one
+ * canvas draw, and rides the `fileupload:started` broadcast. Returns undefined
+ * for anything that is not a decodable image — a placeholder is a nicety, and
+ * failing to make one must never block the actual upload.
+ */
+async function makePreview(file, maxEdge) {
+    if (maxEdge <= 0 || !file.type.startsWith('image/'))
+        return undefined;
+    if (typeof document === 'undefined' || typeof createImageBitmap !== 'function')
+        return undefined;
+    try {
+        const bitmap = await createImageBitmap(file);
+        const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+        const w = Math.max(1, Math.round(bitmap.width * scale));
+        const h = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx)
+            return undefined;
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        bitmap.close?.();
+        return canvas.toDataURL('image/jpeg', 0.5);
+    }
+    catch {
+        return undefined;
+    }
+}
+/** Intrinsic dimensions, so a recipient's layout reserves the right space
+ *  before the full image has downloaded and stops reflowing on arrival. */
+async function measure(file) {
+    if (!file.type.startsWith('image/') || typeof createImageBitmap !== 'function')
+        return {};
+    try {
+        const bitmap = await createImageBitmap(file);
+        const dims = { width: bitmap.width, height: bitmap.height };
+        bitmap.close?.();
+        return dims;
+    }
+    catch {
+        return {};
+    }
+}
+function useFileUpload(channel, options = {}) {
     const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const optionsRef = (0, react_1.useRef)(options);
+    (0, react_1.useEffect)(() => {
+        optionsRef.current = options;
+    });
     const [uploads, setUploads] = (0, react_1.useState)([]);
+    const [transfers, setTransfers] = (0, react_1.useState)([]);
+    /** correlation id -> server transfer id, for the viewer's own uploads. */
+    const transferIdsRef = (0, react_1.useRef)(new Map());
     const channelRef = (0, react_1.useRef)(channel);
     (0, react_1.useEffect)(() => {
         channelRef.current = channel;
@@ -97,6 +149,47 @@ function useFileUpload(channel) {
     const patch = (0, react_1.useCallback)((id, delta) => {
         setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...delta } : u)));
     }, []);
+    /**
+     * Upsert a channel transfer by its server-minted id.
+     *
+     * Upsert rather than patch because these frames can genuinely arrive out of
+     * order for a participant who joined mid-transfer: the first thing they see
+     * may be a `:progress`, with no `:started` ever addressed to them. Treating
+     * that as "unknown transfer, ignore" is how a recipient ends up watching
+     * nothing happen.
+     */
+    const upsertTransfer = (0, react_1.useCallback)((transferId, delta) => {
+        setTransfers((prev) => {
+            const idx = prev.findIndex((t) => t.transferId === transferId);
+            if (idx === -1) {
+                return [
+                    ...prev,
+                    {
+                        transferId,
+                        actor: 'someone',
+                        uploader: '',
+                        name: 'file',
+                        size: 0,
+                        transferred: 0,
+                        phase: 'started',
+                        ...delta,
+                    },
+                ];
+            }
+            const next = prev.slice();
+            // Progress is monotonic on the wire, but a late-delivered older frame
+            // would still walk the bar backwards. Clamp it here too.
+            const merged = { ...next[idx], ...delta };
+            if (typeof delta.transferred === 'number') {
+                merged.transferred = Math.max(next[idx].transferred, delta.transferred);
+            }
+            next[idx] = merged;
+            return next;
+        });
+    }, []);
+    const dropTransfer = (0, react_1.useCallback)((transferId) => {
+        setTransfers((prev) => prev.filter((t) => t.transferId !== transferId));
+    }, []);
     // Register inbound handler once.
     (0, react_1.useEffect)(() => {
         const unsubscribe = onMessage((msg) => {
@@ -106,11 +199,73 @@ function useFileUpload(channel) {
                 return;
             const raw = msg;
             const id = typeof raw.id === 'string' ? raw.id : null;
+            const transferId = typeof raw.transferId === 'string' ? raw.transferId : null;
+            // ---- channel-wide transfer lifecycle --------------------------------
+            // These frames are BROADCASTS: every subscriber gets them, including
+            // participants who are not uploading anything. They are handled before
+            // the correlation-id gate below, because a recipient has no correlation
+            // id for somebody else's upload and would otherwise drop the frame.
+            if (transferId) {
+                switch (msg.type) {
+                    case 'fileupload:started':
+                        upsertTransfer(transferId, {
+                            actor: typeof raw.actor === 'string' ? raw.actor : 'someone',
+                            uploader: typeof raw.uploader === 'string' ? raw.uploader : '',
+                            name: typeof raw.filename === 'string' ? raw.filename : 'file',
+                            size: typeof raw.size === 'number' ? raw.size : 0,
+                            transferred: 0,
+                            phase: 'started',
+                            ...(typeof raw.contentType === 'string' ? { contentType: raw.contentType } : {}),
+                            ...(typeof raw.preview === 'string' ? { preview: raw.preview } : {}),
+                            ...(typeof raw.width === 'number' ? { width: raw.width } : {}),
+                            ...(typeof raw.height === 'number' ? { height: raw.height } : {}),
+                        });
+                        break;
+                    case 'fileupload:progress':
+                        upsertTransfer(transferId, {
+                            phase: 'transferring',
+                            ...(typeof raw.actor === 'string' ? { actor: raw.actor } : {}),
+                            ...(typeof raw.transferred === 'number' ? { transferred: raw.transferred } : {}),
+                            ...(typeof raw.size === 'number' && raw.size > 0 ? { size: raw.size } : {}),
+                        });
+                        break;
+                    case 'fileupload:complete': {
+                        // The transfer row retires here; the consumer turns the completed
+                        // frame into a durable message attachment. Leaving it in the
+                        // in-flight list would double-render the file.
+                        dropTransfer(transferId);
+                        const downloadUrl = typeof raw.downloadUrl === 'string' ? raw.downloadUrl : '';
+                        if (downloadUrl) {
+                            optionsRef.current.onComplete?.({
+                                transferId,
+                                actor: typeof raw.actor === 'string' ? raw.actor : 'someone',
+                                uploader: typeof raw.uploader === 'string' ? raw.uploader : '',
+                                filename: typeof raw.filename === 'string' ? raw.filename : 'file',
+                                size: typeof raw.size === 'number' ? raw.size : 0,
+                                contentType: typeof raw.contentType === 'string' ? raw.contentType : 'application/octet-stream',
+                                downloadUrl,
+                                ...(typeof raw.width === 'number' ? { width: raw.width } : {}),
+                                ...(typeof raw.height === 'number' ? { height: raw.height } : {}),
+                                ...(typeof raw.preview === 'string' ? { preview: raw.preview } : {}),
+                            });
+                        }
+                        break;
+                    }
+                    case 'fileupload:failed':
+                    case 'fileupload:cancelled':
+                        dropTransfer(transferId);
+                        break;
+                    default:
+                        break;
+                }
+            }
             if (!id)
                 return;
             switch (msg.type) {
                 case 'fileupload:url': {
                     const uploadUrl = typeof raw.uploadUrl === 'string' ? raw.uploadUrl : undefined;
+                    if (transferId)
+                        transferIdsRef.current.set(id, transferId);
                     // Resolve the waiting upload() promise.
                     const waiter = urlWaitersRef.current.get(id);
                     if (waiter && uploadUrl) {
@@ -169,10 +324,12 @@ function useFileUpload(channel) {
             }
         });
         return unsubscribe;
-    }, [onMessage, patch]);
+    }, [onMessage, patch, upsertTransfer, dropTransfer]);
     // Reset uploads when channel changes.
     (0, react_1.useEffect)(() => {
         setUploads([]);
+        setTransfers([]);
+        transferIdsRef.current.clear();
         abortControllersRef.current.clear();
         urlWaitersRef.current.clear();
     }, [channel]);
@@ -197,7 +354,16 @@ function useFileUpload(channel) {
             progress: 0,
         };
         setUploads((prev) => [...prev, initial]);
-        // Request a presigned upload URL from the gateway.
+        // Build the presentation hints BEFORE asking for a URL, so the
+        // `fileupload:started` broadcast the gateway fans out already carries
+        // the placeholder. Generating it after would mean every recipient sees
+        // a grey box first and a thumbnail second — two renders for one event.
+        const { previewMaxEdge = 32, displayName } = optionsRef.current;
+        const [preview, dims] = await Promise.all([
+            makePreview(file, previewMaxEdge),
+            measure(file),
+        ]);
+        // Request an upload URL from the gateway.
         send({
             service: 'fileupload',
             action: 'request-upload',
@@ -205,7 +371,13 @@ function useFileUpload(channel) {
             id,
             filename: file.name,
             size: file.size,
-            ...(opts?.metadata ? { metadata: opts.metadata } : {}),
+            metadata: {
+                contentType: file.type || 'application/octet-stream',
+                ...(displayName ? { displayName } : {}),
+                ...(preview ? { preview } : {}),
+                ...dims,
+                ...(opts?.metadata ?? {}),
+            },
         });
         // Wait for the gateway to issue the presigned URL.
         const uploadUrl = await new Promise((resolve, reject) => {
@@ -272,6 +444,17 @@ function useFileUpload(channel) {
     const removeCompleted = (0, react_1.useCallback)(() => {
         setUploads((prev) => prev.filter((u) => u.status !== 'completed' && u.status !== 'clean' && u.status !== 'infected'));
     }, []);
-    return { uploads, upload, cancel, removeCompleted };
+    /** Cancel by the id the UI actually renders (the server-minted one). */
+    const cancelTransfer = (0, react_1.useCallback)((transferId) => {
+        for (const [correlationId, mapped] of transferIdsRef.current) {
+            if (mapped === transferId) {
+                cancel(correlationId);
+                return;
+            }
+        }
+        // Not ours to cancel — a recipient has no authority over somebody
+        // else's upload, and the server would refuse anyway.
+    }, [cancel]);
+    return { uploads, transfers, upload, cancel, cancelTransfer, removeCompleted };
 }
 //# sourceMappingURL=useFileUpload.js.map
