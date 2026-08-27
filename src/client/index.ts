@@ -23,6 +23,14 @@ export type { UseIdleDetectorOptions, UseIdleDetectorReturn } from './useIdleDet
 export { SharedTextEditor } from './SharedTextEditor';
 export type { SharedTextEditorProps } from './SharedTextEditor';
 
+// v0.30.0 — capture a canvas the page already owns as a MediaStreamTrack.
+// Deliberately NOT screen capture: self-capture needs no permission prompt.
+export { useCanvasCapture } from './useCanvasCapture';
+export type {
+  UseCanvasCaptureOptions,
+  UseCanvasCaptureReturn,
+} from './useCanvasCapture';
+
 export { useWebSocket } from './useWebSocket';
 export type {
   UseWebSocketOptions,

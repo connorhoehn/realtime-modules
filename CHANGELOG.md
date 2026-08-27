@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.31.0 — 2026-08-26
+
+- **`useCanvasCapture`** (`./client`) — turns a `<canvas>` the page already
+  owns into a live `MediaStreamTrack`, with NO permission prompt, because the
+  page captures its own output rather than the user's screen. This is what you
+  want for recording a diagram/whiteboard/chart: `getDisplayMedia` requires a
+  gesture and a source picker and always will, whereas
+  `canvas.captureStream()` does not — and self-capture is the honest primitive
+  anyway.
+
+  It mirrors the sources into its own surface on a fixed interval instead of
+  capturing them directly, because a static canvas only paints on change and a
+  direct capture stalls between edits. That also makes it a compositor: pass
+  `[scene, overlay]` and both layers land in one track. Default 5 fps, chosen
+  because a diagram changes in discrete edits and every encoder downstream
+  drops duplicate frames anyway.
+
+  `capturing` is derived from the track's own `readyState`, never a separate
+  boolean, so a UI claiming "off" over a live track is not expressible.
+
 ## 0.28.0 — 2026-08-26
 
 Collaborative diagramming — an Excalidraw ↔ Yjs binding. New subpath

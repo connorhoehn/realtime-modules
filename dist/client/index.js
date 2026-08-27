@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -19,6 +19,10 @@ var useIdleDetector_1 = require("./useIdleDetector");
 Object.defineProperty(exports, "useIdleDetector", { enumerable: true, get: function () { return useIdleDetector_1.useIdleDetector; } });
 var SharedTextEditor_1 = require("./SharedTextEditor");
 Object.defineProperty(exports, "SharedTextEditor", { enumerable: true, get: function () { return SharedTextEditor_1.SharedTextEditor; } });
+// v0.30.0 — capture a canvas the page already owns as a MediaStreamTrack.
+// Deliberately NOT screen capture: self-capture needs no permission prompt.
+var useCanvasCapture_1 = require("./useCanvasCapture");
+Object.defineProperty(exports, "useCanvasCapture", { enumerable: true, get: function () { return useCanvasCapture_1.useCanvasCapture; } });
 var useWebSocket_1 = require("./useWebSocket");
 Object.defineProperty(exports, "useWebSocket", { enumerable: true, get: function () { return useWebSocket_1.useWebSocket; } });
 // v0.2.0 — useAgentStream hook. Pairs with the server-side

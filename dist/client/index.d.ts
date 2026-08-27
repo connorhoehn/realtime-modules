@@ -10,6 +10,8 @@ export { useIdleDetector } from './useIdleDetector';
 export type { UseIdleDetectorOptions, UseIdleDetectorReturn } from './useIdleDetector';
 export { SharedTextEditor } from './SharedTextEditor';
 export type { SharedTextEditorProps } from './SharedTextEditor';
+export { useCanvasCapture } from './useCanvasCapture';
+export type { UseCanvasCaptureOptions, UseCanvasCaptureReturn, } from './useCanvasCapture';
 export { useWebSocket } from './useWebSocket';
 export type { UseWebSocketOptions, UseWebSocketHookReturn, } from './useWebSocket';
 export { useAgentStream } from './useAgentStream';
