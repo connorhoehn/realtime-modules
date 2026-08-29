@@ -185,6 +185,18 @@ export interface UseFileUploadOptions {
 
 export interface CompletedTransfer {
   transferId: string;
+  /**
+   * True on the sender's client only.
+   *
+   * `onComplete` fires on EVERY participant — that is what lets each of them
+   * react at the same instant without a refetch. But exactly one of them may
+   * write the resulting durable record (a chat message, a document embed) or
+   * the channel gets one copy per viewer. This flag is how a consumer knows
+   * which one it is, and the hook is the only layer that can answer it: it
+   * holds the correlation-id map that ties this transfer to an upload() call
+   * made here.
+   */
+  mine: boolean;
   actor: string;
   uploader: string;
   filename: string;
@@ -362,8 +374,13 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
             dropTransfer(transferId);
             const downloadUrl = typeof raw.downloadUrl === 'string' ? raw.downloadUrl : '';
             if (downloadUrl) {
+              let mine = false;
+              for (const mapped of transferIdsRef.current.values()) {
+                if (mapped === transferId) { mine = true; break; }
+              }
               optionsRef.current.onComplete?.({
                 transferId,
+                mine,
                 actor: typeof raw.actor === 'string' ? raw.actor : 'someone',
                 uploader: typeof raw.uploader === 'string' ? raw.uploader : '',
                 filename: typeof raw.filename === 'string' ? raw.filename : 'file',
