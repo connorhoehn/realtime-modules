@@ -8,3 +8,8 @@
 export { default as TiptapEditor } from './TiptapEditor';
 export type { TiptapEditorProps, CollaborationProvider } from './TiptapEditor';
 export { default as EditorToolbar } from './EditorToolbar';
+
+// v0.32.0 — the canvas authoring surface. The white-page document: one
+// continuous body of blocks, macros as embedded tools, markdown as the
+// exchange format. See ./canvas/index.ts for the cross-repo placement rule.
+export * from './canvas';

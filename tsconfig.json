@@ -17,6 +17,7 @@
     "baseUrl": ".",
     "paths": {
       "distributed-core/transport": ["node_modules/distributed-core/dist/transport/index.d.ts"],
+      "distributed-core/applications/document": ["node_modules/distributed-core/dist/applications/document/index.d.ts"],
       "@connorhoehn/event-catalog/client-frames": ["node_modules/@connorhoehn/event-catalog/dist/generated/client-frames.d.ts"],
       "@connorhoehn/event-catalog/types": ["node_modules/@connorhoehn/event-catalog/dist/generated/event-types.d.ts"]
     }
