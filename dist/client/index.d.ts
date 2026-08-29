@@ -41,6 +41,4 @@ export { useFeatureFlag } from './useFeatureFlag';
 export type { UseFeatureFlagResult } from './useFeatureFlag';
 export { useChannel } from './useChannel';
 export type { UseChannelOptions, UseChannelFeatures, UseChannelResult, } from './useChannel';
-export { useCanvasDocument, canvasToDocModel, canvasToMarkdown, CANVAS_BODY_KEY, } from './useCanvasDocument';
-export type { CanvasDocument, UseCanvasDocumentOptions, MaterializeResult, PmSchemaLike, } from './useCanvasDocument';
 //# sourceMappingURL=index.d.ts.map

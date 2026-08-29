@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -91,15 +91,4 @@ Object.defineProperty(exports, "useFeatureFlag", { enumerable: true, get: functi
 // optional-chain safely: chat?.sendMessage('hi').
 var useChannel_1 = require("./useChannel");
 Object.defineProperty(exports, "useChannel", { enumerable: true, get: function () { return useChannel_1.useChannel; } });
-// v0.32.0 — useCanvasDocument: the Y.Doc ⇄ canvas binding. Gates on
-// meta.schemaVersion >= 2, exposes the single `body` XmlFragment that holds the
-// whole page, exports markdown straight from the CRDT, and materialises a
-// migrated DocModel into an empty body atomically with the version flip.
-// Pairs with @connorhoehn/realtime-modules/adapters/tiptap (MacroNode,
-// HeadingAnchor, docModelToPm/pmToDocModel).
-var useCanvasDocument_1 = require("./useCanvasDocument");
-Object.defineProperty(exports, "useCanvasDocument", { enumerable: true, get: function () { return useCanvasDocument_1.useCanvasDocument; } });
-Object.defineProperty(exports, "canvasToDocModel", { enumerable: true, get: function () { return useCanvasDocument_1.canvasToDocModel; } });
-Object.defineProperty(exports, "canvasToMarkdown", { enumerable: true, get: function () { return useCanvasDocument_1.canvasToMarkdown; } });
-Object.defineProperty(exports, "CANVAS_BODY_KEY", { enumerable: true, get: function () { return useCanvasDocument_1.CANVAS_BODY_KEY; } });
 //# sourceMappingURL=index.js.map
