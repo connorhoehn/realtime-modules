@@ -140,7 +140,7 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",
-    "distributed-core": "github:connorhoehn/distributed-core#60599691376f47836c1491df10500072aaf9b6d7",
+    "distributed-core": "github:connorhoehn/distributed-core#d494c8aa5235fe6d23723e0fb9114f9d328ff11c",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
   },
