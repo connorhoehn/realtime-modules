@@ -152,3 +152,22 @@ export type {
   UseChannelFeatures,
   UseChannelResult,
 } from './useChannel';
+
+// v0.32.0 — useCanvasDocument: the Y.Doc ⇄ canvas binding. Gates on
+// meta.schemaVersion >= 2, exposes the single `body` XmlFragment that holds the
+// whole page, exports markdown straight from the CRDT, and materialises a
+// migrated DocModel into an empty body atomically with the version flip.
+// Pairs with @connorhoehn/realtime-modules/adapters/tiptap (MacroNode,
+// HeadingAnchor, docModelToPm/pmToDocModel).
+export {
+  useCanvasDocument,
+  canvasToDocModel,
+  canvasToMarkdown,
+  CANVAS_BODY_KEY,
+} from './useCanvasDocument';
+export type {
+  CanvasDocument,
+  UseCanvasDocumentOptions,
+  MaterializeResult,
+  PmSchemaLike,
+} from './useCanvasDocument';
