@@ -156,6 +156,28 @@ function makeWrapper(ctx: GatewayContextValue) {
   };
 }
 
+/**
+ * Starts an upload and resolves once its `request-upload` frame has actually
+ * been sent, returning the upload id.
+ *
+ * `upload()` builds the preview and measures the file BEFORE asking for a URL
+ * — deliberately, so the `fileupload:started` broadcast already carries the
+ * placeholder. That makes the send asynchronous, so reading `sent` on the
+ * line after `act()` races it and finds an empty array. Every test that needs
+ * the id must await the frame rather than assume it is there.
+ */
+async function startUpload(
+  result: { current: { upload: (f: File) => Promise<unknown> } },
+  sent: Record<string, unknown>[],
+  file: File,
+): Promise<string> {
+  const before = sent.length;
+  act(() => { void result.current.upload(file); });
+  const frameOf = () => sent.slice(before).find((s) => s.action === 'request-upload');
+  await waitFor(() => expect(frameOf()).toBeDefined());
+  return frameOf()!.id as string;
+}
+
 // ---------------------------------------------------------------------------
 // Minimal File stub
 // ---------------------------------------------------------------------------
@@ -213,7 +235,7 @@ describe('useFileUpload', () => {
     });
 
     const file = makeFile('report.pdf', 2048, 'application/pdf');
-    act(() => { void result.current.upload(file); });
+    await startUpload(result, sent, file);
 
     const frame = sent.find((s) => s.action === 'request-upload');
     expect(frame).toBeDefined();
@@ -231,10 +253,7 @@ describe('useFileUpload', () => {
     });
 
     const file = makeFile();
-    act(() => { void result.current.upload(file); });
-
-    const frame = sent.find((s) => s.action === 'request-upload')!;
-    const id = frame.id as string;
+    const id = await startUpload(result, sent, file);
 
     // Gateway responds with presigned URL.
     act(() => {
@@ -260,10 +279,7 @@ describe('useFileUpload', () => {
     });
 
     const file = makeFile();
-    act(() => { void result.current.upload(file); });
-
-    const frame = sent.find((s) => s.action === 'request-upload')!;
-    const id = frame.id as string;
+    const id = await startUpload(result, sent, file);
 
     act(() => {
       emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
@@ -296,9 +312,7 @@ describe('useFileUpload', () => {
     });
 
     const file = makeFile();
-    act(() => { void result.current.upload(file); });
-
-    const id = (sent.find((s) => s.action === 'request-upload')!.id) as string;
+    const id = await startUpload(result, sent, file);
 
     act(() => {
       emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
@@ -327,9 +341,7 @@ describe('useFileUpload', () => {
     });
 
     const file = makeFile();
-    act(() => { void result.current.upload(file); });
-
-    const id = (sent.find((s) => s.action === 'request-upload')!.id) as string;
+    const id = await startUpload(result, sent, file);
 
     act(() => {
       emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
@@ -355,10 +367,14 @@ describe('useFileUpload', () => {
     const file = makeFile();
     let uploadError: unknown;
     act(() => {
+      // Not `startUpload` here: this test needs the promise itself to assert
+      // the rejection, so it keeps the handle and waits for the frame inline.
       result.current.upload(file).catch((e) => { uploadError = e; });
     });
 
-    const id = (sent.find((s) => s.action === 'request-upload')!.id) as string;
+    const frameOf = () => sent.find((s) => s.action === 'request-upload');
+    await waitFor(() => expect(frameOf()).toBeDefined());
+    const id = frameOf()!.id as string;
 
     act(() => {
       emit({ type: 'fileupload:failed', channel: 'ch-1', id, error: 'Storage quota exceeded' } as unknown as GatewayMessage);
@@ -376,9 +392,7 @@ describe('useFileUpload', () => {
     });
 
     const file = makeFile();
-    act(() => { void result.current.upload(file); });
-
-    const id = (sent.find((s) => s.action === 'request-upload')!.id) as string;
+    const id = await startUpload(result, sent, file);
 
     act(() => {
       emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
@@ -404,11 +418,10 @@ describe('useFileUpload', () => {
     // Upload two files.
     const file1 = makeFile('a.txt');
     const file2 = makeFile('b.txt');
-    act(() => { void result.current.upload(file1); });
-    act(() => { void result.current.upload(file2); });
-
-    const id1 = (sent.filter((s) => s.action === 'request-upload')[0]!.id) as string;
-    const id2 = (sent.filter((s) => s.action === 'request-upload')[1]!.id) as string;
+    // Sequential, not concurrent: each helper waits for its own frame, which
+    // also pins the ids to the files that produced them.
+    const id1 = await startUpload(result, sent, file1);
+    const id2 = await startUpload(result, sent, file2);
 
     // Complete file1, leave file2 pending.
     act(() => {
