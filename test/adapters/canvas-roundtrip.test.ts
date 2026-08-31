@@ -62,7 +62,11 @@ describe('canvas round trip: markdown ⇄ ProseMirror', () => {
         '',
         '```macro:action-item',
         'assignee: alice@example.dev',
-        'dueDate: 2026-09-01',
+        // Quoted on purpose. `dueDate` holds a STRING, and YAML reads a bare
+        // 2026-09-01 back as a Date object — so the quotes are what preserve
+        // the type across a save. Canonical output quotes it; an unquoted
+        // input is simply not a fixed point.
+        "dueDate: '2026-09-01'",
         'id: ai-1',
         'priority: high',
         'status: pending',
@@ -88,7 +92,7 @@ describe('canvas round trip: markdown ⇄ ProseMirror', () => {
         'fieldType: date',
         'key: review-date',
         'label: Review date',
-        'value: 2026-09-15',
+        "value: '2026-09-15'", // same date-vs-string reason as dueDate above
         '```',
         '',
       ].join('\n'),
@@ -142,7 +146,11 @@ describe('canvas round trip: markdown ⇄ ProseMirror', () => {
   });
 
   it('round-trips lists, including a list that mixes tasks and bullets', () => {
-    expectFixedPoint('- one\n- two\n  - nested\n');
+    // The blank line before the nested list is canonical output, not a typo:
+    // the chassis emits a sublist as its own block. Writing the tight form
+    // here would only assert that the CHASSIS normalises, which its own suite
+    // already covers — this file is here to test the editor leg.
+    expectFixedPoint('- one\n- two\n\n  - nested\n');
     expectFixedPoint('1. first\n2. second\n');
     // ProseMirror has separate taskList and bulletList nodes and cannot hold a
     // mixed list in one node; the model can. The split-and-remerge is what
@@ -154,7 +162,10 @@ describe('canvas round trip: markdown ⇄ ProseMirror', () => {
     expectFixedPoint('```sql\nselect 1;\n```\n');
     expectFixedPoint('```\nbare fence\n```\n');
     expectFixedPoint('> quoted\n>\n> two paragraphs\n');
-    expectFixedPoint('before\n\n---\n\nafter\n');
+    // `***`, not `---`: the chassis emits `***` for a thematic break so it can
+    // never be confused with the front-matter fence or a setext underline.
+    // `---` parses fine as input, it just is not what comes back out.
+    expectFixedPoint('before\n\n***\n\nafter\n');
   });
 
   it('preserves front matter through the editor leg untouched', () => {
@@ -172,7 +183,13 @@ describe('canvas round trip: markdown ⇄ ProseMirror', () => {
       expect.objectContaining({ kind: 'table' }),
     ]);
     expect(doc.content?.[0]?.type).toBe('codeBlock');
-    expect(doc.content?.[0]?.content?.[0]?.text).toContain('| a | b |');
+    // Assert the DATA survived, not one particular spelling of it. The chassis
+    // pads table cells to a common width, so a literal '| a | b |' check fails
+    // on formatting while the content is perfectly intact — which says nothing
+    // about data loss, the thing this test exists to catch. Re-parsing the
+    // preserved text must give back the original table.
+    const preserved = doc.content?.[0]?.content?.[0]?.text ?? '';
+    expect(parseDocument(preserved).content).toEqual(model.content);
   });
 });
 
