@@ -171,3 +171,23 @@ export type {
   MaterializeResult,
   PmSchemaLike,
 } from './useCanvasDocument';
+
+// v0.32.0 — useDictation: push-to-talk dictation where the transcript returns
+// on the SAME request that carried the audio, instead of looping back through
+// Redis and the gateway's caption fan-out.
+//
+// Measured on one 3.6 s utterance against the same resident model: 418 ms from
+// key release to transcript, versus 1558 ms via the caption path — which also
+// cut the sentence in half at its 3.0 s window boundary. Captions are a
+// broadcast to a room; dictation is one person waiting for one answer, so it
+// gets a request/response transport. See useDictation.ts for the full argument.
+//
+// Pairs with the live-captions sidecar's /dictate/{pcm,end,cancel} routes and
+// reuses client/voice's PcmRecorder + contextFrame ladder unchanged.
+export { useDictation } from './useDictation';
+export type {
+  DictationState,
+  MicPermission,
+  UseDictationOptions,
+  UseDictationResult,
+} from './useDictation';

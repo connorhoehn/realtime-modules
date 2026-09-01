@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -102,4 +102,18 @@ Object.defineProperty(exports, "useCanvasDocument", { enumerable: true, get: fun
 Object.defineProperty(exports, "canvasToDocModel", { enumerable: true, get: function () { return useCanvasDocument_1.canvasToDocModel; } });
 Object.defineProperty(exports, "canvasToMarkdown", { enumerable: true, get: function () { return useCanvasDocument_1.canvasToMarkdown; } });
 Object.defineProperty(exports, "CANVAS_BODY_KEY", { enumerable: true, get: function () { return useCanvasDocument_1.CANVAS_BODY_KEY; } });
+// v0.32.0 — useDictation: push-to-talk dictation where the transcript returns
+// on the SAME request that carried the audio, instead of looping back through
+// Redis and the gateway's caption fan-out.
+//
+// Measured on one 3.6 s utterance against the same resident model: 418 ms from
+// key release to transcript, versus 1558 ms via the caption path — which also
+// cut the sentence in half at its 3.0 s window boundary. Captions are a
+// broadcast to a room; dictation is one person waiting for one answer, so it
+// gets a request/response transport. See useDictation.ts for the full argument.
+//
+// Pairs with the live-captions sidecar's /dictate/{pcm,end,cancel} routes and
+// reuses client/voice's PcmRecorder + contextFrame ladder unchanged.
+var useDictation_1 = require("./useDictation");
+Object.defineProperty(exports, "useDictation", { enumerable: true, get: function () { return useDictation_1.useDictation; } });
 //# sourceMappingURL=index.js.map

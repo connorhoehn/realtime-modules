@@ -43,4 +43,6 @@ export { useChannel } from './useChannel';
 export type { UseChannelOptions, UseChannelFeatures, UseChannelResult, } from './useChannel';
 export { useCanvasDocument, canvasToDocModel, canvasToMarkdown, CANVAS_BODY_KEY, } from './useCanvasDocument';
 export type { CanvasDocument, UseCanvasDocumentOptions, MaterializeResult, PmSchemaLike, } from './useCanvasDocument';
+export { useDictation } from './useDictation';
+export type { DictationState, MicPermission, UseDictationOptions, UseDictationResult, } from './useDictation';
 //# sourceMappingURL=index.d.ts.map
