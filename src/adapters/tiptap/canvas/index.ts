@@ -78,6 +78,12 @@ export type { CanvasLinkOptions } from './schema/link';
 // would have to edit the prose to remove it.
 export { CommentHighlight } from './CommentHighlight';
 export { CANVAS_COMMENT_CLASS, commentHighlightPluginKey } from './CommentHighlight';
+// The write direction: a ProseMirror selection as the plain-text range
+// `createAnchor` wants. Lives beside the painting code so both directions walk
+// one segment table — see `plainRangeFromPm`.
+// ...and the read direction, for a consumer that has to place something of its
+// own (a gutter card) beside the anchored text.
+export { plainRangeFromPm, pmRangesFromPlain } from './CommentHighlight';
 export type {
   CommentHighlightOptions,
   CommentHighlightRef,
@@ -92,4 +98,4 @@ export {
   canvasPlainText,
   isCanvasAnchor,
 } from './anchors';
-export type { CanvasAnchor } from './anchors';
+export type { CanvasAnchor, AnchorRange } from './anchors';

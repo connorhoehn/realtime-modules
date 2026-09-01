@@ -14,7 +14,8 @@ export { CanvasLink, CANVAS_STARTER_KIT_OPTIONS, DANGEROUS_SCHEMES, sanitizeHref
 export type { CanvasLinkOptions } from './schema/link';
 export { CommentHighlight } from './CommentHighlight';
 export { CANVAS_COMMENT_CLASS, commentHighlightPluginKey } from './CommentHighlight';
+export { plainRangeFromPm, pmRangesFromPlain } from './CommentHighlight';
 export type { CommentHighlightOptions, CommentHighlightRef, CommentHighlightState, } from './CommentHighlight';
 export { createAnchor, resolveAnchor, anchorText, canvasPlainText, isCanvasAnchor, } from './anchors';
-export type { CanvasAnchor } from './anchors';
+export type { CanvasAnchor, AnchorRange } from './anchors';
 //# sourceMappingURL=index.d.ts.map

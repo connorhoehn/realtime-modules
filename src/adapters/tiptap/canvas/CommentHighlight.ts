@@ -86,7 +86,7 @@ import type { Node as PmDocNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import type { Doc as YDoc } from 'yjs';
-import { isCanvasAnchor, resolveAnchor, type CanvasAnchor } from './anchors';
+import { isCanvasAnchor, resolveAnchor, type AnchorRange, type CanvasAnchor } from './anchors';
 
 /** Base class on every painted range. See the class contract above. */
 export const CANVAS_COMMENT_CLASS = 'canvas-comment';
@@ -251,6 +251,74 @@ function toPmRanges(
     else ranges.push({ from: start, to: end });
   }
   return ranges;
+}
+
+/**
+ * A resolved anchor's plain-text range as ProseMirror ranges — the direction a
+ * consumer needs to point at the anchored text with something other than a
+ * decoration.
+ *
+ * The gutter is the caller this exists for. It has to put a thread card beside
+ * the sentence it is about, which means turning a resolved anchor into a
+ * SCREEN offset, which means `view.coordsAtPos(...)` — and `coordsAtPos` wants
+ * a ProseMirror position, not a plain-text one.
+ *
+ * Exported rather than reimplemented in the app for the reason the whole file
+ * is written around: two independent conversions between these two number
+ * lines are two chances to disagree, and when they disagree the highlight and
+ * the gutter card point at different sentences. Same walk, same table, one
+ * answer.
+ *
+ * Several ranges, not one, whenever the anchor crosses a block boundary —
+ * usually the caller only wants `[0].from`, but the boundary genuinely is not
+ * text and pretending otherwise is how the off-by-N comes back.
+ */
+export function pmRangesFromPlain(
+  doc: PmDocNode,
+  from: number,
+  to: number,
+): Array<{ from: number; to: number }> {
+  return toPmRanges(textSegments(doc), from, to);
+}
+
+/**
+ * A ProseMirror range as a plain-text range — the direction `createAnchor` needs.
+ *
+ * `toPmRanges` exists so a stored anchor can be PAINTED; this is its inverse,
+ * and without it nothing can ever WRITE an anchor. A user selects words in the
+ * editor and ProseMirror reports that selection in its own position space; an
+ * anchor is defined in the plain-text space of `anchors.ts`. Subtracting a
+ * constant does not convert between them — the gap grows by two at every block
+ * boundary — so the conversion has to walk the same segment table the painting
+ * side does. Sharing that table is the point: two independent walks would be
+ * two chances to disagree, and a disagreement here means the highlight lands on
+ * different words than the anchor claims.
+ *
+ * Returns `null` for a selection that covers no text at all — a caret, a lone
+ * image, the gap between two paragraphs. That is not a failure; it is the
+ * caller's cue that there is nothing here to comment ON, and it is why the
+ * "Comment" affordance can be disabled from this one call.
+ *
+ * The result is a single contiguous range even when the selection crosses
+ * blocks, because block boundaries contribute no characters to the plain text:
+ * the paragraph break between two selected sentences simply is not there on
+ * this number line.
+ */
+export function plainRangeFromPm(doc: PmDocNode, from: number, to: number): AnchorRange | null {
+  if (to <= from) return null;
+  let start: number | null = null;
+  let end: number | null = null;
+  for (const segment of textSegments(doc)) {
+    const segmentEnd = segment.pm + segment.length;
+    if (segmentEnd <= from) continue;
+    if (segment.pm >= to) break; // segments are in document order
+    // First touched segment fixes the start; every touched segment moves the
+    // end, so the last one wins.
+    if (start === null) start = segment.plain + Math.max(from - segment.pm, 0);
+    end = segment.plain + Math.min(to, segmentEnd) - segment.pm;
+  }
+  if (start === null || end === null || end <= start) return null;
+  return { from: start, to: end };
 }
 
 /**

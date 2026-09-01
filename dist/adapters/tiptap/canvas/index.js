@@ -12,7 +12,7 @@
 // Anything needing a Y.Doc, a ProseMirror view or a browser does not belong in
 // the chassis. Everything here needs at least one of the three.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isCanvasAnchor = exports.canvasPlainText = exports.anchorText = exports.resolveAnchor = exports.createAnchor = exports.commentHighlightPluginKey = exports.CANVAS_COMMENT_CLASS = exports.CommentHighlight = exports.linkHrefFromPastedText = exports.linkTagAttributes = exports.sanitizeHref = exports.DANGEROUS_SCHEMES = exports.CANVAS_STARTER_KIT_OPTIONS = exports.CanvasLink = exports.textAlignStyle = exports.parseTextAlign = exports.isTextAlignment = exports.TEXT_ALIGNMENTS = exports.CanvasTextAlign = exports.normalizeCalloutVariant = exports.CALLOUT_INPUT_RULE = exports.CALLOUT_VARIANTS = exports.CALLOUT_MACRO_NAME = exports.CALLOUT_NODE_NAME = exports.Callout = exports.MARKDOWN_CLIPBOARD_KEY = exports.looksLikeMarkdown = exports.MarkdownClipboard = exports.pmToDocModel = exports.docModelToPm = exports.minimalEdit = exports.macroDataFromText = exports.macroTextFromData = exports.HeadingAnchor = exports.readMacroNode = exports.MACRO_NODE_NAME = exports.MacroNode = void 0;
+exports.isCanvasAnchor = exports.canvasPlainText = exports.anchorText = exports.resolveAnchor = exports.createAnchor = exports.pmRangesFromPlain = exports.plainRangeFromPm = exports.commentHighlightPluginKey = exports.CANVAS_COMMENT_CLASS = exports.CommentHighlight = exports.linkHrefFromPastedText = exports.linkTagAttributes = exports.sanitizeHref = exports.DANGEROUS_SCHEMES = exports.CANVAS_STARTER_KIT_OPTIONS = exports.CanvasLink = exports.textAlignStyle = exports.parseTextAlign = exports.isTextAlignment = exports.TEXT_ALIGNMENTS = exports.CanvasTextAlign = exports.normalizeCalloutVariant = exports.CALLOUT_INPUT_RULE = exports.CALLOUT_VARIANTS = exports.CALLOUT_MACRO_NAME = exports.CALLOUT_NODE_NAME = exports.Callout = exports.MARKDOWN_CLIPBOARD_KEY = exports.looksLikeMarkdown = exports.MarkdownClipboard = exports.pmToDocModel = exports.docModelToPm = exports.minimalEdit = exports.macroDataFromText = exports.macroTextFromData = exports.HeadingAnchor = exports.readMacroNode = exports.MACRO_NODE_NAME = exports.MacroNode = void 0;
 var MacroNode_1 = require("./MacroNode");
 Object.defineProperty(exports, "MacroNode", { enumerable: true, get: function () { return MacroNode_1.MacroNode; } });
 Object.defineProperty(exports, "MACRO_NODE_NAME", { enumerable: true, get: function () { return MacroNode_1.MACRO_NODE_NAME; } });
@@ -76,6 +76,14 @@ Object.defineProperty(exports, "CommentHighlight", { enumerable: true, get: func
 var CommentHighlight_2 = require("./CommentHighlight");
 Object.defineProperty(exports, "CANVAS_COMMENT_CLASS", { enumerable: true, get: function () { return CommentHighlight_2.CANVAS_COMMENT_CLASS; } });
 Object.defineProperty(exports, "commentHighlightPluginKey", { enumerable: true, get: function () { return CommentHighlight_2.commentHighlightPluginKey; } });
+// The write direction: a ProseMirror selection as the plain-text range
+// `createAnchor` wants. Lives beside the painting code so both directions walk
+// one segment table — see `plainRangeFromPm`.
+// ...and the read direction, for a consumer that has to place something of its
+// own (a gutter card) beside the anchored text.
+var CommentHighlight_3 = require("./CommentHighlight");
+Object.defineProperty(exports, "plainRangeFromPm", { enumerable: true, get: function () { return CommentHighlight_3.plainRangeFromPm; } });
+Object.defineProperty(exports, "pmRangesFromPlain", { enumerable: true, get: function () { return CommentHighlight_3.pmRangesFromPlain; } });
 // Anchors — what a comment refers to, surviving edits by collaborators.
 var anchors_1 = require("./anchors");
 Object.defineProperty(exports, "createAnchor", { enumerable: true, get: function () { return anchors_1.createAnchor; } });
