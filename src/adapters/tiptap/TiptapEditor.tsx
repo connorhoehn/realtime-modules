@@ -344,6 +344,32 @@ export default function TiptapEditor({
     editable,
   }, [allExtensions]);
 
+  // `editable` above only applies at CONSTRUCTION. Pushing it onto a live
+  // editor is this effect's whole job, and without it finalizing a document
+  // was cosmetic for anyone who already had the page open: the banner said
+  // read-only while the caret kept working, and the lock only took hold on a
+  // reload.
+  //
+  // Three things stack up to make the prop alone insufficient:
+  //   - useEditor is called with a NON-EMPTY deps array, and @tiptap/react
+  //     only pushes changed options onto a live editor when deps is empty;
+  //     otherwise it early-returns when the deps have not changed.
+  //   - even on the empty-deps path Tiptap deliberately pins
+  //     `editable: this.editor.isEditable`, so it never syncs this option
+  //     from props by design.
+  //   - callers key their lists on the section id, so nothing remounts.
+  //
+  // NOTE ON SCOPE: this stops LOCAL input. It does not make the document
+  // read-only — ySync applies remote updates by dispatching transactions
+  // programmatically, and ProseMirror's `editable` gates user input, not
+  // dispatch. A collaborator on an older client, or the still-live mutation
+  // API, can change a finalized document regardless. Real enforcement has to
+  // be server-side.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    if (editor.isEditable !== editable) editor.setEditable(editable);
+  }, [editor, editable]);
+
   // ---- Custom cursor overlay using awareness directly ----
   const [remoteCursors, setRemoteCursors] = useState<RemoteCursorInfo[]>([]);
   const editorAreaRef = useRef<HTMLDivElement>(null);
