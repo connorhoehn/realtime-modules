@@ -22,3 +22,7 @@ export {
 export type { TextRangeEdit } from './macroText';
 export { docModelToPm, pmToDocModel } from './pmModel';
 export type { PmNode, PmMark, ToPmResult, UnsupportedForm } from './pmModel';
+
+// Markdown on the clipboard — the direction that makes "markdown-native"
+// observable. Paste a markdown file in, copy a heading out AS a heading.
+export { MarkdownClipboard, looksLikeMarkdown, MARKDOWN_CLIPBOARD_KEY } from './MarkdownClipboard';
