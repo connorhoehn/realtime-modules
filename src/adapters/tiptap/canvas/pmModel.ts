@@ -37,6 +37,11 @@ import type {
 import { serializeDocument } from 'distributed-core/applications/document';
 import { MACRO_NODE_NAME } from './MacroNode';
 import { macroDataFromText, macroTextFromData } from './macroText';
+import {
+  CALLOUT_MACRO_NAME,
+  CALLOUT_NODE_NAME,
+  normalizeCalloutVariant,
+} from './schema/callout';
 
 // ---------------------------------------------------------------------------
 // ProseMirror JSON shapes (structural — we never import prosemirror-model here,
@@ -214,11 +219,35 @@ function blockToPm(block: Block, unsupported: UnsupportedForm[]): PmNode {
           ? {}
           : { content: [{ type: 'text', text: block.value.replace(/\n$/, '') }] }),
       };
-    case 'blockquote':
+    case 'blockquote': {
+      // A callout is stored as a blockquote whose FIRST child is a
+      // `macro:callout` marker (see `schema/callout.ts` for why that shape and
+      // not `:::info`). Recognising it here is what stops the panel from
+      // evaporating: without this case the marker becomes a visible macro node
+      // and the variant is only recoverable by reading YAML off screen.
+      const [marker, ...body] = block.content;
+      // `body.length > 0` on purpose. A marker with nothing after it has no
+      // panel to draw, and turning it into a `callout` would force ProseMirror
+      // to invent the empty paragraph its `block+` content demands — which
+      // comes back as a paragraph the author never typed, breaking the fixed
+      // point for a document that is already one today.
+      if (
+        marker !== undefined &&
+        marker.type === 'macro' &&
+        marker.name === CALLOUT_MACRO_NAME &&
+        body.length > 0
+      ) {
+        return {
+          type: CALLOUT_NODE_NAME,
+          attrs: { variant: normalizeCalloutVariant(marker.data.variant) },
+          content: blocksToPm(body, unsupported),
+        };
+      }
       return {
         type: 'blockquote',
         content: blocksToPm(block.content, unsupported),
       };
+    }
     case 'thematicBreak':
       return { type: 'horizontalRule' };
     case 'macro': {
@@ -451,6 +480,24 @@ function pmBlocksToModel(nodes: PmNode[] | undefined): Block[] {
       }
       case 'blockquote':
         out.push({ type: 'blockquote', content: pmBlocksToModel(node.content) });
+        break;
+      case CALLOUT_NODE_NAME:
+        // The exact inverse of the `blockquote` case in `blockToPm`: re-emit
+        // the marker leaf ahead of the body. `normalizeCalloutVariant` runs
+        // again rather than trusting the attribute, because a CRDT merge or a
+        // direct Y.Doc write can put an arbitrary string there and this is the
+        // last point before it is written to a file.
+        out.push({
+          type: 'blockquote',
+          content: [
+            {
+              type: 'macro',
+              name: CALLOUT_MACRO_NAME,
+              data: { variant: normalizeCalloutVariant(node.attrs?.variant) },
+            },
+            ...pmBlocksToModel(node.content),
+          ],
+        });
         break;
       case 'horizontalRule':
         out.push({ type: 'thematicBreak' });

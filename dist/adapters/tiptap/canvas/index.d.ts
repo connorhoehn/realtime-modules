@@ -6,4 +6,10 @@ export type { TextRangeEdit } from './macroText';
 export { docModelToPm, pmToDocModel } from './pmModel';
 export type { PmNode, PmMark, ToPmResult, UnsupportedForm } from './pmModel';
 export { MarkdownClipboard, looksLikeMarkdown, MARKDOWN_CLIPBOARD_KEY } from './MarkdownClipboard';
+export { Callout, CALLOUT_NODE_NAME, CALLOUT_MACRO_NAME, CALLOUT_VARIANTS, CALLOUT_INPUT_RULE, normalizeCalloutVariant, } from './schema/callout';
+export type { CalloutVariant, CalloutOptions } from './schema/callout';
+export { CanvasTextAlign, TEXT_ALIGNMENTS, isTextAlignment, parseTextAlign, textAlignStyle, } from './schema/textAlign';
+export type { TextAlignment, CanvasTextAlignOptions } from './schema/textAlign';
+export { CanvasLink, CANVAS_STARTER_KIT_OPTIONS, DANGEROUS_SCHEMES, sanitizeHref, linkTagAttributes, linkHrefFromPastedText, } from './schema/link';
+export type { CanvasLinkOptions } from './schema/link';
 //# sourceMappingURL=index.d.ts.map

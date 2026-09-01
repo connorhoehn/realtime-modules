@@ -34,6 +34,7 @@ exports.pmToDocModel = pmToDocModel;
 const document_1 = require("distributed-core/applications/document");
 const MacroNode_1 = require("./MacroNode");
 const macroText_1 = require("./macroText");
+const callout_1 = require("./schema/callout");
 // `code` must be innermost: `inlineCode` is a LEAF in the chassis model, so any
 // mark that survives alongside it has to wrap it. `link` is outermost because
 // markdown cannot express a link inside emphasis inside the same run without
@@ -169,11 +170,33 @@ function blockToPm(block, unsupported) {
                     ? {}
                     : { content: [{ type: 'text', text: block.value.replace(/\n$/, '') }] }),
             };
-        case 'blockquote':
+        case 'blockquote': {
+            // A callout is stored as a blockquote whose FIRST child is a
+            // `macro:callout` marker (see `schema/callout.ts` for why that shape and
+            // not `:::info`). Recognising it here is what stops the panel from
+            // evaporating: without this case the marker becomes a visible macro node
+            // and the variant is only recoverable by reading YAML off screen.
+            const [marker, ...body] = block.content;
+            // `body.length > 0` on purpose. A marker with nothing after it has no
+            // panel to draw, and turning it into a `callout` would force ProseMirror
+            // to invent the empty paragraph its `block+` content demands — which
+            // comes back as a paragraph the author never typed, breaking the fixed
+            // point for a document that is already one today.
+            if (marker !== undefined &&
+                marker.type === 'macro' &&
+                marker.name === callout_1.CALLOUT_MACRO_NAME &&
+                body.length > 0) {
+                return {
+                    type: callout_1.CALLOUT_NODE_NAME,
+                    attrs: { variant: (0, callout_1.normalizeCalloutVariant)(marker.data.variant) },
+                    content: blocksToPm(body, unsupported),
+                };
+            }
             return {
                 type: 'blockquote',
                 content: blocksToPm(block.content, unsupported),
             };
+        }
         case 'thematicBreak':
             return { type: 'horizontalRule' };
         case 'macro': {
@@ -378,6 +401,24 @@ function pmBlocksToModel(nodes) {
             }
             case 'blockquote':
                 out.push({ type: 'blockquote', content: pmBlocksToModel(node.content) });
+                break;
+            case callout_1.CALLOUT_NODE_NAME:
+                // The exact inverse of the `blockquote` case in `blockToPm`: re-emit
+                // the marker leaf ahead of the body. `normalizeCalloutVariant` runs
+                // again rather than trusting the attribute, because a CRDT merge or a
+                // direct Y.Doc write can put an arbitrary string there and this is the
+                // last point before it is written to a file.
+                out.push({
+                    type: 'blockquote',
+                    content: [
+                        {
+                            type: 'macro',
+                            name: callout_1.CALLOUT_MACRO_NAME,
+                            data: { variant: (0, callout_1.normalizeCalloutVariant)(node.attrs?.variant) },
+                        },
+                        ...pmBlocksToModel(node.content),
+                    ],
+                });
                 break;
             case 'horizontalRule':
                 out.push({ type: 'thematicBreak' });
