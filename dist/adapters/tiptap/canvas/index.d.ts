@@ -12,4 +12,9 @@ export { CanvasTextAlign, TEXT_ALIGNMENTS, isTextAlignment, parseTextAlign, text
 export type { TextAlignment, CanvasTextAlignOptions } from './schema/textAlign';
 export { CanvasLink, CANVAS_STARTER_KIT_OPTIONS, DANGEROUS_SCHEMES, sanitizeHref, linkTagAttributes, linkHrefFromPastedText, } from './schema/link';
 export type { CanvasLinkOptions } from './schema/link';
+export { CommentHighlight } from './CommentHighlight';
+export { CANVAS_COMMENT_CLASS, commentHighlightPluginKey } from './CommentHighlight';
+export type { CommentHighlightOptions, CommentHighlightRef, CommentHighlightState, } from './CommentHighlight';
+export { createAnchor, resolveAnchor, anchorText, canvasPlainText, isCanvasAnchor, } from './anchors';
+export type { CanvasAnchor } from './anchors';
 //# sourceMappingURL=index.d.ts.map

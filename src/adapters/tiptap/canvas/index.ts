@@ -71,3 +71,25 @@ export {
   linkHrefFromPastedText,
 } from './schema/link';
 export type { CanvasLinkOptions } from './schema/link';
+
+// Comment decorations — seeing WHERE the comments are, in the text itself.
+// A view concern, never a stored mark: a mark would write comment state into
+// the document and therefore into the markdown file, and deleting a comment
+// would have to edit the prose to remove it.
+export { CommentHighlight } from './CommentHighlight';
+export { CANVAS_COMMENT_CLASS, commentHighlightPluginKey } from './CommentHighlight';
+export type {
+  CommentHighlightOptions,
+  CommentHighlightRef,
+  CommentHighlightState,
+} from './CommentHighlight';
+
+// Anchors — what a comment refers to, surviving edits by collaborators.
+export {
+  createAnchor,
+  resolveAnchor,
+  anchorText,
+  canvasPlainText,
+  isCanvasAnchor,
+} from './anchors';
+export type { CanvasAnchor } from './anchors';
