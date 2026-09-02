@@ -21,7 +21,44 @@ export interface DiagramElement {
     isDeleted?: boolean;
     [key: string]: unknown;
 }
-/** Awareness payload published under the top-level `diagram` key. */
+/** Local identity as it should be labelled on a peer's canvas. */
+export interface DiagramIdentity {
+    /** Stable identity (Cognito sub) when the host has one. */
+    userId?: string;
+    displayName: string;
+    /** Hex colour. The host supplies it so one person is one colour everywhere. */
+    color: string;
+}
+/**
+ * Awareness payload published under the top-level `diagram` key.
+ *
+ * ## This is ONE object, written whole
+ *
+ * `setLocalStateField` replaces the value at a key — it does not merge into it.
+ * So every field a peer needs has to be present on every write, and the hook
+ * keeps a local mirror it merges partial updates into before publishing. The
+ * earlier code wrote `{ pointer, button }` from the pointer handler and
+ * `{ selectedElementIds }` from the change handler, and the two clobbered each
+ * other several times a second: whichever fired last won, so a peer's cursor
+ * vanished the moment they selected something and their selection vanished the
+ * moment they moved the mouse.
+ *
+ * ## It carries identity, deliberately
+ *
+ * `useAwarenessState` publishes `user` on the same awareness state and is its
+ * single writer, so the obvious move is to read a peer's name and colour from
+ * there. That works in a DOCUMENT, which mounts `useAwarenessState`, and fails
+ * on the STANDALONE board, which builds its own provider and has no
+ * `useAwarenessState` at all — every peer renders as "Anonymous" in the default
+ * blue.
+ *
+ * Carrying identity here fixes the standalone case without breaking the
+ * single-writer rule, and costs almost nothing: `GatewayProvider` encodes the
+ * ENTIRE local awareness state on every flush (`encodeAwarenessUpdate` JSON
+ * -stringifies the whole thing rather than sending a delta), so in a document
+ * the `user` object is already on every frame this adds ~40 bytes to.
+ * Readers prefer this field and fall back to `user`.
+ */
 export interface DiagramPresence {
     /**
      * Which diagram on the page this pointer belongs to. A page-level Y.Doc
@@ -29,6 +66,8 @@ export interface DiagramPresence {
      * pointer has to say which canvas it is over.
      */
     blockId: string;
+    /** Who this is. See the note above on why it rides the diagram key. */
+    user?: DiagramIdentity;
     pointer?: {
         x: number;
         y: number;
@@ -36,8 +75,19 @@ export interface DiagramPresence {
     };
     button?: 'up' | 'down';
     selectedElementIds?: Record<string, boolean>;
+    /**
+     * Liveness stamp, epoch ms, refreshed by the heartbeat.
+     *
+     * Exists because nothing else tells a peer you are gone promptly. The
+     * gateway does not broadcast an awareness removal when a socket drops
+     * (`CRDTService.onClientDisconnect` clears only its own bookkeeping), so a
+     * closed tab would otherwise sit on everyone's canvas until y-protocols'
+     * own 30s `outdatedTimeout` sweep noticed. Readers drop a peer whose stamp
+     * has gone stale. See `PRESENCE_STALE_MS`.
+     */
+    t?: number;
 }
-/** One remote participant, resolved from awareness into render-ready shape. */
+/** One participant on the board, resolved from awareness into render-ready shape. */
 export interface DiagramCollaborator {
     /** Yjs awareness clientID, stringified. Stable for the socket's lifetime. */
     clientId: string;
@@ -52,5 +102,7 @@ export interface DiagramCollaborator {
     };
     button?: 'up' | 'down';
     selectedElementIds?: Record<string, boolean>;
+    /** True for the local user. Only ever set on entries in `participants`. */
+    isSelf?: boolean;
 }
 //# sourceMappingURL=types.d.ts.map

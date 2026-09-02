@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { ExcalidrawYjsBinding } from './ExcalidrawYjsBinding';
-import type { DiagramCollaborator, DiagramElement, DiagramPresence } from './types';
+import type { DiagramCollaborator, DiagramElement, DiagramIdentity, DiagramPresence } from './types';
 /**
  * Structural view of a `y-protocols` Awareness instance.
  *
@@ -32,11 +32,7 @@ export interface UseCollaborativeDiagramOptions {
      */
     blockId?: string;
     /** Local identity, echoed to peers so they can label your cursor. */
-    user?: {
-        userId?: string;
-        displayName: string;
-        color: string;
-    };
+    user?: DiagramIdentity;
     /**
      * Fires when REMOTE changes land. Never fires for this client's own
      * `commitLocal` writes, so there is no echo to guard against.
@@ -49,12 +45,26 @@ export interface UseCollaborativeDiagramReturn {
     ready: boolean;
     /** Remote participants over THIS diagram, self excluded. */
     collaborators: DiagramCollaborator[];
+    /**
+     * Everyone on this board INCLUDING the local user, self first.
+     *
+     * This is what a "who is here" list wants. `collaborators` is what
+     * Excalidraw's collaborator map wants — it draws your own cursor from your
+     * own pointer and would render a duplicate if you were in it.
+     */
+    participants: DiagramCollaborator[];
     /** Push the local scene into the shared doc. Safe to call every onChange. */
     commitLocal: (elements: readonly DiagramElement[]) => void;
-    /** Publish the local pointer. Throttled internally. */
-    publishPointer: (presence: Omit<DiagramPresence, 'blockId'>) => void;
+    /**
+     * Publish local presence. Fields are MERGED over the last published record,
+     * so a pointer update does not erase the selection and vice versa.
+     * Throttled internally.
+     */
+    publishPresence: (patch: DiagramPresencePatch) => void;
     /** Current shared scene, in z-order. */
     readAll: () => DiagramElement[];
 }
+/** The fields a caller may update. `blockId`, `user` and `t` are the hook's. */
+export type DiagramPresencePatch = Partial<Pick<DiagramPresence, 'pointer' | 'button' | 'selectedElementIds'>>;
 export declare function useCollaborativeDiagram(options: UseCollaborativeDiagramOptions): UseCollaborativeDiagramReturn;
 //# sourceMappingURL=useCollaborativeDiagram.d.ts.map

@@ -21,12 +21,14 @@ export {
 } from './useCollaborativeDiagram';
 export type {
     AwarenessLike,
+    DiagramPresencePatch,
     UseCollaborativeDiagramOptions,
     UseCollaborativeDiagramReturn,
 } from './useCollaborativeDiagram';
 
 export type {
     DiagramElement,
+    DiagramIdentity,
     DiagramPresence,
     DiagramCollaborator,
 } from './types';
