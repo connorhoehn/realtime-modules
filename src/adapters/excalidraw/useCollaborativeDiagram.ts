@@ -184,7 +184,7 @@ export interface UseCollaborativeDiagramReturn {
 
 /** The fields a caller may update. `blockId`, `user` and `t` are the hook's. */
 export type DiagramPresencePatch = Partial<
-    Pick<DiagramPresence, 'pointer' | 'button' | 'selectedElementIds'>
+    Pick<DiagramPresence, 'pointer' | 'button' | 'selectedElementIds' | 'viewport'>
 >;
 
 /** Per-peer liveness bookkeeping. Local clock only — see PRESENCE_STALE_MS. */
@@ -434,6 +434,7 @@ export function useCollaborativeDiagram(
                     pointer: diagram.pointer,
                     button: diagram.button,
                     selectedElementIds: diagram.selectedElementIds,
+                    viewport: diagram.viewport,
                 });
             });
 
@@ -522,7 +523,13 @@ function sameCollaborators(a: DiagramCollaborator[], b: DiagramCollaborator[]): 
             x.button !== y.button ||
             x.pointer?.x !== y.pointer?.x ||
             x.pointer?.y !== y.pointer?.y ||
-            x.pointer?.tool !== y.pointer?.tool
+            x.pointer?.tool !== y.pointer?.tool ||
+            // Without this a pure scroll or zoom — no pointer movement — is
+            // judged "no change" and never reaches a follower, which is the
+            // exact case follow mode exists to cover.
+            x.viewport?.scrollX !== y.viewport?.scrollX ||
+            x.viewport?.scrollY !== y.viewport?.scrollY ||
+            x.viewport?.zoom !== y.viewport?.zoom
         ) {
             return false;
         }

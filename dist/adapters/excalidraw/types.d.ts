@@ -76,6 +76,25 @@ export interface DiagramPresence {
     button?: 'up' | 'down';
     selectedElementIds?: Record<string, boolean>;
     /**
+     * Where this peer's camera is pointing, in scene coordinates.
+     *
+     * Follow mode needs this and cannot derive it from `pointer`: a cursor
+     * tells you where someone is working, not what they can SEE. Someone who
+     * zooms out to take in the whole board, or scrolls to read a corner
+     * without moving the mouse, changes their view without touching their
+     * pointer — and a follower tracking the cursor alone would sit still while
+     * the person they are following is looking somewhere else entirely.
+     *
+     * `zoom` travels with the offsets because scroll is meaningless without
+     * it: applying a peer's scrollX/scrollY at a different zoom lands the
+     * viewport somewhere neither of you is looking.
+     */
+    viewport?: {
+        scrollX: number;
+        scrollY: number;
+        zoom: number;
+    };
+    /**
      * Liveness stamp, epoch ms, refreshed by the heartbeat.
      *
      * Exists because nothing else tells a peer you are gone promptly. The
@@ -102,6 +121,12 @@ export interface DiagramCollaborator {
     };
     button?: 'up' | 'down';
     selectedElementIds?: Record<string, boolean>;
+    /** Last published camera. Read by follow mode; see `DiagramPresence.viewport`. */
+    viewport?: {
+        scrollX: number;
+        scrollY: number;
+        zoom: number;
+    };
     /** True for the local user. Only ever set on entries in `participants`. */
     isSelf?: boolean;
 }

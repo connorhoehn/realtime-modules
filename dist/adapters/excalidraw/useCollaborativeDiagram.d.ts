@@ -65,6 +65,6 @@ export interface UseCollaborativeDiagramReturn {
     readAll: () => DiagramElement[];
 }
 /** The fields a caller may update. `blockId`, `user` and `t` are the hook's. */
-export type DiagramPresencePatch = Partial<Pick<DiagramPresence, 'pointer' | 'button' | 'selectedElementIds'>>;
+export type DiagramPresencePatch = Partial<Pick<DiagramPresence, 'pointer' | 'button' | 'selectedElementIds' | 'viewport'>>;
 export declare function useCollaborativeDiagram(options: UseCollaborativeDiagramOptions): UseCollaborativeDiagramReturn;
 //# sourceMappingURL=useCollaborativeDiagram.d.ts.map

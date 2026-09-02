@@ -311,6 +311,7 @@ function useCollaborativeDiagram(options) {
                     pointer: diagram.pointer,
                     button: diagram.button,
                     selectedElementIds: diagram.selectedElementIds,
+                    viewport: diagram.viewport,
                 });
             });
             // Forget peers that left, so the map cannot grow without bound
@@ -383,7 +384,13 @@ function sameCollaborators(a, b) {
             x.button !== y.button ||
             x.pointer?.x !== y.pointer?.x ||
             x.pointer?.y !== y.pointer?.y ||
-            x.pointer?.tool !== y.pointer?.tool) {
+            x.pointer?.tool !== y.pointer?.tool ||
+            // Without this a pure scroll or zoom — no pointer movement — is
+            // judged "no change" and never reaches a follower, which is the
+            // exact case follow mode exists to cover.
+            x.viewport?.scrollX !== y.viewport?.scrollX ||
+            x.viewport?.scrollY !== y.viewport?.scrollY ||
+            x.viewport?.zoom !== y.viewport?.zoom) {
             return false;
         }
         const xs = x.selectedElementIds;
