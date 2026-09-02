@@ -168,6 +168,43 @@ describe('diagram presence over one awareness channel', () => {
         expect(after.selectedElementIds).toEqual({ rect1: true });
     });
 
+    // An identity that settles a beat after mount used to tear the presence
+    // effect down and back up, and the cleanup reset the record — so a live
+    // pointer was wiped by the display name arriving. Observed on the document
+    // surface as a peer whose selection showed with no cursor.
+    it('keeps a live pointer when identity changes mid-session', () => {
+        const { a, b } = pair();
+        const ydoc = new Y.Doc();
+        const view = renderHook(
+            ({ name }) =>
+                useCollaborativeDiagram({
+                    ydoc,
+                    awareness: a as unknown as AwarenessLike,
+                    blockId: BLOCK,
+                    user: { displayName: name, color: '#FF6B6B' },
+                }),
+            { initialProps: { name: 'Anonymous' } },
+        );
+
+        act(() => {
+            view.result.current.publishPresence({
+                pointer: { x: 42, y: 43, tool: 'pointer' },
+                selectedElementIds: { r1: true },
+            });
+            jest.advanceTimersByTime(80);
+        });
+
+        act(() => {
+            view.rerender({ name: 'Alice' });
+            jest.advanceTimersByTime(80);
+        });
+
+        const seen = presenceSeenBy(b, a.clientID)!;
+        expect(seen.user?.displayName).toBe('Alice');
+        expect(seen.pointer).toEqual({ x: 42, y: 43, tool: 'pointer' });
+        expect(seen.selectedElementIds).toEqual({ r1: true });
+    });
+
     // -----------------------------------------------------------------------
     // 3. A peer is resolved with the right name, colour and selection
     // -----------------------------------------------------------------------

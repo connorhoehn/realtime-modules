@@ -135,6 +135,10 @@ function useCollaborativeDiagram(options) {
     const displayName = user?.displayName ?? 'Anonymous';
     const color = user?.color || DEFAULT_COLOR;
     const identity = (0, react_1.useMemo)(() => ({ displayName, color, ...(userId ? { userId } : {}) }), [displayName, color, userId]);
+    // Read through a ref by everything that publishes, so identity is never a
+    // dependency of an effect that TEARS DOWN presence. See the announce
+    // effect below for what that cost.
+    const identityRef = (0, react_1.useRef)(identity);
     // ---- The local presence record -----------------------------------------
     // The single source of truth for what we publish. Patches merge into this;
     // the whole thing goes onto awareness. See the header note.
@@ -164,7 +168,7 @@ function useCollaborativeDiagram(options) {
             ...presenceRef.current,
             ...patch,
             blockId: scopeId,
-            user: identity,
+            user: identityRef.current,
         };
         dirtyRef.current = true;
         const since = Date.now() - lastSentAtRef.current;
@@ -179,7 +183,7 @@ function useCollaborativeDiagram(options) {
         if (flushTimerRef.current)
             return; // trailing flush already queued
         flushTimerRef.current = setTimeout(flush, POINTER_THROTTLE_MS - since);
-    }, [flush, identity, scopeId]);
+    }, [flush, scopeId]);
     // ---- Announce on arrival, then heartbeat -------------------------------
     //
     // The announce is not a nicety. Presence used to be published ONLY from the
@@ -190,10 +194,35 @@ function useCollaborativeDiagram(options) {
     //
     // The heartbeat then keeps that record fresh so peers can tell "idle" from
     // "gone"; see PRESENCE_STALE_MS for why nothing else can tell them.
+    // ## Why identity is NOT a dependency here
+    //
+    // It was, and the cleanup below resets the presence record — so every time
+    // the host's identity settled (a display name arriving a beat after mount,
+    // a colour resolving) this effect tore down and rebuilt, and a live pointer
+    // was silently wiped in between. Caught on the document surface, where the
+    // page re-renders far more than a standalone board does: a peer's record
+    // arrived carrying `selectedElementIds` with `pointer: undefined`, which is
+    // the same broken picture the whole-record clobber used to produce.
+    //
+    // Identity now updates through `identityRef` in its own non-destructive
+    // effect, and this one turns over only when the CHANNEL does.
+    (0, react_1.useEffect)(() => {
+        identityRef.current = identity;
+        if (!awarenessRef.current)
+            return;
+        // Republish so peers relabel immediately — merged, so a pointer or
+        // selection in flight survives the rename.
+        presenceRef.current = { ...presenceRef.current, user: identity };
+        flush();
+    }, [identity, flush]);
     (0, react_1.useEffect)(() => {
         if (!awareness)
             return;
-        presenceRef.current = { ...presenceRef.current, blockId: scopeId, user: identity };
+        presenceRef.current = {
+            ...presenceRef.current,
+            blockId: scopeId,
+            user: identityRef.current,
+        };
         flush();
         const beat = setInterval(flush, HEARTBEAT_MS);
         return () => {
@@ -211,10 +240,10 @@ function useCollaborativeDiagram(options) {
             catch {
                 /* provider already destroyed — nothing to clear */
             }
-            presenceRef.current = { blockId: scopeId, user: identity };
+            presenceRef.current = { blockId: scopeId, user: identityRef.current };
             lastSentAtRef.current = 0;
         };
-    }, [awareness, scopeId, identity, flush]);
+    }, [awareness, scopeId, flush]);
     // ---- Reading peers off awareness ---------------------------------------
     (0, react_1.useEffect)(() => {
         if (!awareness) {
