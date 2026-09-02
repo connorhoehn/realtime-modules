@@ -37,6 +37,8 @@ export { useNotifications } from './useNotifications';
 export type { Notification, NotificationType, UseNotificationsOptions, UseNotificationsResult, } from './useNotifications';
 export { useCapability } from './useCapability';
 export type { CapabilityDescriptor, UseCapabilityResult, } from './useCapability';
+export { useCapabilities } from './useCapabilities';
+export type { UseCapabilitiesResult } from './useCapabilities';
 export { useFeatureFlag } from './useFeatureFlag';
 export type { UseFeatureFlagResult } from './useFeatureFlag';
 export { useChannel } from './useChannel';

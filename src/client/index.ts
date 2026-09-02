@@ -132,6 +132,12 @@ export type {
   UseCapabilityResult,
 } from './useCapability';
 
+// useCapabilities: the same discovery for a SET of names. React forbids calling
+// a hook in a loop, so a surface that composes on a caller-supplied capability
+// list — the whole point of an embeddable module — cannot use the singular hook.
+export { useCapabilities } from './useCapabilities';
+export type { UseCapabilitiesResult } from './useCapabilities';
+
 // v0.7.7 — useFeatureFlag: app-level boolean/variant feature flag hook.
 // Orthogonal to useCapability (CRD-driven, infrastructure-level). Designed for
 // A/B testing, gradual rollouts, and kill-switches. Queries

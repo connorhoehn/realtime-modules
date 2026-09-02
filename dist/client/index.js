@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -76,6 +76,11 @@ Object.defineProperty(exports, "useNotifications", { enumerable: true, get: func
 // listens for capability:updated push frames so state updates without a remount.
 var useCapability_1 = require("./useCapability");
 Object.defineProperty(exports, "useCapability", { enumerable: true, get: function () { return useCapability_1.useCapability; } });
+// useCapabilities: the same discovery for a SET of names. React forbids calling
+// a hook in a loop, so a surface that composes on a caller-supplied capability
+// list — the whole point of an embeddable module — cannot use the singular hook.
+var useCapabilities_1 = require("./useCapabilities");
+Object.defineProperty(exports, "useCapabilities", { enumerable: true, get: function () { return useCapabilities_1.useCapabilities; } });
 // v0.7.7 — useFeatureFlag: app-level boolean/variant feature flag hook.
 // Orthogonal to useCapability (CRD-driven, infrastructure-level). Designed for
 // A/B testing, gradual rollouts, and kill-switches. Queries
