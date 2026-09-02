@@ -85,7 +85,6 @@ export class ExcalidrawYjsBinding {
     readonly rootName: string;
 
     private readonly _root: Y.Map<unknown>;
-    private readonly _elements: Y.Map<Y.Map<unknown>>;
 
     /**
      * Last element state this binding wrote or observed, keyed by element id.
@@ -104,18 +103,11 @@ export class ExcalidrawYjsBinding {
         this.ydoc = options.ydoc;
         this.rootName = options.rootName ?? DEFAULT_DIAGRAM_ROOT;
 
+        // The ROOT is the stable handle. `ydoc.getMap(name)` is idempotent and
+        // conflict-free for a root type, so this reference can never be
+        // orphaned — which the `elements` container underneath it very much
+        // can. See `_elements` and `_ensureElements` below.
         this._root = this.ydoc.getMap(this.rootName);
-        let elements = this._root.get(ELEMENTS_KEY) as Y.Map<Y.Map<unknown>> | undefined;
-        if (!elements) {
-            // Two clients opening a cold diagram simultaneously both run this.
-            // Yjs resolves the concurrent `set` of two fresh Y.Maps by keeping
-            // one; the loser's map is detached and its (empty) contents are
-            // dropped, which is harmless because it is empty at this instant.
-            elements = new Y.Map<Y.Map<unknown>>();
-            this._root.set(ELEMENTS_KEY, elements);
-            elements = this._root.get(ELEMENTS_KEY) as Y.Map<Y.Map<unknown>>;
-        }
-        this._elements = elements;
 
         this._deepHandler = (_events, txn) => {
             // Skip our own writes — `commitLocal` transacts with `this` as the
@@ -132,12 +124,70 @@ export class ExcalidrawYjsBinding {
             }
             for (const cb of this._observers) cb(snapshot);
         };
-        this._elements.observeDeep(this._deepHandler);
+        // Observed on the ROOT, not on the elements map. The container can be
+        // REPLACED (see `_elements`), and an observer attached to the old one
+        // would go quiet at exactly the moment the real scene arrives.
+        this._root.observeDeep(this._deepHandler);
+    }
+
+    /**
+     * The elements container, re-read every time, or `undefined` when the
+     * scene is genuinely cold.
+     *
+     * ## Why this is a getter and not a field
+     *
+     * It used to be captured in the constructor, and the constructor CREATED
+     * the container when it was missing. Both halves were wrong, and together
+     * they lost a whole diagram every time one was reloaded.
+     *
+     * `getMap` on a Y.Doc root is conflict-free, but `map.set('elements', new
+     * Y.Map())` is an ordinary keyed write. Two clients — or, far more often,
+     * ONE client and the server snapshot it has not received yet — write that
+     * key concurrently, and Yjs keeps exactly one of the two maps. The loser is
+     * DETACHED: still a live Y.Map, still writable, no longer reachable from
+     * the document root.
+     *
+     * A cold-open client therefore did this, every single time:
+     *
+     *   1. mount with an empty Y.Doc (the provider hands one over immediately,
+     *      before the snapshot lands),
+     *   2. see no container, create one, capture it,
+     *   3. receive the snapshot carrying the REAL container,
+     *   4. lose the tie — and spend the rest of the session reading from and
+     *      writing into an orphan.
+     *
+     * The user's shapes were still in the document and still on the server;
+     * they were simply hanging off a map nothing pointed at. Verified live: the
+     * `crdt:snapshot` frame for a document contained three rectangles under
+     * `excalidraw:<id> -> elements` while the canvas on screen was blank.
+     *
+     * Re-reading fixes the read side, and `_ensureElements` fixes the write
+     * side by never creating the container speculatively.
+     */
+    private get _elements(): Y.Map<Y.Map<unknown>> | undefined {
+        return this._root.get(ELEMENTS_KEY) as Y.Map<Y.Map<unknown>> | undefined;
+    }
+
+    /**
+     * The elements container, created if absent.
+     *
+     * ONLY called from inside `commitLocal`'s transaction — i.e. only when
+     * there is actually a shape to store. Creating it on open is what made the
+     * race above reachable on every load; creating it on first write narrows
+     * the window to "two people drew on a genuinely empty diagram in the same
+     * instant", which is the case the CRDT can honestly only pick one answer
+     * for anyway.
+     */
+    private _ensureElements(): Y.Map<Y.Map<unknown>> {
+        const existing = this._elements;
+        if (existing) return existing;
+        this._root.set(ELEMENTS_KEY, new Y.Map<Y.Map<unknown>>());
+        return this._root.get(ELEMENTS_KEY) as Y.Map<Y.Map<unknown>>;
     }
 
     /** Number of elements currently in the shared scene, tombstones included. */
     get size(): number {
-        return this._elements.size;
+        return this._elements?.size ?? 0;
     }
 
     /**
@@ -150,7 +200,7 @@ export class ExcalidrawYjsBinding {
      */
     readAll(): DiagramElement[] {
         const out: DiagramElement[] = [];
-        this._elements.forEach((ymap) => {
+        this._elements?.forEach((ymap) => {
             const obj = ymap.toJSON() as DiagramElement;
             if (obj && typeof obj.id === 'string') out.push(obj);
         });
@@ -179,12 +229,15 @@ export class ExcalidrawYjsBinding {
         const seen = new Set<string>();
 
         this.ydoc.transact(() => {
+            // Resolved INSIDE the transaction, and only now that there is
+            // something to write. See `_ensureElements`.
+            const container = this._ensureElements();
             for (const el of elements) {
                 if (!el || typeof el.id !== 'string') continue;
                 seen.add(el.id);
 
                 const stamp = this._stamps.get(el.id);
-                const existing = this._elements.get(el.id);
+                const existing = container.get(el.id);
                 if (
                     existing &&
                     stamp &&
@@ -199,7 +252,7 @@ export class ExcalidrawYjsBinding {
                     for (const [k, v] of Object.entries(el)) {
                         if (v !== undefined) ymap.set(k, v);
                     }
-                    this._elements.set(el.id, ymap);
+                    container.set(el.id, ymap);
                     wrote = true;
                 } else if (this._applyProps(existing, el)) {
                     wrote = true;
@@ -217,7 +270,7 @@ export class ExcalidrawYjsBinding {
             // so this is the belt-and-braces path for hosts that filter.)
             for (const id of this._stamps.keys()) {
                 if (seen.has(id)) continue;
-                const ymap = this._elements.get(id);
+                const ymap = container.get(id);
                 if (ymap && ymap.get('isDeleted') !== true) {
                     ymap.set('isDeleted', true);
                     wrote = true;
@@ -242,7 +295,7 @@ export class ExcalidrawYjsBinding {
     destroy(): void {
         if (this._destroyed) return;
         this._destroyed = true;
-        this._elements.unobserveDeep(this._deepHandler);
+        this._root.unobserveDeep(this._deepHandler);
         this._observers.clear();
         this._stamps.clear();
     }
