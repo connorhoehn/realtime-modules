@@ -21,6 +21,7 @@ export declare class CallService {
     private canCallHook;
     private recordCallActionHook;
     private persistBindingHook;
+    private callEndedHook;
     /** Fast local cache of active calls. PR-W2.1: still maintained
      *  per-node so handleDisconnect can find calls this client was in
      *  without a Redis SMEMBERS roundtrip. Authoritative state lives in
@@ -149,6 +150,22 @@ export declare class CallService {
      *  participants in the call's HASH+SET, but going through the
      *  explicit API ensures in-memory stub implementations that don't
      *  share that internal state still get cleaned. */
+    /**
+     * Fire `onCallEnded` exactly once for a call that is over.
+     *
+     * There are TWO terminal paths and they do not share teardown: a
+     * `ended`/`declined`/`cancelled` verb drops the last participant and
+     * deletes the call inline, while `forgetCall` handles the sweeper, the
+     * `forget` verb and cross-node departure. A hook wired to only one of
+     * them misses whichever way this particular call happened to end, so both
+     * call this.
+     *
+     * `acceptedCallIds` is both the gate and the once-guard: an invite nobody
+     * accepted is a MISSED call rather than a call, and consuming the entry
+     * here means a second terminal event for the same call finds nothing to
+     * announce.
+     */
+    private _announceCallEnded;
     private forgetCall;
     /** UX audit 2026-08-24 — reap a call that exists only in the durable
      *  store (local cache cold) and whose every registered participant is

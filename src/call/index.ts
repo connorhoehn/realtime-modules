@@ -40,4 +40,10 @@ export type {
     CallStateStore,
     CallStateRedis,
 } from './CallStateStore';
+// The call ↔ conversation mapping, in both directions. Exported because both
+// the gateway (posting a finished call into its thread) and the frontend
+// (listing a conversation's recordings) need it, and two copies of one rule
+// drift silently.
+export { lobbyForChannel, channelForLobby } from './lobbyChannel';
+
 export { CallManifest } from './manifest';

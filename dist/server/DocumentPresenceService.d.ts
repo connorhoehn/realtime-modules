@@ -39,6 +39,34 @@ declare class DocumentPresenceService {
      */
     get channelCount(): number;
     /**
+     * Read this connection's identity off the router.
+     *
+     * `identified` is the load-bearing part. When the connection carries no
+     * user context we still need a key, and the clientId is the only one
+     * available — but a clientId is a CONNECTION, not a person, and the
+     * caller has to be able to tell the difference. Without that flag the
+     * fallback is indistinguishable from a real user id, and the dedup in
+     * getPresence() cannot collapse two connections belonging to the same
+     * human: one arrives as `dev-hank`, the other as a UUID, and the
+     * document shows a phantom second editor next to "Hank is editing now".
+     */
+    private _resolve;
+    /**
+     * Re-read a client's identity, for an entry that was created before the
+     * connection had one.
+     *
+     * Identity was previously frozen at subscribe time. A client that
+     * subscribes to a document during the window where its socket exists but
+     * its user context has not been attached yet — a reconnect restoring a
+     * clientId, most commonly — stayed anonymous for the whole session, even
+     * though the very next frame it sent was fully authenticated. Awareness
+     * traffic is continuous on an open document, so re-resolving there costs
+     * one map read per frame and closes the window.
+     *
+     * Returns true when something changed, so the caller can broadcast.
+     */
+    refreshIdentity(clientId: string, channel: string): boolean;
+    /**
      * Add a client to the document presence map for a doc: channel.
      * Broadcasts updated presence to all connected clients.
      *
@@ -99,6 +127,18 @@ declare class DocumentPresenceService {
      * Build and broadcast a documents:presence message to all connected clients.
      * Format: { type: 'documents:presence', documents: [{ documentId, users }] }
      */
+    /**
+     * Presence as PEOPLE rather than connections: one row per user, per
+     * document.
+     *
+     * Every consumer wants this shape — a document with one person in two
+     * tabs has one person in it — and the raw map is keyed by clientId. This
+     * used to be inlined in broadcastPresence(), so the pushed presence
+     * collapsed the tabs and the polled `getDocumentPresence` reply did not:
+     * the same document reported one editor or two depending on which path
+     * the client happened to be on.
+     */
+    getPresenceByUser(): Map<string, UserInfo[]>;
     broadcastPresence(): void;
 }
 export = DocumentPresenceService;

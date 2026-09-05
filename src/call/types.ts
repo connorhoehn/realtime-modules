@@ -262,6 +262,40 @@ export interface CallConfig {
         clientId: string;
         action: 'invite' | 'accepted';
     }) => Promise<void> | void;
+
+    /**
+     * Fired once when a call reaches its terminal state and is forgotten.
+     *
+     * This exists so a call can leave a trace somewhere other than the call
+     * itself — the gateway posts it into the conversation the call happened
+     * in, the way `onDocumentCreated` does for documents. Before it, a call
+     * in a channel left NO record in the thread: you could not tell from the
+     * conversation that a call had happened or who was in it.
+     *
+     * Only fires for calls that were ACCEPTED. An invite nobody picked up is
+     * a missed call, which is a different event with different wording, and
+     * recording it as "a call happened" would be false.
+     *
+     * `participantClientIds` are CONNECTIONS, not people — the same person on
+     * two tabs appears twice, and a clientId is not a userId. Resolving them
+     * is the consumer's job because only the consumer has the router.
+     *
+     * Best-effort: a throwing consumer is logged and swallowed. A call must
+     * still tear down when the thing that records it is broken.
+     */
+    onCallEnded?: (summary: {
+        callId: string;
+        lobbyName: string;
+        callerId: string;
+        /** Display name captured at invite time, when the caller sent one. */
+        callerName?: string;
+        /** Epoch ms of the invite. Absent on a call restored without it. */
+        startedAt?: number;
+        endedAt: number;
+        /** Absent when `startedAt` is, rather than reported as zero. */
+        durationMs?: number;
+        participantClientIds: string[];
+    }) => Promise<void> | void;
 }
 
 /**
@@ -380,6 +414,15 @@ export interface ActiveCallState {
     lobbyName: string;
     targetUserIds: string[];
     participantClientIds: Set<string>;
+    /**
+     * Everyone who was EVER in this call, never pruned.
+     *
+     * `participantClientIds` is who is in the call right now, so it drains as
+     * people hang up — by the time the last person leaves it is empty, and a
+     * record built from it names one person out of however many were there.
+     * This is the roster a record needs.
+     */
+    everParticipated?: Set<string>;
     invitedAt?: number;
     inviteExpiresAt?: number;
     originalCallerName?: string;

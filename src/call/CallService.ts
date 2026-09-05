@@ -117,6 +117,7 @@ export class CallService {
     private canCallHook: NonNullable<CallConfig['canCall']> | null;
     private recordCallActionHook: ((action: CallAction, targetKind: 'targeted' | 'broadcast') => void) | null;
     private persistBindingHook: NonNullable<CallConfig['persistCallBinding']> | null;
+    private callEndedHook: NonNullable<CallConfig['onCallEnded']> | null;
     /** Fast local cache of active calls. PR-W2.1: still maintained
      *  per-node so handleDisconnect can find calls this client was in
      *  without a Redis SMEMBERS roundtrip. Authoritative state lives in
@@ -202,6 +203,7 @@ export class CallService {
         this.canCallHook = config.canCall ?? null;
         this.recordCallActionHook = config.recordCallAction ?? null;
         this.persistBindingHook = config.persistCallBinding ?? null;
+        this.callEndedHook = config.onCallEnded ?? null;
 
         this.inviteSweepTimer = setInterval(() => {
             // PR-W2.4 — leader gate.  When ownership is enabled and a
@@ -520,6 +522,9 @@ export class CallService {
             this.activeCalls.set(callId, state);
         }
         state.participantClientIds.add(clientId);
+        // Who is here now drains as people leave; who was ever here is what a
+        // record of the call is made of.
+        (state.everParticipated ??= new Set()).add(clientId);
         let calls = this.clientToCalls.get(clientId);
         if (!calls) {
             calls = new Set();
@@ -558,10 +563,64 @@ export class CallService {
      *  participants in the call's HASH+SET, but going through the
      *  explicit API ensures in-memory stub implementations that don't
      *  share that internal state still get cleaned. */
+    /**
+     * Fire `onCallEnded` exactly once for a call that is over.
+     *
+     * There are TWO terminal paths and they do not share teardown: a
+     * `ended`/`declined`/`cancelled` verb drops the last participant and
+     * deletes the call inline, while `forgetCall` handles the sweeper, the
+     * `forget` verb and cross-node departure. A hook wired to only one of
+     * them misses whichever way this particular call happened to end, so both
+     * call this.
+     *
+     * `acceptedCallIds` is both the gate and the once-guard: an invite nobody
+     * accepted is a MISSED call rather than a call, and consuming the entry
+     * here means a second terminal event for the same call finds nothing to
+     * announce.
+     */
+    private _announceCallEnded(callId: string, state: ActiveCallState): void {
+        if (!this.callEndedHook || !this.acceptedCallIds.has(callId)) return;
+        this.acceptedCallIds.delete(callId);
+
+        const endedAt = Date.now();
+        const startedAt = typeof state.invitedAt === 'number' ? state.invitedAt : undefined;
+        const summary = {
+            callId,
+            lobbyName: state.lobbyName,
+            callerId: state.callerId,
+            callerName: state.originalCallerName,
+            startedAt,
+            endedAt,
+            // Absent rather than zero when we never knew when it began — a
+            // transcript reading "0s" looks like a bug, because it is one.
+            durationMs: startedAt !== undefined ? endedAt - startedAt : undefined,
+            // The full roster. Reporting whoever happened to leave last
+            // would name one person out of however many were in the call.
+            participantClientIds: Array.from(
+                state.everParticipated ?? state.participantClientIds,
+            ),
+        };
+
+        try {
+            // Never awaited: teardown is synchronous and must not wait on
+            // whatever the consumer does with this. A broken recorder cannot
+            // break a hang-up.
+            void Promise.resolve(this.callEndedHook(summary)).catch((e: any) =>
+                this.logger.warn(
+                    `[CallService] onCallEnded failed for ${callId}: ${e?.message ?? e}`,
+                ),
+            );
+        } catch (e: any) {
+            this.logger.warn(`[CallService] onCallEnded threw for ${callId}: ${e?.message ?? e}`);
+        }
+    }
+
     private forgetCall(callId: string): void {
         const state = this.activeCalls.get(callId);
         if (!state) return;
         const departedParticipants = Array.from(state.participantClientIds);
+
+        this._announceCallEnded(callId, state);
         for (const cid of departedParticipants) {
             const calls = this.clientToCalls.get(cid);
             if (calls) {
@@ -1385,7 +1444,12 @@ export class CallService {
                     cs.delete(callId);
                     if (cs.size === 0) this.clientToCalls.delete(clientId);
                 }
-                if (state.participantClientIds.size === 0) this.activeCalls.delete(callId);
+                if (state.participantClientIds.size === 0) {
+                    // Last one out — the call is over, whichever verb got us
+                    // here. This path never goes through forgetCall().
+                    this._announceCallEnded(callId, state);
+                    this.activeCalls.delete(callId);
+                }
             }
             // W11 — mirror to durable store. Fire-and-forget.
             if (this.stateStore) {
