@@ -610,8 +610,16 @@ export class ChatService {
     async getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]> {
         const effectiveLimit = limit ?? this.defaultHistoryLimit;
         const cache = this.getChannelCache(channel);
-        const allMessages = Array.from(cache.values());
+        // `lru-cache` iterates MOST-RECENTLY-USED FIRST, which is the opposite
+        // of reading order and cost two bugs in one line: every transcript
+        // rendered newest-message-first, and `.slice(-limit)` took the OLDEST
+        // messages — a 100-message channel asked for its last 20 returned its
+        // first 20. The second hid until a conversation outgrew the limit, at
+        // which point the missing messages looked like they were never sent.
+        const allMessages = Array.from(cache.values()).reverse();
         if (allMessages.length > 0) {
+            // Now that the list is chronological, the tail really is the
+            // newest, and it comes back in reading order.
             return allMessages.slice(-effectiveLimit);
         }
 
