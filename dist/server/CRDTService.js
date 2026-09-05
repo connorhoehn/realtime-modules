@@ -86,12 +86,14 @@ class CRDTService {
     _evictionCallback;
     _snapshotSweep;
     _authz;
+    _onDocumentCreated;
     constructor(opts) {
-        const { messageRouter, snapshotStore, metadataStore, hotCache, logger, metricsCollector, authz } = opts;
+        const { messageRouter, snapshotStore, metadataStore, hotCache, logger, metricsCollector, authz, onDocumentCreated, } = opts;
         this.messageRouter = messageRouter;
         this.logger = logger;
         this.metricsCollector = metricsCollector || null;
         this._authz = authz || (() => true);
+        this._onDocumentCreated = onDocumentCreated ?? null;
         // ---------------------------------------------------------------
         // Core state — stays in orchestrator (handlers need direct access)
         // ---------------------------------------------------------------
@@ -249,6 +251,35 @@ class CRDTService {
     // ===================================================================
     // Action dispatch
     // ===================================================================
+    /**
+     * Invoke the `onDocumentCreated` tap. Sync throws are caught, rejected
+     * promises are .catch-ed, and neither reaches the creation path.
+     */
+    _announceDocument(doc) {
+        if (!this._onDocumentCreated)
+            return;
+        const channel = typeof doc?.channel === 'string' ? doc.channel : '';
+        if (!channel)
+            return;
+        try {
+            const result = this._onDocumentCreated({
+                documentId: doc.id,
+                title: doc.title,
+                channel,
+                createdBy: doc.createdBy,
+                createdByName: doc.createdByName ?? null,
+                icon: doc.icon,
+            });
+            if (result && typeof result.catch === 'function') {
+                result.catch((err) => {
+                    this.logger.error(`onDocumentCreated hook rejected for ${doc?.id}:`, err);
+                });
+            }
+        }
+        catch (err) {
+            this.logger.error(`onDocumentCreated hook threw for ${doc?.id}:`, err);
+        }
+    }
     async handleAction(clientId, action, data) {
         const startTime = Date.now();
         try {
@@ -332,6 +363,11 @@ class CRDTService {
                         createdByName: userContext.displayName || userContext.email || null,
                     });
                     await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentCreated', document: doc });
+                    // Announce it in the conversation it was created in, if
+                    // any. After the broadcast: the document exists and every
+                    // client already knows, so a slow or failing announcement
+                    // cannot hold up the thing it is announcing.
+                    this._announceDocument(doc);
                     return;
                 }
                 case 'deleteDocument': {

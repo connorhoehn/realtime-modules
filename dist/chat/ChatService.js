@@ -252,6 +252,42 @@ class ChatService {
             this.sendError(clientId, 'Failed to leave channel');
         }
     }
+    /**
+     * Post a message that no connection sent.
+     *
+     * Something happened in the channel — a document was created in it, a call
+     * started — and the thread is where people look for what happened. Every
+     * other send path starts from a clientId, because every other message is
+     * typed by somebody; this one has no connection behind it, so it takes the
+     * store-and-broadcast path directly rather than pretending to be a client.
+     *
+     * It is persisted like any other message. An event that only live viewers
+     * saw is not a record of anything, and the thread would disagree with
+     * itself on the next reload.
+     *
+     * Returns the stored message, or null when the channel or text is missing.
+     */
+    async postSystemMessage(channel, message, metadata = {}) {
+        if (!channel || !message)
+            return null;
+        const messageData = {
+            id: this.generateMessageId(),
+            // No connection to attribute it to. `system` is a reserved
+            // clientId rather than an empty string so a renderer can tell
+            // "the server said this" from "we lost the sender".
+            clientId: 'system',
+            channel,
+            message,
+            metadata: { ...metadata, system: true },
+            timestamp: new Date().toISOString(),
+        };
+        this.addToChannelHistory(channel, messageData);
+        this._persistMessage(messageData).catch((err) => this.logger.error('Failed to persist system message:', err && err.message));
+        // No sender to exclude and none to authorize as: this is the server
+        // talking to the channel.
+        await this.broadcastMessage(channel, messageData);
+        return messageData;
+    }
     async handleSendMessage(clientId, { channel, message, metadata = {} }) {
         if (!channel || !message) {
             this.sendError(clientId, 'Channel and message are required');

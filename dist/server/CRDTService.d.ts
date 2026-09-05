@@ -56,6 +56,25 @@ export interface CRDTServiceOpts {
      * Defaults to permissive.
      */
     authz?: (clientId: string, channel: string, service: CRDTService) => boolean;
+    /**
+     * A document was created inside a conversation.
+     *
+     * Fired only when the new document carries a `channel` binding, and only
+     * after the document exists — the consumer's job is to announce it in that
+     * conversation, and announcing something that failed to be created is
+     * worse than not announcing it.
+     *
+     * Fire-and-forget: a failing hook is logged and never fails the creation.
+     * The document is the thing that matters; the message about it is not.
+     */
+    onDocumentCreated?: (doc: {
+        documentId: string;
+        title: string;
+        channel: string;
+        createdBy: string;
+        createdByName?: string | null;
+        icon?: string;
+    }) => void | Promise<void>;
 }
 declare class CRDTService {
     messageRouter: OrchestratorMessageRouter;
@@ -73,10 +92,16 @@ declare class CRDTService {
     _evictionCallback: (channel: string) => Promise<void>;
     private readonly _snapshotSweep;
     private _authz;
+    private _onDocumentCreated;
     constructor(opts: CRDTServiceOpts);
     _applyRemoteUpdate(channel: string, state: ChannelState, updateBytes: Uint8Array): void;
     _bufferRemoteUpdate(channel: string, updateBytes: Uint8Array): void;
     _drainPendingRemoteUpdates(channel: string, state: ChannelState): number;
+    /**
+     * Invoke the `onDocumentCreated` tap. Sync throws are caught, rejected
+     * promises are .catch-ed, and neither reaches the creation path.
+     */
+    _announceDocument(doc: any): void;
     handleAction(clientId: string, action: string, data: any): Promise<void>;
     handleSubscribe(clientId: string, { channel }: {
         channel: string;

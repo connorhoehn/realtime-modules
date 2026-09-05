@@ -84,6 +84,25 @@ export interface CRDTServiceOpts {
      * Defaults to permissive.
      */
     authz?: (clientId: string, channel: string, service: CRDTService) => boolean;
+    /**
+     * A document was created inside a conversation.
+     *
+     * Fired only when the new document carries a `channel` binding, and only
+     * after the document exists — the consumer's job is to announce it in that
+     * conversation, and announcing something that failed to be created is
+     * worse than not announcing it.
+     *
+     * Fire-and-forget: a failing hook is logged and never fails the creation.
+     * The document is the thing that matters; the message about it is not.
+     */
+    onDocumentCreated?: (doc: {
+        documentId: string;
+        title: string;
+        channel: string;
+        createdBy: string;
+        createdByName?: string | null;
+        icon?: string;
+    }) => void | Promise<void>;
 }
 
 class CRDTService {
@@ -102,14 +121,19 @@ class CRDTService {
     _evictionCallback: (channel: string) => Promise<void>;
     private readonly _snapshotSweep: PeriodicSweep;
     private _authz: (clientId: string, channel: string, service: CRDTService) => boolean;
+    private _onDocumentCreated: CRDTServiceOpts['onDocumentCreated'] | null;
 
     constructor(opts: CRDTServiceOpts) {
-        const { messageRouter, snapshotStore, metadataStore, hotCache, logger, metricsCollector, authz } = opts;
+        const {
+            messageRouter, snapshotStore, metadataStore, hotCache, logger,
+            metricsCollector, authz, onDocumentCreated,
+        } = opts;
 
         this.messageRouter = messageRouter;
         this.logger = logger;
         this.metricsCollector = metricsCollector || null;
         this._authz = authz || (() => true);
+        this._onDocumentCreated = onDocumentCreated ?? null;
 
         // ---------------------------------------------------------------
         // Core state — stays in orchestrator (handlers need direct access)
@@ -281,6 +305,33 @@ class CRDTService {
     // Action dispatch
     // ===================================================================
 
+    /**
+     * Invoke the `onDocumentCreated` tap. Sync throws are caught, rejected
+     * promises are .catch-ed, and neither reaches the creation path.
+     */
+    _announceDocument(doc: any): void {
+        if (!this._onDocumentCreated) return;
+        const channel = typeof doc?.channel === 'string' ? doc.channel : '';
+        if (!channel) return;
+        try {
+            const result = this._onDocumentCreated({
+                documentId: doc.id,
+                title: doc.title,
+                channel,
+                createdBy: doc.createdBy,
+                createdByName: doc.createdByName ?? null,
+                icon: doc.icon,
+            });
+            if (result && typeof (result as Promise<void>).catch === 'function') {
+                (result as Promise<void>).catch((err: any) => {
+                    this.logger.error(`onDocumentCreated hook rejected for ${doc?.id}:`, err);
+                });
+            }
+        } catch (err: any) {
+            this.logger.error(`onDocumentCreated hook threw for ${doc?.id}:`, err);
+        }
+    }
+
     async handleAction(clientId: string, action: string, data: any): Promise<void> {
         const startTime = Date.now();
         try {
@@ -365,6 +416,11 @@ class CRDTService {
                         createdByName: userContext.displayName || userContext.email || null,
                     });
                     await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentCreated', document: doc });
+                    // Announce it in the conversation it was created in, if
+                    // any. After the broadcast: the document exists and every
+                    // client already knows, so a slow or failing announcement
+                    // cannot hold up the thing it is announcing.
+                    this._announceDocument(doc);
                     return;
                 }
                 case 'deleteDocument': {

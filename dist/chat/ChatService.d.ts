@@ -148,6 +148,22 @@ export declare class ChatService {
     handleLeaveChannel(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
+    /**
+     * Post a message that no connection sent.
+     *
+     * Something happened in the channel — a document was created in it, a call
+     * started — and the thread is where people look for what happened. Every
+     * other send path starts from a clientId, because every other message is
+     * typed by somebody; this one has no connection behind it, so it takes the
+     * store-and-broadcast path directly rather than pretending to be a client.
+     *
+     * It is persisted like any other message. An event that only live viewers
+     * saw is not a record of anything, and the thread would disagree with
+     * itself on the next reload.
+     *
+     * Returns the stored message, or null when the channel or text is missing.
+     */
+    postSystemMessage(channel: string, message: string, metadata?: Record<string, any>): Promise<ChatMessage | null>;
     handleSendMessage(clientId: string, { channel, message, metadata }: {
         channel: string;
         message: string;
