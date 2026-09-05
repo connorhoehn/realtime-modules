@@ -32,6 +32,17 @@
 //   { service: 'reaction', action: 'subscribe',   channel }
 //   { service: 'reaction', action: 'unsubscribe', channel }
 //   { service: 'reaction', action: 'send', channel, emoji, targetId?, metadata? }
+//   { service: 'reaction', action: 'remove', channel, emoji, targetId }
+//
+// Durable message reactions (rm >= 0.33): when the server wires a
+// ReactionStore, a reaction carrying a targetId is state rather than an event.
+// Two extra inbound frames carry that:
+//   { type:'reaction', action:'reaction_history', success:true,
+//     data:{ channel, reactions: Reaction[] } }   // replay on subscribe
+//   { type:'reaction', action:'reaction_removed',
+//     data:{ channel, targetId, emoji, userId, timestamp } }
+// Servers without a store never send either, and `unreact` gets an error
+// frame back — the ephemeral call-reaction behaviour is unchanged.
 //
 // targetId support (v0.7.6):
 //   - useReactions(channel, { targetId }) — reactions is pre-filtered to that entity
@@ -79,8 +90,31 @@ function useReactions(channel, opts) {
                         });
                     }
                 }
-                // reaction_subscribed / reaction_sent / available_reactions acks —
-                // no state change needed.
+                // Durable replay on subscribe: the server's stored reactions for the
+                // channel, already in Reaction shape. REPLACES the list rather than
+                // appending — it is the state, not more events.
+                if (msg.action === 'reaction_history') {
+                    const data = msg.data;
+                    if (data && data.channel === channelRef.current && Array.isArray(data.reactions)) {
+                        const parsed = data.reactions
+                            .map((r) => asReaction(r))
+                            .filter(Boolean);
+                        setAllReactions(parsed.slice(-MAX_REACTIONS));
+                    }
+                    return;
+                }
+                // Somebody took their reaction back. Matched on the durable key
+                // (target, emoji, owner) — NOT on the reaction id, which differs
+                // between the live broadcast and the replayed row for the same fact.
+                if (msg.action === 'reaction_removed') {
+                    const data = msg.data;
+                    if (data && data.channel === channelRef.current) {
+                        setAllReactions((prev) => prev.filter((r) => !(r.targetId === data.targetId && r.emoji === data.emoji && r.userId === data.userId)));
+                    }
+                    return;
+                }
+                // reaction_subscribed / reaction_sent / reaction_unsent /
+                // available_reactions acks — no state change needed.
                 return;
             }
             // Legacy flat shapes (non-gateway servers) — kept as a fallback.
@@ -139,12 +173,39 @@ function useReactions(channel, opts) {
             frame.metadata = reactOpts.metadata;
         send(frame);
     }, [send]);
+    const unreact = (0, react_1.useCallback)((emoji, unreactOpts) => {
+        const resolvedTargetId = unreactOpts?.targetId ?? targetIdRef.current;
+        send({
+            service: 'reaction',
+            action: 'remove',
+            channel: channelRef.current,
+            emoji,
+            targetId: resolvedTargetId,
+        });
+    }, [send]);
+    // Reads the CURRENT list through a ref so the callback identity stays
+    // stable — a toggle that changes on every reaction would re-render every
+    // chip in the channel each time anyone reacted.
+    const allRef = (0, react_1.useRef)(allReactions);
+    (0, react_1.useEffect)(() => {
+        allRef.current = allReactions;
+    }, [allReactions]);
+    const toggle = (0, react_1.useCallback)((emoji, toggleOpts) => {
+        const resolvedTargetId = toggleOpts?.targetId ?? targetIdRef.current;
+        const mine = allRef.current.some((r) => r.emoji === emoji &&
+            r.targetId === resolvedTargetId &&
+            r.userId === toggleOpts?.userId);
+        if (mine)
+            unreact(emoji, { targetId: resolvedTargetId });
+        else
+            react(emoji, { targetId: resolvedTargetId });
+    }, [react, unreact]);
     const reactionsFor = (0, react_1.useCallback)((targetId) => allReactions.filter((r) => r.targetId === targetId), [allReactions]);
     // Apply hook-level targetId filter for the returned reactions list.
     const reactions = opts?.targetId !== undefined
         ? allReactions.filter((r) => r.targetId === opts.targetId)
         : allReactions;
-    return { reactions, react, reactionsFor };
+    return { reactions, react, reactionsFor, unreact, toggle };
 }
 // ---------------------------------------------------------------------------
 // Helpers
@@ -168,6 +229,8 @@ function asReaction(raw) {
             : {}),
         timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
         targetId: typeof raw.targetId === 'string' ? raw.targetId : undefined,
+        userId: typeof raw.userId === 'string' ? raw.userId : undefined,
+        displayName: typeof raw.displayName === 'string' ? raw.displayName : undefined,
     };
 }
 //# sourceMappingURL=useReactions.js.map

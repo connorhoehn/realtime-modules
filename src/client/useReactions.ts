@@ -31,6 +31,17 @@
 //   { service: 'reaction', action: 'subscribe',   channel }
 //   { service: 'reaction', action: 'unsubscribe', channel }
 //   { service: 'reaction', action: 'send', channel, emoji, targetId?, metadata? }
+//   { service: 'reaction', action: 'remove', channel, emoji, targetId }
+//
+// Durable message reactions (rm >= 0.33): when the server wires a
+// ReactionStore, a reaction carrying a targetId is state rather than an event.
+// Two extra inbound frames carry that:
+//   { type:'reaction', action:'reaction_history', success:true,
+//     data:{ channel, reactions: Reaction[] } }   // replay on subscribe
+//   { type:'reaction', action:'reaction_removed',
+//     data:{ channel, targetId, emoji, userId, timestamp } }
+// Servers without a store never send either, and `unreact` gets an error
+// frame back — the ephemeral call-reaction behaviour is unchanged.
 //
 // targetId support (v0.7.6):
 //   - useReactions(channel, { targetId }) — reactions is pre-filtered to that entity
@@ -55,6 +66,11 @@ export interface UseReactionsOpts {
   targetId?: string;
 }
 
+export interface UnreactOpts {
+  /** Override the hook-level targetId for this single call. */
+  targetId?: string;
+}
+
 export interface ReactOpts {
   /** Override the hook-level targetId for this single call. */
   targetId?: string;
@@ -69,6 +85,19 @@ export interface UseReactionsReturn {
   react: (emoji: string, opts?: ReactOpts) => void;
   /** Utility: filter the full (unfiltered) channel reaction list by targetId. */
   reactionsFor: (targetId: string) => Reaction[];
+  /**
+   * Take back your own reaction. Only targeted reactions are removable — a
+   * floating call reaction is an event that already happened. Servers with no
+   * durable reaction store reply with an error frame.
+   */
+  unreact: (emoji: string, opts?: UnreactOpts) => void;
+  /**
+   * React or un-react depending on whether `currentUserId` already has this
+   * emoji on the target. This is what a reaction CHIP does — the chip is a
+   * toggle, and deciding which way it goes needs the current list, which the
+   * hook already holds.
+   */
+  toggle: (emoji: string, opts?: UnreactOpts & { userId: string }) => void;
 }
 
 export function useReactions(channel: string, opts?: UseReactionsOpts): UseReactionsReturn {
@@ -108,8 +137,38 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
             });
           }
         }
-        // reaction_subscribed / reaction_sent / available_reactions acks —
-        // no state change needed.
+        // Durable replay on subscribe: the server's stored reactions for the
+        // channel, already in Reaction shape. REPLACES the list rather than
+        // appending — it is the state, not more events.
+        if (msg.action === 'reaction_history') {
+          const data = (msg as Record<string, any>).data;
+          if (data && data.channel === channelRef.current && Array.isArray(data.reactions)) {
+            const parsed = (data.reactions as unknown[])
+              .map((r) => asReaction(r as Record<string, unknown>))
+              .filter(Boolean) as Reaction[];
+            setAllReactions(parsed.slice(-MAX_REACTIONS));
+          }
+          return;
+        }
+
+        // Somebody took their reaction back. Matched on the durable key
+        // (target, emoji, owner) — NOT on the reaction id, which differs
+        // between the live broadcast and the replayed row for the same fact.
+        if (msg.action === 'reaction_removed') {
+          const data = (msg as Record<string, any>).data;
+          if (data && data.channel === channelRef.current) {
+            setAllReactions((prev) =>
+              prev.filter(
+                (r) =>
+                  !(r.targetId === data.targetId && r.emoji === data.emoji && r.userId === data.userId),
+              ),
+            );
+          }
+          return;
+        }
+
+        // reaction_subscribed / reaction_sent / reaction_unsent /
+        // available_reactions acks — no state change needed.
         return;
       }
 
@@ -172,6 +231,43 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
     [send],
   );
 
+  const unreact = useCallback(
+    (emoji: string, unreactOpts?: UnreactOpts) => {
+      const resolvedTargetId = unreactOpts?.targetId ?? targetIdRef.current;
+      send({
+        service: 'reaction',
+        action: 'remove',
+        channel: channelRef.current,
+        emoji,
+        targetId: resolvedTargetId,
+      });
+    },
+    [send],
+  );
+
+  // Reads the CURRENT list through a ref so the callback identity stays
+  // stable — a toggle that changes on every reaction would re-render every
+  // chip in the channel each time anyone reacted.
+  const allRef = useRef(allReactions);
+  useEffect(() => {
+    allRef.current = allReactions;
+  }, [allReactions]);
+
+  const toggle = useCallback(
+    (emoji: string, toggleOpts?: UnreactOpts & { userId: string }) => {
+      const resolvedTargetId = toggleOpts?.targetId ?? targetIdRef.current;
+      const mine = allRef.current.some(
+        (r) =>
+          r.emoji === emoji &&
+          r.targetId === resolvedTargetId &&
+          r.userId === toggleOpts?.userId,
+      );
+      if (mine) unreact(emoji, { targetId: resolvedTargetId });
+      else react(emoji, { targetId: resolvedTargetId });
+    },
+    [react, unreact],
+  );
+
   const reactionsFor = useCallback(
     (targetId: string): Reaction[] => allReactions.filter((r) => r.targetId === targetId),
     [allReactions],
@@ -183,7 +279,7 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
       ? allReactions.filter((r) => r.targetId === opts.targetId)
       : allReactions;
 
-  return { reactions, react, reactionsFor };
+  return { reactions, react, reactionsFor, unreact, toggle };
 }
 
 // ---------------------------------------------------------------------------
@@ -206,5 +302,7 @@ function asReaction(raw: Record<string, unknown>): Reaction | null {
       : {}) as Record<string, unknown>,
     timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
     targetId: typeof raw.targetId === 'string' ? raw.targetId : undefined,
+    userId: typeof raw.userId === 'string' ? raw.userId : undefined,
+    displayName: typeof raw.displayName === 'string' ? raw.displayName : undefined,
   };
 }

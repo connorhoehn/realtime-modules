@@ -640,3 +640,137 @@ describe('useReactions — reactionsFor()', () => {
     expect(result.current.reactionsFor('article-B')[0]!.id).toBe('r-2');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Durable message reactions (v0.33.0)
+//
+// A message reaction is state, not an event. The hook has to hold it the same
+// way whether it arrived live or was replayed on subscribe, has to drop it
+// when its owner takes it back, and has to know which way a chip toggles.
+// ---------------------------------------------------------------------------
+
+function storedFrame(channel: string, reactions: Record<string, unknown>[]): GatewayMessage {
+  return {
+    type: 'reaction',
+    action: 'reaction_history',
+    success: true,
+    data: { channel, reactions },
+  } as unknown as GatewayMessage;
+}
+
+function removedFrame(
+  channel: string,
+  data: { targetId: string; emoji: string; userId: string },
+): GatewayMessage {
+  return {
+    type: 'reaction',
+    action: 'reaction_removed',
+    data: { channel, ...data, timestamp: '2026-09-05T08:00:00.000Z' },
+  } as unknown as GatewayMessage;
+}
+
+const stored = (over: Record<string, unknown> = {}) => ({
+  id: 'reaction_m1_\u{1F44D}_u-hank',
+  clientId: 'u-hank',
+  channel: 'ch-1',
+  emoji: '\u{1F44D}',
+  effect: 'bounce-green',
+  position: null,
+  metadata: {},
+  timestamp: '2026-09-05T07:00:00.000Z',
+  targetId: 'm1',
+  userId: 'u-hank',
+  displayName: 'Hank',
+  ...over,
+});
+
+describe('useReactions durable path', () => {
+  it('takes the replayed history as the state, not as more events', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    act(() => { emit(storedFrame('ch-1', [stored()])); });
+    act(() => { emit(storedFrame('ch-1', [stored()])); });
+
+    expect(result.current.reactions).toHaveLength(1);
+    expect(result.current.reactions[0].userId).toBe('u-hank');
+  });
+
+  it('carries the owner through, which is what makes a chip a toggle', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-1', [stored({ displayName: 'Hank Anderson' })])); });
+    expect(result.current.reactions[0]).toMatchObject({ userId: 'u-hank', displayName: 'Hank Anderson' });
+  });
+
+  it('ignores a history frame for another channel', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-2', [stored({ channel: 'ch-2' })])); });
+    expect(result.current.reactions).toHaveLength(0);
+  });
+
+  // Matched on the durable key, never the id: the live broadcast and the
+  // replayed row are the same fact under two different ids.
+  it('drops a reaction whose owner took it back', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    act(() => { emit(storedFrame('ch-1', [stored(), stored({ userId: 'u-bob', id: 'other' })])); });
+    act(() => { emit(removedFrame('ch-1', { targetId: 'm1', emoji: '\u{1F44D}', userId: 'u-hank' })); });
+
+    expect(result.current.reactions.map((r) => r.userId)).toEqual(['u-bob']);
+  });
+
+  it('removes nobody else reaction on the same emoji', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-1', [stored({ targetId: 'm2', id: 'x' })])); });
+    act(() => { emit(removedFrame('ch-1', { targetId: 'm1', emoji: '\u{1F44D}', userId: 'u-hank' })); });
+    expect(result.current.reactions).toHaveLength(1);
+  });
+
+  it('sends the remove frame the gateway accepts', () => {
+    const { ctx, sent } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1', { targetId: 'm1' }), {
+      wrapper: makeWrapper(ctx),
+    });
+    act(() => { result.current.unreact('\u{1F44D}'); });
+    expect(sent.at(-1)).toEqual({
+      service: 'reaction', action: 'remove', channel: 'ch-1', emoji: '\u{1F44D}', targetId: 'm1',
+    });
+  });
+
+  it('toggles off when that person already reacted', () => {
+    const { ctx, emit, sent } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-1', [stored()])); });
+    act(() => { result.current.toggle('\u{1F44D}', { targetId: 'm1', userId: 'u-hank' }); });
+    expect(sent.at(-1)).toMatchObject({ action: 'remove', targetId: 'm1' });
+  });
+
+  it('toggles on for someone who has not reacted yet', () => {
+    const { ctx, emit, sent } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-1', [stored()])); });
+    act(() => { result.current.toggle('\u{1F44D}', { targetId: 'm1', userId: 'u-bob' }); });
+    expect(sent.at(-1)).toMatchObject({ action: 'send', targetId: 'm1' });
+  });
+
+  // Reacting to a different message with the same emoji is a different fact.
+  it('does not mistake a reaction on another message for yours', () => {
+    const { ctx, emit, sent } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-1', [stored({ userId: 'u-bob', targetId: 'm9' })])); });
+    act(() => { result.current.toggle('\u{1F44D}', { targetId: 'm1', userId: 'u-bob' }); });
+    expect(sent.at(-1)).toMatchObject({ action: 'send' });
+  });
+
+  it('ignores a removal announced on another channel', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit(storedFrame('ch-1', [stored()])); });
+    act(() => { emit(removedFrame('ch-2', { targetId: 'm1', emoji: '\u{1F44D}', userId: 'u-hank' })); });
+    expect(result.current.reactions).toHaveLength(1);
+  });
+});

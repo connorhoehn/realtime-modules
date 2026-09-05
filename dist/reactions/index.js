@@ -3,8 +3,14 @@
 //
 // Subpath export: `@connorhoehn/realtime-modules/reactions`.
 //
-// Wave 2 lift: pure in-memory emoji-reaction fan-out service with a small
-// LRU history per channel. See ReactionService.ts for the lift notes.
+// Emoji-reaction fan-out. Two behaviours in one service, split by whether a
+// reaction names a target:
+//   - no targetId  → ephemeral. The floating emoji thrown at a call: fanned
+//     out, kept in a small per-channel ring, never stored.
+//   - targetId set → durable, when a `ReactionStore` is configured. A message
+//     reaction is state, not an event: it is written before it is broadcast,
+//     replayed to every new subscriber, and removable by its owner.
+// See ReactionService.ts for the lift notes.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReactionsManifest = exports.DEFAULT_ERROR_CODE = exports.DEFAULT_AVAILABLE_REACTIONS = exports.ReactionService = void 0;
 // Named export is the canonical surface. The default export on

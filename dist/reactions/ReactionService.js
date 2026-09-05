@@ -2,8 +2,10 @@
 // realtime-modules/src/reactions/ReactionService.ts
 //
 // Lifted from gateway's src/realtime-fanout/reaction-service.ts (337 LOC,
-// Wave 2 extraction). Pure in-memory emoji-reaction fan-out with a small
-// LRU history per channel. No persistence, no DDB, no Redis.
+// Wave 2 extraction). In-memory emoji-reaction fan-out with a small LRU
+// history per channel, plus an OPTIONAL durable path for reactions that name
+// a target (`config.store`, a `ReactionStore` the consumer supplies — the
+// service itself still knows nothing about DDB or Redis).
 //
 // Lift changes vs the gateway original:
 //   - Constructor switched from positional `(router, logger, metrics)` to
@@ -29,6 +31,7 @@ exports.ReactionService = void 0;
 const types_1 = require("./types");
 const DEFAULT_MAX_HISTORY = 50;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
+const DEFAULT_MAX_HISTORY_REPLAY = 500;
 /**
  * In-memory subscription tracker — `clientId → Set<channelId>`.
  *
@@ -85,6 +88,8 @@ class ReactionService {
     authorizeChannel;
     identityResolver;
     onReaction;
+    store;
+    maxHistoryReplay;
     constructor(opts) {
         if (!opts || !opts.logger) {
             throw new Error('ReactionService: logger is required');
@@ -101,14 +106,17 @@ class ReactionService {
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.identityResolver = config.identityResolver ?? null;
         this.onReaction = config.onReaction ?? null;
+        this.store = config.store ?? null;
+        this.maxHistoryReplay = config.maxHistoryReplay ?? DEFAULT_MAX_HISTORY_REPLAY;
         this.clientChannels = new SubscriptionTracker();
         this.reactionHistory = new Map();
         this.isDistributed = !!this.messageRouter;
     }
     /**
      * Discard transient in-memory reaction-aggregator state for a room.
-     * Reactions are ephemeral by design — there is no persisted store to
-     * preserve. Drops the recent-reaction history list for the channel.
+     * Drops the recent-reaction ring for the channel only: stored (targeted)
+     * reactions are channel state and outlive whichever node owns the room,
+     * so losing ownership must not delete them.
      *
      * Gateway's ownership-cleanup-coordinator (room/Raft eviction) wires
      * this method as the `onLost` handler; here we expose it as a
@@ -132,6 +140,9 @@ class ReactionService {
                     return;
                 case 'send':
                     await this.handleSendReaction(clientId, data);
+                    return;
+                case 'remove':
+                    await this.handleRemoveReaction(clientId, data);
                     return;
                 case 'getAvailable':
                     await this.handleGetAvailableReactions(clientId);
@@ -168,6 +179,11 @@ class ReactionService {
                 message: `Subscribed to reactions in channel: ${channel}`,
                 availableReactions: Object.keys(this.availableReactions),
             });
+            // Replay AFTER the ack: the ack says the channel is live, the
+            // history says what was already there. A failed read degrades to
+            // "no history" rather than failing the subscription — losing the
+            // live feed because a table blinked is the worse outcome.
+            await this._replayStoredReactions(clientId, channel);
             this.logger.info(`Client ${clientId} subscribed to reactions in channel: ${channel}`);
         }
         catch (error) {
@@ -223,6 +239,23 @@ class ReactionService {
             if (identity.displayName !== undefined)
                 reaction.displayName = identity.displayName;
         }
+        // Store-first for TARGETED reactions: a reaction that is fanned out
+        // and then fails to persist reads as "it worked" until the reload
+        // that loses it. Untargeted (call) reactions never touch the store.
+        if (this.store && this._isTargeted(reaction)) {
+            if (!reaction.userId) {
+                this.sendError(clientId, 'A reaction on a message needs an identified sender; this connection has none');
+                return;
+            }
+            try {
+                await this.store.add(this._toStored(reaction));
+            }
+            catch (err) {
+                this.logger.error(`Failed to persist reaction ${reaction.id}:`, err);
+                this.sendError(clientId, 'Failed to save reaction');
+                return;
+            }
+        }
         if (!this.reactionHistory.has(channel)) {
             this.reactionHistory.set(channel, []);
         }
@@ -252,6 +285,123 @@ class ReactionService {
         // or fails the send path (ack is already on the wire above).
         this._emitReaction(reaction);
         this.logger.info(`Client ${clientId} sent reaction ${emoji} in channel: ${channel}`);
+    }
+    /**
+     * Take back a reaction. Only meaningful for targeted reactions with a
+     * store behind them — the floating emoji thrown at a call is an event
+     * that already happened and cannot be un-thrown.
+     *
+     * Removing a reaction that is not there succeeds: two clicks racing on
+     * the same chip should settle on "not reacted", not on an error.
+     */
+    async handleRemoveReaction(clientId, { channel, emoji, targetId }) {
+        if (!channel || !emoji) {
+            this.sendError(clientId, 'Channel and emoji are required');
+            return;
+        }
+        if (typeof targetId !== 'string' || !targetId) {
+            this.sendError(clientId, 'targetId is required to remove a reaction');
+            return;
+        }
+        if (!this.store) {
+            this.sendError(clientId, 'Reactions are not removable on this server');
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        if (!identity?.userId) {
+            this.sendError(clientId, 'A reaction can only be removed by an identified sender');
+            return;
+        }
+        try {
+            await this.store.remove({ channel, targetId, emoji, userId: identity.userId });
+        }
+        catch (err) {
+            this.logger.error(`Failed to remove reaction ${emoji} on ${targetId}:`, err);
+            this.sendError(clientId, 'Failed to remove reaction');
+            return;
+        }
+        // Drop it from the transient ring too, so getStats and any local
+        // replay agree with the store.
+        const history = this.reactionHistory.get(channel);
+        if (history) {
+            const kept = history.filter((r) => !(r.targetId === targetId && r.emoji === emoji && r.userId === identity.userId));
+            this.reactionHistory.set(channel, kept);
+        }
+        const removal = {
+            type: 'reaction',
+            action: 'reaction_removed',
+            data: {
+                channel,
+                targetId,
+                emoji,
+                userId: identity.userId,
+                timestamp: new Date().toISOString(),
+            },
+        };
+        if (this.isDistributed && this.messageRouter) {
+            await this.messageRouter.sendToChannel(`reactions:${channel}`, removal);
+        }
+        else {
+            this.broadcastToLocalChannel(channel, removal);
+        }
+        // Distinct ack verb: the broadcast already reaches the sender (they
+        // are subscribed), and an ack sharing the broadcast's action name
+        // would apply the removal twice on the client.
+        this.sendSuccess(clientId, 'reaction_unsent', { channel, targetId, emoji });
+        this.logger.info(`Client ${clientId} removed reaction ${emoji} on ${targetId} in channel: ${channel}`);
+    }
+    /** A reaction is durable when it names what it is attached to. */
+    _isTargeted(reaction) {
+        return typeof reaction.targetId === 'string' && reaction.targetId.length > 0;
+    }
+    _toStored(reaction) {
+        const stored = {
+            channel: reaction.channel,
+            targetId: reaction.targetId,
+            emoji: reaction.emoji,
+            userId: reaction.userId,
+            timestamp: reaction.timestamp,
+        };
+        if (reaction.displayName !== undefined)
+            stored.displayName = reaction.displayName;
+        return stored;
+    }
+    /**
+     * Stored rows are re-broadcast as ordinary Reactions so clients need one
+     * inbound shape, not two. The id is derived from the key rather than
+     * generated, so replaying twice cannot look like two reactions.
+     */
+    _fromStored(stored) {
+        const catalogEntry = this.availableReactions[stored.emoji];
+        const reaction = {
+            id: `reaction_${stored.targetId}_${stored.emoji}_${stored.userId}`,
+            clientId: stored.userId,
+            channel: stored.channel,
+            emoji: stored.emoji,
+            effect: catalogEntry ? catalogEntry.effect : '',
+            position: null,
+            metadata: {},
+            timestamp: stored.timestamp,
+            targetId: stored.targetId,
+            userId: stored.userId,
+        };
+        if (stored.displayName !== undefined)
+            reaction.displayName = stored.displayName;
+        return reaction;
+    }
+    async _replayStoredReactions(clientId, channel) {
+        if (!this.store)
+            return;
+        try {
+            const stored = await this.store.list(channel, this.maxHistoryReplay);
+            this.sendSuccess(clientId, 'reaction_history', {
+                channel,
+                reactions: stored.map((s) => this._fromStored(s)),
+            });
+        }
+        catch (err) {
+            this.logger.error(`Failed to replay reactions for channel ${channel}:`, err);
+        }
     }
     /**
      * Resolve the sender identity for a connection, or null. A throwing

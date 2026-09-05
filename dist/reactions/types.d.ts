@@ -37,6 +37,48 @@ export interface AvailableReaction {
     effect: string;
 }
 /**
+ * One durable reaction: a single person's single emoji on a single target.
+ *
+ * This is deliberately NOT a `Reaction`. A broadcast Reaction is an EVENT —
+ * it has an id, a connection, a position, an effect, and it happened once.
+ * A stored reaction is STATE: the fact that this person currently has this
+ * emoji on this message. The primary key is therefore
+ * (channel, targetId, emoji, userId) and nothing else, which is what makes
+ * a double-click one row and un-reacting a delete rather than a tombstone.
+ */
+export interface StoredReaction {
+    channel: string;
+    /** The entity reacted to — a messageId in chat. */
+    targetId: string;
+    emoji: string;
+    /** Owner. Required: a reaction nobody owns can never be taken back. */
+    userId: string;
+    displayName?: string;
+    /** ISO-8601 — when it was first placed. */
+    timestamp: string;
+}
+/**
+ * Durable store for TARGETED reactions (message reactions and the like).
+ *
+ * Reactions without a `targetId` — the floating emoji thrown at a call —
+ * never reach this port: they are ephemeral by nature and the service keeps
+ * treating them as fan-out only. Wiring a store is what turns "reaction" into
+ * two behaviours in one service, so the split is by `targetId`, not by config.
+ */
+export interface ReactionStore {
+    /** Idempotent on (channel, targetId, emoji, userId). */
+    add(reaction: StoredReaction): Promise<void>;
+    /** Removing something that is not there is a no-op, not an error. */
+    remove(key: {
+        channel: string;
+        targetId: string;
+        emoji: string;
+        userId: string;
+    }): Promise<void>;
+    /** Every stored reaction on the channel, for replay on subscribe. */
+    list(channel: string, limit?: number): Promise<StoredReaction[]>;
+}
+/**
  * Optional construction-time tunables. All defaults come from
  * `manifest.ts` env-var declarations; this is the runtime-override path
  * (mainly for tests and per-deployment overrides).
@@ -79,6 +121,19 @@ export interface ReactionConfig {
      * for durable capture (e.g. gateway publishing call:reaction.recorded).
      */
     onReaction?: (reaction: Reaction) => void | Promise<void>;
+    /**
+     * Durable store for targeted reactions. When set, a reaction carrying a
+     * `targetId` is written BEFORE it is broadcast, replayed to every client
+     * that subscribes, and can be taken back with the `remove` action.
+     *
+     * Requires `identityResolver`: the store's key includes the owner, so a
+     * targeted reaction from a connection with no resolvable identity is
+     * REFUSED rather than persisted under a connection id that will not
+     * survive the reload the store exists to survive.
+     */
+    store?: ReactionStore | null;
+    /** Max stored reactions replayed on subscribe. Default 500. */
+    maxHistoryReplay?: number;
 }
 /**
  * The MessageRouter slice ReactionService needs. Kept narrow on purpose:

@@ -105,6 +105,15 @@ export interface Reaction {
   timestamp: string;
   /** Optional entity being reacted to (messageId, articleId, commentId, …). */
   targetId?: string;
+  /**
+   * Stable owner id, stamped server-side from the connection's authenticated
+   * context (never from the frame). Absent when the server resolved no
+   * identity. This — not `clientId` — is what makes "you already reacted"
+   * answerable across a reload, so grouping and toggling both key on it.
+   */
+  userId?: string;
+  /** Owner's display name, stamped alongside `userId`. */
+  displayName?: string;
 }
 
 /** One activity event — mirror of gateway/activity/types.ts ActivityEvent. */
