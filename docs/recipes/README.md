@@ -17,6 +17,12 @@ matrix, all 78 pairs).
 | Notifications | [notifications](./notifications.md) | `notifications()` | `useNotifications` |
 | File uploads | [file-uploads](./file-uploads.md) | `fileUploads()` | `useFileUpload` |
 | Collab documents | [collab-docs](./collab-docs.md) | `collabDocs()` | `useCRDT` |
+| Pinned messages | [conversation](./conversation.md) | `chat()` | `usePins` |
+
+**Composing them:** [conversation](./conversation.md) assembles chat, files,
+documents, pins, mentions and calls into one surface whose view set is data —
+the same component ships as chat-only in one product and chat-plus-everything
+in another.
 
 Authoring your own capability: `defineFeature({ manifest, create })` — it
 plugs in identically to the built-ins. See `src/server/attach.ts`.
