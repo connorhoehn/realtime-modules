@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -47,6 +47,9 @@ Object.defineProperty(exports, "useFeatures", { enumerable: true, get: function 
 // sides and never firing.
 Object.defineProperty(exports, "createGatewayRest", { enumerable: true, get: function () { return GatewaySocketProvider_1.createGatewayRest; } });
 Object.defineProperty(exports, "httpBaseFromSocketUrl", { enumerable: true, get: function () { return GatewaySocketProvider_1.httpBaseFromSocketUrl; } });
+// Pinned messages — channel state, served over the gateway's REST half.
+var usePins_1 = require("./usePins");
+Object.defineProperty(exports, "usePins", { enumerable: true, get: function () { return usePins_1.usePins; } });
 // v0.7.0 — Feature hooks: useChat, usePresence, useReactions, useActivity.
 // All hooks require a GatewaySocketProvider ancestor and use the message bus
 // exposed by useGateway() to subscribe to inbound frames per channel.

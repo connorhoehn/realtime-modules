@@ -79,6 +79,11 @@ export {
   createGatewayRest,
   httpBaseFromSocketUrl,
 } from './GatewaySocketProvider';
+export type { PinnedMessage } from './GatewaySocketProvider';
+
+// Pinned messages — channel state, served over the gateway's REST half.
+export { usePins } from './usePins';
+export type { UsePinsResult } from './usePins';
 export type {
   FeatureName,
   GatewaySocketProviderProps,

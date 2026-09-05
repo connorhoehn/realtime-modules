@@ -50,7 +50,37 @@ function createGatewayRest(url, token) {
     const base = httpBaseFromSocketUrl(url);
     if (!base)
         return null;
+    const authHeaders = () => token ? { Authorization: `Bearer ${token}` } : {};
+    const json = async (path, init) => {
+        const res = await fetch(`${base}${path}`, {
+            ...init,
+            headers: { ...authHeaders(), ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers ?? {}) },
+        });
+        if (!res.ok) {
+            const err = new Error(`gateway request failed: ${res.status}`);
+            err.status = res.status;
+            throw err;
+        }
+        return res.json();
+    };
     return {
+        async listPins(channel) {
+            const body = (await json(`/api/chat/pins?channel=${encodeURIComponent(channel)}`));
+            return body.pins ?? [];
+        },
+        async pin(input) {
+            const body = (await json('/api/chat/pins', {
+                method: 'POST',
+                body: JSON.stringify(input),
+            }));
+            return body.pin ?? null;
+        },
+        async unpin(channel, messageId) {
+            await json('/api/chat/pins', {
+                method: 'DELETE',
+                body: JSON.stringify({ channel, messageId }),
+            });
+        },
         async getCapability(name, channel) {
             const qs = new URLSearchParams({ name });
             if (channel)

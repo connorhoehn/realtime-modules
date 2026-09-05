@@ -71,6 +71,35 @@ export interface GatewayRest {
         version?: string;
         metadata?: Record<string, unknown>;
     }>;
+    /** Pinned messages for a channel, newest pin first. */
+    listPins?: (channel: string) => Promise<PinnedMessage[]>;
+    pin?: (input: {
+        channel: string;
+        messageId: string;
+        text: string;
+        author: string;
+    }) => Promise<PinnedMessage | null>;
+    unpin?: (channel: string, messageId: string) => Promise<void>;
+}
+/**
+ * A message pinned to the top of a channel.
+ *
+ * Channel state, not message content: set by one person, seen by everyone,
+ * and outliving the session that set it — which is why it has its own store
+ * rather than riding the message's metadata, where a later pin by someone
+ * else would have nowhere to live.
+ */
+export interface PinnedMessage {
+    channelId: string;
+    messageId: string;
+    /** userId of whoever pinned it. */
+    pinnedBy: string;
+    /** ISO-8601. */
+    pinnedAt: string;
+    /** Short excerpt, so a pin panel renders without re-reading the transcript. */
+    preview: string;
+    /** Display name of the original sender. */
+    author: string;
 }
 export interface GatewayContextValue extends UseWebSocketHookReturn {
     onMessage: (handler: (msg: GatewayMessage) => void) => () => void;

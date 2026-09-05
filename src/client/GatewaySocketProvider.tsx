@@ -128,6 +128,36 @@ export interface GatewayRest {
     name: string,
     channel?: string,
   ) => Promise<{ enabled: boolean; version?: string; metadata?: Record<string, unknown> }>;
+  /** Pinned messages for a channel, newest pin first. */
+  listPins?: (channel: string) => Promise<PinnedMessage[]>;
+  pin?: (input: {
+    channel: string;
+    messageId: string;
+    text: string;
+    author: string;
+  }) => Promise<PinnedMessage | null>;
+  unpin?: (channel: string, messageId: string) => Promise<void>;
+}
+
+/**
+ * A message pinned to the top of a channel.
+ *
+ * Channel state, not message content: set by one person, seen by everyone,
+ * and outliving the session that set it — which is why it has its own store
+ * rather than riding the message's metadata, where a later pin by someone
+ * else would have nowhere to live.
+ */
+export interface PinnedMessage {
+  channelId: string;
+  messageId: string;
+  /** userId of whoever pinned it. */
+  pinnedBy: string;
+  /** ISO-8601. */
+  pinnedAt: string;
+  /** Short excerpt, so a pin panel renders without re-reading the transcript. */
+  preview: string;
+  /** Display name of the original sender. */
+  author: string;
 }
 
 export interface GatewayContextValue extends UseWebSocketHookReturn {
@@ -155,7 +185,45 @@ export function httpBaseFromSocketUrl(url: string): string | null {
 export function createGatewayRest(url: string, token?: string): GatewayRest | null {
   const base = httpBaseFromSocketUrl(url);
   if (!base) return null;
+  const authHeaders = (): Record<string, string> =>
+    token ? { Authorization: `Bearer ${token}` } : {};
+
+  const json = async (path: string, init?: RequestInit) => {
+    const res = await fetch(`${base}${path}`, {
+      ...init,
+      headers: { ...authHeaders(), ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers ?? {}) },
+    });
+    if (!res.ok) {
+      const err = new Error(`gateway request failed: ${res.status}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  };
+
   return {
+    async listPins(channel: string) {
+      const body = (await json(`/api/chat/pins?channel=${encodeURIComponent(channel)}`)) as {
+        pins?: PinnedMessage[];
+      };
+      return body.pins ?? [];
+    },
+
+    async pin(input: { channel: string; messageId: string; text: string; author: string }) {
+      const body = (await json('/api/chat/pins', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      })) as { pin?: PinnedMessage };
+      return body.pin ?? null;
+    },
+
+    async unpin(channel: string, messageId: string) {
+      await json('/api/chat/pins', {
+        method: 'DELETE',
+        body: JSON.stringify({ channel, messageId }),
+      });
+    },
+
     async getCapability(name: string, channel?: string) {
       const qs = new URLSearchParams({ name });
       if (channel) qs.set('channel', channel);
