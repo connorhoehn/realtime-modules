@@ -91,6 +91,9 @@ class MemoryMetadataStore {
         if (opts?.docType !== undefined) {
             result = result.filter((d) => d.docType === opts.docType);
         }
+        if (opts?.channel !== undefined) {
+            result = result.filter((d) => d.channel === opts.channel);
+        }
         // Newest-first by updatedAt, matching DocumentMetadataService.
         result.sort((a, b) => b.updatedAt - a.updatedAt);
         if (opts?.limit !== undefined && opts.limit >= 0) {

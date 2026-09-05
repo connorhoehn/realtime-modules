@@ -74,7 +74,9 @@ declare class DocumentMetadataService {
     /**
      * List all documents, returning metadata for each (wire shape).
      */
-    handleListDocuments(): Promise<DocumentWire[]>;
+    handleListDocuments(opts?: {
+        channel?: string;
+    }): Promise<DocumentWire[]>;
     /**
      * Delete a document's metadata.
      */

@@ -46,6 +46,20 @@ export interface DocumentMeta {
     description?: string;
     docType?: string;
     ownerId?: string;
+    /**
+     * The conversation this document was created in, if any.
+     *
+     * A document written during a conversation belongs to it — that is where
+     * it will be looked for. Persisted here rather than kept as a wire-only
+     * field, because the wire sidecar is a per-process Map: a binding held
+     * there is lost on restart and invisible to every other node, which is
+     * exactly the wrong shape for something whose whole job is to still be
+     * true tomorrow.
+     *
+     * Absent for documents created outside any conversation. Never inferred:
+     * a document is bound only when its creator was in a channel.
+     */
+    channel?: string;
     createdAt: number;
     updatedAt: number;
 }
@@ -62,6 +76,8 @@ export interface MetadataStore {
     listDocuments(opts?: {
         ownerId?: string;
         docType?: string;
+        /** Only documents bound to this conversation. */
+        channel?: string;
         limit?: number;
     }): Promise<DocumentMeta[]>;
     /** Delete metadata for a document. No-op if it doesn't exist. */

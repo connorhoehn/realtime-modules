@@ -115,6 +115,10 @@ class DocumentMetadataService {
             icon: (meta && meta.icon) || TYPE_ICONS[docType] || TYPE_ICONS.custom,
             description: (meta && meta.description) || '',
         };
+        // A document written during a conversation belongs to it. Carried
+        // only when the creator supplied one — never inferred.
+        const channel = typeof meta?.channel === 'string' && meta.channel ? meta.channel : undefined;
+        if (channel) document.channel = channel;
 
         // Persist canonical fields via the store.
         await this.metadataStore.putDocument({
@@ -124,6 +128,7 @@ class DocumentMetadataService {
             description: document.description,
             docType: document.type,
             ownerId: document.createdBy,
+            channel,
             createdAt: nowEpoch,
             updatedAt: nowEpoch,
         });
@@ -162,8 +167,10 @@ class DocumentMetadataService {
     /**
      * List all documents, returning metadata for each (wire shape).
      */
-    async handleListDocuments(): Promise<DocumentWire[]> {
-        const stored = await this.metadataStore.listDocuments();
+    async handleListDocuments(opts?: { channel?: string }): Promise<DocumentWire[]> {
+        const stored = await this.metadataStore.listDocuments(
+            opts?.channel ? { channel: opts.channel } : undefined,
+        );
         return stored.map((d) => this._toWire(d));
     }
 
@@ -205,6 +212,10 @@ class DocumentMetadataService {
             description: wire.description,
             docType: wire.type,
             ownerId: wire.createdBy,
+            // Carried through explicitly. putDocument is an upsert of the
+            // WHOLE row, so leaving this out would quietly unbind a document
+            // from its conversation the first time anyone renamed it.
+            channel: existing.channel,
             createdAt: existing.createdAt,
             updatedAt: nowEpoch,
         });
@@ -240,6 +251,7 @@ class DocumentMetadataService {
             updatedAt: new Date(stored.updatedAt).toISOString(),
             icon: (sidecar.icon as string | undefined) || TYPE_ICONS[docType] || '',
             description: stored.description || '',
+            ...(stored.channel ? { channel: stored.channel } : {}),
             ...(sidecar.activeCallSessionId !== undefined ? { activeCallSessionId: sidecar.activeCallSessionId } : {}),
         };
     }

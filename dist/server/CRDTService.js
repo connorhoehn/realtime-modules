@@ -317,7 +317,9 @@ class CRDTService {
                     return;
                 }
                 case 'listDocuments': {
-                    const docs = await this.metadataService.handleListDocuments();
+                    // An optional channel filter, so a conversation can ask
+                    // for its own documents without pulling the workspace.
+                    const docs = await this.metadataService.handleListDocuments(typeof data?.channel === 'string' && data.channel ? { channel: data.channel } : undefined);
                     this.sendToClient(clientId, { type: 'crdt', action: 'documentList', documents: docs });
                     return;
                 }

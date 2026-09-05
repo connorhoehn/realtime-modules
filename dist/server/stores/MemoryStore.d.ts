@@ -45,6 +45,7 @@ export declare class MemoryMetadataStore implements MetadataStore {
     listDocuments(opts?: {
         ownerId?: string;
         docType?: string;
+        channel?: string;
         limit?: number;
     }): Promise<DocumentMeta[]>;
     deleteDocument(documentId: string): Promise<void>;
