@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GatewayContext = void 0;
+exports.httpBaseFromSocketUrl = httpBaseFromSocketUrl;
+exports.createGatewayRest = createGatewayRest;
 exports.GatewaySocketProvider = GatewaySocketProvider;
 exports.useGateway = useGateway;
 exports.useFeatures = useFeatures;
@@ -28,6 +30,45 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 //     the consumer wired subscriptions manually.
 const react_1 = require("react");
 const useWebSocket_1 = require("./useWebSocket");
+/**
+ * `ws://host` → `http://host`, `wss://` → `https://`. The gateway serves its
+ * REST routes on the same origin it accepts sockets on, so the socket URL is
+ * the only configuration a consumer should have to supply.
+ */
+function httpBaseFromSocketUrl(url) {
+    try {
+        const u = new URL(url);
+        const protocol = u.protocol === 'wss:' ? 'https:' : u.protocol === 'ws:' ? 'http:' : u.protocol;
+        return `${protocol}//${u.host}`;
+    }
+    catch {
+        return null;
+    }
+}
+/** The default REST shim: plain fetch against the gateway's own origin. */
+function createGatewayRest(url, token) {
+    const base = httpBaseFromSocketUrl(url);
+    if (!base)
+        return null;
+    return {
+        async getCapability(name, channel) {
+            const qs = new URLSearchParams({ name });
+            if (channel)
+                qs.set('channel', channel);
+            const res = await fetch(`${base}/api/capabilities?${qs.toString()}`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            if (!res.ok) {
+                // Carries `status` so the hooks can tell 404 ("this gateway has no
+                // capability endpoint" — the optimistic case) from a real failure.
+                const err = new Error(`capability query failed: ${res.status}`);
+                err.status = res.status;
+                throw err;
+            }
+            return (await res.json());
+        },
+    };
+}
 /**
  * Holds the full UseWebSocketHookReturn so child hooks can consume the
  * WS connection without prop-drilling. Do not call useGateway() outside
@@ -65,7 +106,7 @@ FeaturesContext.displayName = 'FeaturesContext';
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-function GatewaySocketProvider({ url, children, features = [], token, channel, }) {
+function GatewaySocketProvider({ url, children, features = [], token, channel, rest, }) {
     // Message-bus: child hooks register handlers; GatewaySocketProvider fans
     // each inbound frame out to all registered handlers in registration order.
     const handlersRef = (0, react_1.useRef)(new Set());
@@ -136,9 +177,13 @@ function GatewaySocketProvider({ url, children, features = [], token, channel, }
     // Merge the message-bus subscriber into the WS context value. useMemo keeps
     // the identity stable across renders (only changes when `ws` identity changes,
     // which is rare — reconnects don't replace the ws object).
-    const contextValue = (0, react_1.useMemo)(() => ({ ...ws, onMessage: busOnMessage }), 
+    // `undefined` means "give me the default"; `null` means "there is no REST
+    // surface here" and must survive as null so the hooks take their no-endpoint
+    // path rather than building a shim against a URL nobody wanted used.
+    const resolvedRest = (0, react_1.useMemo)(() => (rest === undefined ? createGatewayRest(url, token) : rest), [rest, url, token]);
+    const contextValue = (0, react_1.useMemo)(() => ({ ...ws, onMessage: busOnMessage, rest: resolvedRest }), 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ws, busOnMessage]);
+    [ws, busOnMessage, resolvedRest]);
     return ((0, jsx_runtime_1.jsx)(FeaturesContext.Provider, { value: features, children: (0, jsx_runtime_1.jsx)(exports.GatewayContext.Provider, { value: contextValue, children: children }) }));
 }
 // ---------------------------------------------------------------------------

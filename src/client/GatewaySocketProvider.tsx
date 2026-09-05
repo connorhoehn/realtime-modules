@@ -80,6 +80,21 @@ export interface GatewaySocketProviderProps {
    */
   features?: FeatureName[];
   /**
+   * REST surface for the questions a socket cannot answer — today that is
+   * capability resolution (`GET /api/capabilities`).
+   *
+   * Defaults to an HTTP shim derived from `url`, because the alternative was
+   * worse than it looked: `rest` used to be an undeclared extension point
+   * that only Lambda-tier proxy clients wired in, so in every browser app
+   * `useCapability`/`useCapabilities` found no way to ask, took their
+   * optimistic fallback, and reported EVERY capability enabled. The gate was
+   * wired end to end and never fired once.
+   *
+   * Pass `null` to switch it off deliberately (a deployment with no
+   * capability endpoint), or your own object to route through a proxy.
+   */
+  rest?: GatewayRest | null;
+  /**
    * Optional bearer token forwarded to useWebSocket as `authToken`.
    * Passed as the `bearer-token-v1` WS subprotocol header.
    */
@@ -104,8 +119,59 @@ export interface GatewaySocketProviderProps {
  * Returns an unsubscribe function. Safe to call from any child component
  * inside a GatewaySocketProvider; handlers are called in registration order.
  */
+/**
+ * The non-socket half of the gateway. Small on purpose: this is for the
+ * questions that are not a stream.
+ */
+export interface GatewayRest {
+  getCapability?: (
+    name: string,
+    channel?: string,
+  ) => Promise<{ enabled: boolean; version?: string; metadata?: Record<string, unknown> }>;
+}
+
 export interface GatewayContextValue extends UseWebSocketHookReturn {
   onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
+  /** See GatewaySocketProviderProps.rest. Null when explicitly disabled. */
+  rest?: GatewayRest | null;
+}
+
+/**
+ * `ws://host` → `http://host`, `wss://` → `https://`. The gateway serves its
+ * REST routes on the same origin it accepts sockets on, so the socket URL is
+ * the only configuration a consumer should have to supply.
+ */
+export function httpBaseFromSocketUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const protocol = u.protocol === 'wss:' ? 'https:' : u.protocol === 'ws:' ? 'http:' : u.protocol;
+    return `${protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The default REST shim: plain fetch against the gateway's own origin. */
+export function createGatewayRest(url: string, token?: string): GatewayRest | null {
+  const base = httpBaseFromSocketUrl(url);
+  if (!base) return null;
+  return {
+    async getCapability(name: string, channel?: string) {
+      const qs = new URLSearchParams({ name });
+      if (channel) qs.set('channel', channel);
+      const res = await fetch(`${base}/api/capabilities?${qs.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        // Carries `status` so the hooks can tell 404 ("this gateway has no
+        // capability endpoint" — the optimistic case) from a real failure.
+        const err = new Error(`capability query failed: ${res.status}`) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
+      return (await res.json()) as { enabled: boolean; version?: string; metadata?: Record<string, unknown> };
+    },
+  };
 }
 
 /**
@@ -154,6 +220,7 @@ export function GatewaySocketProvider({
   features = [],
   token,
   channel,
+  rest,
 }: GatewaySocketProviderProps) {
   // Message-bus: child hooks register handlers; GatewaySocketProvider fans
   // each inbound frame out to all registered handlers in registration order.
@@ -231,10 +298,18 @@ export function GatewaySocketProvider({
   // Merge the message-bus subscriber into the WS context value. useMemo keeps
   // the identity stable across renders (only changes when `ws` identity changes,
   // which is rare — reconnects don't replace the ws object).
+  // `undefined` means "give me the default"; `null` means "there is no REST
+  // surface here" and must survive as null so the hooks take their no-endpoint
+  // path rather than building a shim against a URL nobody wanted used.
+  const resolvedRest = useMemo<GatewayRest | null>(
+    () => (rest === undefined ? createGatewayRest(url, token) : rest),
+    [rest, url, token],
+  );
+
   const contextValue = useMemo<GatewayContextValue>(
-    () => ({ ...ws, onMessage: busOnMessage }),
+    () => ({ ...ws, onMessage: busOnMessage, rest: resolvedRest }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ws, busOnMessage],
+    [ws, busOnMessage, resolvedRest],
   );
 
   return (

@@ -67,10 +67,22 @@ export type {
 // v0.3.x — GatewaySocketProvider + useFeatures for declarative feature activation.
 // Provides the WebSocket context so child hooks (useChat, usePresence, etc.)
 // work without manual wiring. Also exports useGateway() for direct WS access.
-export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from './GatewaySocketProvider';
+export {
+  GatewaySocketProvider,
+  GatewayContext,
+  useGateway,
+  useFeatures,
+  // The REST half. Exported because an app that bridges its OWN socket onto
+  // GatewayContext never mounts GatewaySocketProvider, and so never gets the
+  // default shim — which is how a capability gate ends up complete on both
+  // sides and never firing.
+  createGatewayRest,
+  httpBaseFromSocketUrl,
+} from './GatewaySocketProvider';
 export type {
   FeatureName,
   GatewaySocketProviderProps,
+  GatewayRest,
   GatewayContextValue,
 } from './GatewaySocketProvider';
 

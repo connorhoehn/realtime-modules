@@ -27,6 +27,21 @@ export interface GatewaySocketProviderProps {
      */
     features?: FeatureName[];
     /**
+     * REST surface for the questions a socket cannot answer — today that is
+     * capability resolution (`GET /api/capabilities`).
+     *
+     * Defaults to an HTTP shim derived from `url`, because the alternative was
+     * worse than it looked: `rest` used to be an undeclared extension point
+     * that only Lambda-tier proxy clients wired in, so in every browser app
+     * `useCapability`/`useCapabilities` found no way to ask, took their
+     * optimistic fallback, and reported EVERY capability enabled. The gate was
+     * wired end to end and never fired once.
+     *
+     * Pass `null` to switch it off deliberately (a deployment with no
+     * capability endpoint), or your own object to route through a proxy.
+     */
+    rest?: GatewayRest | null;
+    /**
      * Optional bearer token forwarded to useWebSocket as `authToken`.
      * Passed as the `bearer-token-v1` WS subprotocol header.
      */
@@ -46,9 +61,30 @@ export interface GatewaySocketProviderProps {
  * Returns an unsubscribe function. Safe to call from any child component
  * inside a GatewaySocketProvider; handlers are called in registration order.
  */
+/**
+ * The non-socket half of the gateway. Small on purpose: this is for the
+ * questions that are not a stream.
+ */
+export interface GatewayRest {
+    getCapability?: (name: string, channel?: string) => Promise<{
+        enabled: boolean;
+        version?: string;
+        metadata?: Record<string, unknown>;
+    }>;
+}
 export interface GatewayContextValue extends UseWebSocketHookReturn {
     onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
+    /** See GatewaySocketProviderProps.rest. Null when explicitly disabled. */
+    rest?: GatewayRest | null;
 }
+/**
+ * `ws://host` → `http://host`, `wss://` → `https://`. The gateway serves its
+ * REST routes on the same origin it accepts sockets on, so the socket URL is
+ * the only configuration a consumer should have to supply.
+ */
+export declare function httpBaseFromSocketUrl(url: string): string | null;
+/** The default REST shim: plain fetch against the gateway's own origin. */
+export declare function createGatewayRest(url: string, token?: string): GatewayRest | null;
 /**
  * Holds the full UseWebSocketHookReturn so child hooks can consume the
  * WS connection without prop-drilling. Do not call useGateway() outside
@@ -74,7 +110,7 @@ export declare const GatewayContext: React.Context<GatewayContextValue | null>;
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-export declare function GatewaySocketProvider({ url, children, features, token, channel, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
+export declare function GatewaySocketProvider({ url, children, features, token, channel, rest, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *

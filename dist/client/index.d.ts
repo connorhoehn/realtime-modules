@@ -17,8 +17,8 @@ export type { UseWebSocketOptions, UseWebSocketHookReturn, } from './useWebSocke
 export { useAgentStream } from './useAgentStream';
 export type { UseAgentStreamOptions, UseAgentStreamReturn, Message, ToolCall, BuildBody, } from './useAgentStream';
 export type { ConnectionState, GatewayError, GatewayMessage, UseWebSocketReturn, ChatMessage, PresenceStatus, PresenceEntry, Reaction, ActivityEvent, } from './types';
-export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures } from './GatewaySocketProvider';
-export type { FeatureName, GatewaySocketProviderProps, GatewayContextValue, } from './GatewaySocketProvider';
+export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures, createGatewayRest, httpBaseFromSocketUrl, } from './GatewaySocketProvider';
+export type { FeatureName, GatewaySocketProviderProps, GatewayRest, GatewayContextValue, } from './GatewaySocketProvider';
 export { useChat } from './useChat';
 export type { UseChatReturn } from './useChat';
 export { usePresence } from './usePresence';
