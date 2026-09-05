@@ -480,10 +480,12 @@ class CRDTService {
                 }
 
                 case 'getDocumentPresence': {
+                    // Per USER, not per connection — the same shape the
+                    // pushed `documents:presence` sends. Reading the raw
+                    // clientId map here made a poll disagree with a push
+                    // about how many people were in the document.
                     const presence: Record<string, any[]> = {};
-                    const presenceMap = this.presenceService.getPresence();
-                    for (const [ch, usersMap] of presenceMap) {
-                        const users = Array.from(usersMap.values());
+                    for (const [ch, users] of this.presenceService.getPresenceByUser()) {
                         if (users.length > 0) presence[ch] = users;
                     }
                     this.sendToClient(clientId, { type: 'crdt', action: 'documentPresence', presence });
@@ -714,6 +716,13 @@ class CRDTService {
                 if (!this.presenceService.hasClient(clientId, channel)) {
                     this.logger.info(`[presence-backfill] Adding ${clientId} to presence for ${channel}`);
                     this.presenceService.addClient(clientId, channel);
+                } else {
+                    // An entry created before this connection's user context
+                    // landed is keyed on its clientId, which reads downstream
+                    // as a second, anonymous person in the document. Awareness
+                    // arrives constantly while a document is open, so this is
+                    // where such an entry gets its name.
+                    this.presenceService.refreshIdentity(clientId, channel);
                 }
 
                 if (typeof idle === 'boolean') {

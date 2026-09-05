@@ -79,21 +79,29 @@ class DocumentPresenceService {
     }
 
     /**
-     * Add a client to the document presence map for a doc: channel.
-     * Broadcasts updated presence to all connected clients.
+     * Read this connection's identity off the router.
      *
-     * @param clientId
-     * @param channel
+     * `identified` is the load-bearing part. When the connection carries no
+     * user context we still need a key, and the clientId is the only one
+     * available — but a clientId is a CONNECTION, not a person, and the
+     * caller has to be able to tell the difference. Without that flag the
+     * fallback is indistinguishable from a real user id, and the dedup in
+     * getPresence() cannot collapse two connections belonging to the same
+     * human: one arrives as `dev-hank`, the other as a UUID, and the
+     * document shows a phantom second editor next to "Hank is editing now".
      */
-    addClient(clientId: string, channel: string): void {
-        if (!channel.startsWith('doc:')) return;
-
+    private _resolve(clientId: string): {
+        identity: { userId: string; displayName: string; color: string };
+        identified: boolean;
+        mode: PresenceMode | undefined;
+    } {
         const clientData: AnyClientData = this.messageRouter.getClientData
             ? this.messageRouter.getClientData(clientId)
             : null;
         const ctx = clientData?.userContext || clientData?.metadata?.userContext || {};
 
-        const userId = ctx.userId || ctx.sub || clientId;
+        const resolved: string | undefined = ctx.userId || ctx.sub || undefined;
+        const userId = resolved ?? clientId;
         const color = ctx.color || (ctx.email ? deriveColor(ctx.email) : deriveColor(userId));
         // mode is optional editor/reviewer/reader. Sourced from userContext
         // when present (set by the auth pipeline or by a future awareness
@@ -104,10 +112,59 @@ class DocumentPresenceService {
             (typeof ctx.mode === 'string' && (VALID_MODES as string[]).includes(ctx.mode))
                 ? (ctx.mode as PresenceMode)
                 : undefined;
+
+        return {
+            identity: {
+                userId,
+                displayName: ctx.displayName || ctx.email || clientId.slice(0, 8),
+                color,
+            },
+            identified: resolved !== undefined,
+            mode,
+        };
+    }
+
+    /**
+     * Re-read a client's identity, for an entry that was created before the
+     * connection had one.
+     *
+     * Identity was previously frozen at subscribe time. A client that
+     * subscribes to a document during the window where its socket exists but
+     * its user context has not been attached yet — a reconnect restoring a
+     * clientId, most commonly — stayed anonymous for the whole session, even
+     * though the very next frame it sent was fully authenticated. Awareness
+     * traffic is continuous on an open document, so re-resolving there costs
+     * one map read per frame and closes the window.
+     *
+     * Returns true when something changed, so the caller can broadcast.
+     */
+    refreshIdentity(clientId: string, channel: string): boolean {
+        const existing = this.documentPresenceMap.get(channel)?.get(clientId);
+        // Already a person: nothing to upgrade to, and re-reading would let a
+        // later empty context downgrade a good entry.
+        if (!existing || existing.userId !== clientId) return false;
+
+        const { identity, identified } = this._resolve(clientId);
+        if (!identified) return false;
+
+        Object.assign(existing, identity);
+        this.broadcastPresence();
+        return true;
+    }
+
+    /**
+     * Add a client to the document presence map for a doc: channel.
+     * Broadcasts updated presence to all connected clients.
+     *
+     * @param clientId
+     * @param channel
+     */
+    addClient(clientId: string, channel: string): void {
+        if (!channel.startsWith('doc:')) return;
+
+        const { identity, mode } = this._resolve(clientId);
         const userInfo: UserInfo = {
-            userId,
-            displayName: ctx.displayName || ctx.email || clientId.slice(0, 8),
-            color,
+            ...identity,
             idle: false,
             ...(mode ? { mode } : {}),
         };
@@ -257,11 +314,21 @@ class DocumentPresenceService {
      * Build and broadcast a documents:presence message to all connected clients.
      * Format: { type: 'documents:presence', documents: [{ documentId, users }] }
      */
-    broadcastPresence(): void {
-        const documents: Array<{ documentId: string; users: UserInfo[] }> = [];
+    /**
+     * Presence as PEOPLE rather than connections: one row per user, per
+     * document.
+     *
+     * Every consumer wants this shape — a document with one person in two
+     * tabs has one person in it — and the raw map is keyed by clientId. This
+     * used to be inlined in broadcastPresence(), so the pushed presence
+     * collapsed the tabs and the polled `getDocumentPresence` reply did not:
+     * the same document reported one editor or two depending on which path
+     * the client happened to be on.
+     */
+    getPresenceByUser(): Map<string, UserInfo[]> {
+        const out = new Map<string, UserInfo[]>();
 
         for (const [channelId, usersMap] of this.documentPresenceMap) {
-            // Deduplicate by userId (same user could have multiple tabs)
             const usersByUserId = new Map<string, UserInfo>();
             for (const userInfo of usersMap.values()) {
                 // Keep the most recent entry per userId (last write wins for idle)
@@ -270,11 +337,17 @@ class DocumentPresenceService {
                     usersByUserId.set(userInfo.userId, userInfo);
                 }
             }
+            out.set(channelId, Array.from(usersByUserId.values()));
+        }
 
-            documents.push({
-                documentId: channelId,
-                users: Array.from(usersByUserId.values()),
-            });
+        return out;
+    }
+
+    broadcastPresence(): void {
+        const documents: Array<{ documentId: string; users: UserInfo[] }> = [];
+
+        for (const [channelId, users] of this.getPresenceByUser()) {
+            documents.push({ documentId: channelId, users });
         }
 
         const message = {
