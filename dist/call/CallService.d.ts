@@ -66,6 +66,20 @@ export declare class CallService {
      */
     private roomMembershipMirrored;
     /**
+     * Live room calls, keyed by slug.
+     *
+     * A room call has no invite and no accept — you join a PLACE — so none of
+     * the signaling-edge bookkeeping above ever runs for it, and
+     * `onCallEnded` could never fire: the record of a room call simply never
+     * reached the room's conversation. Its lifecycle is membership instead:
+     * the first member in starts it, the last member out ends it, which is
+     * the same rule the DM path uses on `participantClientIds`.
+     *
+     * Deleting the entry IS the once-guard, so a duplicate leave cannot
+     * announce the same call twice.
+     */
+    private roomCalls;
+    /**
      * PR-W2.4 — sync leadership check + skip-metric hook for the
      * invite-sweep timer.  Both are optional: when omitted the sweeper
      * runs every tick (single-node / pre-PR behaviour).  Wired by
@@ -166,6 +180,12 @@ export declare class CallService {
      * announce.
      */
     private _announceCallEnded;
+    /**
+     * Hand a finished call to the consumer. Never awaited: teardown is
+     * synchronous and must not wait on whatever the consumer does with this.
+     * A broken recorder cannot break a hang-up.
+     */
+    private _emitCallEnded;
     private forgetCall;
     /** UX audit 2026-08-24 — reap a call that exists only in the durable
      *  store (local cache cold) and whose every registered participant is

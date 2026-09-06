@@ -164,6 +164,30 @@ export class CallService {
      * unique (slug, clientId) pair within a call lifetime.
      */
     private roomMembershipMirrored = new Set<string>();
+
+    /**
+     * Live room calls, keyed by slug.
+     *
+     * A room call has no invite and no accept — you join a PLACE — so none of
+     * the signaling-edge bookkeeping above ever runs for it, and
+     * `onCallEnded` could never fire: the record of a room call simply never
+     * reached the room's conversation. Its lifecycle is membership instead:
+     * the first member in starts it, the last member out ends it, which is
+     * the same rule the DM path uses on `participantClientIds`.
+     *
+     * Deleting the entry IS the once-guard, so a duplicate leave cannot
+     * announce the same call twice.
+     */
+    private roomCalls = new Map<string, {
+        callId: string;
+        lobbyName: string;
+        startedAt: number;
+        starterId: string;
+        starterName?: string;
+        /** Everyone who was ever in it, never pruned — a record needs the roster. */
+        everParticipated: Set<string>;
+        present: Set<string>;
+    }>();
     /**
      * PR-W2.4 — sync leadership check + skip-metric hook for the
      * invite-sweep timer.  Both are optional: when omitted the sweeper
@@ -584,7 +608,7 @@ export class CallService {
 
         const endedAt = Date.now();
         const startedAt = typeof state.invitedAt === 'number' ? state.invitedAt : undefined;
-        const summary = {
+        this._emitCallEnded({
             callId,
             lobbyName: state.lobbyName,
             callerId: state.callerId,
@@ -599,19 +623,35 @@ export class CallService {
             participantClientIds: Array.from(
                 state.everParticipated ?? state.participantClientIds,
             ),
-        };
+        });
+    }
 
+    /**
+     * Hand a finished call to the consumer. Never awaited: teardown is
+     * synchronous and must not wait on whatever the consumer does with this.
+     * A broken recorder cannot break a hang-up.
+     */
+    private _emitCallEnded(summary: {
+        callId: string;
+        lobbyName: string;
+        callerId: string;
+        callerName?: string;
+        startedAt?: number;
+        endedAt: number;
+        durationMs?: number;
+        participantClientIds: string[];
+    }): void {
+        if (!this.callEndedHook) return;
         try {
-            // Never awaited: teardown is synchronous and must not wait on
-            // whatever the consumer does with this. A broken recorder cannot
-            // break a hang-up.
             void Promise.resolve(this.callEndedHook(summary)).catch((e: any) =>
                 this.logger.warn(
-                    `[CallService] onCallEnded failed for ${callId}: ${e?.message ?? e}`,
+                    `[CallService] onCallEnded failed for ${summary.callId}: ${e?.message ?? e}`,
                 ),
             );
         } catch (e: any) {
-            this.logger.warn(`[CallService] onCallEnded threw for ${callId}: ${e?.message ?? e}`);
+            this.logger.warn(
+                `[CallService] onCallEnded threw for ${summary.callId}: ${e?.message ?? e}`,
+            );
         }
     }
 
@@ -1177,6 +1217,26 @@ export class CallService {
                 const userStatus = typeof state.status === 'string' ? state.status : null;
                 if (action === 'user-status' && userStatus === 'left') {
                     if (this.roomMembershipMirrored.delete(dedupKey)) {
+                        // Last one out ends the room's call. Deleting the
+                        // entry is the once-guard.
+                        const roomCall = this.roomCalls.get(slug);
+                        if (roomCall) {
+                            roomCall.present.delete(clientId);
+                            if (roomCall.present.size === 0) {
+                                this.roomCalls.delete(slug);
+                                const endedAt = Date.now();
+                                this._emitCallEnded({
+                                    callId: roomCall.callId,
+                                    lobbyName: roomCall.lobbyName,
+                                    callerId: roomCall.starterId,
+                                    callerName: roomCall.starterName,
+                                    startedAt: roomCall.startedAt,
+                                    endedAt,
+                                    durationMs: endedAt - roomCall.startedAt,
+                                    participantClientIds: Array.from(roomCall.everParticipated),
+                                });
+                            }
+                        }
                         try {
                             await Promise.resolve(this.roomBridge.handleMemberLeft(slug, userId, clientId));
                         } catch (e: any) {
@@ -1189,6 +1249,25 @@ export class CallService {
                     this.logger.warn(`[CallService→Room] participant-state for room:${slug} missing participantId — skipping handleMemberJoined for ${clientId}`);
                 } else if (!this.roomMembershipMirrored.has(dedupKey)) {
                     this.roomMembershipMirrored.add(dedupKey);
+                    // First member in starts the room's call; everyone after
+                    // joins the one already running.
+                    let roomCall = this.roomCalls.get(slug);
+                    if (!roomCall) {
+                        roomCall = {
+                            // Prefer the envelope's callId so the record lines
+                            // up with recordings of the same session.
+                            callId: callId || `room-${slug}-${Date.now()}`,
+                            lobbyName,
+                            startedAt: Date.now(),
+                            starterId: userId,
+                            starterName: displayName || undefined,
+                            everParticipated: new Set(),
+                            present: new Set(),
+                        };
+                        this.roomCalls.set(slug, roomCall);
+                    }
+                    roomCall.everParticipated.add(clientId);
+                    roomCall.present.add(clientId);
                     try {
                         await Promise.resolve(this.roomBridge.handleMemberJoined(slug, userId, clientId, participantId, displayName));
                     } catch (e: any) {

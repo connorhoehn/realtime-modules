@@ -162,3 +162,113 @@ describe('CallService — onCallEnded', () => {
     await expect(end(svc)).resolves.not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Room calls
+// ---------------------------------------------------------------------------
+//
+// A room call has no invite and no accept — you join a PLACE — so none of the
+// signaling-edge bookkeeping runs for it. Before this, `onCallEnded` could
+// never fire for a room, and the record of a room call never reached the
+// room's conversation even though the call plainly happened.
+
+const ROOM_LOBBY = 'room:design';
+
+function roomService(onCallEnded: any, roomBridge: any = {
+  handleMemberJoined: jest.fn(), handleMemberLeft: jest.fn(),
+}) {
+  const svc = new CallService({
+      messageRouter: makeRouter(),
+      logger: new NoopLogger() as any,
+      stateStore: new InMemoryCallStateStore(),
+      rejoinGraceMs: 0,
+    config: { onCallEnded },
+  } as any);
+  // The bridge is installed after construction, not passed in.
+  svc.setRoomBridge(roomBridge);
+  return { svc, roomBridge };
+}
+
+const joinRoom = (svc: CallService, clientId: string, userId: string, name: string) =>
+  svc.handleCallEvent(clientId, 'participant-state', {
+    callId: 'room-call-1', lobbyName: ROOM_LOBBY, callerId: userId,
+    participantId: `${userId}-p`, displayName: name,
+  } as any);
+
+const leaveRoom = (svc: CallService, clientId: string, userId: string) =>
+  svc.handleCallEvent(clientId, 'user-status', {
+    callId: 'room-call-1', lobbyName: ROOM_LOBBY, callerId: userId, status: 'left',
+  } as any);
+
+describe('CallService — onCallEnded for rooms', () => {
+  it('reports a room call once the last person leaves', async () => {
+    const onCallEnded = jest.fn();
+    const { svc } = roomService(onCallEnded);
+
+    await joinRoom(svc, 'c-alice', 'u-alice', 'Alice Chen');
+    await joinRoom(svc, 'c-bob', 'u-bob', 'Bob Martinez');
+    expect(onCallEnded).not.toHaveBeenCalled();
+
+    await leaveRoom(svc, 'c-alice', 'u-alice');
+    // Bob is still in the room — the call is still happening.
+    expect(onCallEnded).not.toHaveBeenCalled();
+
+    await leaveRoom(svc, 'c-bob', 'u-bob');
+    expect(onCallEnded).toHaveBeenCalledTimes(1);
+
+    const summary = onCallEnded.mock.calls[0]![0];
+    expect(summary).toMatchObject({
+      lobbyName: ROOM_LOBBY,
+      callId: 'room-call-1',
+      // Whoever opened the room started its call.
+      callerId: 'u-alice',
+      callerName: 'Alice Chen',
+    });
+    expect(summary.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  // The roster drains as people leave, so a record built from who is still
+  // present would name nobody at all.
+  it('names everyone who was ever in the room', async () => {
+    const onCallEnded = jest.fn();
+    const { svc } = roomService(onCallEnded);
+    await joinRoom(svc, 'c-alice', 'u-alice', 'Alice Chen');
+    await joinRoom(svc, 'c-bob', 'u-bob', 'Bob Martinez');
+    await leaveRoom(svc, 'c-alice', 'u-alice');
+    await leaveRoom(svc, 'c-bob', 'u-bob');
+
+    const ids: string[] = onCallEnded.mock.calls[0]![0].participantClientIds;
+    expect([...ids].sort()).toEqual(['c-alice', 'c-bob']);
+  });
+
+  it('does not announce the same room call twice', async () => {
+    const onCallEnded = jest.fn();
+    const { svc } = roomService(onCallEnded);
+    await joinRoom(svc, 'c-alice', 'u-alice', 'Alice Chen');
+    await leaveRoom(svc, 'c-alice', 'u-alice');
+    await leaveRoom(svc, 'c-alice', 'u-alice');
+    expect(onCallEnded).toHaveBeenCalledTimes(1);
+  });
+
+  // Re-entering an empty room is a NEW call, not a continuation.
+  it('starts a fresh call when somebody comes back', async () => {
+    const onCallEnded = jest.fn();
+    const { svc } = roomService(onCallEnded);
+    await joinRoom(svc, 'c-alice', 'u-alice', 'Alice Chen');
+    await leaveRoom(svc, 'c-alice', 'u-alice');
+    await joinRoom(svc, 'c-bob', 'u-bob', 'Bob Martinez');
+    await leaveRoom(svc, 'c-bob', 'u-bob');
+
+    expect(onCallEnded).toHaveBeenCalledTimes(2);
+    expect(onCallEnded.mock.calls[1]![0].callerId).toBe('u-bob');
+  });
+
+  it('still mirrors membership to the room bridge', async () => {
+    const onCallEnded = jest.fn();
+    const { svc, roomBridge } = roomService(onCallEnded);
+    await joinRoom(svc, 'c-alice', 'u-alice', 'Alice Chen');
+    await leaveRoom(svc, 'c-alice', 'u-alice');
+    expect(roomBridge.handleMemberJoined).toHaveBeenCalled();
+    expect(roomBridge.handleMemberLeft).toHaveBeenCalled();
+  });
+});
