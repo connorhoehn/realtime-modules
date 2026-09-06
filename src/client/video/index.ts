@@ -52,6 +52,15 @@ export {
   type LVSRecordingSegment,
 } from './useLVSRecordings';
 
+// Live vs DVR are different questions, so they are different hooks:
+// useLVSLiveHls answers "what is happening now" (many viewers, seconds of
+// latency); useLVSHlsPlayer answers "replay this window".
+export {
+  useLVSLiveHls,
+  type UseLVSLiveHlsOptions,
+  type UseLVSLiveHlsResult,
+} from './useLVSLiveHls';
+
 export {
   useLVSHlsPlayer,
   type UseLVSHlsPlayerOptions,

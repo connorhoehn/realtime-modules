@@ -5,7 +5,7 @@
 // reach for the hooks first; transport helpers are surfaced for
 // advanced cases (custom retry, headless tests).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
+exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSLiveHls = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
 var LVSProvider_1 = require("./LVSProvider");
 Object.defineProperty(exports, "LVSProvider", { enumerable: true, get: function () { return LVSProvider_1.LVSProvider; } });
 Object.defineProperty(exports, "useLVSContext", { enumerable: true, get: function () { return LVSProvider_1.useLVSContext; } });
@@ -21,6 +21,11 @@ Object.defineProperty(exports, "LVSHangoutSessionProvider", { enumerable: true, 
 Object.defineProperty(exports, "useLVSHangoutShared", { enumerable: true, get: function () { return useLVSHangoutShared_1.useLVSHangoutShared; } });
 var useLVSRecordings_1 = require("./useLVSRecordings");
 Object.defineProperty(exports, "useLVSRecordings", { enumerable: true, get: function () { return useLVSRecordings_1.useLVSRecordings; } });
+// Live vs DVR are different questions, so they are different hooks:
+// useLVSLiveHls answers "what is happening now" (many viewers, seconds of
+// latency); useLVSHlsPlayer answers "replay this window".
+var useLVSLiveHls_1 = require("./useLVSLiveHls");
+Object.defineProperty(exports, "useLVSLiveHls", { enumerable: true, get: function () { return useLVSLiveHls_1.useLVSLiveHls; } });
 var useLVSHlsPlayer_1 = require("./useLVSHlsPlayer");
 Object.defineProperty(exports, "useLVSHlsPlayer", { enumerable: true, get: function () { return useLVSHlsPlayer_1.useLVSHlsPlayer; } });
 var useLiveCaptions_1 = require("./useLiveCaptions");
