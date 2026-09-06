@@ -74,13 +74,55 @@ function validateMetadata(metadata, logger, maxKeys, maxSize) {
         }
         metadata = truncated;
     }
-    // Limit total serialized size
+    // Limit total serialized size.
     const serialized = JSON.stringify(metadata);
-    if (serialized.length > maxSize) {
-        logger.warn(`Metadata exceeds size limit: ${serialized.length}/${maxSize}`);
-        return { _truncated: true, displayName: metadata.displayName || 'unknown' };
+    if (serialized.length <= maxSize)
+        return metadata;
+    // Over budget. Shed the LARGEST keys until what remains fits, rather than
+    // discarding the envelope.
+    //
+    // This used to return `{ _truncated: true, displayName }` — everything
+    // else went in the bin. Attachments ride in `metadata.attachments`, and
+    // each image attachment carries a base64 `preview` measured at
+    // 1124-1376 characters, so three screenshots clear the 4096 default on
+    // their own. The sender's text posted, their files ceased to exist, and
+    // the @mentions and the reply they were answering went with them. The
+    // send reported success, so nothing anywhere said a word.
+    //
+    // Size order is what makes this worth doing: the keys that blow the
+    // budget are big, and the ones that carry the envelope — mentions,
+    // replyTo, displayName — are tiny. Dropping the biggest first almost
+    // always costs exactly the attachment payload and keeps the rest.
+    //
+    // `_droppedKeys` is the other half. A client that knows attachments were
+    // dropped can say so; a client handed a bare `_truncated` can only
+    // pretend the message was always plain text.
+    const bySize = Object.keys(metadata)
+        .map((key) => ({ key, size: JSON.stringify(metadata[key] ?? null).length }))
+        .sort((a, b) => b.size - a.size);
+    const kept = { ...metadata };
+    const droppedKeys = [];
+    for (const { key } of bySize) {
+        // Identity survives: it is what names the sender in the transcript,
+        // and it is never the reason the budget blew.
+        if (key === 'displayName')
+            continue;
+        delete kept[key];
+        droppedKeys.push(key);
+        const candidate = { ...kept, _truncated: true, _droppedKeys: droppedKeys };
+        if (JSON.stringify(candidate).length <= maxSize) {
+            logger.warn(`Metadata exceeds size limit: ${serialized.length}/${maxSize} — dropped ${droppedKeys.join(', ')}`);
+            return candidate;
+        }
     }
-    return metadata;
+    // Irreducible: a single oversized displayName. Cap it rather than return
+    // something that still does not fit.
+    logger.warn(`Metadata exceeds size limit: ${serialized.length}/${maxSize} — irreducible`);
+    return {
+        _truncated: true,
+        _droppedKeys: droppedKeys,
+        displayName: String(metadata.displayName || 'unknown').slice(0, 128),
+    };
 }
 // ---- ChatService ----------------------------------------------------------
 class ChatService {
