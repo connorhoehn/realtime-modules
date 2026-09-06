@@ -5,7 +5,7 @@
 // reach for the hooks first; transport helpers are surfaced for
 // advanced cases (custom retry, headless tests).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSLiveHls = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
+exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSViewerCount = exports.useLVSLiveHls = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
 var LVSProvider_1 = require("./LVSProvider");
 Object.defineProperty(exports, "LVSProvider", { enumerable: true, get: function () { return LVSProvider_1.LVSProvider; } });
 Object.defineProperty(exports, "useLVSContext", { enumerable: true, get: function () { return LVSProvider_1.useLVSContext; } });
@@ -26,6 +26,10 @@ Object.defineProperty(exports, "useLVSRecordings", { enumerable: true, get: func
 // latency); useLVSHlsPlayer answers "replay this window".
 var useLVSLiveHls_1 = require("./useLVSLiveHls");
 Object.defineProperty(exports, "useLVSLiveHls", { enumerable: true, get: function () { return useLVSLiveHls_1.useLVSLiveHls; } });
+// The audience figure that makes a broadcast a broadcast. LVS has tracked it
+// all along; nothing was asking.
+var useLVSViewerCount_1 = require("./useLVSViewerCount");
+Object.defineProperty(exports, "useLVSViewerCount", { enumerable: true, get: function () { return useLVSViewerCount_1.useLVSViewerCount; } });
 var useLVSHlsPlayer_1 = require("./useLVSHlsPlayer");
 Object.defineProperty(exports, "useLVSHlsPlayer", { enumerable: true, get: function () { return useLVSHlsPlayer_1.useLVSHlsPlayer; } });
 var useLiveCaptions_1 = require("./useLiveCaptions");

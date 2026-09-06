@@ -61,6 +61,14 @@ export {
   type UseLVSLiveHlsResult,
 } from './useLVSLiveHls';
 
+// The audience figure that makes a broadcast a broadcast. LVS has tracked it
+// all along; nothing was asking.
+export {
+  useLVSViewerCount,
+  type UseLVSViewerCountOptions,
+  type UseLVSViewerCountResult,
+} from './useLVSViewerCount';
+
 export {
   useLVSHlsPlayer,
   type UseLVSHlsPlayerOptions,
