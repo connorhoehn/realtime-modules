@@ -44,6 +44,6 @@ export type {
 // the gateway (posting a finished call into its thread) and the frontend
 // (listing a conversation's recordings) need it, and two copies of one rule
 // drift silently.
-export { lobbyForChannel, channelForLobby } from './lobbyChannel';
+export { lobbyForChannel, channelForLobby, isDmLobby, dmLobbyMembers } from './lobbyChannel';
 
 export { CallManifest } from './manifest';

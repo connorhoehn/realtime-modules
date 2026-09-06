@@ -2,7 +2,12 @@
 // to take back. A silent mismatch means a call posts into a thread nobody
 // reads, or a thread lists no recordings for calls it definitely had.
 
-import { lobbyForChannel, channelForLobby } from '../../src/call/lobbyChannel';
+import {
+  lobbyForChannel,
+  channelForLobby,
+  isDmLobby,
+  dmLobbyMembers,
+} from '../../src/call/lobbyChannel';
 
 describe('lobby ↔ channel', () => {
   it('maps a DM conversation to its lobby and back', () => {
@@ -64,5 +69,50 @@ describe('lobby ↔ channel', () => {
   // `chat:` alone is a chat channel, not a DM, and has no lobby.
   it('does not mistake a non-DM chat channel for a DM', () => {
     expect(lobbyForChannel('chat:general')).toBeNull();
+  });
+});
+
+describe('isDmLobby', () => {
+  it('accepts both dm lobby forms', () => {
+    expect(isDmLobby('dm:alice:bob')).toBe(true);
+    expect(isDmLobby('dm:alice:bob:carol')).toBe(true);
+    expect(isDmLobby('dmg:9f2c14a7b3')).toBe(true);
+  });
+
+  // The whole reason this helper exists: a hand-rolled `startsWith('dm:')`
+  // answers false here, and a group chat loses privacy gating the moment it
+  // grows past the 100-char cap.
+  it('does not lose the hashed group form', () => {
+    const grown = channelForLobby('dmg:9f2c14a7b3');
+    expect(lobbyForChannel(grown)).toBe('dmg:9f2c14a7b3');
+    expect(isDmLobby(lobbyForChannel(grown))).toBe(true);
+  });
+
+  it('rejects rooms, ad-hoc lobbies and empties', () => {
+    expect(isDmLobby('room:design')).toBe(false);
+    expect(isDmLobby('global')).toBe(false);
+    expect(isDmLobby('')).toBe(false);
+    expect(isDmLobby(null)).toBe(false);
+    expect(isDmLobby(undefined)).toBe(false);
+  });
+});
+
+describe('dmLobbyMembers', () => {
+  it('parses members from a member-addressed lobby', () => {
+    expect(dmLobbyMembers('dm:alice:bob')).toEqual(['alice', 'bob']);
+    expect(dmLobbyMembers('dm:alice:bob:carol')).toEqual(['alice', 'bob', 'carol']);
+  });
+
+  // Null here means "private, but this name cannot tell you who" — callers
+  // must take the closed branch, NOT read it as "not a DM".
+  it('returns null for a hashed group, which is still a DM', () => {
+    expect(dmLobbyMembers('dmg:9f2c14a7b3')).toBeNull();
+    expect(isDmLobby('dmg:9f2c14a7b3')).toBe(true);
+  });
+
+  it('returns null for non-dm and malformed lobbies', () => {
+    expect(dmLobbyMembers('room:design')).toBeNull();
+    expect(dmLobbyMembers('dm:alice')).toBeNull();
+    expect(dmLobbyMembers(null)).toBeNull();
   });
 });

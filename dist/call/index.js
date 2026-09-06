@@ -11,7 +11,7 @@
 // onSweepSkipped) so the library stays dependency-light. The gateway keeps
 // its DDB session-binding repository, Redis wiring and HTTP routes.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CallManifest = exports.channelForLobby = exports.lobbyForChannel = exports.RedisCallStateStore = exports.InMemoryCallStateStore = exports.isParticipantStateBroadcast = exports.ALLOWED_CALL_ACTIONS = exports.CallService = void 0;
+exports.CallManifest = exports.dmLobbyMembers = exports.isDmLobby = exports.channelForLobby = exports.lobbyForChannel = exports.RedisCallStateStore = exports.InMemoryCallStateStore = exports.isParticipantStateBroadcast = exports.ALLOWED_CALL_ACTIONS = exports.CallService = void 0;
 var CallService_1 = require("./CallService");
 Object.defineProperty(exports, "CallService", { enumerable: true, get: function () { return CallService_1.CallService; } });
 var types_1 = require("./types");
@@ -27,6 +27,8 @@ Object.defineProperty(exports, "RedisCallStateStore", { enumerable: true, get: f
 var lobbyChannel_1 = require("./lobbyChannel");
 Object.defineProperty(exports, "lobbyForChannel", { enumerable: true, get: function () { return lobbyChannel_1.lobbyForChannel; } });
 Object.defineProperty(exports, "channelForLobby", { enumerable: true, get: function () { return lobbyChannel_1.channelForLobby; } });
+Object.defineProperty(exports, "isDmLobby", { enumerable: true, get: function () { return lobbyChannel_1.isDmLobby; } });
+Object.defineProperty(exports, "dmLobbyMembers", { enumerable: true, get: function () { return lobbyChannel_1.dmLobbyMembers; } });
 var manifest_1 = require("./manifest");
 Object.defineProperty(exports, "CallManifest", { enumerable: true, get: function () { return manifest_1.CallManifest; } });
 //# sourceMappingURL=index.js.map
