@@ -78,3 +78,26 @@ export function dmLobbyMembers(lobby: string | null | undefined): string[] | nul
   const members = lobby.slice('dm:'.length).split(':').filter(Boolean);
   return members.length >= 2 ? members : null;
 }
+
+/**
+ * Should `userId` knock to be let into `lobby`, rather than walking in?
+ *
+ * This encodes the pairing of the two helpers above, because getting that
+ * pairing wrong is the bug they were extracted from: a caller read
+ * "members not derivable" as "not private" and joined a hashed group call
+ * uninvited.
+ *
+ * Open the door only when the lobby is not private, or when the name itself
+ * proves the caller is a party to it. A hashed group proves nothing either
+ * way, so it knocks — the closed branch is the safe one, and knocking is a
+ * request, not a rejection.
+ */
+export function shouldKnockToJoin(
+  lobby: string | null | undefined,
+  userId: string | null | undefined,
+): boolean {
+  if (!isDmLobby(lobby)) return false;
+  const members = dmLobbyMembers(lobby);
+  if (!members || !userId) return true;
+  return !members.includes(userId);
+}

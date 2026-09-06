@@ -28,4 +28,18 @@ export declare function isDmLobby(lobby: string | null | undefined): boolean;
  * private, membership unknown ⇒ ask to be let in.
  */
 export declare function dmLobbyMembers(lobby: string | null | undefined): string[] | null;
+/**
+ * Should `userId` knock to be let into `lobby`, rather than walking in?
+ *
+ * This encodes the pairing of the two helpers above, because getting that
+ * pairing wrong is the bug they were extracted from: a caller read
+ * "members not derivable" as "not private" and joined a hashed group call
+ * uninvited.
+ *
+ * Open the door only when the lobby is not private, or when the name itself
+ * proves the caller is a party to it. A hashed group proves nothing either
+ * way, so it knocks — the closed branch is the safe one, and knocking is a
+ * request, not a rejection.
+ */
+export declare function shouldKnockToJoin(lobby: string | null | undefined, userId: string | null | undefined): boolean;
 //# sourceMappingURL=lobbyChannel.d.ts.map

@@ -7,6 +7,7 @@ import {
   channelForLobby,
   isDmLobby,
   dmLobbyMembers,
+  shouldKnockToJoin,
 } from '../../src/call/lobbyChannel';
 
 describe('lobby ↔ channel', () => {
@@ -114,5 +115,32 @@ describe('dmLobbyMembers', () => {
     expect(dmLobbyMembers('room:design')).toBeNull();
     expect(dmLobbyMembers('dm:alice')).toBeNull();
     expect(dmLobbyMembers(null)).toBeNull();
+  });
+});
+
+describe('shouldKnockToJoin', () => {
+  it('lets a party to the DM walk in', () => {
+    expect(shouldKnockToJoin('dm:alice:bob', 'alice')).toBe(false);
+    expect(shouldKnockToJoin('dm:alice:bob:carol', 'carol')).toBe(false);
+  });
+
+  it('makes an outsider knock', () => {
+    expect(shouldKnockToJoin('dm:alice:bob', 'mallory')).toBe(true);
+  });
+
+  // The bug this whole pair was extracted from: members are not derivable
+  // from a hash, and "not derivable" must not read as "not private".
+  it('makes a hashed group knock rather than opening the door', () => {
+    expect(shouldKnockToJoin('dmg:9f2c14a7b3', 'alice')).toBe(true);
+  });
+
+  it('never knocks for a room or an unidentified caller in public', () => {
+    expect(shouldKnockToJoin('room:design', 'alice')).toBe(false);
+    expect(shouldKnockToJoin('room:design', null)).toBe(false);
+    expect(shouldKnockToJoin(null, 'alice')).toBe(false);
+  });
+
+  it('makes an unidentified caller knock at a private door', () => {
+    expect(shouldKnockToJoin('dm:alice:bob', null)).toBe(true);
   });
 });
