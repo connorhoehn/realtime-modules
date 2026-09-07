@@ -211,9 +211,9 @@ function GatewaySocketProvider({ url, children, features = [], token, channel, r
     // surface here" and must survive as null so the hooks take their no-endpoint
     // path rather than building a shim against a URL nobody wanted used.
     const resolvedRest = (0, react_1.useMemo)(() => (rest === undefined ? createGatewayRest(url, token) : rest), [rest, url, token]);
-    const contextValue = (0, react_1.useMemo)(() => ({ ...ws, onMessage: busOnMessage, rest: resolvedRest }), 
+    const contextValue = (0, react_1.useMemo)(() => ({ ...ws, onMessage: busOnMessage, rest: resolvedRest, ...(token ? { authToken: token } : {}) }), 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ws, busOnMessage, resolvedRest]);
+    [ws, busOnMessage, resolvedRest, token]);
     return ((0, jsx_runtime_1.jsx)(FeaturesContext.Provider, { value: features, children: (0, jsx_runtime_1.jsx)(exports.GatewayContext.Provider, { value: contextValue, children: children }) }));
 }
 // ---------------------------------------------------------------------------

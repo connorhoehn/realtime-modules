@@ -105,6 +105,19 @@ export interface GatewayContextValue extends UseWebSocketHookReturn {
     onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
     /** See GatewaySocketProviderProps.rest. Null when explicitly disabled. */
     rest?: GatewayRest | null;
+    /**
+     * The same bearer token the socket authenticated with.
+     *
+     * Exposed because not every gateway interaction is a frame. File bytes ride
+     * a plain HTTP PUT to the gateway's own origin, and that request has to
+     * prove it is the same user who asked for the upload — the socket's identity
+     * does not travel with it. Without this, an upload authenticates as nobody
+     * and the gateway rejects it as belonging to another user.
+     *
+     * Undefined when the consumer passed no token (a gateway running with auth
+     * disabled), which is a valid configuration, not an error.
+     */
+    authToken?: string;
 }
 /**
  * `ws://host` → `http://host`, `wss://` → `https://`. The gateway serves its

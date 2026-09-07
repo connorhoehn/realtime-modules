@@ -47,7 +47,7 @@ function randomId() {
  * callback. Returns a Promise that resolves on success or rejects on error.
  * Accepts an optional AbortSignal so the caller can cancel mid-flight.
  */
-function xhrPut(url, file, onProgress, signal) {
+function xhrPut(url, file, onProgress, signal, authToken) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.upload.addEventListener('progress', (e) => {
@@ -72,6 +72,13 @@ function xhrPut(url, file, onProgress, signal) {
         });
         xhr.open('PUT', url);
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        // The bytes ride a separate HTTP request from the socket that requested
+        // the upload, and nothing about the socket's identity travels with them.
+        // The gateway checks that the PUT comes from the user who asked for the
+        // id and answers 403 otherwise, so an unauthenticated PUT is not merely
+        // anonymous — it is a rejected upload. See GatewayContextValue.authToken.
+        if (authToken)
+            xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
         xhr.send(file);
         if (signal) {
             signal.addEventListener('abort', () => xhr.abort());
@@ -127,11 +134,15 @@ async function measure(file) {
     }
 }
 function useFileUpload(channel, options = {}) {
-    const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const { send, onMessage, authToken } = (0, GatewaySocketProvider_1.useGateway)();
     const optionsRef = (0, react_1.useRef)(options);
     (0, react_1.useEffect)(() => {
         optionsRef.current = options;
     });
+    // Read through a ref: a token refresh must not change `upload`'s identity,
+    // because callers memoise on it and some hold it for the life of a composer.
+    const authTokenRef = (0, react_1.useRef)(authToken);
+    authTokenRef.current = authToken;
     const [uploads, setUploads] = (0, react_1.useState)([]);
     const [transfers, setTransfers] = (0, react_1.useState)([]);
     /** correlation id -> server transfer id, for the viewer's own uploads. */
@@ -397,7 +408,7 @@ function useFileUpload(channel, options = {}) {
         try {
             await xhrPut(uploadUrl, file, (pct) => {
                 patch(id, { progress: pct, status: 'uploading' });
-            }, ctrl.signal);
+            }, ctrl.signal, authTokenRef.current);
         }
         catch (err) {
             abortControllersRef.current.delete(id);

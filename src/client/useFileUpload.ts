@@ -120,6 +120,7 @@ function xhrPut(
   file: File,
   onProgress: (pct: number) => void,
   signal?: AbortSignal,
+  authToken?: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -149,6 +150,12 @@ function xhrPut(
 
     xhr.open('PUT', url);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    // The bytes ride a separate HTTP request from the socket that requested
+    // the upload, and nothing about the socket's identity travels with them.
+    // The gateway checks that the PUT comes from the user who asked for the
+    // id and answers 403 otherwise, so an unauthenticated PUT is not merely
+    // anonymous — it is a rejected upload. See GatewayContextValue.authToken.
+    if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
     xhr.send(file);
 
     if (signal) {
@@ -253,11 +260,15 @@ async function measure(file: File): Promise<{ width?: number; height?: number }>
 }
 
 export function useFileUpload(channel: string, options: UseFileUploadOptions = {}): UseFileUploadResult {
-  const { send, onMessage } = useGateway();
+  const { send, onMessage, authToken } = useGateway();
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
   });
+  // Read through a ref: a token refresh must not change `upload`'s identity,
+  // because callers memoise on it and some hold it for the life of a composer.
+  const authTokenRef = useRef(authToken);
+  authTokenRef.current = authToken;
   const [uploads, setUploads] = useState<FileUploadState[]>([]);
   const [transfers, setTransfers] = useState<ChannelTransfer[]>([]);
   /** correlation id -> server transfer id, for the viewer's own uploads. */
@@ -547,6 +558,7 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
             patch(id, { progress: pct, status: 'uploading' });
           },
           ctrl.signal,
+          authTokenRef.current,
         );
       } catch (err) {
         abortControllersRef.current.delete(id);
