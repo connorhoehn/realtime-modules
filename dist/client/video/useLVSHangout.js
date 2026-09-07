@@ -29,6 +29,7 @@
 // `:screen` pids — we now do the same uniformly for cameras too, and
 // the main subscriber is gone.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.acquireLocalMedia = acquireLocalMedia;
 exports.useLVSHangout = useLVSHangout;
 const react_1 = require("react");
 const jwt_1 = require("./lib/jwt");
@@ -54,6 +55,34 @@ const DEFAULT_MEDIA = {
     },
     audio: true,
 };
+async function acquireLocalMedia(constraints) {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        return { stream, videoUnavailable: null, error: null };
+    }
+    catch (e) {
+        const name = e instanceof DOMException ? e.name : '';
+        // The camera exists and was granted, but something else is using it.
+        // TrackStartError is the older Chrome spelling; AbortError shows up when
+        // the OS hands back a device it cannot start.
+        const cameraBusy = name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError';
+        const canDropVideo = Boolean(constraints.video) && Boolean(constraints.audio);
+        if (!cameraBusy || !canDropVideo) {
+            return { stream: null, videoUnavailable: null, error: e instanceof Error ? e.message : String(e) };
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints.audio, video: false });
+            return { stream, videoUnavailable: 'Camera unavailable — joined with audio only.', error: null };
+        }
+        catch (audioErr) {
+            return {
+                stream: null,
+                videoUnavailable: null,
+                error: audioErr instanceof Error ? audioErr.message : String(audioErr),
+            };
+        }
+    }
+}
 /** Recompute hasAudio/hasVideo flags by inspecting each stream's enabled
  *  tracks. Pure helper so participant updates stay declarative. */
 function computeMediaFlags(streams) {
@@ -110,6 +139,12 @@ function useLVSHangout(opts) {
     const [localStream, setLocalStream] = (0, react_1.useState)(null);
     const [localScreenStream, setLocalScreenStream] = (0, react_1.useState)(null);
     const [error, setError] = (0, react_1.useState)(null);
+    /**
+     * Set when the call joined WITHOUT a camera that was asked for — not an
+     * error, because the call is up. Kept separate from `error` for exactly
+     * that reason: consumers treat `error` as fatal.
+     */
+    const [videoUnavailable, setVideoUnavailable] = (0, react_1.useState)(null);
     const [isScreenSharing, setIsScreenSharing] = (0, react_1.useState)(false);
     const [remoteParticipants, setRemoteParticipants] = (0, react_1.useState)(new Map());
     // Bump on any local-track enabled toggle so participants memo
@@ -243,9 +278,7 @@ function useLVSHangout(opts) {
         let cancelled = false;
         setError(null);
         const constraints = media ?? DEFAULT_MEDIA;
-        navigator.mediaDevices
-            .getUserMedia(constraints)
-            .then((stream) => {
+        const adopt = (stream) => {
             if (cancelled) {
                 stream.getTracks().forEach((t) => t.stop());
                 return;
@@ -253,11 +286,20 @@ function useLVSHangout(opts) {
             localStreamRef.current = stream;
             cameraStreamRef.current = stream;
             setLocalStream(stream);
-        })
-            .catch((e) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (!cancelled)
-                setError(`getUserMedia failed: ${msg}`);
+        };
+        setVideoUnavailable(null);
+        void acquireLocalMedia(constraints).then((outcome) => {
+            if (cancelled) {
+                outcome.stream?.getTracks().forEach((t) => t.stop());
+                return;
+            }
+            if (!outcome.stream) {
+                setError(`getUserMedia failed: ${outcome.error}`);
+                return;
+            }
+            if (outcome.videoUnavailable)
+                setVideoUnavailable(outcome.videoUnavailable);
+            adopt(outcome.stream);
         });
         return () => {
             cancelled = true;
@@ -1876,6 +1918,8 @@ function useLVSHangout(opts) {
         isScreenSharing,
         isCameraEnabled,
         error: composedError,
+        /** Set when the call is up but the camera could not be opened. */
+        videoUnavailable,
         connectionState,
         toggleMute,
         toggleCamera,

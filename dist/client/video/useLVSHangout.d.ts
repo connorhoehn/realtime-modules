@@ -81,12 +81,45 @@ export type RemoteParticipant = HangoutParticipant;
  *                       exhausted) — UI should prompt user to refresh
  */
 export type HangoutConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+/**
+ * Open the local camera and microphone, and do not let a busy camera cost you
+ * the call.
+ *
+ * Another app holding the webcam — a second tab, Zoom, Photo Booth — rejects
+ * the whole getUserMedia, so asking for video AND audio got you neither and
+ * the call ended before it started. Observed in the browser as
+ * NotReadableError "Could not start video source", after which the session
+ * goes to `failed` and the overlay tears it down: a click that appears to do
+ * nothing, with the real reason never reaching the person.
+ *
+ * Audio is the part of a call that carries the meeting, so a camera that
+ * cannot be opened is reported and stepped over. Every other failure stays
+ * fatal — a refused permission or a machine with no devices leaves nothing to
+ * join with, and pretending otherwise would just move the confusion later.
+ *
+ * Exported for its own tests: reaching this through the hook means standing up
+ * a stage join, a discovery socket and a peer connection first, none of which
+ * this decision depends on.
+ */
+export interface LocalMediaOutcome {
+    stream: MediaStream | null;
+    /** Set when the call has audio but no camera. Not an error — the call is up. */
+    videoUnavailable: string | null;
+    error: string | null;
+}
+export declare function acquireLocalMedia(constraints: MediaStreamConstraints): Promise<LocalMediaOutcome>;
 export interface UseLVSHangoutResult {
     participants: HangoutParticipant[];
     isJoined: boolean;
     isScreenSharing: boolean;
     isCameraEnabled: boolean;
     error: string | null;
+    /**
+     * Set when the call is UP but the camera could not be opened — another app
+     * holding it, typically. Deliberately not `error`: consumers treat that as
+     * fatal, and a call with sound is a call.
+     */
+    videoUnavailable: string | null;
     /** Aggregate transport health across publisher WHIP + every WHEP
      *  subscriber. Drives the "Reconnecting…" banner in HangoutOverlay. */
     connectionState: HangoutConnectionState;

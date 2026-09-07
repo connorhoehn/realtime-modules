@@ -142,12 +142,74 @@ export type RemoteParticipant = HangoutParticipant;
 export type HangoutConnectionState =
   | 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
+/**
+ * Open the local camera and microphone, and do not let a busy camera cost you
+ * the call.
+ *
+ * Another app holding the webcam — a second tab, Zoom, Photo Booth — rejects
+ * the whole getUserMedia, so asking for video AND audio got you neither and
+ * the call ended before it started. Observed in the browser as
+ * NotReadableError "Could not start video source", after which the session
+ * goes to `failed` and the overlay tears it down: a click that appears to do
+ * nothing, with the real reason never reaching the person.
+ *
+ * Audio is the part of a call that carries the meeting, so a camera that
+ * cannot be opened is reported and stepped over. Every other failure stays
+ * fatal — a refused permission or a machine with no devices leaves nothing to
+ * join with, and pretending otherwise would just move the confusion later.
+ *
+ * Exported for its own tests: reaching this through the hook means standing up
+ * a stage join, a discovery socket and a peer connection first, none of which
+ * this decision depends on.
+ */
+export interface LocalMediaOutcome {
+  stream: MediaStream | null;
+  /** Set when the call has audio but no camera. Not an error — the call is up. */
+  videoUnavailable: string | null;
+  error: string | null;
+}
+
+export async function acquireLocalMedia(
+  constraints: MediaStreamConstraints,
+): Promise<LocalMediaOutcome> {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    return { stream, videoUnavailable: null, error: null };
+  } catch (e: unknown) {
+    const name = e instanceof DOMException ? e.name : '';
+    // The camera exists and was granted, but something else is using it.
+    // TrackStartError is the older Chrome spelling; AbortError shows up when
+    // the OS hands back a device it cannot start.
+    const cameraBusy = name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError';
+    const canDropVideo = Boolean(constraints.video) && Boolean(constraints.audio);
+    if (!cameraBusy || !canDropVideo) {
+      return { stream: null, videoUnavailable: null, error: e instanceof Error ? e.message : String(e) };
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints.audio, video: false });
+      return { stream, videoUnavailable: 'Camera unavailable — joined with audio only.', error: null };
+    } catch (audioErr: unknown) {
+      return {
+        stream: null,
+        videoUnavailable: null,
+        error: audioErr instanceof Error ? audioErr.message : String(audioErr),
+      };
+    }
+  }
+}
+
 export interface UseLVSHangoutResult {
   participants: HangoutParticipant[];
   isJoined: boolean;
   isScreenSharing: boolean;
   isCameraEnabled: boolean;
   error: string | null;
+  /**
+   * Set when the call is UP but the camera could not be opened — another app
+   * holding it, typically. Deliberately not `error`: consumers treat that as
+   * fatal, and a call with sound is a call.
+   */
+  videoUnavailable: string | null;
   /** Aggregate transport health across publisher WHIP + every WHEP
    *  subscriber. Drives the "Reconnecting…" banner in HangoutOverlay. */
   connectionState: HangoutConnectionState;
@@ -237,6 +299,12 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set when the call joined WITHOUT a camera that was asked for — not an
+   * error, because the call is up. Kept separate from `error` for exactly
+   * that reason: consumers treat `error` as fatal.
+   */
+  const [videoUnavailable, setVideoUnavailable] = useState<string | null>(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remoteParticipants, setRemoteParticipants] = useState<
     Map<string, {
@@ -416,21 +484,31 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     let cancelled = false;
     setError(null);
     const constraints = media ?? DEFAULT_MEDIA;
-    navigator.mediaDevices
-      .getUserMedia(constraints)
-      .then((stream) => {
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        localStreamRef.current = stream;
-        cameraStreamRef.current = stream;
-        setLocalStream(stream);
-      })
-      .catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!cancelled) setError(`getUserMedia failed: ${msg}`);
-      });
+
+    const adopt = (stream: MediaStream) => {
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      localStreamRef.current = stream;
+      cameraStreamRef.current = stream;
+      setLocalStream(stream);
+    };
+
+    setVideoUnavailable(null);
+    void acquireLocalMedia(constraints).then((outcome) => {
+      if (cancelled) {
+        outcome.stream?.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      if (!outcome.stream) {
+        setError(`getUserMedia failed: ${outcome.error}`);
+        return;
+      }
+      if (outcome.videoUnavailable) setVideoUnavailable(outcome.videoUnavailable);
+      adopt(outcome.stream);
+    });
+
     return () => {
       cancelled = true;
     };
@@ -1965,6 +2043,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     isScreenSharing,
     isCameraEnabled,
     error: composedError,
+    /** Set when the call is up but the camera could not be opened. */
+    videoUnavailable,
     connectionState,
     toggleMute,
     toggleCamera,
