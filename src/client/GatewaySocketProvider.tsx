@@ -426,6 +426,19 @@ export function useGateway(): GatewayContextValue {
 }
 
 /**
+ * useGatewayOptional — the same context, or null outside a provider.
+ *
+ * For hooks that a page may legitimately mount without a socket: a component
+ * test that renders the page in isolation, a preview, a read-only embed. The
+ * throwing variant makes such a page un-mountable, which turns "this feature
+ * is unavailable here" into "this page crashes" — and the feature is usually
+ * one control on a page full of others.
+ */
+export function useGatewayOptional(): GatewayContextValue | null {
+  return useContext(GatewayContext);
+}
+
+/**
  * useFeatures — returns the FeatureName[] declared by the nearest
  * GatewaySocketProvider. Returns [] when called outside a provider
  * (safe to use in feature guards without wrapping in try/catch).

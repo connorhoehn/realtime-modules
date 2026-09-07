@@ -30,7 +30,7 @@
 //   { service: 'fileupload', action: 'cancel',          channel, id }
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useGateway } from './GatewaySocketProvider';
+import { useGatewayOptional } from './GatewaySocketProvider';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
 import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
@@ -269,7 +269,14 @@ async function measure(file: File): Promise<{ width?: number; height?: number }>
 }
 
 export function useFileUpload(channel: string, options: UseFileUploadOptions = {}): UseFileUploadResult {
-  const { send, onMessage, authToken } = useGateway();
+  // Optional, deliberately. A page that hosts an upload control among many
+  // other controls must still render where there is no socket — a component
+  // test, a preview, a read-only embed. `upload()` then rejects with a clear
+  // message instead of the page failing to mount at all.
+  const gateway = useGatewayOptional();
+  const send = gateway?.send;
+  const onMessage = gateway?.onMessage;
+  const authToken = gateway?.authToken;
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
@@ -350,6 +357,7 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
 
   // Register inbound handler once.
   useEffect(() => {
+    if (!onMessage) return;
     const unsubscribe = onMessage((msg: GatewayMessage) => {
       if (msg.channel !== channelRef.current) return;
       if (typeof msg.type !== 'string' || !msg.type.startsWith('fileupload:')) return;
@@ -512,6 +520,7 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
 
   const upload = useCallback(
     async (file: File, opts?: { metadata?: Record<string, unknown> }): Promise<FileUploadState> => {
+      if (!send) throw new Error('No gateway connection: uploads are unavailable here');
       const id = randomId();
       const initial: FileUploadState = {
         id,
@@ -626,8 +635,9 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
         urlWaitersRef.current.delete(id);
         waiter.reject(new DOMException('Upload cancelled', 'AbortError'));
       }
-      // Notify gateway.
-      send({
+      // Notify gateway. Guarded rather than early-returned: the local abort
+      // above is worth doing even with no socket to tell.
+      send?.({
         service: 'fileupload',
         action: 'cancel',
         channel: channelRef.current,

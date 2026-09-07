@@ -134,7 +134,14 @@ async function measure(file) {
     }
 }
 function useFileUpload(channel, options = {}) {
-    const { send, onMessage, authToken } = (0, GatewaySocketProvider_1.useGateway)();
+    // Optional, deliberately. A page that hosts an upload control among many
+    // other controls must still render where there is no socket — a component
+    // test, a preview, a read-only embed. `upload()` then rejects with a clear
+    // message instead of the page failing to mount at all.
+    const gateway = (0, GatewaySocketProvider_1.useGatewayOptional)();
+    const send = gateway?.send;
+    const onMessage = gateway?.onMessage;
+    const authToken = gateway?.authToken;
     const optionsRef = (0, react_1.useRef)(options);
     (0, react_1.useEffect)(() => {
         optionsRef.current = options;
@@ -203,6 +210,8 @@ function useFileUpload(channel, options = {}) {
     }, []);
     // Register inbound handler once.
     (0, react_1.useEffect)(() => {
+        if (!onMessage)
+            return;
         const unsubscribe = onMessage((msg) => {
             if (msg.channel !== channelRef.current)
                 return;
@@ -364,6 +373,8 @@ function useFileUpload(channel, options = {}) {
     }, []);
     // ---- upload ---------------------------------------------------------------
     const upload = (0, react_1.useCallback)(async (file, opts) => {
+        if (!send)
+            throw new Error('No gateway connection: uploads are unavailable here');
         const id = randomId();
         const initial = {
             id,
@@ -459,8 +470,9 @@ function useFileUpload(channel, options = {}) {
             urlWaitersRef.current.delete(id);
             waiter.reject(new DOMException('Upload cancelled', 'AbortError'));
         }
-        // Notify gateway.
-        send({
+        // Notify gateway. Guarded rather than early-returned: the local abort
+        // above is worth doing even with no socket to tell.
+        send?.({
             service: 'fileupload',
             action: 'cancel',
             channel: channelRef.current,

@@ -5,6 +5,7 @@ exports.httpBaseFromSocketUrl = httpBaseFromSocketUrl;
 exports.createGatewayRest = createGatewayRest;
 exports.GatewaySocketProvider = GatewaySocketProvider;
 exports.useGateway = useGateway;
+exports.useGatewayOptional = useGatewayOptional;
 exports.useFeatures = useFeatures;
 const jsx_runtime_1 = require("react/jsx-runtime");
 // realtime-modules/src/client/GatewaySocketProvider.tsx
@@ -234,6 +235,18 @@ function useGateway() {
             'Mount GatewaySocketProvider near the root of your component tree.');
     }
     return ctx;
+}
+/**
+ * useGatewayOptional — the same context, or null outside a provider.
+ *
+ * For hooks that a page may legitimately mount without a socket: a component
+ * test that renders the page in isolation, a preview, a read-only embed. The
+ * throwing variant makes such a page un-mountable, which turns "this feature
+ * is unavailable here" into "this page crashes" — and the feature is usually
+ * one control on a page full of others.
+ */
+function useGatewayOptional() {
+    return (0, react_1.useContext)(exports.GatewayContext);
 }
 /**
  * useFeatures — returns the FeatureName[] declared by the nearest
