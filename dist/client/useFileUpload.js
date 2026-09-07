@@ -426,6 +426,14 @@ function useFileUpload(channel, options = {}) {
         });
         // Return current state snapshot — caller can observe further status changes
         // (scanning → clean/infected) via the uploads array.
+        //
+        // `transferId` is the important field and it was missing. A caller that
+        // needs the download URL has to wait for `onComplete`, which is keyed by
+        // the SERVER's transfer id — while everything the caller holds is the
+        // local correlation id. Without the mapping the two never met, so a
+        // consumer waiting on its own upload waited forever and timed out with
+        // the bytes safely stored. The id is known by now: it arrives with
+        // `fileupload:url`, which is what unblocked the PUT above.
         const snapshot = {
             id,
             filename: file.name,
@@ -433,6 +441,7 @@ function useFileUpload(channel, options = {}) {
             status: 'uploading',
             progress: 100,
             uploadUrl,
+            ...(transferIdsRef.current.get(id) ? { transferId: transferIdsRef.current.get(id) } : {}),
         };
         return snapshot;
     }, [send, patch]);

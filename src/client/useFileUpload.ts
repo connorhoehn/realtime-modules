@@ -48,6 +48,15 @@ export interface FileUploadState {
   uploadUrl?: string;
   downloadUrl?: string;
   error?: string;
+  /**
+   * The SERVER's id for this transfer, once the gateway has minted one.
+   *
+   * Distinct from `id`, which is the client's own correlation id. Every
+   * channel-wide frame — progress, completion — is keyed by this one, so a
+   * caller that wants to match its own upload to its `onComplete` needs the
+   * mapping, and this is where it gets it.
+   */
+  transferId?: string;
 }
 
 /**
@@ -579,6 +588,14 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
 
       // Return current state snapshot — caller can observe further status changes
       // (scanning → clean/infected) via the uploads array.
+      //
+      // `transferId` is the important field and it was missing. A caller that
+      // needs the download URL has to wait for `onComplete`, which is keyed by
+      // the SERVER's transfer id — while everything the caller holds is the
+      // local correlation id. Without the mapping the two never met, so a
+      // consumer waiting on its own upload waited forever and timed out with
+      // the bytes safely stored. The id is known by now: it arrives with
+      // `fileupload:url`, which is what unblocked the PUT above.
       const snapshot: FileUploadState = {
         id,
         filename: file.name,
@@ -586,6 +603,7 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
         status: 'uploading',
         progress: 100,
         uploadUrl,
+        ...(transferIdsRef.current.get(id) ? { transferId: transferIdsRef.current.get(id)! } : {}),
       };
       return snapshot;
     },

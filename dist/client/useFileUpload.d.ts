@@ -7,6 +7,15 @@ export interface FileUploadState {
     uploadUrl?: string;
     downloadUrl?: string;
     error?: string;
+    /**
+     * The SERVER's id for this transfer, once the gateway has minted one.
+     *
+     * Distinct from `id`, which is the client's own correlation id. Every
+     * channel-wide frame — progress, completion — is keyed by this one, so a
+     * caller that wants to match its own upload to its `onComplete` needs the
+     * mapping, and this is where it gets it.
+     */
+    transferId?: string;
 }
 /**
  * A transfer happening in this channel — possibly somebody else's.
