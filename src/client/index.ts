@@ -71,6 +71,7 @@ export {
   GatewaySocketProvider,
   GatewayContext,
   useGateway,
+  useGatewayOptional,
   useFeatures,
   // The REST half. Exported because an app that bridges its OWN socket onto
   // GatewayContext never mounts GatewaySocketProvider, and so never gets the

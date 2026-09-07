@@ -512,12 +512,32 @@ export class ChatService {
         clientId: string,
         { channel, message, metadata = {} }: { channel: string; message: string; metadata?: any }
     ): Promise<void> {
-        if (!channel || !message) {
-            this.sendError(clientId, 'Channel and message are required');
+        if (!channel) {
+            this.sendError(clientId, 'Channel is required');
             return;
         }
 
-        if (typeof message !== 'string' || message.length === 0 || message.length > this.maxMessageLength) {
+        // A message with no text but an attachment is a message.
+        //
+        // Sending a photo with no caption is the ordinary case in every chat
+        // product, and the old length check rejected it: the file uploaded,
+        // the composer cleared, an error the sender's UI does not render was
+        // returned, and nothing appeared in the channel. The file was stored
+        // and unreachable, which is worse than a refusal the user can see.
+        const hasAttachments =
+            !!metadata &&
+            Array.isArray((metadata as { attachments?: unknown }).attachments) &&
+            (metadata as { attachments: unknown[] }).attachments.length > 0;
+
+        if (typeof message !== 'string') {
+            this.sendError(clientId, 'Message must be a string');
+            return;
+        }
+        if (message.length === 0 && !hasAttachments) {
+            this.sendError(clientId, 'A message needs text or an attachment');
+            return;
+        }
+        if (message.length > this.maxMessageLength) {
             this.sendError(
                 clientId,
                 `Message must be a string between 1 and ${this.maxMessageLength} characters`

@@ -17,7 +17,7 @@ export type { UseWebSocketOptions, UseWebSocketHookReturn, } from './useWebSocke
 export { useAgentStream } from './useAgentStream';
 export type { UseAgentStreamOptions, UseAgentStreamReturn, Message, ToolCall, BuildBody, } from './useAgentStream';
 export type { ConnectionState, GatewayError, GatewayMessage, UseWebSocketReturn, ChatMessage, PresenceStatus, PresenceEntry, Reaction, ActivityEvent, } from './types';
-export { GatewaySocketProvider, GatewayContext, useGateway, useFeatures, createGatewayRest, httpBaseFromSocketUrl, } from './GatewaySocketProvider';
+export { GatewaySocketProvider, GatewayContext, useGateway, useGatewayOptional, useFeatures, createGatewayRest, httpBaseFromSocketUrl, } from './GatewaySocketProvider';
 export type { PinnedMessage } from './GatewaySocketProvider';
 export { usePins } from './usePins';
 export type { UsePinsResult } from './usePins';
