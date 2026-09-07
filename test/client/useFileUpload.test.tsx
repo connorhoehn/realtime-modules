@@ -454,4 +454,129 @@ describe('useFileUpload', () => {
 
     expect(result.current.uploads).toHaveLength(0);
   });
+
+  // -------------------------------------------------------------------------
+  // The two bugs that made a working upload look broken
+  // -------------------------------------------------------------------------
+
+  it('sends the viewer bearer on the PUT', async () => {
+    // The bytes ride a separate HTTP request from the socket that asked for
+    // the id, and nothing about the socket's identity travels with them. The
+    // gateway answers 403 to a PUT from anyone but the user who requested the
+    // upload — so an unauthenticated PUT is not anonymous, it is rejected.
+    const { ctx, sent, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useFileUpload('ch-1'), {
+      wrapper: makeWrapper({ ...ctx, authToken: 'viewer-token' }),
+    });
+
+    const id = await startUpload(result, sent, makeFile());
+    act(() => {
+      emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
+    });
+    await waitFor(() => expect(FakeXHR.instances.length).toBeGreaterThan(0));
+
+    expect(FakeXHR.instances[0]!.headers['Authorization']).toBe('Bearer viewer-token');
+  });
+
+  it('omits Authorization entirely when there is no token', async () => {
+    // Not `Bearer undefined` — a malformed header is a 401 with a confusing
+    // reason, where an absent one lets a SKIP_AUTH dev gateway through.
+    const { ctx, sent, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useFileUpload('ch-1'), {
+      wrapper: makeWrapper(ctx),
+    });
+
+    const id = await startUpload(result, sent, makeFile());
+    act(() => {
+      emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
+    });
+    await waitFor(() => expect(FakeXHR.instances.length).toBeGreaterThan(0));
+
+    expect(FakeXHR.instances[0]!.headers['Authorization']).toBeUndefined();
+  });
+
+  it('resolves upload() with the SERVER transfer id that onComplete is keyed by', async () => {
+    // The whole point. `upload()` used to resolve with the local correlation
+    // id while every completion frame is keyed by the server-minted transfer
+    // id, so a caller that parked a resolver under the returned id never
+    // matched its own completion: it timed out at 60s with the bytes safely
+    // stored. Both app consumers (RichChatSurface, useDocumentImageUpload)
+    // depend on these two ids being the same string.
+    const { ctx, sent, emit } = makeGatewayContext();
+    const completions: string[] = [];
+    const { result } = renderHook(
+      () => useFileUpload('ch-1', { onComplete: (t) => { completions.push(t.transferId); } }),
+      { wrapper: makeWrapper(ctx) },
+    );
+
+    const file = makeFile();
+    let resolved: { id: string; transferId?: string } | undefined;
+    const before = sent.length;
+    act(() => {
+      void result.current.upload(file).then((s) => { resolved = s as typeof resolved; });
+    });
+    const frameOf = () => sent.slice(before).find((s) => s.action === 'request-upload');
+    await waitFor(() => expect(frameOf()).toBeDefined());
+    const id = frameOf()!.id as string;
+
+    act(() => {
+      emit({
+        type: 'fileupload:url',
+        channel: 'ch-1',
+        id,
+        transferId: 'srv-transfer-9',
+        uploadUrl: 'https://s3.example.com/upload',
+      } as unknown as GatewayMessage);
+    });
+    await waitFor(() => expect(FakeXHR.instances.length).toBeGreaterThan(0));
+    act(() => { FakeXHR.instances[0]!.fireLoad(); });
+
+    await waitFor(() => expect(resolved).toBeDefined());
+    expect(resolved!.transferId).toBe('srv-transfer-9');
+    // And it is NOT the correlation id, which is what callers used to get.
+    expect(resolved!.transferId).not.toBe(resolved!.id);
+
+    act(() => {
+      emit({
+        type: 'fileupload:complete',
+        channel: 'ch-1',
+        transferId: 'srv-transfer-9',
+        downloadUrl: '/api/uploads/srv-transfer-9',
+      } as unknown as GatewayMessage);
+    });
+    expect(completions).toEqual([resolved!.transferId]);
+  });
+
+  it('marks a completion as `mine` only for the client that uploaded it', async () => {
+    // `onComplete` fires on EVERY participant. Exactly one of them may write
+    // the durable record, or the channel gets one chat message per viewer.
+    const { ctx, sent, emit } = makeGatewayContext();
+    const mineFlags: boolean[] = [];
+    const { result } = renderHook(
+      () => useFileUpload('ch-1', { onComplete: (t) => { mineFlags.push(t.mine); } }),
+      { wrapper: makeWrapper(ctx) },
+    );
+
+    const id = await startUpload(result, sent, makeFile());
+    act(() => {
+      emit({
+        type: 'fileupload:url', channel: 'ch-1', id,
+        transferId: 'mine-1', uploadUrl: 'https://s3.example.com/upload',
+      } as unknown as GatewayMessage);
+    });
+    await waitFor(() => expect(FakeXHR.instances.length).toBeGreaterThan(0));
+
+    act(() => {
+      emit({
+        type: 'fileupload:complete', channel: 'ch-1',
+        transferId: 'mine-1', downloadUrl: '/api/uploads/mine-1',
+      } as unknown as GatewayMessage);
+      emit({
+        type: 'fileupload:complete', channel: 'ch-1',
+        transferId: 'somebody-else', downloadUrl: '/api/uploads/somebody-else',
+      } as unknown as GatewayMessage);
+    });
+
+    expect(mineFlags).toEqual([true, false]);
+  });
 });
