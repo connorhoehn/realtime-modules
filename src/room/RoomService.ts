@@ -383,7 +383,42 @@ export class RoomService {
             this.activeRooms.set(slug, room);
         }
         const already = room.has(clientId);
-        room.set(clientId, { clientId, userId, displayName, participantId });
+        // Merge, never blank out.
+        //
+        // Two different signals reach this method for the SAME clientId, and
+        // only one of them carries an identity:
+        //
+        //   1. the explicit `room` / `join` action, which the overlay sends
+        //      with `displayName` and `participantId`;
+        //   2. the call→room membership bridge in CallService (:1272), whose
+        //      `user-status` envelope carries neither — it reads them off the
+        //      payload and defaults both to `''` (CallService.ts:1211-1215).
+        //
+        // (2) arrives moments after (1) and this line used to overwrite the
+        // record wholesale, so a member who had just announced themselves as
+        // "Hank Anderson" became `displayName: ''`. `''` is not `undefined`,
+        // so every downstream `displayName ?? userId` fallback passed the
+        // empty string straight through — and the room row's face-pile in the
+        // app sidebar rendered `?` instead of `HA`, for everyone.
+        //
+        // The `!already` gate below protects the join METRIC and the
+        // member-joined fan-out from the second call, but not the record
+        // itself, and `stateStore.addMember` is called unconditionally — so
+        // the blanks won in the durable store while no event ever announced
+        // the change. Hence a wrong badge that nothing in the logs explains.
+        //
+        // A later signal may legitimately supply a name that was missing
+        // before, so this is a field-wise merge rather than a "first write
+        // wins" lock: a non-empty value always beats an empty one.
+        const prev = room.get(clientId);
+        const mergedDisplayName = displayName || prev?.displayName || '';
+        const mergedParticipantId = participantId || prev?.participantId || '';
+        room.set(clientId, {
+            clientId,
+            userId: userId || prev?.userId || '',
+            displayName: mergedDisplayName,
+            participantId: mergedParticipantId,
+        });
         // Metric + structured log. Only emit on a genuinely new arrival to
         // match the per-room fan-out gate further down — repeated
         // participant-state envelopes from the same client must not
@@ -405,7 +440,7 @@ export class RoomService {
 
         if (this.stateStore) {
             try {
-                await this.stateStore.addMember(slug, clientId, userId, displayName, participantId);
+                await this.stateStore.addMember(slug, clientId, userId, mergedDisplayName, mergedParticipantId);
             } catch (e: any) {
                 this.logger.warn(`[RoomService] stateStore.addMember failed for ${slug}/${clientId}: ${e?.message ?? e}`);
             }
@@ -421,7 +456,7 @@ export class RoomService {
             const envelope: RoomServerEvent = {
                 type: 'room',
                 action: 'member-joined',
-                data: { slug, userId, displayName, participantId },
+                data: { slug, userId, displayName: mergedDisplayName, participantId: mergedParticipantId },
                 timestamp: new Date().toISOString(),
             };
             await this.fanOutToRoomSubscribers(slug, envelope, /* exclude */ null);
@@ -435,8 +470,8 @@ export class RoomService {
                         slug,
                         clientId,
                         userId,
-                        displayName,
-                        participantId,
+                        displayName: mergedDisplayName,
+                        participantId: mergedParticipantId,
                         sourceNodeId: this.nodeId ?? undefined,
                     };
                     await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_ROOM_TOPIC, JSON.stringify(payload)));
