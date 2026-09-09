@@ -47,7 +47,9 @@ interface DocumentWire {
     updatedAt: string;
     icon: string;
     description: string;
-    [extra: string]: any;
+    [extra: string]: any; /** See `DocumentMeta.parentId`. `null` on the wire means a root; absent means the store never said. */
+    parentId?: string | null;
+    position?: number;
 }
 declare class DocumentMetadataService {
     metadataStore: MetadataStore;

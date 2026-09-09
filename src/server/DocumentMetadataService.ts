@@ -56,7 +56,9 @@ interface DocumentWire {
     updatedAt: string; // ISO-8601
     icon: string;
     description: string;
-    [extra: string]: any;
+    [extra: string]: any;    /** See `DocumentMeta.parentId`. `null` on the wire means a root; absent means the store never said. */
+    parentId?: string | null;
+    position?: number;
 }
 
 class DocumentMetadataService {
@@ -200,6 +202,21 @@ class DocumentMetadataService {
                 (wire as any)[field] = meta[field];
             }
         }
+        // The tree position. Validated rather than merged blind: a parent that
+        // is the document itself, or not a string, would corrupt every reader
+        // of the tree; a non-finite position would sort as NaN forever.
+        if (meta.parentId !== undefined) {
+            if (meta.parentId !== null && (typeof meta.parentId !== 'string' || meta.parentId === documentId)) {
+                throw new Error('parentId must be null or the id of another document');
+            }
+            wire.parentId = meta.parentId;
+        }
+        if (meta.position !== undefined) {
+            if (typeof meta.position !== 'number' || !Number.isFinite(meta.position)) {
+                throw new Error('position must be a finite number');
+            }
+            wire.position = meta.position;
+        }
         const nowIso = new Date().toISOString();
         const nowEpoch = Date.now();
         wire.updatedAt = nowIso;
@@ -216,6 +233,11 @@ class DocumentMetadataService {
             // WHOLE row, so leaving this out would quietly unbind a document
             // from its conversation the first time anyone renamed it.
             channel: existing.channel,
+            // Carried through for the same reason as `channel`: an upsert of
+            // the whole row would otherwise flatten the tree on the first
+            // rename. `parentId: null` is a real value (a root) and is kept.
+            ...(wire.parentId !== undefined ? { parentId: wire.parentId } : {}),
+            ...(wire.position !== undefined ? { position: wire.position } : {}),
             createdAt: existing.createdAt,
             updatedAt: nowEpoch,
         });
@@ -241,6 +263,8 @@ class DocumentMetadataService {
         const sidecar = this._wireSidecar.get(stored.documentId) || {};
         const docType = stored.docType || 'custom';
         return {
+            ...(stored.parentId !== undefined ? { parentId: stored.parentId } : {}),
+            ...(stored.position !== undefined ? { position: stored.position } : {}),
             id: stored.documentId,
             title: stored.title || 'Untitled',
             type: docType,

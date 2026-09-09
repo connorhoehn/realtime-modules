@@ -47,6 +47,16 @@ export interface DocumentMeta {
     docType?: string;
     ownerId?: string;
     /**
+     * The document this one sits under in the explorer's tree, or null for a
+     * root. A tree a person can drag things around in needs somewhere on the
+     * record for the drag to LAND — before this, documents could only ever be
+     * grouped by `docType`, and a group is not a place. Persisted, not a
+     * wire-only field: a move that only one node remembers is not a move.
+     */
+    parentId?: string | null;
+    /** Order among siblings under the same `parentId`. Lower first; ties by `updatedAt`. */
+    position?: number;
+    /**
      * The conversation this document was created in, if any.
      *
      * A document written during a conversation belongs to it — that is where
