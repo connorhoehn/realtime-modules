@@ -8,7 +8,7 @@
 // The REST helpers are pure (no React) so scripts and SSR can start and
 // approve runs with the same code the hook uses.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.reviewPipelineRun = exports.approvePipelineRun = exports.requestPipelineRun = exports.statusFromSnapshot = exports.statusFromEvent = exports.normalizeEventType = exports.retryLabel = exports.stepLabelFor = exports.isAwaitingReview = exports.suggestionOf = exports.reviewOf = exports.reviewDetail = exports.runStatusDetail = exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = exports.usePipelineRunStatus = void 0;
+exports.reviewPipelineRun = exports.approvePipelineRun = exports.requestPipelineRun = exports.mergeDetails = exports.documentFromOutputs = exports.snippetFromOutline = exports.opsFromApplyOutput = exports.stepTimelineLabel = exports.stepsFromSnapshot = exports.detailsFromSnapshot = exports.enrichTerminalStatus = exports.statusFromSnapshot = exports.statusFromEvent = exports.normalizeEventType = exports.retryLabel = exports.stepLabelFor = exports.isAwaitingReview = exports.suggestionOf = exports.reviewOf = exports.reviewDetail = exports.runStatusDetail = exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = exports.usePipelineRunStatus = void 0;
 var usePipelineRunStatus_1 = require("./usePipelineRunStatus");
 Object.defineProperty(exports, "usePipelineRunStatus", { enumerable: true, get: function () { return usePipelineRunStatus_1.usePipelineRunStatus; } });
 Object.defineProperty(exports, "DEFAULT_STEP_LABELS", { enumerable: true, get: function () { return usePipelineRunStatus_1.DEFAULT_STEP_LABELS; } });
@@ -25,6 +25,14 @@ Object.defineProperty(exports, "retryLabel", { enumerable: true, get: function (
 Object.defineProperty(exports, "normalizeEventType", { enumerable: true, get: function () { return usePipelineRunStatus_1.normalizeEventType; } });
 Object.defineProperty(exports, "statusFromEvent", { enumerable: true, get: function () { return usePipelineRunStatus_1.statusFromEvent; } });
 Object.defineProperty(exports, "statusFromSnapshot", { enumerable: true, get: function () { return usePipelineRunStatus_1.statusFromSnapshot; } });
+Object.defineProperty(exports, "enrichTerminalStatus", { enumerable: true, get: function () { return usePipelineRunStatus_1.enrichTerminalStatus; } });
+Object.defineProperty(exports, "detailsFromSnapshot", { enumerable: true, get: function () { return usePipelineRunStatus_1.detailsFromSnapshot; } });
+Object.defineProperty(exports, "stepsFromSnapshot", { enumerable: true, get: function () { return usePipelineRunStatus_1.stepsFromSnapshot; } });
+Object.defineProperty(exports, "stepTimelineLabel", { enumerable: true, get: function () { return usePipelineRunStatus_1.stepTimelineLabel; } });
+Object.defineProperty(exports, "opsFromApplyOutput", { enumerable: true, get: function () { return usePipelineRunStatus_1.opsFromApplyOutput; } });
+Object.defineProperty(exports, "snippetFromOutline", { enumerable: true, get: function () { return usePipelineRunStatus_1.snippetFromOutline; } });
+Object.defineProperty(exports, "documentFromOutputs", { enumerable: true, get: function () { return usePipelineRunStatus_1.documentFromOutputs; } });
+Object.defineProperty(exports, "mergeDetails", { enumerable: true, get: function () { return usePipelineRunStatus_1.mergeDetails; } });
 Object.defineProperty(exports, "requestPipelineRun", { enumerable: true, get: function () { return usePipelineRunStatus_1.requestPipelineRun; } });
 Object.defineProperty(exports, "approvePipelineRun", { enumerable: true, get: function () { return usePipelineRunStatus_1.approvePipelineRun; } });
 Object.defineProperty(exports, "reviewPipelineRun", { enumerable: true, get: function () { return usePipelineRunStatus_1.reviewPipelineRun; } });

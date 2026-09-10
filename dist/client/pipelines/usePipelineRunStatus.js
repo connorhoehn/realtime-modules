@@ -20,6 +20,12 @@
 // A run that SUGGESTED its edit (apply step `mode: 'suggest'`) completes with a
 // `suggestion` and waits on a person: the `pipeline.run.reviewed` frame, or the
 // snapshot's `review`, settles it to "Accepted by …" / "Rejected by …".
+//
+// A card can EXPAND: `details` carries the run's steps (ordered, labelled, with
+// a status each), the document it worked on (id, title, a snippet), and the
+// ops the apply step emitted — derived from the snapshot's step outputs and
+// kept current by step frames. Details are only ever added to, never cleared
+// by a sparser snapshot.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = void 0;
 exports.stepLabelFor = stepLabelFor;
@@ -33,7 +39,15 @@ exports.reviewOf = reviewOf;
 exports.suggestionOf = suggestionOf;
 exports.isAwaitingReview = isAwaitingReview;
 exports.normalizeEventType = normalizeEventType;
+exports.stepTimelineLabel = stepTimelineLabel;
+exports.stepsFromSnapshot = stepsFromSnapshot;
+exports.opsFromApplyOutput = opsFromApplyOutput;
+exports.snippetFromOutline = snippetFromOutline;
+exports.documentFromOutputs = documentFromOutputs;
+exports.mergeDetails = mergeDetails;
+exports.detailsFromSnapshot = detailsFromSnapshot;
 exports.statusFromSnapshot = statusFromSnapshot;
+exports.enrichTerminalStatus = enrichTerminalStatus;
 exports.statusFromEvent = statusFromEvent;
 exports.usePipelineRunStatus = usePipelineRunStatus;
 const react_1 = require("react");
@@ -237,22 +251,277 @@ function normalizeEventType(eventType) {
         return undefined;
     return eventType.replace(/:/g, '.');
 }
+/** The snapshot's steps as a list, each carrying its id (the store keys them by node id; older shapes carried an array). */
+function stepListOf(snap) {
+    return Array.isArray(snap.steps) ? snap.steps : Object.entries(snap.steps ?? {}).map(([id, st]) => ({ stepId: id, ...st }));
+}
+/** An error's message, whether the record carried a string or `{ message }`. */
+function errorMessage(err) {
+    if (typeof err === 'string' && err)
+        return err;
+    const m = err?.message;
+    return typeof m === 'string' && m ? m : undefined;
+}
+/** The message of a failed run: the run's own error, then the failed step's, then its last attempt's. */
+function failureMessage(snap, stepList) {
+    const own = errorMessage(snap.error);
+    if (own)
+        return own;
+    const failed = stepList.find((s) => s.status === 'failed') ?? stepList.find((s) => s.error !== undefined);
+    if (!failed)
+        return undefined;
+    const attempts = failed.attempts ?? [];
+    return errorMessage(failed.error) ?? errorMessage(attempts[attempts.length - 1]?.error);
+}
+// ---------------------------------------------------------------------------
+// Details — what an expanded card shows
+// ---------------------------------------------------------------------------
+const OP_TEXT_MAX = 140;
+const SNIPPET_MAX = 200;
+function truncate(text, max) {
+    return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+/** The step's label for a timeline: the narration without its trailing ellipsis. */
+function stepTimelineLabel(stepId, pipelineId, tables = {}) {
+    return stepLabelFor(stepId, pipelineId, tables).replace(/(\.{3}|…)+\s*$/u, '').trimEnd() || stepId;
+}
+function stepStatusOf(raw, running) {
+    if (running)
+        return 'running';
+    switch (raw) {
+        case 'awaiting':
+        case 'running':
+        case 'completed':
+        case 'failed':
+        case 'skipped': return raw;
+        case 'success': return 'completed';
+        case 'error': return 'failed';
+        default: return 'pending';
+    }
+}
+/**
+ * The snapshot's steps in the order a person reads them: the trigger first,
+ * then by `startedAt` among the steps that have one — a step without a
+ * timestamp keeps its place in the record. The definition's node order is
+ * not known here.
+ */
+function stepsFromSnapshot(snap, pipelineId, tables = {}) {
+    const list = stepListOf(snap).map((s) => ({ ...s, id: s.stepId ?? s.nodeId ?? '' })).filter((s) => s.id);
+    if (list.length === 0)
+        return undefined;
+    const trigger = list.filter((s) => s.id === 'trigger');
+    const rest = list.filter((s) => s.id !== 'trigger');
+    const stamped = rest.filter((s) => typeof s.startedAt === 'string').sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    let next = 0;
+    const ordered = rest.map((s) => (typeof s.startedAt === 'string' ? stamped[next++] : s));
+    const current = new Set(snap.currentStepIds ?? []);
+    return [...trigger, ...ordered].map((s) => ({
+        id: s.id,
+        label: stepTimelineLabel(s.id, pipelineId, tables),
+        status: stepStatusOf(s.status, current.has(s.id) && s.status !== 'awaiting' && s.status !== 'completed' && s.status !== 'failed'),
+    }));
+}
+/** platform-api's DocOp objects, flattened for a card: text cut short, only the fields that name what happened. */
+function opsFromApplyOutput(applyOutput) {
+    const raw = applyOutput?.ops;
+    if (!Array.isArray(raw))
+        return undefined;
+    const ops = [];
+    for (const item of raw) {
+        const o = (item ?? {});
+        if (typeof o.op !== 'string' || !o.op)
+            continue;
+        const out = { op: o.op };
+        if (typeof o.text === 'string')
+            out.text = truncate(o.text, OP_TEXT_MAX);
+        if (typeof o.index === 'number')
+            out.index = o.index;
+        if (typeof o.macroName === 'string' && o.macroName)
+            out.macroName = o.macroName;
+        if (typeof o.typeName === 'string' && o.typeName)
+            out.typeName = o.typeName;
+        if (typeof o.reason === 'string' && o.reason)
+            out.reason = truncate(o.reason, OP_TEXT_MAX);
+        ops.push(out);
+    }
+    return ops;
+}
+/**
+ * A snippet of the document from the read step's outline — `title: …` dropped,
+ * each `#N kind(h2)(macro): ` prefix stripped, `(empty)` lines skipped — cut
+ * to ~200 chars.
+ */
+function snippetFromOutline(outline) {
+    if (typeof outline !== 'string' || !outline.trim())
+        return undefined;
+    const lines = outline
+        .split('\n')
+        .filter((line) => !/^title:\s/.test(line))
+        .map((line) => line.replace(/^#\d+\s+[^:]*:\s*/, '').trim())
+        .filter((line) => line && line !== '(empty)');
+    const text = lines.join(' ').replace(/\s+/g, ' ').trim();
+    return text ? truncate(text, SNIPPET_MAX) : undefined;
+}
+/** The document a run worked on, from the trigger/context/apply output; title and snippet from the read step, falling back to what apply wrote. */
+function documentFromOutputs(outputs, context) {
+    const o = outputs ?? {};
+    const step = (id) => (o[id] ?? {});
+    const trigger = step('trigger');
+    const read = step('read');
+    const apply = step('apply');
+    const id = firstString(trigger.documentId, ...(context ? [context.documentId, context.trigger?.documentId, context.input?.documentId] : []), apply.documentId, read.documentId);
+    if (!id)
+        return undefined;
+    const title = firstString(read.documentTitle, apply.title, context?.documentTitle);
+    const firstAppend = (opsFromApplyOutput(apply) ?? []).find((op) => (op.op === 'appendBlock' || op.op === 'insertBlock') && op.text);
+    const snippet = snippetFromOutline(read.documentOutline) ?? (firstAppend?.text ? truncate(firstAppend.text, SNIPPET_MAX) : undefined);
+    return { id, ...(title ? { title } : {}), ...(snippet ? { snippet } : {}) };
+}
+/** `next` laid over `prev`, field by field — a field the newer source lacks keeps the older value. Never clears. */
+function mergeDetails(prev, next) {
+    if (!next)
+        return prev;
+    if (!prev)
+        return next;
+    const merged = { ...prev };
+    if (next.steps && next.steps.length > 0)
+        merged.steps = next.steps;
+    if (next.ops)
+        merged.ops = next.ops;
+    if (next.document)
+        merged.document = { ...(prev.document ?? {}), ...next.document };
+    if (next.startedAt)
+        merged.startedAt = next.startedAt;
+    if (next.completedAt)
+        merged.completedAt = next.completedAt;
+    if (next.error)
+        merged.error = next.error;
+    return merged;
+}
+/** The expanded card's details from a run snapshot, laid over what was already known. */
+function detailsFromSnapshot(snap, prev, pipelineId, tables = {}) {
+    const stepList = stepListOf(snap);
+    const outputs = Object.fromEntries(stepList.map((s) => [s.stepId ?? s.nodeId ?? '', s.output]));
+    const context = { ...(snap.trigger ? { trigger: snap.trigger } : {}), ...(snap.context ?? {}) };
+    const status = String(snap.status ?? '');
+    const next = {};
+    const steps = stepsFromSnapshot(snap, pipelineId, tables);
+    if (steps)
+        next.steps = steps;
+    const ops = opsFromApplyOutput(outputs.apply);
+    if (ops)
+        next.ops = ops;
+    const document = documentFromOutputs(outputs, context);
+    if (document)
+        next.document = document;
+    if (typeof snap.startedAt === 'string' && snap.startedAt)
+        next.startedAt = snap.startedAt;
+    if (typeof snap.completedAt === 'string' && snap.completedAt)
+        next.completedAt = snap.completedAt;
+    const error = status === 'failed' || status === 'cancelled' ? failureMessage(snap, stepList) : errorMessage(snap.error);
+    if (error)
+        next.error = error;
+    return mergeDetails(prev, Object.keys(next).length > 0 ? next : undefined);
+}
+/** One step's status changed in a frame: update it in place, or add it when the timeline had not seen it. */
+function withStepStatus(details, stepId, status, pipelineId, tables = {}) {
+    if (!stepId)
+        return details;
+    const steps = details?.steps ?? [];
+    const idx = steps.findIndex((s) => s.id === stepId);
+    const nextSteps = idx >= 0
+        ? steps.map((s, i) => (i === idx ? { ...s, status } : s))
+        : [...steps, { id: stepId, label: stepTimelineLabel(stepId, pipelineId, tables), status }];
+    return { ...(details ?? {}), steps: nextSteps };
+}
+/** What a live frame adds to the details: a step's status, the apply ops, the document, an error. */
+function detailsFromEvent(eventType, p, prev, pipelineId, tables = {}) {
+    const stepId = typeof p.stepId === 'string' ? p.stepId : '';
+    const at = typeof p.at === 'string' ? p.at : undefined;
+    switch (eventType) {
+        case 'pipeline.run.started': return at ? mergeDetails(prev, { startedAt: at }) : prev;
+        case 'pipeline.step.started': return withStepStatus(prev, stepId, 'running', pipelineId, tables);
+        case 'pipeline.step.skipped': return withStepStatus(prev, stepId, 'skipped', pipelineId, tables);
+        case 'pipeline.approval.requested': return withStepStatus(prev, stepId || 'approve', 'awaiting', pipelineId, tables);
+        case 'pipeline.step.completed': {
+            const base = withStepStatus(prev, stepId, 'completed', pipelineId, tables);
+            const outputs = stepId ? { [stepId]: p.output } : {};
+            const patch = {};
+            if (stepId === 'apply') {
+                const ops = opsFromApplyOutput(p.output);
+                if (ops)
+                    patch.ops = ops;
+            }
+            const document = documentFromOutputs(outputs, p);
+            if (document)
+                patch.document = document;
+            return mergeDetails(base, Object.keys(patch).length > 0 ? patch : undefined);
+        }
+        case 'pipeline.step.failed': {
+            const base = withStepStatus(prev, stepId, 'failed', pipelineId, tables);
+            const error = errorMessage(p.error);
+            return mergeDetails(base, error ? { error } : undefined);
+        }
+        case 'pipeline.run.failed': {
+            const error = errorMessage(p.error);
+            const nodeId = p.error?.nodeId;
+            const base = typeof nodeId === 'string' && nodeId && !nodeId.startsWith('(') ? withStepStatus(prev, nodeId, 'failed', pipelineId, tables) : prev;
+            const patch = { ...(error ? { error } : {}), ...(at ? { completedAt: at } : {}) };
+            return mergeDetails(base, Object.keys(patch).length > 0 ? patch : undefined);
+        }
+        case 'pipeline.run.completed': {
+            const outputs = outputsOfContext(p.output);
+            const patch = {};
+            const ops = opsFromApplyOutput(outputs?.apply);
+            if (ops)
+                patch.ops = ops;
+            const document = documentFromOutputs(outputs, { ...p, ...(p.output ?? {}) });
+            if (document)
+                patch.document = document;
+            if (at)
+                patch.completedAt = at;
+            const error = p.status === 'failed' || p.status === 'cancelled' ? errorMessage(p.error) : undefined;
+            if (error)
+                patch.error = error;
+            return mergeDetails(prev, Object.keys(patch).length > 0 ? patch : undefined);
+        }
+        default: return prev;
+    }
+}
+/** `applied === 0` on the apply step: the run changed nothing (the model chose `skip`, or there was nothing to do). */
+function isNoop(outputs) {
+    const apply = (outputs?.apply ?? {});
+    return apply.applied === 0;
+}
+/** A card is only a placeholder when nobody has said anything specific yet. */
+const PLACEHOLDER_DETAILS = new Set(['Done', 'The run failed', undefined]);
 /** The card's status from a run snapshot; `undefined` when the snapshot says nothing new (pending). */
 function statusFromSnapshot(snap, prev, pipelineId, tables = {}) {
+    const phase = phaseFromSnapshot(snap, prev, pipelineId, tables);
+    if (!phase)
+        return undefined;
+    const details = detailsFromSnapshot(snap, prev?.details, pipelineId, tables);
+    return details ? { ...phase, details } : phase;
+}
+function phaseFromSnapshot(snap, prev, pipelineId, tables = {}) {
     const status = String(snap.status ?? '');
-    // The snapshot keys steps by node id; older shapes carried an array.
-    const stepList = Array.isArray(snap.steps) ? snap.steps : Object.entries(snap.steps ?? {}).map(([id, st]) => ({ stepId: id, ...st }));
+    const stepList = stepListOf(snap);
     const outputs = Object.fromEntries(stepList.map((s) => [s.stepId ?? s.nodeId ?? '', s.output]));
     if (status === 'completed') {
         const result = resultOf(snap, stepList);
-        const base = { phase: 'completed', detail: runStatusDetail(outputs) ?? 'Done', ...(result !== undefined ? { result } : {}) };
+        const base = {
+            phase: 'completed',
+            detail: runStatusDetail(outputs) ?? 'Done',
+            ...(result !== undefined ? { result } : {}),
+            ...(isNoop(outputs) ? { noop: true } : {}),
+        };
         // The snapshot's review wins; a snapshot that has not caught up yet must not clear one already learned from a frame.
         return withReview(base, suggestionOf(outputs, { ...(snap.trigger ? { trigger: snap.trigger } : {}), ...(snap.context ?? {}) }) ?? prev?.suggestion, reviewOf(snap.review) ?? prev?.review);
     }
     if (status === 'rejected')
         return { phase: 'rejected', detail: rejectedDetail(snap.rejection) };
     if (status === 'failed' || status === 'cancelled')
-        return { phase: 'failed', detail: typeof snap.error === 'string' ? snap.error : snap.error?.message ?? 'The run failed' };
+        return { phase: 'failed', detail: failureMessage(snap, stepList) ?? 'The run failed' };
     if (status === 'awaiting_approval') {
         const step = stepList.find((s) => s.status === 'awaiting') ?? stepList.find((s) => (s.stepId ?? s.nodeId) === 'approve');
         return { phase: 'awaiting_approval', approvalStepId: step?.stepId ?? step?.nodeId ?? 'approve', detail: approvalReason(snap.context, outputs) };
@@ -271,10 +540,49 @@ function statusFromSnapshot(snap, prev, pipelineId, tables = {}) {
     }
     return undefined;
 }
+/**
+ * A terminal status learned from a frame, filled in from the snapshot that
+ * arrives after it: a placeholder line ("Done" / "The run failed") gives way
+ * to the snapshot's, a missing result/suggestion/review/noop is taken, and
+ * the details merge. The phase itself is never walked back. Returns `cur`
+ * itself when nothing changed.
+ */
+function enrichTerminalStatus(cur, snap, pipelineId, tables = {}) {
+    const fromSnap = statusFromSnapshot(snap, cur, pipelineId, tables);
+    const samePhase = fromSnap?.phase === cur.phase;
+    const review = cur.review ?? (samePhase ? fromSnap?.review : reviewOf(snap.review));
+    const suggestion = cur.suggestion ?? (cur.phase === 'completed' ? fromSnap?.suggestion : undefined);
+    const details = mergeDetails(cur.details, fromSnap?.details ?? detailsFromSnapshot(snap, undefined, pipelineId, tables));
+    const next = withReview({ ...cur }, suggestion, review);
+    if (samePhase && fromSnap) {
+        if (PLACEHOLDER_DETAILS.has(cur.detail) && fromSnap.detail && !PLACEHOLDER_DETAILS.has(fromSnap.detail) && !review)
+            next.detail = fromSnap.detail;
+        if (next.result === undefined && fromSnap.result !== undefined)
+            next.result = fromSnap.result;
+        if (next.noop === undefined && fromSnap.noop)
+            next.noop = true;
+    }
+    if (details)
+        next.details = details;
+    const changed = next.detail !== cur.detail || next.result !== cur.result || next.noop !== cur.noop || next.review !== cur.review || next.suggestion !== cur.suggestion
+        || JSON.stringify(next.details) !== JSON.stringify(cur.details);
+    return changed ? next : cur;
+}
 /** The card's status after one live frame; `undefined` when the frame is not about the card. */
 function statusFromEvent(eventType, p, prev, pipelineId, tables = {}) {
+    const type = normalizeEventType(eventType);
+    const details = detailsFromEvent(type, p, prev?.details, pipelineId, tables);
+    const phase = phaseFromEvent(type, p, prev, pipelineId, tables);
+    if (phase)
+        return details ? { ...phase, details } : phase;
+    // A frame that says nothing about the phase can still move a step in the timeline.
+    if (details && prev && details !== prev.details)
+        return { ...prev, details };
+    return undefined;
+}
+function phaseFromEvent(type, p, prev, pipelineId, tables = {}) {
     const stepId = typeof p.stepId === 'string' ? p.stepId : '';
-    switch (normalizeEventType(eventType)) {
+    switch (type) {
         case 'pipeline.run.started': return { phase: 'running' };
         case 'pipeline.step.started': return { phase: 'running', stepLabel: stepLabelFor(stepId, pipelineId, tables) };
         case 'pipeline.step.attempt.started': {
@@ -294,19 +602,25 @@ function statusFromEvent(eventType, p, prev, pipelineId, tables = {}) {
             if (stepId === 'apply' || stepId === 'publish' || stepId === 'announce') {
                 const outputs = { [stepId]: p.output };
                 const suggestion = suggestionOf(outputs, p);
-                return { phase: 'running', stepLabel: 'Finishing', detail: runStatusDetail(outputs), ...(suggestion ? { suggestion } : {}) };
+                // The apply step's verdict travels to the completion frame: a skip stays a skip.
+                return { phase: 'running', stepLabel: 'Finishing', detail: runStatusDetail(outputs), ...(suggestion ? { suggestion } : {}), ...(isNoop(outputs) ? { noop: true } : {}) };
             }
             return undefined;
         }
         case 'pipeline.run.completed': {
             if (p.status === 'rejected')
                 return { phase: 'rejected', detail: rejectedDetail(p.rejection) };
+            // A completion frame that says the run failed IS a failure, whatever the event's name.
+            if (p.status === 'failed' || p.status === 'cancelled')
+                return { phase: 'failed', detail: errorMessage(p.error) ?? 'The run failed' };
             const result = resultOf(p, []);
             const outputs = outputsOfContext(p.output);
+            const noop = isNoop(outputs) || (prev?.phase === 'running' && prev.noop === true);
             const base = {
                 phase: 'completed',
                 detail: (prev?.phase === 'running' ? prev.detail : undefined) ?? runStatusDetail(outputs) ?? 'Done',
                 ...(result !== undefined ? { result } : {}),
+                ...(noop ? { noop: true } : {}),
             };
             return withReview(base, suggestionOf(outputs, { ...p, ...(p.output ?? {}) }) ?? prev?.suggestion, prev?.review);
         }
@@ -396,12 +710,10 @@ function usePipelineRunStatus(runs, opts) {
                         const cur = prev[r.runId];
                         if (TERMINAL.has(cur?.phase)) {
                             // A terminal phase learned from a frame is never walked back by a
-                            // stale snapshot — but a snapshot CAN settle a pending suggestion.
-                            const review = cur.review ?? reviewOf(snap.review);
-                            const suggestion = cur.suggestion ?? (cur.phase === 'completed' ? statusFromSnapshot(snap, cur, r.pipelineId, tablesRef.current)?.suggestion : undefined);
-                            if (review === cur.review && suggestion === cur.suggestion)
-                                return prev;
-                            return { ...prev, [r.runId]: withReview(cur, suggestion, review) };
+                            // stale snapshot — but the snapshot fills the card in: a pending
+                            // suggestion settles, a placeholder line gives way, details land.
+                            const next = enrichTerminalStatus(cur, snap, r.pipelineId, tablesRef.current);
+                            return next === cur ? prev : { ...prev, [r.runId]: next };
                         }
                         const next = statusFromSnapshot(snap, cur, r.pipelineId, tablesRef.current);
                         return next ? { ...prev, [r.runId]: next } : prev;
