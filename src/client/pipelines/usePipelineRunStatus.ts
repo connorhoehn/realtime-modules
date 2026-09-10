@@ -644,7 +644,13 @@ function detailsFromEvent(eventType: string | undefined, p: Record<string, unkno
 /** `applied === 0` on the apply step: the run changed nothing (the model chose `skip`, or there was nothing to do). */
 function isNoop(outputs: Record<string, unknown> | undefined): boolean {
   const apply = ((outputs?.apply ?? {}) as Record<string, unknown>);
-  return apply.applied === 0;
+  if (apply.applied !== 0) return false;
+  // An OPTIONAL apply step that had no document to write ("skipped: 'no document on
+  // this run'") is not the run declining to change anything — the transcript or the
+  // search still did its work. Only a real skip (a reason) or a plain empty plan counts.
+  if (typeof apply.skipped === 'string') return false;
+  if (outputs && ('publish' in outputs) && !('plan' in outputs)) return false;
+  return true;
 }
 
 /** A card is only a placeholder when nobody has said anything specific yet. */

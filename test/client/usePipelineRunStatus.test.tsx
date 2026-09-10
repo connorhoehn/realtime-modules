@@ -680,3 +680,16 @@ describe('details — the expanded card', () => {
     expect(second.result.current('run-2')?.phase).toBe('failed');
   });
 });
+
+describe('noop — only a real skip', () => {
+  it('does not flag a transcription whose optional apply step had no document', () => {
+    const { statusFromSnapshot } = require('../../src/client/pipelines/usePipelineRunStatus');
+    const status = statusFromSnapshot({ status: 'completed', steps: { transcribe: { status: 'completed', output: { words: 12 } }, apply: { status: 'completed', output: { applied: 0, skipped: 'no document on this run' } }, publish: { status: 'completed', output: { posted: true, words: 12 } } } } as never, undefined, {});
+    expect(status?.noop).toBeUndefined();
+  });
+  it('flags a document edit whose plan was a skip', () => {
+    const { statusFromSnapshot } = require('../../src/client/pipelines/usePipelineRunStatus');
+    const status = statusFromSnapshot({ status: 'completed', steps: { plan: { status: 'completed', output: { text: '[{"op":"skip"}]' } }, apply: { status: 'completed', output: { applied: 0, skipped: 0, reason: 'nothing to do' } } } } as never, undefined, {});
+    expect(status?.noop).toBe(true);
+  });
+});
