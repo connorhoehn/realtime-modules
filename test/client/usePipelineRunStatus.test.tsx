@@ -531,13 +531,14 @@ describe('details — the expanded card', () => {
   });
 
   it('derives the document from the read step (title + outline snippet), or from what apply wrote when there was no read', () => {
-    expect(snippetFromOutline(OUTLINE)).toBe('Roadmap First para text. Ship it');
+    // The level-1 heading repeats the title and a macro's text is its YAML body — neither is a preview.
+    expect(snippetFromOutline(OUTLINE)).toBe('First para text.');
     expect(snippetFromOutline(`title: T\n#0 paragraph: ${'y'.repeat(300)}`)).toHaveLength(200);
     expect(snippetFromOutline('title: T\n#0 paragraph: (empty)')).toBeUndefined();
     expect(snippetFromOutline(undefined)).toBeUndefined();
 
     const fromRead = documentFromOutputs({ trigger: { documentId: 'doc-1' }, read: { documentOutline: OUTLINE, documentTitle: 'Roadmap' } });
-    expect(fromRead).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'Roadmap First para text. Ship it' });
+    expect(fromRead).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'First para text.' });
 
     const fromApply = documentFromOutputs({ apply: { title: 'Fresh page', ops: [{ op: 'setTitle', text: 'Fresh page' }, { op: 'appendBlock', kind: 'paragraph', text: 'Hello world' }] } }, { documentId: 'doc-2' });
     expect(fromApply).toEqual({ id: 'doc-2', title: 'Fresh page', snippet: 'Hello world' });
@@ -548,7 +549,7 @@ describe('details — the expanded card', () => {
 
     // The whole snapshot path, timestamps included.
     const details = detailsFromSnapshot(SNAP, undefined, RUN.pipelineId);
-    expect(details?.document).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'Roadmap First para text. Ship it' });
+    expect(details?.document).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'First para text.' });
     expect(details?.startedAt).toBe(T(0));
     expect(details?.steps?.map((s) => s.id)).toEqual(['trigger', 'read', 'plan', 'apply', 'approve']);
     expect(statusFromSnapshot(SNAP, undefined, RUN.pipelineId)?.details).toEqual(details);
@@ -588,7 +589,7 @@ describe('details — the expanded card', () => {
     expect(sparse.details).toEqual(withOps.details);
     // A later snapshot with a title but no snippet keeps the snippet.
     const partial = statusFromSnapshot({ status: 'completed', context: { documentId: 'doc-1', documentTitle: 'Renamed' } }, withOps, RUN.pipelineId)!;
-    expect(partial.details?.document).toEqual({ id: 'doc-1', title: 'Renamed', snippet: 'Roadmap First para text. Ship it' });
+    expect(partial.details?.document).toEqual({ id: 'doc-1', title: 'Renamed', snippet: 'First para text.' });
     expect(partial.details?.ops).toEqual(withOps.details?.ops);
     expect(partial.details?.steps).toEqual(withOps.details?.steps);
   });
@@ -664,7 +665,7 @@ describe('details — the expanded card', () => {
     });
     await waitFor(() => expect(result.current('run-1')?.detail).toBe('Already covered'));
     expect(result.current('run-1')?.noop).toBe(true);
-    expect(result.current('run-1')?.details?.document).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'Roadmap First para text. Ship it' });
+    expect(result.current('run-1')?.details?.document).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'First para text.' });
     expect(result.current('run-1')?.details?.steps?.map((s) => s.id)).toEqual(['read', 'apply']);
 
     const RUN2 = { runId: 'run-2', pipelineId: 'document-agent-edit' };

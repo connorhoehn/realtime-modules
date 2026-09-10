@@ -526,6 +526,9 @@ export function snippetFromOutline(outline: unknown): string | undefined {
   const lines = outline
     .split('\n')
     .filter((line) => !/^title:\s/.test(line))
+    // A macro block's text is its YAML body (attachment names, sizes, URLs) and the
+    // level-1 heading repeats the title — neither reads as a preview of the page.
+    .filter((line) => !/^#\d+\s+macro\(/.test(line) && !/^#\d+\s+heading\(h1\):/.test(line))
     .map((line) => line.replace(/^#\d+\s+[^:]*:\s*/, '').trim())
     .filter((line) => line && line !== '(empty)');
   const text = lines.join(' ').replace(/\s+/g, ' ').trim();
