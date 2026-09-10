@@ -31,6 +31,10 @@ export interface PipelineRunOpDetail {
     op: string;
     text?: string;
     index?: number;
+    /** The block an `appendBlock`/`insertBlock` op added — 'paragraph' | 'heading' | 'horizontalRule' — so a card can say "a divider" rather than quote nothing. */
+    kind?: string;
+    /** A heading op's level (1–6). */
+    level?: number;
     macroName?: string;
     typeName?: string;
     reason?: string;

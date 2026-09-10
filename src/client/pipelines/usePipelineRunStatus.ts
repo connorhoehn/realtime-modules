@@ -67,6 +67,10 @@ export interface PipelineRunOpDetail {
   op: string;
   text?: string;
   index?: number;
+  /** The block an `appendBlock`/`insertBlock` op added — 'paragraph' | 'heading' | 'horizontalRule' — so a card can say "a divider" rather than quote nothing. */
+  kind?: string;
+  /** A heading op's level (1–6). */
+  level?: number;
   macroName?: string;
   typeName?: string;
   reason?: string;
@@ -508,6 +512,8 @@ export function opsFromApplyOutput(applyOutput: unknown): PipelineRunOpDetail[] 
     const out: PipelineRunOpDetail = { op: o.op };
     if (typeof o.text === 'string') out.text = truncate(o.text, OP_TEXT_MAX);
     if (typeof o.index === 'number') out.index = o.index;
+    if (typeof o.kind === 'string' && o.kind) out.kind = o.kind;
+    if (typeof o.level === 'number') out.level = o.level;
     if (typeof o.macroName === 'string' && o.macroName) out.macroName = o.macroName;
     if (typeof o.typeName === 'string' && o.typeName) out.typeName = o.typeName;
     if (typeof o.reason === 'string' && o.reason) out.reason = truncate(o.reason, OP_TEXT_MAX);

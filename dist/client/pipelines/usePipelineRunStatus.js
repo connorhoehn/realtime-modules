@@ -336,6 +336,10 @@ function opsFromApplyOutput(applyOutput) {
             out.text = truncate(o.text, OP_TEXT_MAX);
         if (typeof o.index === 'number')
             out.index = o.index;
+        if (typeof o.kind === 'string' && o.kind)
+            out.kind = o.kind;
+        if (typeof o.level === 'number')
+            out.level = o.level;
         if (typeof o.macroName === 'string' && o.macroName)
             out.macroName = o.macroName;
         if (typeof o.typeName === 'string' && o.typeName)

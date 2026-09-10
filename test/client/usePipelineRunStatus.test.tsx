@@ -505,6 +505,8 @@ describe('details — the expanded card', () => {
       { op: 'setTitle', text: 'New title' },
       { op: 'appendBlock', kind: 'paragraph', text: long },
       { op: 'insertBlock', index: 2, kind: 'heading', level: 2, text: 'Heading' },
+      { op: 'appendBlock', kind: 'horizontalRule' },
+      { op: 'appendBlock', kind: '', level: 'two' },
       { op: 'replaceBlock', index: 1, text: 'Replaced' },
       { op: 'deleteBlock', index: 3 },
       { op: 'copyBlock', index: 4 },
@@ -514,10 +516,13 @@ describe('details — the expanded card', () => {
       { notAnOp: true },
       null,
     ] });
+    // `kind` and `level` ride along so a card can say "a divider" or "heading …" rather than quote an empty text.
     expect(ops).toEqual([
       { op: 'setTitle', text: 'New title' },
-      { op: 'appendBlock', text: `${'x'.repeat(139)}…` },
-      { op: 'insertBlock', index: 2, text: 'Heading' },
+      { op: 'appendBlock', kind: 'paragraph', text: `${'x'.repeat(139)}…` },
+      { op: 'insertBlock', index: 2, kind: 'heading', level: 2, text: 'Heading' },
+      { op: 'appendBlock', kind: 'horizontalRule' },
+      { op: 'appendBlock' },
       { op: 'replaceBlock', index: 1, text: 'Replaced' },
       { op: 'deleteBlock', index: 3 },
       { op: 'copyBlock', index: 4 },
