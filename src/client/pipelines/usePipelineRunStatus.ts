@@ -15,6 +15,10 @@
 // The transport is injectable so an app that owns its own socket can hand in
 // `{ send, onMessage }`; an rm-native host mounted under GatewaySocketProvider
 // passes nothing and the hook reads the gateway context itself.
+//
+// A run that SUGGESTED its edit (apply step `mode: 'suggest'`) completes with a
+// `suggestion` and waits on a person: the `pipeline.run.reviewed` frame, or the
+// snapshot's `review`, settles it to "Accepted by …" / "Rejected by …".
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
@@ -32,6 +36,33 @@ export interface PipelineRunStatus {
   approvalStepId?: string;
   /** The run's final result, lifted from a completed snapshot or frame when it carried one. */
   result?: unknown;
+  /** Set when a completed run SUGGESTED its edit instead of applying it — the card offers accept / reject until `review` lands. */
+  suggestion?: PipelineRunSuggestion;
+  /** The decision on a suggestion, once someone made one. A reviewed run is fully settled. */
+  review?: PipelineRunReview;
+}
+
+/** A completed run whose apply step ran in `mode: 'suggest'` — the changes are pending as suggestions in the document. */
+export interface PipelineRunSuggestion {
+  /** The suggestion bucket in the document, `<user>@<bucket>`; the review names it. */
+  key: string;
+  /** The document the suggestions live in, when the run's trigger or context said. */
+  documentId?: string;
+  /** How many changes were suggested. */
+  applied: number;
+}
+
+export type PipelineReviewDecision = 'accept' | 'reject';
+
+/** Who decided what about a run's suggestions, and when. */
+export interface PipelineRunReview {
+  decision: PipelineReviewDecision;
+  /** The reviewer's user id. */
+  by: string;
+  /** The reviewer's display name, when the record carried one. */
+  byName?: string;
+  /** ISO timestamp of the decision. */
+  at: string;
 }
 
 export type PipelineRunDecision = 'approve' | 'reject';
@@ -57,6 +88,13 @@ export interface UsePipelineRunStatusOptions {
   pipelineStepLabels?: Record<string, Record<string, string>>;
   /** Snapshot re-read interval while a run is not terminal. Default 1500. */
   pollMs?: number;
+  /**
+   * Re-read interval for a completed run whose suggestions are still unreviewed —
+   * the review usually arrives as a `pipeline.run.reviewed` frame, so this is
+   * a slow safety net (platform-api rate-limits GETs per user). Default 15000;
+   * `0` disables it (frames only).
+   */
+  reviewPollMs?: number;
 }
 
 /** The narration people see while a step runs, keyed by step id. */
@@ -111,9 +149,12 @@ export function retryLabel(attemptNumber: number, maxAttempts?: number): string 
 // REST helpers (pure — no React)
 // ---------------------------------------------------------------------------
 
-async function errorFrom(res: Response, fallback: string): Promise<Error> {
+/** The error a REST helper throws: the server's message, with the HTTP status attached (`409` = already reviewed). */
+export type PipelineRunRequestError = Error & { status: number };
+
+async function errorFrom(res: Response, fallback: string): Promise<PipelineRunRequestError> {
   const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
-  return new Error(body.error || body.message || `${fallback} (${res.status})`);
+  return Object.assign(new Error(body.error || body.message || `${fallback} (${res.status})`), { status: res.status });
 }
 
 /**
@@ -150,6 +191,48 @@ export async function approvePipelineRun(
   if (!res.ok) throw await errorFrom(res, `Could not ${input.decision} the run`);
 }
 
+export interface ReviewPipelineRunInput {
+  pipelineId: string;
+  runId: string;
+  decision: PipelineReviewDecision;
+  /** The suggestion bucket the run wrote (`PipelineRunSuggestion.key`). */
+  suggestionKey: string;
+  documentId: string;
+  comment?: string;
+  /** The reviewer's display name, so the card can say "Accepted by Grace" without a profile lookup. */
+  byName?: string;
+  /** Ask platform-api to accept/reject the suggestions in the document itself (as a second run) instead of the client doing it through the CRDT. */
+  applyServerSide?: boolean;
+}
+
+export interface ReviewPipelineRunResponse {
+  runId: string;
+  pipelineId: string;
+  review: PipelineRunReview & { suggestionKey: string; documentId: string; comment?: string; appliedByRunId?: string };
+  /** Present when `applyServerSide` was asked for: what the server did. */
+  applied?: unknown;
+}
+
+/**
+ * Accept or reject the suggestions a completed run left in a document.
+ * Resolves with platform-api's record; throws a `PipelineRunRequestError`
+ * on a non-2xx — `status === 409` means someone already reviewed it.
+ */
+export async function reviewPipelineRun(
+  apiBaseUrl: string,
+  idToken: string | null,
+  input: ReviewPipelineRunInput,
+): Promise<ReviewPipelineRunResponse> {
+  const { pipelineId, runId, ...body } = input;
+  const res = await fetch(`${apiBaseUrl}/api/pipelines/${encodeURIComponent(pipelineId)}/runs/${encodeURIComponent(runId)}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+    body: JSON.stringify(Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined))),
+  });
+  if (!res.ok) throw await errorFrom(res, `Could not ${input.decision} the suggestions`);
+  return (await res.json()) as ReviewPipelineRunResponse;
+}
+
 // ---------------------------------------------------------------------------
 // Detail lines
 // ---------------------------------------------------------------------------
@@ -169,8 +252,55 @@ export function runStatusDetail(outputs: Record<string, unknown> | undefined): s
   if (typeof announce.posted === 'boolean') return 'Recording ready';
   const apply = step('apply');
   if (typeof apply.title === 'string') return `Renamed to “${apply.title}”`;
-  if (typeof apply.applied === 'number') return apply.applied > 0 ? `${apply.applied} change${apply.applied === 1 ? '' : 's'} applied` : (typeof apply.reason === 'string' ? apply.reason : 'No changes were needed');
+  if (typeof apply.applied === 'number') {
+    if (apply.applied <= 0) return typeof apply.reason === 'string' ? apply.reason : 'No changes were needed';
+    return `${apply.applied} change${apply.applied === 1 ? '' : 's'} ${apply.mode === 'suggest' ? 'suggested' : 'applied'}`;
+  }
   return undefined;
+}
+
+/** "Accepted by Grace" / "Rejected by Grace" — the name, falling back to the id. */
+export function reviewDetail(review: PipelineRunReview): string {
+  return `${review.decision === 'accept' ? 'Accepted' : 'Rejected'} by ${review.byName || review.by}`;
+}
+
+/** A well-formed review record from a snapshot's `review` or a `pipeline.run.reviewed` payload; `undefined` otherwise. */
+export function reviewOf(raw: unknown): PipelineRunReview | undefined {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (r.decision !== 'accept' && r.decision !== 'reject') return undefined;
+  const by = typeof r.by === 'string' ? r.by : '';
+  const at = typeof r.at === 'string' ? r.at : new Date(0).toISOString();
+  return { decision: r.decision, by, at, ...(typeof r.byName === 'string' && r.byName ? { byName: r.byName } : {}) };
+}
+
+/** The first string among the candidates — the run's documentId lives in different places per source. */
+function firstString(...candidates: unknown[]): string | undefined {
+  return candidates.find((c): c is string => typeof c === 'string' && c.length > 0);
+}
+
+/** The document a run worked on: the trigger, then the context, then the apply output. */
+function documentIdOf(context: Record<string, unknown> | undefined, apply: Record<string, unknown>): string | undefined {
+  const c = context ?? {};
+  const trigger = (c.trigger ?? {}) as Record<string, unknown>;
+  const input = (c.input ?? {}) as Record<string, unknown>;
+  return firstString(c.documentId, trigger.documentId, input.documentId, apply.documentId);
+}
+
+/** The suggestion a completed run left behind, when its apply step ran in `mode: 'suggest'`. */
+export function suggestionOf(outputs: Record<string, unknown> | undefined, context?: Record<string, unknown>): PipelineRunSuggestion | undefined {
+  const apply = ((outputs?.apply ?? {}) as Record<string, unknown>);
+  if (apply.mode !== 'suggest' || typeof apply.suggestionKey !== 'string' || !apply.suggestionKey) return undefined;
+  const documentId = documentIdOf(context, apply);
+  return { key: apply.suggestionKey, applied: typeof apply.applied === 'number' ? apply.applied : 0, ...(documentId ? { documentId } : {}) };
+}
+
+/** A completed status with its suggestion and review folded in — the review's line wins over the run's own. */
+function withReview(base: PipelineRunStatus, suggestion: PipelineRunSuggestion | undefined, review: PipelineRunReview | undefined): PipelineRunStatus {
+  return {
+    ...base,
+    ...(suggestion ? { suggestion } : {}),
+    ...(review ? { review, detail: reviewDetail(review) } : {}),
+  };
 }
 
 function outputsOfContext(output: unknown): Record<string, unknown> | undefined {
@@ -211,6 +341,11 @@ function resultOf(snapOrFrame: { result?: unknown; output?: unknown }, stepList:
 
 const TERMINAL = new Set<PipelineRunPhase>(['completed', 'failed', 'rejected']);
 
+/** A completed run whose suggestions nobody has accepted or rejected yet — terminal for the phase, not for the card. */
+export function isAwaitingReview(status: PipelineRunStatus | undefined): boolean {
+  return status?.phase === 'completed' && !!status.suggestion && !status.review;
+}
+
 /** `pipeline:run:completed` and `pipeline.run.completed` are the same event. */
 export function normalizeEventType(eventType: unknown): string | undefined {
   if (typeof eventType !== 'string' || !eventType) return undefined;
@@ -225,9 +360,12 @@ export interface PipelineRunSnapshot {
   steps?: Step[] | Record<string, Step>;
   error?: { message?: string } | string;
   context?: Record<string, unknown>;
+  trigger?: Record<string, unknown>;
   rejection?: unknown;
   result?: unknown;
   output?: unknown;
+  /** Present once someone accepted or rejected the run's suggestions. */
+  review?: unknown;
   pipelineDefinitionSnapshot?: { nodes?: Array<{ id: string; data?: { retryPolicy?: { maxAttempts?: number } } }> };
 }
 
@@ -239,7 +377,9 @@ export function statusFromSnapshot(snap: PipelineRunSnapshot, prev?: PipelineRun
   const outputs = Object.fromEntries(stepList.map((s) => [s.stepId ?? s.nodeId ?? '', s.output]));
   if (status === 'completed') {
     const result = resultOf(snap, stepList);
-    return { phase: 'completed', detail: runStatusDetail(outputs) ?? 'Done', ...(result !== undefined ? { result } : {}) };
+    const base: PipelineRunStatus = { phase: 'completed', detail: runStatusDetail(outputs) ?? 'Done', ...(result !== undefined ? { result } : {}) };
+    // The snapshot's review wins; a snapshot that has not caught up yet must not clear one already learned from a frame.
+    return withReview(base, suggestionOf(outputs, { ...(snap.trigger ? { trigger: snap.trigger } : {}), ...(snap.context ?? {}) }) ?? prev?.suggestion, reviewOf(snap.review) ?? prev?.review);
   }
   if (status === 'rejected') return { phase: 'rejected', detail: rejectedDetail(snap.rejection) };
   if (status === 'failed' || status === 'cancelled') return { phase: 'failed', detail: typeof snap.error === 'string' ? snap.error : snap.error?.message ?? 'The run failed' };
@@ -281,17 +421,32 @@ export function statusFromEvent(eventType: string | undefined, p: Record<string,
         // The review's reason is what the approval card will say; keep it around for the request frame.
         return out.needsApproval === true ? { phase: 'running', stepLabel: stepLabelFor('approve', pipelineId, tables), detail: typeof out.reason === 'string' ? out.reason : undefined } : undefined;
       }
-      if (stepId === 'apply' || stepId === 'publish' || stepId === 'announce') return { phase: 'running', stepLabel: 'Finishing', detail: runStatusDetail({ [stepId]: p.output }) };
+      if (stepId === 'apply' || stepId === 'publish' || stepId === 'announce') {
+        const outputs = { [stepId]: p.output };
+        const suggestion = suggestionOf(outputs, p);
+        return { phase: 'running', stepLabel: 'Finishing', detail: runStatusDetail(outputs), ...(suggestion ? { suggestion } : {}) };
+      }
       return undefined;
     }
     case 'pipeline.run.completed': {
       if (p.status === 'rejected') return { phase: 'rejected', detail: rejectedDetail(p.rejection) };
       const result = resultOf(p as { result?: unknown; output?: unknown }, []);
-      return {
+      const outputs = outputsOfContext(p.output);
+      const base: PipelineRunStatus = {
         phase: 'completed',
-        detail: (prev?.phase === 'running' ? prev.detail : undefined) ?? runStatusDetail(outputsOfContext(p.output)) ?? 'Done',
+        detail: (prev?.phase === 'running' ? prev.detail : undefined) ?? runStatusDetail(outputs) ?? 'Done',
         ...(result !== undefined ? { result } : {}),
       };
+      return withReview(base, suggestionOf(outputs, { ...p, ...((p.output ?? {}) as Record<string, unknown>) }) ?? prev?.suggestion, prev?.review);
+    }
+    case 'pipeline.run.reviewed': {
+      const review = reviewOf(p);
+      if (!review) return undefined;
+      const documentId = firstString(p.documentId, prev?.suggestion?.documentId);
+      const suggestion: PipelineRunSuggestion | undefined = prev?.suggestion
+        ? { ...prev.suggestion, ...(documentId ? { documentId } : {}) }
+        : (typeof p.suggestionKey === 'string' && p.suggestionKey ? { key: p.suggestionKey, applied: 0, ...(documentId ? { documentId } : {}) } : undefined);
+      return withReview({ ...(prev ?? {}), phase: 'completed' }, suggestion, review);
     }
     case 'pipeline.run.failed':
     case 'pipeline.step.failed': return { phase: 'failed', detail: typeof p.error === 'string' ? p.error : (typeof (p.error as { message?: unknown } | undefined)?.message === 'string' ? (p.error as { message: string }).message : 'The run failed') };
@@ -304,6 +459,7 @@ export function statusFromEvent(eventType: string | undefined, p: Record<string,
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_POLL_MS = 1500;
+export const DEFAULT_REVIEW_POLL_MS = 15_000;
 
 export function usePipelineRunStatus(
   runs: readonly PipelineRunRef[],
@@ -311,6 +467,7 @@ export function usePipelineRunStatus(
 ): (runId: string) => PipelineRunStatus | undefined {
   const { apiBaseUrl, idToken, transport, stepLabels, pipelineStepLabels } = opts;
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const reviewPollMs = opts.reviewPollMs ?? DEFAULT_REVIEW_POLL_MS;
 
   // Hooks cannot be conditional, so the context is always read; it is only
   // USED when the host handed in no transport of its own.
@@ -369,8 +526,16 @@ export function usePipelineRunStatus(
           if (!res.ok) return;
           const snap = (await res.json()) as PipelineRunSnapshot;
           setStatuses((prev) => {
-            if (TERMINAL.has(prev[r.runId]?.phase)) return prev;
-            const next = statusFromSnapshot(snap, prev[r.runId], r.pipelineId, tablesRef.current);
+            const cur = prev[r.runId];
+            if (TERMINAL.has(cur?.phase)) {
+              // A terminal phase learned from a frame is never walked back by a
+              // stale snapshot — but a snapshot CAN settle a pending suggestion.
+              const review = cur.review ?? reviewOf(snap.review);
+              const suggestion = cur.suggestion ?? (cur.phase === 'completed' ? statusFromSnapshot(snap, cur, r.pipelineId, tablesRef.current)?.suggestion : undefined);
+              if (review === cur.review && suggestion === cur.suggestion) return prev;
+              return { ...prev, [r.runId]: withReview(cur, suggestion, review) };
+            }
+            const next = statusFromSnapshot(snap, cur, r.pipelineId, tablesRef.current);
             return next ? { ...prev, [r.runId]: next } : prev;
           });
         } catch { /* the live frames still tell the story */ }
@@ -390,6 +555,19 @@ export function usePipelineRunStatus(
     }, pollMs);
     return () => clearInterval(timer);
   }, [runs, statuses, idToken, pollMs]);
+
+  // A completed suggestion waits on a person; re-read slowly until the review
+  // lands (the `pipeline.run.reviewed` frame is the fast path). Reviewed = settled.
+  useEffect(() => {
+    if (!idToken || reviewPollMs <= 0) return;
+    const awaiting = runs.filter((r) => isAwaitingReview(statuses[r.runId]));
+    if (awaiting.length === 0) return;
+    const timer = setInterval(() => {
+      for (const r of awaiting) fetched.current.delete(r.runId);
+      setTick((t) => t + 1);
+    }, reviewPollMs);
+    return () => clearInterval(timer);
+  }, [runs, statuses, idToken, reviewPollMs]);
 
   return useCallback((runId: string) => statuses[runId], [statuses]);
 }

@@ -12,7 +12,12 @@ export {
   DEFAULT_STEP_LABELS,
   DEFAULT_PIPELINE_STEP_LABELS,
   DEFAULT_POLL_MS,
+  DEFAULT_REVIEW_POLL_MS,
   runStatusDetail,
+  reviewDetail,
+  reviewOf,
+  suggestionOf,
+  isAwaitingReview,
   stepLabelFor,
   retryLabel,
   normalizeEventType,
@@ -20,6 +25,7 @@ export {
   statusFromSnapshot,
   requestPipelineRun,
   approvePipelineRun,
+  reviewPipelineRun,
 } from './usePipelineRunStatus';
 
 export type {
@@ -27,6 +33,12 @@ export type {
   PipelineRunPhase,
   PipelineRunDecision,
   PipelineRunRef,
+  PipelineRunSuggestion,
+  PipelineRunReview,
+  PipelineReviewDecision,
+  PipelineRunRequestError,
+  ReviewPipelineRunInput,
+  ReviewPipelineRunResponse,
   PipelineRunSnapshot,
   PipelineRunTransport,
   StepLabelTables,

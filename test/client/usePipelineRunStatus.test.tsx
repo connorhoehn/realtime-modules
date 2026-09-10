@@ -22,7 +22,11 @@ import {
   DEFAULT_STEP_LABELS,
   approvePipelineRun,
   requestPipelineRun,
+  reviewPipelineRun,
+  reviewDetail,
+  isAwaitingReview,
 } from '../../src/client/pipelines';
+import type { PipelineRunRequestError } from '../../src/client/pipelines';
 import type { PipelineRunTransport } from '../../src/client/pipelines';
 
 const API = 'http://api.test';
@@ -312,5 +316,132 @@ describe('REST helpers', () => {
     const [, init2] = fetchMock.mock.calls[1];
     expect(JSON.parse(init2?.body as string)).toEqual({ stepId: 's', decision: 'reject', comment: 'later' });
     expect((init2?.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+});
+
+describe('suggestion reviews', () => {
+  const SUGGEST = { mode: 'suggest', suggestionKey: 'grace@bucket-1', applied: 3, ops: [] };
+  const REVIEW = { decision: 'accept', suggestionKey: 'grace@bucket-1', documentId: 'doc-1', by: 'u-grace', byName: 'Grace', at: '2026-09-09T00:00:00.000Z' };
+
+  it('a completed suggest run says "N changes suggested" and carries the suggestion, from a frame and from a snapshot', () => {
+    // Frames: the apply step carries the suggestion; the completed frame keeps it.
+    const running = statusFromEvent('pipeline.step.completed', { stepId: 'apply', output: SUGGEST, documentId: 'doc-1' }, { phase: 'running' }, RUN.pipelineId);
+    expect(running).toEqual({ phase: 'running', stepLabel: 'Finishing', detail: '3 changes suggested', suggestion: { key: 'grace@bucket-1', documentId: 'doc-1', applied: 3 } });
+    const done = statusFromEvent('pipeline.run.completed', { status: 'completed' }, running, RUN.pipelineId);
+    expect(done).toEqual({ phase: 'completed', detail: '3 changes suggested', suggestion: { key: 'grace@bucket-1', documentId: 'doc-1', applied: 3 } });
+    expect(isAwaitingReview(done)).toBe(true);
+    // A completed frame that carries the whole context works on its own too.
+    expect(statusFromEvent('pipeline.run.completed', { output: { trigger: { documentId: 'doc-9' }, steps: { apply: { ...SUGGEST, applied: 1 } } } }, undefined)).toEqual({
+      phase: 'completed', detail: '1 change suggested', suggestion: { key: 'grace@bucket-1', documentId: 'doc-9', applied: 1 }, result: undefined,
+    });
+    // Snapshot: documentId from the trigger/context.
+    expect(statusFromSnapshot({ status: 'completed', context: { documentId: 'doc-1' }, steps: { apply: { status: 'completed', output: SUGGEST } } })).toEqual({
+      phase: 'completed', detail: '3 changes suggested', suggestion: { key: 'grace@bucket-1', documentId: 'doc-1', applied: 3 }, result: SUGGEST,
+    });
+    // Applied mode is unchanged.
+    expect(runStatusDetail({ apply: { applied: 2 } })).toBe('2 changes applied');
+    expect(runStatusDetail({ apply: { ...SUGGEST, applied: 1 } })).toBe('1 change suggested');
+  });
+
+  it('the reviewed event settles the card to "Accepted by <name>", falling back to the id, in both spellings', () => {
+    const pending = statusFromSnapshot({ status: 'completed', context: { documentId: 'doc-1' }, steps: { apply: { output: SUGGEST } } })!;
+    const accepted = statusFromEvent('pipeline.run.reviewed', { runId: 'run-1', ...REVIEW }, pending);
+    expect(accepted).toEqual({
+      ...pending,
+      detail: 'Accepted by Grace',
+      review: { decision: 'accept', by: 'u-grace', byName: 'Grace', at: REVIEW.at },
+    });
+    expect(isAwaitingReview(accepted)).toBe(false);
+    const rejected = statusFromEvent('pipeline:run:reviewed', { ...REVIEW, decision: 'reject', byName: undefined }, pending);
+    expect(rejected?.detail).toBe('Rejected by u-grace');
+    expect(rejected?.review).toEqual({ decision: 'reject', by: 'u-grace', at: REVIEW.at });
+    // A review for a card we had not seen yet still lands as a completed, reviewed run.
+    expect(statusFromEvent('pipeline.run.reviewed', REVIEW, undefined)).toEqual({
+      phase: 'completed', detail: 'Accepted by Grace', suggestion: { key: 'grace@bucket-1', documentId: 'doc-1', applied: 0 }, review: { decision: 'accept', by: 'u-grace', byName: 'Grace', at: REVIEW.at },
+    });
+    expect(statusFromEvent('pipeline.run.reviewed', { decision: 'maybe' }, pending)).toBeUndefined();
+    expect(reviewDetail({ decision: 'reject', by: 'u-1', at: 'x' })).toBe('Rejected by u-1');
+  });
+
+  it('reads the review from a snapshot, and a late snapshot without one keeps the review already known', () => {
+    const fromSnap = statusFromSnapshot({ status: 'completed', review: REVIEW, context: { documentId: 'doc-1' }, steps: { apply: { output: SUGGEST } } });
+    expect(fromSnap?.detail).toBe('Accepted by Grace');
+    expect(fromSnap?.review).toEqual({ decision: 'accept', by: 'u-grace', byName: 'Grace', at: REVIEW.at });
+    expect(fromSnap?.suggestion).toEqual({ key: 'grace@bucket-1', documentId: 'doc-1', applied: 3 });
+    const late = statusFromSnapshot({ status: 'completed', steps: { apply: { output: SUGGEST } } }, fromSnap);
+    expect(late?.review).toEqual(fromSnap?.review);
+    expect(late?.detail).toBe('Accepted by Grace');
+  });
+
+  it('hook: keeps re-reading a pending suggestion slowly, takes the review from the snapshot, then stops', async () => {
+    const { transport } = makeTransport();
+    fetchMock
+      .mockResolvedValueOnce(snapshotResponse({ status: 'completed', context: { documentId: 'doc-1' }, steps: { apply: { output: SUGGEST } } }))
+      .mockResolvedValueOnce(snapshotResponse({ status: 'completed', context: { documentId: 'doc-1' }, steps: { apply: { output: SUGGEST } } }))
+      .mockResolvedValue(snapshotResponse({ status: 'completed', review: REVIEW, context: { documentId: 'doc-1' }, steps: { apply: { output: SUGGEST } } }));
+    const { result } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok', transport, pollMs: 500, reviewPollMs: 2000 }));
+
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(result.current('run-1')?.detail).toBe('3 changes suggested'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The fast poll is off (the phase is terminal); the slow review poll is on.
+    await act(async () => { jest.advanceTimersByTime(1500); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => { jest.advanceTimersByTime(500); await Promise.resolve(); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(result.current('run-1')?.review).toBeUndefined();
+
+    await act(async () => { jest.advanceTimersByTime(2000); await Promise.resolve(); });
+    await waitFor(() => expect(result.current('run-1')?.detail).toBe('Accepted by Grace'));
+    expect(result.current('run-1')?.review?.byName).toBe('Grace');
+    const calls = fetchMock.mock.calls.length;
+
+    // Reviewed: settled, no more reads.
+    await act(async () => { jest.advanceTimersByTime(10_000); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
+  it('hook: the reviewed frame settles the card and a late snapshot does not clear the review', async () => {
+    const { transport, emit } = makeTransport();
+    let resolveSnap: (r: Response) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise<Response>((res) => { resolveSnap = res; }));
+    const { result } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok', transport }));
+
+    emit('pipeline.step.completed', { runId: 'run-1', stepId: 'apply', output: SUGGEST, documentId: 'doc-1' });
+    emit('pipeline.run.completed', { runId: 'run-1', status: 'completed' });
+    expect(result.current('run-1')?.detail).toBe('3 changes suggested');
+    emit('pipeline:run:reviewed', { runId: 'run-1', ...REVIEW, decision: 'reject' });
+    expect(result.current('run-1')?.detail).toBe('Rejected by Grace');
+
+    // The mount read resolves late, without the review — the review stays.
+    await act(async () => { resolveSnap(snapshotResponse({ status: 'completed', context: { documentId: 'doc-1' }, steps: { apply: { output: SUGGEST } } })); await Promise.resolve(); });
+    expect(result.current('run-1')?.review?.decision).toBe('reject');
+    expect(result.current('run-1')?.detail).toBe('Rejected by Grace');
+    expect(result.current('run-1')?.suggestion).toEqual({ key: 'grace@bucket-1', documentId: 'doc-1', applied: 3 });
+
+    // Settled: no review polling either.
+    await act(async () => { jest.advanceTimersByTime(60_000); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reviewPipelineRun posts the decision to the run, drops undefined fields, and surfaces a 409 with its status', async () => {
+    fetchMock.mockResolvedValue(snapshotResponse({ runId: 'run-1', pipelineId: 'document-agent-edit', review: REVIEW }));
+    const out = await reviewPipelineRun(API, 'tok', { pipelineId: 'document-agent-edit', runId: 'run/1', decision: 'accept', suggestionKey: 'grace@bucket-1', documentId: 'doc-1', byName: 'Grace' });
+    expect(out.review.decision).toBe('accept');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${API}/api/pipelines/document-agent-edit/runs/run%2F1/review`);
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    expect(JSON.parse(init?.body as string)).toEqual({ decision: 'accept', suggestionKey: 'grace@bucket-1', documentId: 'doc-1', byName: 'Grace' });
+
+    await reviewPipelineRun(API, null, { pipelineId: 'p', runId: 'r', decision: 'reject', suggestionKey: 'k', documentId: 'd', comment: 'no', applyServerSide: true });
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ decision: 'reject', suggestionKey: 'k', documentId: 'd', comment: 'no', applyServerSide: true });
+
+    fetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'Already reviewed by Grace' }) } as unknown as Response);
+    const err = await reviewPipelineRun(API, 'tok', { pipelineId: 'p', runId: 'r', decision: 'accept', suggestionKey: 'k', documentId: 'd' }).catch((e: PipelineRunRequestError) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as PipelineRunRequestError).message).toBe('Already reviewed by Grace');
+    expect((err as PipelineRunRequestError).status).toBe(409);
   });
 });
