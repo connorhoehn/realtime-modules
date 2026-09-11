@@ -358,14 +358,16 @@ function opsFromApplyOutput(applyOutput) {
 function snippetFromOutline(outline) {
     if (typeof outline !== 'string' || !outline.trim())
         return undefined;
+    // A block's text can span lines — a macro's is its whole YAML body — so the
+    // outline is cut where a block starts (`#N kind: `), not at every newline.
     const lines = outline
-        .split('\n')
-        .filter((line) => !/^title:\s/.test(line))
+        .split(/\n(?=#\d+\s)/)
+        .filter((block) => !/^title:\s/.test(block))
         // A macro block's text is its YAML body (attachment names, sizes, URLs) and the
         // level-1 heading repeats the title — neither reads as a preview of the page.
-        .filter((line) => !/^#\d+\s+macro\(/.test(line) && !/^#\d+\s+heading\(h1\):/.test(line))
-        .map((line) => line.replace(/^#\d+\s+[^:]*:\s*/, '').trim())
-        .filter((line) => line && line !== '(empty)');
+        .filter((block) => !/^#\d+\s+macro\(/.test(block) && !/^#\d+\s+heading\(h1\):/.test(block))
+        .map((block) => block.replace(/^#\d+\s+[^:]*:\s*/, '').trim())
+        .filter((text) => text && text !== '(empty)');
     const text = lines.join(' ').replace(/\s+/g, ' ').trim();
     return text ? truncate(text, SNIPPET_MAX) : undefined;
 }

@@ -464,7 +464,8 @@ describe('suggestion reviews', () => {
 
 describe('details — the expanded card', () => {
   const T = (n: number) => `2026-09-10T00:00:0${n}.000Z`;
-  const OUTLINE = 'title: Roadmap\n#0 heading(h1): Roadmap\n#1 paragraph: First para text.\n#2 macro(decision): Ship it\n#3 paragraph: (empty)';
+  // The attachment macro's text is its YAML body, and it spans lines.
+  const OUTLINE = 'title: Roadmap\n#0 heading(h1): Roadmap\n#1 paragraph: First para text.\n#2 macro(attachment): name: brief.txt\nsize: 1520\ntype: text/plain\nurl: https://x/brief.txt\n#3 macro(decision): Ship it\n#4 paragraph: (empty)';
   const SNAP = {
     status: 'running',
     currentStepIds: ['apply'],
@@ -538,6 +539,8 @@ describe('details — the expanded card', () => {
   it('derives the document from the read step (title + outline snippet), or from what apply wrote when there was no read', () => {
     // The level-1 heading repeats the title and a macro's text is its YAML body — neither is a preview.
     expect(snippetFromOutline(OUTLINE)).toBe('First para text.');
+    // The lines a macro's YAML body continues onto go with the macro, not into the snippet.
+    expect(snippetFromOutline('title: T\n#0 macro(attachment): name: a.txt\nsize: 1520\nurl: https://x/a.txt\n#1 paragraph: After the file.\n#2 paragraph: And more.')).toBe('After the file. And more.');
     expect(snippetFromOutline(`title: T\n#0 paragraph: ${'y'.repeat(300)}`)).toHaveLength(200);
     expect(snippetFromOutline('title: T\n#0 paragraph: (empty)')).toBeUndefined();
     expect(snippetFromOutline(undefined)).toBeUndefined();
