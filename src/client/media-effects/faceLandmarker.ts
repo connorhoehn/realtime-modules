@@ -15,8 +15,19 @@
 import type { FaceLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { getMediaEffectsAssets } from './assets';
 
-let landmarkerPromise: Promise<FaceLandmarker> | null = null;
-let landmarkerKey: string | null = null;
+// Ownership mirrors segmenter.ts: every FaceTracker owns its FaceLandmarker,
+// and only the WARMUP is shared (pre-built once, claimed by the first tracker
+// to ask). A borrowed singleton broke the moment two engines existed — the
+// settings dialog's preview engine closing it out from under the live call.
+// See the note above PersonSegmenter's loader for the full failure.
+
+let warmPromise: Promise<FaceLandmarker> | null = null;
+let warmKey: string | null = null;
+
+function assetKey(): string {
+  const { wasmBase, faceLandmarkerModelUrl } = getMediaEffectsAssets();
+  return `${wasmBase}|${faceLandmarkerModelUrl}`;
+}
 
 async function createLandmarkerInstance(): Promise<FaceLandmarker> {
   const { wasmBase, faceLandmarkerModelUrl } = getMediaEffectsAssets();
@@ -34,21 +45,32 @@ async function createLandmarkerInstance(): Promise<FaceLandmarker> {
   });
 }
 
-function loadLandmarker(): Promise<FaceLandmarker> {
-  const { wasmBase, faceLandmarkerModelUrl } = getMediaEffectsAssets();
-  const key = `${wasmBase}|${faceLandmarkerModelUrl}`;
-  if (!landmarkerPromise || landmarkerKey !== key) {
-    landmarkerKey = key;
-    landmarkerPromise = createLandmarkerInstance().catch((err) => {
-      // Reset on failure so the next detect() retries instead of failing forever.
-      if (landmarkerKey === key) {
-        landmarkerPromise = null;
-        landmarkerKey = null;
+function warmLandmarker(): Promise<FaceLandmarker> {
+  const key = assetKey();
+  if (!warmPromise || warmKey !== key) {
+    const stale = warmPromise;
+    if (stale) stale.then((l) => l.close()).catch(() => {});
+    warmKey = key;
+    warmPromise = createLandmarkerInstance().catch((err) => {
+      // Reset on failure so the next acquire retries instead of failing forever.
+      if (warmKey === key) {
+        warmPromise = null;
+        warmKey = null;
       }
       throw err;
     });
   }
-  return landmarkerPromise;
+  return warmPromise;
+}
+
+function acquireLandmarker(): Promise<FaceLandmarker> {
+  if (warmPromise && warmKey === assetKey()) {
+    const claimed = warmPromise;
+    warmPromise = null;
+    warmKey = null;
+    return claimed;
+  }
+  return createLandmarkerInstance();
 }
 
 /** MediaPipe Face Mesh landmark indices we care about. */
@@ -75,11 +97,13 @@ export function warmupFaceLandmarker(): Promise<void> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return Promise.resolve();
   }
-  return loadLandmarker().then(() => undefined).catch(() => undefined);
+  return warmLandmarker().then(() => undefined).catch(() => undefined);
 }
 
 export class FaceTracker {
   private landmarker: FaceLandmarker | null = null;
+  private loading: Promise<void> | null = null;
+  private generation = 0;
   private lastLandmarks: NormalizedLandmark[] | null = null;
 
   warmup(): Promise<void> {
@@ -92,7 +116,7 @@ export class FaceTracker {
    */
   detect(video: HTMLVideoElement, timestampMs: number): NormalizedLandmark[] | null {
     if (!this.landmarker) {
-      loadLandmarker().then((l) => { this.landmarker = l; }).catch(() => {});
+      this.ensureLoading();
       return null;
     }
     try {
@@ -108,10 +132,28 @@ export class FaceTracker {
     }
   }
 
+  private ensureLoading(): void {
+    if (this.loading) return;
+    const gen = this.generation;
+    this.loading = acquireLandmarker()
+      .then((l) => {
+        if (gen !== this.generation) {
+          l.close();
+          return;
+        }
+        this.landmarker = l;
+      })
+      .catch(() => {
+        if (gen === this.generation) this.loading = null;
+      });
+  }
+
+  /** Releases THIS tracker's graph only; other trackers and the warm slot
+   *  are untouched. */
   close() {
+    this.generation++;
+    this.loading = null;
     this.landmarker?.close();
     this.landmarker = null;
-    landmarkerPromise = null;
-    landmarkerKey = null;
   }
 }

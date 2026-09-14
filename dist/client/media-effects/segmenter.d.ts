@@ -16,6 +16,11 @@ export declare function shapeConfidence(p: number): number;
 export declare function warmupSegmenter(): Promise<void>;
 export declare class PersonSegmenter {
     private segmenter;
+    /** In-flight acquire, so a frame loop asking every frame starts one load. */
+    private loading;
+    /** Bumped by close(); an acquire that lands from an older generation is
+     *  released, never installed. */
+    private generation;
     private maskCanvas;
     private maskCtx;
     private imageData;
@@ -25,6 +30,10 @@ export declare class PersonSegmenter {
      * alpha encodes per-pixel person probability. Null until model loads.
      */
     segment(video: HTMLVideoElement, timestampMs: number): HTMLCanvasElement | null;
+    private ensureLoading;
+    /** Releases THIS segmenter's graph only. Other PersonSegmenters — and the
+     *  warm slot — are untouched. Safe to segment() again afterwards: it
+     *  acquires a fresh instance. */
     close(): void;
 }
 //# sourceMappingURL=segmenter.d.ts.map

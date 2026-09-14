@@ -12,12 +12,12 @@
 //   - WASM: jsdelivr build of @mediapipe/tasks-vision@0.10.34
 //   - models: Google's public mediapipe-models bucket
 //
-// Timing contract: the lazy loaders in segmenter.ts / faceLandmarker.ts
-// key their singleton promises off the RESOLVED urls, so calling
-// setMediaEffectsAssets() before the first load Just Works. Changing
-// assets AFTER a model has loaded requires close() on the live
-// PersonSegmenter / FaceTracker (which also resets the loader singleton)
-// before the new URLs take effect.
+// Timing contract: segmenter.ts / faceLandmarker.ts read these URLs at the
+// moment an instance is built, and their warm slots are keyed off the
+// RESOLVED urls, so calling setMediaEffectsAssets() before the first load
+// Just Works. An instance that already loaded keeps the model it has;
+// changing assets takes effect on the next PersonSegmenter / FaceTracker
+// to acquire one (a stale warm instance is discarded automatically).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_FACE_LANDMARKER_MODEL_URL = exports.DEFAULT_SEGMENTER_MODEL_URL = exports.DEFAULT_WASM_BASE = void 0;
 exports.setMediaEffectsAssets = setMediaEffectsAssets;

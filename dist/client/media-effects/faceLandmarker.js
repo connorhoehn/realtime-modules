@@ -39,8 +39,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FaceTracker = exports.LANDMARK = void 0;
 exports.warmupFaceLandmarker = warmupFaceLandmarker;
 const assets_1 = require("./assets");
-let landmarkerPromise = null;
-let landmarkerKey = null;
+// Ownership mirrors segmenter.ts: every FaceTracker owns its FaceLandmarker,
+// and only the WARMUP is shared (pre-built once, claimed by the first tracker
+// to ask). A borrowed singleton broke the moment two engines existed — the
+// settings dialog's preview engine closing it out from under the live call.
+// See the note above PersonSegmenter's loader for the full failure.
+let warmPromise = null;
+let warmKey = null;
+function assetKey() {
+    const { wasmBase, faceLandmarkerModelUrl } = (0, assets_1.getMediaEffectsAssets)();
+    return `${wasmBase}|${faceLandmarkerModelUrl}`;
+}
 async function createLandmarkerInstance() {
     const { wasmBase, faceLandmarkerModelUrl } = (0, assets_1.getMediaEffectsAssets)();
     const { FilesetResolver, FaceLandmarker: Ctor } = await Promise.resolve().then(() => __importStar(require('@mediapipe/tasks-vision')));
@@ -56,21 +65,32 @@ async function createLandmarkerInstance() {
         outputFacialTransformationMatrixes: false,
     });
 }
-function loadLandmarker() {
-    const { wasmBase, faceLandmarkerModelUrl } = (0, assets_1.getMediaEffectsAssets)();
-    const key = `${wasmBase}|${faceLandmarkerModelUrl}`;
-    if (!landmarkerPromise || landmarkerKey !== key) {
-        landmarkerKey = key;
-        landmarkerPromise = createLandmarkerInstance().catch((err) => {
-            // Reset on failure so the next detect() retries instead of failing forever.
-            if (landmarkerKey === key) {
-                landmarkerPromise = null;
-                landmarkerKey = null;
+function warmLandmarker() {
+    const key = assetKey();
+    if (!warmPromise || warmKey !== key) {
+        const stale = warmPromise;
+        if (stale)
+            stale.then((l) => l.close()).catch(() => { });
+        warmKey = key;
+        warmPromise = createLandmarkerInstance().catch((err) => {
+            // Reset on failure so the next acquire retries instead of failing forever.
+            if (warmKey === key) {
+                warmPromise = null;
+                warmKey = null;
             }
             throw err;
         });
     }
-    return landmarkerPromise;
+    return warmPromise;
+}
+function acquireLandmarker() {
+    if (warmPromise && warmKey === assetKey()) {
+        const claimed = warmPromise;
+        warmPromise = null;
+        warmKey = null;
+        return claimed;
+    }
+    return createLandmarkerInstance();
 }
 /** MediaPipe Face Mesh landmark indices we care about. */
 exports.LANDMARK = {
@@ -95,10 +115,12 @@ function warmupFaceLandmarker() {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
         return Promise.resolve();
     }
-    return loadLandmarker().then(() => undefined).catch(() => undefined);
+    return warmLandmarker().then(() => undefined).catch(() => undefined);
 }
 class FaceTracker {
     landmarker = null;
+    loading = null;
+    generation = 0;
     lastLandmarks = null;
     warmup() {
         return warmupFaceLandmarker();
@@ -109,7 +131,7 @@ class FaceTracker {
      */
     detect(video, timestampMs) {
         if (!this.landmarker) {
-            loadLandmarker().then((l) => { this.landmarker = l; }).catch(() => { });
+            this.ensureLoading();
             return null;
         }
         try {
@@ -125,11 +147,30 @@ class FaceTracker {
             return null;
         }
     }
+    ensureLoading() {
+        if (this.loading)
+            return;
+        const gen = this.generation;
+        this.loading = acquireLandmarker()
+            .then((l) => {
+            if (gen !== this.generation) {
+                l.close();
+                return;
+            }
+            this.landmarker = l;
+        })
+            .catch(() => {
+            if (gen === this.generation)
+                this.loading = null;
+        });
+    }
+    /** Releases THIS tracker's graph only; other trackers and the warm slot
+     *  are untouched. */
     close() {
+        this.generation++;
+        this.loading = null;
         this.landmarker?.close();
         this.landmarker = null;
-        landmarkerPromise = null;
-        landmarkerKey = null;
     }
 }
 exports.FaceTracker = FaceTracker;

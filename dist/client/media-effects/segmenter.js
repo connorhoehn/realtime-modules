@@ -47,8 +47,31 @@ exports.PersonSegmenter = void 0;
 exports.shapeConfidence = shapeConfidence;
 exports.warmupSegmenter = warmupSegmenter;
 const assets_1 = require("./assets");
-let segmenterPromise = null;
-let segmenterKey = null;
+// ------------------------------------------------------------- ownership
+//
+// Every PersonSegmenter OWNS its ImageSegmenter. It used to borrow one
+// module-level singleton, and that is exactly wrong for the one situation
+// where two segmenters exist at once: useMediaEffects builds a SECOND engine
+// for the settings dialog's preview, so for the length of a preview session
+// the live call and the preview both fed frames — with two unrelated
+// timestamp clocks — into one MediaPipe graph, and the moment the preview
+// ended its teardown called close() on the graph the live call was still
+// drawing with. Every live frame after that failed with
+// `AddPacketToInputStream() is called before StartRun()` and the mask froze
+// on whatever it last was — a ghost of the person, offset from where they
+// now are. Changing your background mid-call is what triggered it.
+//
+// What is still shared is the WARMUP: the effects UI kicks the ~3 MB WASM +
+// model load before anyone picks an effect, and that pre-built instance is
+// handed to the first PersonSegmenter that asks (it becomes that instance's
+// to close). A second concurrent segmenter builds its own; the browser cache
+// makes that a GPU init, not a second download.
+let warmPromise = null;
+let warmKey = null;
+function assetKey() {
+    const { wasmBase, segmenterModelUrl } = (0, assets_1.getMediaEffectsAssets)();
+    return `${wasmBase}|${segmenterModelUrl}`;
+}
 async function createSegmenterInstance() {
     const { wasmBase, segmenterModelUrl } = (0, assets_1.getMediaEffectsAssets)();
     const { FilesetResolver, ImageSegmenter: Ctor } = await Promise.resolve().then(() => __importStar(require('@mediapipe/tasks-vision')));
@@ -64,22 +87,38 @@ async function createSegmenterInstance() {
         outputConfidenceMasks: true,
     });
 }
-function loadSegmenter() {
-    const { wasmBase, segmenterModelUrl } = (0, assets_1.getMediaEffectsAssets)();
-    const key = `${wasmBase}|${segmenterModelUrl}`;
-    if (!segmenterPromise || segmenterKey !== key) {
-        segmenterKey = key;
-        segmenterPromise = createSegmenterInstance().catch((err) => {
+/** Pre-build one instance for the next PersonSegmenter to claim. Keyed on
+ *  the asset URLs: a warm instance built against old assets is released,
+ *  since it would segment with the wrong model. */
+function warmSegmenter() {
+    const key = assetKey();
+    if (!warmPromise || warmKey !== key) {
+        const stale = warmPromise;
+        if (stale)
+            stale.then((s) => s.close()).catch(() => { });
+        warmKey = key;
+        warmPromise = createSegmenterInstance().catch((err) => {
             // Reset on failure so a transient network error doesn't poison the
-            // singleton forever — the next segment() retries the download.
-            if (segmenterKey === key) {
-                segmenterPromise = null;
-                segmenterKey = null;
+            // warm slot forever — the next acquire retries the download.
+            if (warmKey === key) {
+                warmPromise = null;
+                warmKey = null;
             }
             throw err;
         });
     }
-    return segmenterPromise;
+    return warmPromise;
+}
+/** The warm instance if one matches the current assets — it leaves the warm
+ *  slot and becomes the caller's to close — otherwise a fresh build. */
+function acquireSegmenter() {
+    if (warmPromise && warmKey === assetKey()) {
+        const claimed = warmPromise;
+        warmPromise = null;
+        warmKey = null;
+        return claimed;
+    }
+    return createSegmenterInstance();
 }
 /**
  * Alpha-shaping curve applied to raw per-pixel person probabilities.
@@ -102,10 +141,15 @@ function warmupSegmenter() {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
         return Promise.resolve();
     }
-    return loadSegmenter().then(() => undefined).catch(() => undefined);
+    return warmSegmenter().then(() => undefined).catch(() => undefined);
 }
 class PersonSegmenter {
     segmenter = null;
+    /** In-flight acquire, so a frame loop asking every frame starts one load. */
+    loading = null;
+    /** Bumped by close(); an acquire that lands from an older generation is
+     *  released, never installed. */
+    generation = 0;
     maskCanvas = null;
     maskCtx = null;
     imageData = null;
@@ -118,7 +162,7 @@ class PersonSegmenter {
      */
     segment(video, timestampMs) {
         if (!this.segmenter) {
-            loadSegmenter().then((s) => { this.segmenter = s; }).catch(() => { });
+            this.ensureLoading();
             return null;
         }
         const w = video.videoWidth;
@@ -164,11 +208,34 @@ class PersonSegmenter {
             mpMask?.close();
         }
     }
+    ensureLoading() {
+        if (this.loading)
+            return;
+        const gen = this.generation;
+        this.loading = acquireSegmenter()
+            .then((s) => {
+            if (gen !== this.generation) {
+                // Closed while the model was loading. Nothing else will ever
+                // release this instance, so do it here.
+                s.close();
+                return;
+            }
+            this.segmenter = s;
+        })
+            .catch(() => {
+            // Transient failure: clear so the next frame retries.
+            if (gen === this.generation)
+                this.loading = null;
+        });
+    }
+    /** Releases THIS segmenter's graph only. Other PersonSegmenters — and the
+     *  warm slot — are untouched. Safe to segment() again afterwards: it
+     *  acquires a fresh instance. */
     close() {
+        this.generation++;
+        this.loading = null;
         this.segmenter?.close();
         this.segmenter = null;
-        segmenterPromise = null;
-        segmenterKey = null;
     }
 }
 exports.PersonSegmenter = PersonSegmenter;

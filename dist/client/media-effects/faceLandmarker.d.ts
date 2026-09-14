@@ -21,6 +21,8 @@ export declare const LANDMARK: {
 export declare function warmupFaceLandmarker(): Promise<void>;
 export declare class FaceTracker {
     private landmarker;
+    private loading;
+    private generation;
     private lastLandmarks;
     warmup(): Promise<void>;
     /**
@@ -28,6 +30,9 @@ export declare class FaceTracker {
      * landmarks or null if no face detected / model not ready.
      */
     detect(video: HTMLVideoElement, timestampMs: number): NormalizedLandmark[] | null;
+    private ensureLoading;
+    /** Releases THIS tracker's graph only; other trackers and the warm slot
+     *  are untouched. */
     close(): void;
 }
 //# sourceMappingURL=faceLandmarker.d.ts.map
