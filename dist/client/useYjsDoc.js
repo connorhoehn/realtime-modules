@@ -74,17 +74,22 @@ function useYjsDoc(options) {
         return () => {
             clearTimeout(retryTimer);
             clearTimeout(retryTimer2);
-            ws.sendMessage({
-                service: 'crdt',
-                action: 'unsubscribe',
-                channel,
-            });
+            // Destroy BEFORE unsubscribing: the provider announces this client's
+            // departure on the channel as it goes down, and that frame has to leave
+            // while the socket is still in the channel. The other order left a
+            // ghost participant in everyone else's list for up to 30 seconds — see
+            // GatewayProvider.announceDeparture.
             const curProvider = providerRef.current;
             const curDoc = ydocRef.current;
             if (curProvider) {
                 curProvider.off('synced', onSynced);
                 curProvider.destroy();
             }
+            ws.sendMessage({
+                service: 'crdt',
+                action: 'unsubscribe',
+                channel,
+            });
             if (curDoc) {
                 curDoc.destroy();
             }

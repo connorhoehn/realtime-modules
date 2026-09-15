@@ -9,6 +9,8 @@ export declare class GatewayProvider extends Observable<string> {
     private readonly _sendMessage;
     private _synced;
     private _awarenessTimer;
+    /** Departure has been announced; nothing else leaves on the wire. */
+    private _departed;
     private readonly _updateHandler;
     constructor(doc: Y.Doc, channel: string, sendMessage: SendMessage);
     /** Whether we have received at least one snapshot from the server. */
@@ -27,6 +29,22 @@ export declare class GatewayProvider extends Observable<string> {
      * Apply a remote awareness update received from the gateway.
      */
     applyAwarenessUpdate(b64: string): void;
+    /**
+     * Tell the channel this client is gone — now, on the socket, before the
+     * caller unsubscribes.
+     *
+     * Every other awareness change leaves through the 50ms debounce above. A
+     * departure cannot: `useYjsDoc`'s cleanup sends the channel unsubscribe and
+     * destroys the provider in the same tick, so the timer fired after the
+     * socket had left the channel and the null state never reached anyone. The
+     * others kept the last state — a person listed as "Editing" a document they
+     * had left — until y-protocols' 30-second outdated sweep dropped it.
+     * Measured live: 6s after leaving, still listed; gone at 36s.
+     *
+     * Idempotent; `destroy` calls it too, so a caller that forgets is covered as
+     * long as it destroys before it unsubscribes.
+     */
+    announceDeparture(): void;
     destroy(): void;
 }
 //# sourceMappingURL=GatewayProvider.d.ts.map

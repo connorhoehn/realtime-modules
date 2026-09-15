@@ -56,6 +56,8 @@ class GatewayProvider extends observable_1.Observable {
     _sendMessage;
     _synced = false;
     _awarenessTimer = null;
+    /** Departure has been announced; nothing else leaves on the wire. */
+    _departed = false;
     _updateHandler;
     constructor(doc, channel, sendMessage) {
         super();
@@ -81,6 +83,10 @@ class GatewayProvider extends observable_1.Observable {
         this.awareness.on('update', ({ added, updated, removed }, origin) => {
             // Skip updates applied from remote (applyAwarenessUpdate uses `this` as origin)
             if (origin === this)
+                return;
+            // Gone: the departure went out synchronously in `announceDeparture`, and
+            // a debounced frame after it would put the state back.
+            if (this._departed)
                 return;
             const changedClients = added.concat(updated, removed);
             // Only send if local client changed (not remote echoes)
@@ -146,10 +152,44 @@ class GatewayProvider extends observable_1.Observable {
         const bytes = (0, buffer_1.fromBase64)(b64);
         (0, awareness_1.applyAwarenessUpdate)(this.awareness, bytes, this);
     }
+    /**
+     * Tell the channel this client is gone — now, on the socket, before the
+     * caller unsubscribes.
+     *
+     * Every other awareness change leaves through the 50ms debounce above. A
+     * departure cannot: `useYjsDoc`'s cleanup sends the channel unsubscribe and
+     * destroys the provider in the same tick, so the timer fired after the
+     * socket had left the channel and the null state never reached anyone. The
+     * others kept the last state — a person listed as "Editing" a document they
+     * had left — until y-protocols' 30-second outdated sweep dropped it.
+     * Measured live: 6s after leaving, still listed; gone at 36s.
+     *
+     * Idempotent; `destroy` calls it too, so a caller that forgets is covered as
+     * long as it destroys before it unsubscribes.
+     */
+    announceDeparture() {
+        if (this._departed)
+            return;
+        this._departed = true;
+        if (this._awarenessTimer) {
+            clearTimeout(this._awarenessTimer);
+            this._awarenessTimer = null;
+        }
+        const clientID = this.awareness.clientID;
+        if (this.awareness.getLocalState() !== null)
+            this.awareness.setLocalState(null);
+        // A null state at a bumped clock: the receiver removes the client.
+        const encoded = (0, awareness_1.encodeAwarenessUpdate)(this.awareness, [clientID]);
+        this._sendMessage({
+            service: 'crdt',
+            action: 'awareness',
+            channel: this.channel,
+            update: (0, buffer_1.toBase64)(encoded),
+        });
+    }
     destroy() {
         this.doc.off('update', this._updateHandler);
-        if (this._awarenessTimer)
-            clearTimeout(this._awarenessTimer);
+        this.announceDeparture();
         this.awareness.destroy();
         super.destroy();
     }

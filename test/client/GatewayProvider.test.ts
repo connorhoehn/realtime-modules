@@ -129,4 +129,39 @@ describe('GatewayProvider awareness send', () => {
     expect('mode' in msg).toBe(false);
     expect('idle' in msg).toBe(false);
   });
+
+  describe('departure', () => {
+    it('announces the null state synchronously on destroy, and nothing after', () => {
+      provider.awareness.setLocalStateField('user', { userId: 'u-1', displayName: 'Alice' });
+      jest.advanceTimersByTime(100);
+      sendMessage.mockClear();
+
+      const clientID = provider.awareness.clientID;
+      provider.destroy();
+
+      // Sent NOW — not after the 50ms debounce, which fires after the caller
+      // has already left the channel.
+      const sends = awarenessSends();
+      expect(sends).toHaveLength(1);
+      expect(sends[0].channel).toBe('doc:test');
+      // The frame removes this client on the receiving side.
+      const peer = new Y.Doc();
+      const peerProvider = new GatewayProvider(peer, 'doc:test', jest.fn());
+      peerProvider.applyAwarenessUpdate(sends[0].update as string);
+      expect(peerProvider.awareness.getStates().has(clientID)).toBe(false);
+
+      jest.advanceTimersByTime(200);
+      expect(awarenessSends()).toHaveLength(1);
+    });
+
+    it('is idempotent: announcing then destroying sends one departure', () => {
+      provider.awareness.setLocalStateField('user', { userId: 'u-1', displayName: 'Alice' });
+      jest.advanceTimersByTime(100);
+      sendMessage.mockClear();
+      provider.announceDeparture();
+      provider.destroy();
+      jest.advanceTimersByTime(200);
+      expect(awarenessSends()).toHaveLength(1);
+    });
+  });
 });
