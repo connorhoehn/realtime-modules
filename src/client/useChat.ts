@@ -52,11 +52,52 @@ export interface UseChatReturn {
    */
   sendMessage: (text: string, metadata?: Record<string, unknown>) => void;
   loadHistory: (limit?: number) => void;
+  /**
+   * Who else is composing in this channel right now, by display name (or
+   * user id when the server gave none). Never includes this connection.
+   * An entry lapses on its own a few seconds after the last signal, so a
+   * closed tab does not leave "Carol is typing…" on screen forever.
+   */
+  typingUsers: string[];
+  /**
+   * Say that this person is (or is no longer) composing. Throttled: while
+   * typing, at most one frame every few seconds; a `false` goes out at once
+   * and only if the channel was told `true`. Call it from the composer's
+   * key handler and after every send.
+   */
+  setTyping: (typing: boolean) => void;
 }
+
+/** How long a peer stays "typing" after their last signal. */
+const TYPING_TTL_MS = 4_000;
+/** How often a composing client re-announces itself. Under the TTL, so a steady typist never lapses. */
+const TYPING_RESEND_MS = 2_500;
 
 export function useChat(channel: string): UseChatReturn {
   const { send, onMessage } = useGateway();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Peers composing: connection id → { name, expiresAt }. Keyed by the
+  // CONNECTION, so two tabs of one person count once each and each lapses
+  // on its own.
+  const typingRef = useRef<Map<string, { name: string; expiresAt: number }>>(new Map());
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const publishTyping = useCallback(() => {
+    const now = Date.now();
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const [id, entry] of typingRef.current) {
+      if (entry.expiresAt <= now) { typingRef.current.delete(id); continue; }
+      if (seen.has(entry.name)) continue;
+      seen.add(entry.name);
+      names.push(entry.name);
+    }
+    setTypingUsers((prev) => (prev.length === names.length && prev.every((n, i) => n === names[i]) ? prev : names));
+  }, []);
+  // Lapse on a timer, since no frame announces "stopped" when a tab closes.
+  useEffect(() => {
+    const t = setInterval(publishTyping, 1_000);
+    return () => clearInterval(t);
+  }, [publishTyping]);
 
   // Keep channel in a ref so the message handler always sees the latest value
   // without needing to be re-registered on every channel change.
@@ -86,6 +127,20 @@ export function useChat(channel: string): UseChatReturn {
           const list = Array.isArray(raw.messages) ? (raw.messages as unknown[]) : [];
           const parsed = list.map(asChatMessageRaw).filter(Boolean) as ChatMessage[];
           setMessages(parsed);
+        } else if (msg.action === 'typing') {
+          // A peer composing (or done). The server never echoes our own.
+          const id = typeof raw.clientId === 'string' ? raw.clientId : null;
+          if (id) {
+            if (raw.typing === true) {
+              const name = (typeof raw.displayName === 'string' && raw.displayName)
+                || (typeof raw.userId === 'string' && raw.userId)
+                || 'Someone';
+              typingRef.current.set(id, { name, expiresAt: Date.now() + TYPING_TTL_MS });
+            } else {
+              typingRef.current.delete(id);
+            }
+            publishTyping();
+          }
         }
         // 'joined' / 'left' / 'sent' acks need no state change.
         return;
@@ -111,6 +166,9 @@ export function useChat(channel: string): UseChatReturn {
   // a chat/history frame), so no explicit history request is needed here.
   useEffect(() => {
     setMessages([]);
+    typingRef.current.clear();
+    setTypingUsers([]);
+    typingSentRef.current = { typing: false, at: 0 };
     send({
       service: 'chat',
       action: 'join',
@@ -125,6 +183,28 @@ export function useChat(channel: string): UseChatReturn {
     };
   }, [channel, send]);
 
+  // What this connection last told the channel about its own composing.
+  const typingSentRef = useRef<{ typing: boolean; at: number }>({ typing: false, at: 0 });
+  const setTyping = useCallback(
+    (typing: boolean) => {
+      const now = Date.now();
+      const last = typingSentRef.current;
+      if (typing) {
+        if (last.typing && now - last.at < TYPING_RESEND_MS) return;
+      } else if (!last.typing) {
+        return;
+      }
+      typingSentRef.current = { typing, at: now };
+      send({
+        service: 'chat',
+        action: 'typing',
+        channel: channelRef.current,
+        typing,
+      } satisfies ClientFramePayload<'client.chat.typing'>);
+    },
+    [send],
+  );
+
   const sendMessage = useCallback(
     (text: string, metadata?: Record<string, unknown>) => {
       send({
@@ -134,6 +214,12 @@ export function useChat(channel: string): UseChatReturn {
         message: text,
         ...(metadata ? { metadata } : {}),
       } satisfies ClientFramePayload<'client.chat.send'>);
+      // A sent message ends the composing, and the others should not wait
+      // out the lapse to see that.
+      if (typingSentRef.current.typing) {
+        typingSentRef.current = { typing: false, at: Date.now() };
+        send({ service: 'chat', action: 'typing', channel: channelRef.current, typing: false } satisfies ClientFramePayload<'client.chat.typing'>);
+      }
     },
     [send],
   );
@@ -153,7 +239,7 @@ export function useChat(channel: string): UseChatReturn {
     [send],
   );
 
-  return { messages, sendMessage, loadHistory };
+  return { messages, sendMessage, loadHistory, typingUsers, setTyping };
 }
 
 // ---------------------------------------------------------------------------

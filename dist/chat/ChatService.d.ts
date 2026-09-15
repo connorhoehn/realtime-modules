@@ -179,6 +179,17 @@ export declare class ChatService {
     sendChannelHistory(clientId: string, channel: string): Promise<void>;
     _persistMessage(messageData: ChatMessage): Promise<void>;
     _loadHistoryFromStore(channel: string, limit: number): Promise<ChatMessage[]>;
+    /**
+     * "Someone is typing" — relayed to the channel, never stored. Excluded
+     * from the sender (their own composer knows), carried with the identity
+     * the resolver gives the connection so the others can name them. A
+     * connection that has not joined the channel is not in it, and may not
+     * announce itself there.
+     */
+    handleTyping(clientId: string, { channel, typing }: {
+        channel: string;
+        typing?: unknown;
+    }): Promise<void>;
     broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string): Promise<void>;
     /**
      * Resolve the sender identity for a connection, or null. A throwing

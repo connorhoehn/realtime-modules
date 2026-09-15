@@ -206,6 +206,9 @@ class ChatService {
                 case 'history':
                     await this.handleGetHistory(clientId, data);
                     return;
+                case 'typing':
+                    await this.handleTyping(clientId, data);
+                    return;
                 default:
                     this.sendError(clientId, `Unknown chat action: ${action}`);
             }
@@ -513,6 +516,35 @@ class ChatService {
             this.logger.error('ChatStore history load failed:', err && err.message);
             return [];
         }
+    }
+    /**
+     * "Someone is typing" — relayed to the channel, never stored. Excluded
+     * from the sender (their own composer knows), carried with the identity
+     * the resolver gives the connection so the others can name them. A
+     * connection that has not joined the channel is not in it, and may not
+     * announce itself there.
+     */
+    async handleTyping(clientId, { channel, typing }) {
+        if (!channel) {
+            this.sendError(clientId, 'Channel is required');
+            return;
+        }
+        if (!this.clientChannels.hasSubscription(clientId, channel)) {
+            this.sendError(clientId, 'You must join the channel before typing in it');
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        const frame = {
+            type: 'chat',
+            action: 'typing',
+            channel,
+            clientId,
+            userId: identity?.userId,
+            displayName: identity?.displayName,
+            typing: typing === true,
+            timestamp: new Date().toISOString(),
+        };
+        await this.messageRouter.sendToChannel(channel, frame, clientId);
     }
     async broadcastMessage(channel, messageData, publisherClientId) {
         const broadcastMessage = {

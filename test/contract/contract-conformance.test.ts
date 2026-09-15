@@ -97,6 +97,7 @@ type ExpectedOutboundFrameName =
   | 'client.chat.join'
   | 'client.chat.leave'
   | 'client.chat.send'
+  | 'client.chat.typing'
   | 'client.chat.history'
   | 'client.presence.subscribe'
   | 'client.presence.unsubscribe'
@@ -384,7 +385,10 @@ type _presenceLeft = Assert<Extends<{ type: 'presence:left'; channel: string; cl
 // fileupload:progress / scanning / cancelled → fields useFileUpload reads.
 type EcFupProgress = EventPayloadMap['ws.fileupload.progress'];
 type _fupProgId = Assert<Extends<EcFupProgress['id'], string>>;
-type _fupProgPct = Assert<Extends<EcFupProgress['progress'], FileUploadState['progress'] & number>>;
+// The catalog declares `progress` optional (a progress frame may carry only
+// `transferred`/`size`); the hook's own field is optional too, so the check is
+// on the number both agree on when it is there.
+type _fupProgPct = Assert<Extends<NonNullable<EcFupProgress['progress']>, NonNullable<FileUploadState['progress']> & number>>;
 type _fupScanning = Assert<Extends<EventPayloadMap['ws.fileupload.scanning']['id'], string>>;
 type _fupCancelled = Assert<Extends<EventPayloadMap['ws.fileupload.cancelled']['id'], string>>;
 
