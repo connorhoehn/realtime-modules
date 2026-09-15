@@ -27,6 +27,7 @@ import * as Y from 'yjs';
 import DocumentMetadataService from './DocumentMetadataService';
 import SnapshotManager from './SnapshotManager';
 import AwarenessCoalescer from './AwarenessCoalescer';
+import AwarenessLedger from './AwarenessLedger';
 import DocumentPresenceService from './DocumentPresenceService';
 import IdleEvictionManager from './IdleEvictionManager';
 import type { HotCache, SnapshotStore } from './stores/SnapshotStore';
@@ -87,6 +88,8 @@ declare class CRDTService {
     metadataService: DocumentMetadataService;
     snapshotManager: SnapshotManager;
     awarenessCoalescer: AwarenessCoalescer;
+    /** Who announced which awareness ids where — so the gateway can say goodbye for a connection that could not. */
+    awarenessLedger: AwarenessLedger;
     presenceService: DocumentPresenceService;
     evictionManager: IdleEvictionManager;
     _evictionCallback: (channel: string) => Promise<void>;

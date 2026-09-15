@@ -32,6 +32,7 @@ import { UpdateCoalescer, PeriodicSweep } from 'distributed-core';
 import DocumentMetadataService from './DocumentMetadataService';
 import SnapshotManager from './SnapshotManager';
 import AwarenessCoalescer from './AwarenessCoalescer';
+import AwarenessLedger from './AwarenessLedger';
 import DocumentPresenceService from './DocumentPresenceService';
 import IdleEvictionManager from './IdleEvictionManager';
 import * as config from './config';
@@ -116,6 +117,8 @@ class CRDTService {
     metadataService: DocumentMetadataService;
     snapshotManager: SnapshotManager;
     awarenessCoalescer: AwarenessCoalescer;
+    /** Who announced which awareness ids where — so the gateway can say goodbye for a connection that could not. */
+    awarenessLedger: AwarenessLedger;
     presenceService: DocumentPresenceService;
     evictionManager: IdleEvictionManager;
     _evictionCallback: (channel: string) => Promise<void>;
@@ -179,6 +182,7 @@ class CRDTService {
         });
 
         this.awarenessCoalescer = new AwarenessCoalescer(this.messageRouter, this.logger);
+        this.awarenessLedger = new AwarenessLedger();
 
         this.presenceService = new DocumentPresenceService(this.messageRouter, this.logger);
 
@@ -648,6 +652,11 @@ class CRDTService {
                 await this.messageRouter.unsubscribeFromChannel(clientId, channel);
             }
             this.presenceService.removeClient(clientId, channel);
+            // The goodbye the client may not have sent (see AwarenessLedger).
+            // Buffered under its own slot so the coalescer's next flush carries
+            // it to whoever is still there.
+            const bye = this.awarenessLedger.departure(clientId, channel);
+            if (bye) this.awarenessCoalescer.bufferUpdate(clientId, channel, bye);
 
             this.sendToClient(clientId, {
                 type: 'crdt',
@@ -733,6 +742,7 @@ class CRDTService {
                 }
             }
 
+            this.awarenessLedger.remember(clientId, channel, update);
             this.awarenessCoalescer.bufferUpdate(clientId, channel, update);
 
             this.logger.debug(`Awareness buffered for channel ${channel} from client ${clientId}`);
@@ -773,6 +783,11 @@ class CRDTService {
 
         this.presenceService.removeAllForClient(clientId);
         this.awarenessCoalescer.removeClient(clientId);
+        // AFTER the prune above, which would otherwise delete these too: the
+        // goodbye for every document this connection was still announced on.
+        for (const { channel, update } of this.awarenessLedger.departures(clientId)) {
+            this.awarenessCoalescer.bufferUpdate(clientId, channel, update);
+        }
 
         this.logger.debug(`Client ${clientId} disconnected from CRDT service`);
     }
