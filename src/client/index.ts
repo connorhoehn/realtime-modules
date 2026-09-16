@@ -97,6 +97,8 @@ export type {
 // exposed by useGateway() to subscribe to inbound frames per channel.
 export { useChat } from './useChat';
 export type { UseChatReturn } from './useChat';
+export { useChatMembers } from './useChatMembers';
+export type { UseChatMembersReturn, ChatMemberEntry, ChatHistoryChoice as ChatMembersHistoryChoice } from './useChatMembers';
 
 export { usePresence } from './usePresence';
 export type { UsePresenceReturn } from './usePresence';

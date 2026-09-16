@@ -1,0 +1,199 @@
+// Membership: a channel with no rows is open; the first add closes it and
+// makes the adder its owner; members read from their own history floor;
+// a removed member is refused; the thread is told.
+import { describe, it, expect, jest } from '@jest/globals';
+import { ChatService } from '../../src/chat/ChatService';
+import { MemoryChatMembershipStore, historyFloorFor, parseHistoryChoice } from '../../src/chat/ChatMembershipStore';
+
+class NoopLogger { info() {} warn() {} error() {} debug() {} }
+
+function makeRouter() {
+    const sentToClient: any[] = [];
+    const sendToChannelCalls: any[] = [];
+    const router: any = {
+        redisAvailable: false,
+        sendToClient: jest.fn((clientId: string, message: any) => { sentToClient.push({ clientId, message }); }),
+        sendToChannel: jest.fn(async (channel: string, message: any, excludeClientId?: string | null, opts?: any) => {
+            sendToChannelCalls.push({ channel, message, excludeClientId, opts });
+        }),
+        subscribeToChannel: jest.fn(async () => true),
+        unsubscribeFromChannel: jest.fn(async () => undefined),
+        getClientData: jest.fn(() => ({})),
+    };
+    return { router, sentToClient, sendToChannelCalls };
+}
+
+const IDS: Record<string, { userId: string; displayName: string }> = {
+    eve: { userId: 'u-eve', displayName: 'Eve Thompson' },
+    carol: { userId: 'u-carol', displayName: 'Carol Johnson' },
+    bob: { userId: 'u-bob', displayName: 'Bob Martinez' },
+};
+
+function makeService(router: any, store = new MemoryChatMembershipStore()) {
+    const svc = new ChatService({
+        messageRouter: router,
+        logger: new NoopLogger() as any,
+        membershipStore: store,
+        identityResolver: (clientId: string) => IDS[clientId] ?? null,
+    } as any);
+    return { svc, store };
+}
+
+const framesTo = (sent: any[], clientId: string, action: string) => sent.filter((s) => s.clientId === clientId && s.message.action === action).map((s) => s.message);
+const errorsTo = (sent: any[], clientId: string) => sent.filter((s) => s.clientId === clientId && s.message.type === 'error').map((s) => s.message);
+
+describe('history choice', () => {
+    it('parses the three modes and clamps days', () => {
+        expect(parseHistoryChoice({ mode: 'all' })).toEqual({ mode: 'all' });
+        expect(parseHistoryChoice({ mode: 'none' })).toEqual({ mode: 'none' });
+        expect(parseHistoryChoice({ mode: 'days', days: 7 })).toEqual({ mode: 'days', days: 7 });
+        expect(parseHistoryChoice({ mode: 'days', days: 99999 })).toEqual({ mode: 'days', days: 3650 });
+        expect(parseHistoryChoice({ mode: 'days' })).toBeNull();
+        expect(parseHistoryChoice({ mode: 'weeks' })).toBeNull();
+        expect(parseHistoryChoice('all')).toBeNull();
+    });
+    it('turns a choice into a floor', () => {
+        const now = Date.parse('2026-09-16T00:00:00Z');
+        expect(historyFloorFor({ mode: 'all' }, now)).toBeNull();
+        expect(historyFloorFor({ mode: 'none' }, now)).toBe('2026-09-16T00:00:00.000Z');
+        expect(historyFloorFor({ mode: 'days', days: 7 }, now)).toBe('2026-09-09T00:00:00.000Z');
+    });
+});
+
+describe('ChatService membership', () => {
+    it('reports an open channel with no members, and a dm channel from its name', async () => {
+        const { router, sentToClient } = makeRouter();
+        const { svc } = makeService(router);
+        await svc.handleAction('eve', 'members', { channel: 'room:design' });
+        expect(framesTo(sentToClient, 'eve', 'members')[0]).toMatchObject({ type: 'chat', channel: 'room:design', open: true, members: [] });
+        await svc.handleAction('eve', 'members', { channel: 'chat:dm:u-carol:u-eve' });
+        const dm = framesTo(sentToClient, 'eve', 'members')[1];
+        expect(dm.open).toBe(false);
+        expect(dm.members.map((m: any) => m.userId).sort()).toEqual(['u-carol', 'u-eve']);
+    });
+
+    it('the first add closes the channel, owns it to the adder, floors the added, tells the thread and the room', async () => {
+        const { router, sentToClient, sendToChannelCalls } = makeRouter();
+        const { svc, store } = makeService(router);
+        await svc.handleAction('eve', 'join', { channel: 'room:design' });
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'before carol' });
+        sendToChannelCalls.length = 0;
+
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'days', days: 7 }, names: { 'u-carol': 'Carol Johnson' } });
+
+        const rows = await store.listMembers('room:design');
+        expect(rows.find((r) => r.userId === 'u-eve')).toMatchObject({ role: 'owner', historyFrom: null, removedAt: null });
+        const carol = rows.find((r) => r.userId === 'u-carol')!;
+        expect(carol).toMatchObject({ role: 'member', addedBy: 'u-eve', removedAt: null });
+        expect(typeof carol.historyFrom).toBe('string');
+
+        // The thread got a stored membership message from Eve…
+        const posted = sendToChannelCalls.find((c) => c.message.action === 'message');
+        expect(posted.message.message).toMatchObject({ userId: 'u-eve', message: 'Eve Thompson added Carol Johnson' });
+        expect(posted.message.message.metadata).toMatchObject({ kind: 'membership', event: 'added', actorId: 'u-eve', userIds: ['u-carol'], history: { mode: 'days', days: 7 } });
+        // …and everyone got the roster.
+        const updated = sendToChannelCalls.find((c) => c.message.action === 'membersUpdated');
+        expect(updated.message).toMatchObject({ type: 'chat', channel: 'room:design', open: false });
+        expect(updated.message.members.map((m: any) => m.userId).sort()).toEqual(['u-carol', 'u-eve']);
+        expect(framesTo(sentToClient, 'eve', 'membersUpdated')).toHaveLength(1);
+    });
+
+    it('refuses a non-member on a closed channel, for join, send, history and adding', async () => {
+        const { router, sentToClient, sendToChannelCalls } = makeRouter();
+        const { svc } = makeService(router);
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'all' } });
+        sentToClient.length = 0;
+        await svc.handleAction('bob', 'join', { channel: 'room:design' });
+        await svc.handleAction('bob', 'history', { channel: 'room:design' });
+        await svc.handleAction('bob', 'addMembers', { channel: 'room:design', userIds: ['u-bob'], history: { mode: 'all' } });
+        const errs = errorsTo(sentToClient, 'bob');
+        expect(errs.length).toBe(3);
+        expect(errs.every((e) => e.error.code === 'not-a-member' && e.channel === 'room:design')).toBe(true);
+        expect(framesTo(sentToClient, 'bob', 'joined')).toHaveLength(0);
+        expect(router.subscribeToChannel).not.toHaveBeenCalledWith('bob', 'room:design');
+        // and a connection with no identity is refused too (fail closed)
+        await svc.handleAction('nobody', 'join', { channel: 'room:design' });
+        expect(errorsTo(sentToClient, 'nobody')[0].error.code).toBe('not-a-member');
+        expect(sendToChannelCalls.filter((c) => c.message.action === 'message')).toHaveLength(1);
+    });
+
+    it('a member reads history from their floor only', async () => {
+        const { router, sentToClient } = makeRouter();
+        const { svc } = makeService(router);
+        await svc.handleAction('eve', 'join', { channel: 'room:design' });
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'old' });
+        // A floor is a timestamp: give the clock a tick on either side of it.
+        await new Promise((r) => setTimeout(r, 5));
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'none' } });
+        await new Promise((r) => setTimeout(r, 5));
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'new' });
+        sentToClient.length = 0;
+        await svc.handleAction('carol', 'join', { channel: 'room:design' });
+        const hist = framesTo(sentToClient, 'carol', 'history')[0];
+        const texts = hist.messages.map((m: any) => m.message);
+        expect(texts).not.toContain('old');
+        expect(texts).toContain('new');
+        // The owner (no floor) sees everything, including the membership line.
+        expect((await svc.getChannelHistoryFor('u-eve', 'room:design', 50)).map((m) => m.message)).toEqual(['old', 'Eve Thompson added u-carol', 'new']);
+        // A stranger sees nothing.
+        expect(await svc.getChannelHistoryFor('u-bob', 'room:design', 50)).toEqual([]);
+    });
+
+    it('all-history keeps no floor; a removed member is out until re-added with a new floor', async () => {
+        const { router, sentToClient, sendToChannelCalls } = makeRouter();
+        const { svc, store } = makeService(router);
+        await svc.handleAction('eve', 'join', { channel: 'room:design' });
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'old' });
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'all' } });
+        await svc.handleAction('carol', 'join', { channel: 'room:design' });
+        expect((await store.getMember('room:design', 'u-carol'))!.historyFrom).toBeNull();
+        expect((await svc.getChannelHistoryFor('u-carol', 'room:design', 50)).map((m) => m.message)).toContain('old');
+
+        // Carol may not remove Eve; Eve (owner) may remove Carol.
+        await svc.handleAction('carol', 'removeMember', { channel: 'room:design', userId: 'u-eve' });
+        expect(errorsTo(sentToClient, 'carol').pop().error.code).toBe('forbidden');
+        await svc.handleAction('eve', 'removeMember', { channel: 'room:design', userId: 'u-carol', name: 'Carol Johnson' });
+        expect((await store.getMember('room:design', 'u-carol'))!.removedAt).toBeTruthy();
+        const removedLine = sendToChannelCalls.filter((c) => c.message.action === 'message').pop();
+        expect(removedLine.message.message).toMatchObject({ message: 'Eve Thompson removed Carol Johnson' });
+        expect(removedLine.message.message.metadata).toMatchObject({ kind: 'membership', event: 'removed', userIds: ['u-carol'] });
+        expect(await svc.getChannelHistoryFor('u-carol', 'room:design', 50)).toEqual([]);
+        sentToClient.length = 0;
+        await svc.handleAction('carol', 'send', { channel: 'room:design', message: 'still here?' });
+        expect(errorsTo(sentToClient, 'carol')[0].error.code).toBe('not-a-member');
+
+        // Re-added with "none": back in, but only from now.
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'none' } });
+        const again = (await store.getMember('room:design', 'u-carol'))!;
+        expect(again.removedAt).toBeNull();
+        expect(typeof again.historyFrom).toBe('string');
+        expect((await svc.getChannelHistoryFor('u-carol', 'room:design', 50)).map((m) => m.message)).not.toContain('old');
+    });
+
+    it('a member may leave (remove themselves)', async () => {
+        const { router, sendToChannelCalls } = makeRouter();
+        const { svc, store } = makeService(router);
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'all' } });
+        await svc.handleAction('carol', 'removeMember', { channel: 'room:design', userId: 'u-carol' });
+        expect((await store.getMember('room:design', 'u-carol'))!.removedAt).toBeTruthy();
+        expect(sendToChannelCalls.filter((c) => c.message.action === 'message').pop().message.message.message).toBe('Carol Johnson left');
+    });
+
+    it('rejects malformed requests and dm channels', async () => {
+        const { router, sentToClient } = makeRouter();
+        const { svc } = makeService(router);
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: [], history: { mode: 'all' } });
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'sometimes' } });
+        await svc.handleAction('eve', 'addMembers', { channel: 'chat:dm:u-carol:u-eve', userIds: ['u-bob'], history: { mode: 'all' } });
+        expect(errorsTo(sentToClient, 'eve').map((e) => e.error.code)).toEqual(['bad-request', 'bad-request', 'bad-request']);
+    });
+
+    it('without a membership store every channel stays open and the actions say so', async () => {
+        const { router, sentToClient } = makeRouter();
+        const svc = new ChatService({ messageRouter: router, logger: new NoopLogger() as any, identityResolver: (c: string) => IDS[c] ?? null } as any);
+        await svc.handleAction('eve', 'members', { channel: 'room:design' });
+        expect(framesTo(sentToClient, 'eve', 'members')[0]).toMatchObject({ open: true, members: [] });
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'all' } });
+        expect(errorsTo(sentToClient, 'eve')[0].error.code).toBe('bad-request');
+    });
+});

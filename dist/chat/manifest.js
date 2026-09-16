@@ -11,6 +11,11 @@ exports.ChatManifest = {
     version: '0.1.0',
     channels: ['chat:*'],
     envVars: {
+        DYNAMODB_CHAT_MEMBERS_TABLE: {
+            required: false,
+            default: 'chat-members',
+            description: 'DynamoDB table for channel membership (PK channel, SK userId; role, addedBy, addedAt, historyFrom, removedAt). Read by the gateway-side DdbChatMembershipStore adapter; the module takes any ChatMembershipStore.',
+        },
         DYNAMODB_CHAT_TABLE: {
             required: false,
             default: 'chat-messages',

@@ -24,6 +24,8 @@ export type { UsePinsResult } from './usePins';
 export type { FeatureName, GatewaySocketProviderProps, GatewayRest, GatewayContextValue, } from './GatewaySocketProvider';
 export { useChat } from './useChat';
 export type { UseChatReturn } from './useChat';
+export { useChatMembers } from './useChatMembers';
+export type { UseChatMembersReturn, ChatMemberEntry, ChatHistoryChoice as ChatMembersHistoryChoice } from './useChatMembers';
 export { usePresence } from './usePresence';
 export type { UsePresenceReturn } from './usePresence';
 export { useReactions } from './useReactions';

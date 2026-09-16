@@ -1,6 +1,7 @@
 import { LRUCache } from 'lru-cache';
 import { SubscriptionTracker } from './SubscriptionTracker';
 import { type ChatStore } from './ChatStore';
+import { type ChatMember, type ChatMemberView, type ChatMembershipStore } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
 export interface ChatLogger {
     debug(...args: any[]): void;
@@ -54,6 +55,11 @@ export interface ChatServiceOpts {
      * concrete DynamoDB adapter here.
      */
     chatStore?: ChatStore;
+    /**
+     * Who is in each channel and from when they may read it. Absent, every
+     * channel is open (the pre-membership behaviour). See ChatMembershipStore.
+     */
+    membershipStore?: ChatMembershipStore;
     /**
      * Optional authz hook. Returns true if the client is permitted to
      * access the channel; false (after sending its own error message)
@@ -121,6 +127,7 @@ export declare class ChatService {
     chatStore: ChatStore;
     authz: (clientId: string, channel: string, service: ChatService) => boolean;
     identityResolver: ChatIdentityResolver | null;
+    membershipStore: ChatMembershipStore | null;
     readonly enforceDmMembership: boolean;
     onDmMessage: ((info: {
         channel: string;
@@ -176,7 +183,61 @@ export declare class ChatService {
     getChannelCache(channelId: string): LRUCache<string, ChatMessage>;
     addToChannelHistory(channel: string, messageData: ChatMessage): void;
     getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]>;
-    sendChannelHistory(clientId: string, channel: string): Promise<void>;
+    sendChannelHistory(clientId: string, channel: string, userId?: string): Promise<void>;
+    /** Every row for the channel; [] when there is no store or the channel is open. */
+    _membershipRows(channel: string): Promise<ChatMember[]>;
+    /**
+     * The channel's members as the wire reports them. A dm channel's members
+     * are in its name; a channel with no rows is open (everyone may read).
+     */
+    describeMembers(channel: string): Promise<{
+        open: boolean;
+        members: ChatMemberView[];
+    }>;
+    /**
+     * Channel membership gate. True when the channel is open (no rows), is a
+     * dm channel (the dm gate owns those), or the sender is an active member.
+     * FAIL-CLOSED on a closed channel: no resolvable userId ⇒ refused.
+     */
+    _checkMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): Promise<boolean>;
+    /**
+     * History for a PERSON: what the channel holds, from their `historyFrom`
+     * on. A closed channel shows a non-member nothing; an open channel and a
+     * dm channel show everything (the dm gate has already run).
+     */
+    getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number): Promise<ChatMessage[]>;
+    /** `{action:'members', channel}` → who is in it, to the sender. */
+    handleMembers(clientId: string, { channel }: {
+        channel: string;
+    }): Promise<void>;
+    /**
+     * `{action:'addMembers', channel, userIds, history:{mode,days?}, names?}`.
+     * The requester must be a member, or the channel open — in which case
+     * they become its owner and the channel closes. Each added person gets a
+     * history floor from the choice; re-adding a removed person restores
+     * them with the new floor. The thread is told, and every subscriber gets
+     * the new roster.
+     */
+    handleAddMembers(clientId: string, { channel, userIds, history, names }: {
+        channel: string;
+        userIds?: unknown;
+        history?: unknown;
+        names?: unknown;
+    }): Promise<void>;
+    /** `{action:'removeMember', channel, userId}` — an owner may remove anyone; anyone may remove themselves. */
+    handleRemoveMember(clientId: string, { channel, userId, name }: {
+        channel: string;
+        userId?: unknown;
+        name?: unknown;
+    }): Promise<void>;
+    /**
+     * A membership change, as a stored message from the person who made it.
+     * Not gated on a join: the owner adding people from a picker may not be
+     * subscribed to the channel at that moment.
+     */
+    _postMembershipMessage(channel: string, clientId: string, identity: ChatSenderIdentity | null, text: string, metadata: Record<string, unknown>): Promise<ChatMessage>;
+    /** The roster, to everyone in the channel and to the requester whether or not they are subscribed. */
+    _broadcastMembers(channel: string, requesterClientId: string): Promise<void>;
     _persistMessage(messageData: ChatMessage): Promise<void>;
     _loadHistoryFromStore(channel: string, limit: number): Promise<ChatMessage[]>;
     /**
@@ -207,7 +268,7 @@ export declare class ChatService {
     _checkDmMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): boolean;
     generateMessageId(): string;
     sendToClient(clientId: string, message: any): void;
-    sendError(clientId: string, message: string, errorCode?: string): void;
+    sendError(clientId: string, message: string, errorCode?: string, channel?: string): void;
     onClientConnect(clientId: string): Promise<void>;
     onClientDisconnect(clientId: string): Promise<void>;
     shutdown(): Promise<void>;

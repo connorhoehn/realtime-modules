@@ -42,6 +42,7 @@ const distributed_core_1 = require("distributed-core");
 const SubscriptionTracker_1 = require("./SubscriptionTracker");
 const ChatStore_1 = require("./ChatStore");
 const dmChannels_1 = require("./dmChannels");
+const ChatMembershipStore_1 = require("./ChatMembershipStore");
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 const DEFAULT_MAX_METADATA_KEYS = 20;
 const DEFAULT_MAX_METADATA_SIZE = 4096;
@@ -56,6 +57,12 @@ const ErrorCodes = {
     SERVICE_INTERNAL_ERROR: 'SERVICE_INTERNAL_ERROR',
     /** Sender is not (or cannot be proven to be) a member of a dm channel. */
     CHAT_DM_FORBIDDEN: 'CHAT_DM_FORBIDDEN',
+    /** The channel has members and the sender is not one of them (or was removed). */
+    CHAT_NOT_A_MEMBER: 'not-a-member',
+    /** A member may not do this — removing someone else without being an owner, say. */
+    CHAT_FORBIDDEN: 'forbidden',
+    /** The membership request itself was malformed. */
+    CHAT_BAD_REQUEST: 'bad-request',
 };
 function createErrorResponse(code, message, context = {}) {
     return { error: { code, message, ...context } };
@@ -132,6 +139,7 @@ class ChatService {
     chatStore;
     authz;
     identityResolver;
+    membershipStore;
     enforceDmMembership;
     onDmMessage;
     clientChannels;
@@ -157,6 +165,7 @@ class ChatService {
         this.logger = opts.logger;
         this.metricsCollector = opts.metricsCollector ?? null;
         this.chatStore = opts.chatStore ?? new ChatStore_1.InMemoryChatStore();
+        this.membershipStore = opts.membershipStore ?? null;
         this.authz = opts.authz ?? (() => true);
         this.identityResolver = opts.identityResolver ?? null;
         // DM enforcement defaults ON exactly when an identity source exists;
@@ -209,6 +218,15 @@ class ChatService {
                 case 'typing':
                     await this.handleTyping(clientId, data);
                     return;
+                case 'members':
+                    await this.handleMembers(clientId, data);
+                    return;
+                case 'addMembers':
+                    await this.handleAddMembers(clientId, data);
+                    return;
+                case 'removeMember':
+                    await this.handleRemoveMember(clientId, data);
+                    return;
                 default:
                     this.sendError(clientId, `Unknown chat action: ${action}`);
             }
@@ -241,7 +259,14 @@ class ChatService {
             // DM membership gate (v0.23.0) — fail-closed on member-addressed
             // dm channels. Runs before the router subscribe so a forbidden
             // client never acquires a distributed subscription.
-            if (!this._checkDmMembership(clientId, channel, this._resolveIdentity(clientId))) {
+            const joinIdentity = this._resolveIdentity(clientId);
+            if (!this._checkDmMembership(clientId, channel, joinIdentity)) {
+                return;
+            }
+            // Channel membership gate: a closed channel admits only its
+            // active members. Runs before the router subscribe, like the dm
+            // gate, so a refused client never holds a subscription.
+            if (!(await this._checkMembership(clientId, channel, joinIdentity))) {
                 return;
             }
             // M3 gap #10: respect the router's subscribe authz decision.
@@ -266,7 +291,7 @@ class ChatService {
                 channel,
                 timestamp: new Date().toISOString(),
             });
-            await this.sendChannelHistory(clientId, channel);
+            await this.sendChannelHistory(clientId, channel, joinIdentity?.userId);
             this.logger.info(`Client ${clientId} joined chat channel: ${channel}`);
         }
         catch (error) {
@@ -373,6 +398,9 @@ class ChatService {
         if (!this._checkDmMembership(clientId, channel, identity)) {
             return;
         }
+        if (!(await this._checkMembership(clientId, channel, identity))) {
+            return;
+        }
         try {
             if (identity && identity.userId) {
                 // Merge resolver-provided presentation hints into metadata
@@ -438,8 +466,15 @@ class ChatService {
             this.sendError(clientId, 'Channel name is required');
             return;
         }
+        const identity = this._resolveIdentity(clientId);
+        if (!this._checkDmMembership(clientId, channel, identity)) {
+            return;
+        }
+        if (!(await this._checkMembership(clientId, channel, identity))) {
+            return;
+        }
         try {
-            const history = await this.getChannelHistory(channel, limit ?? this.defaultHistoryLimit);
+            const history = await this.getChannelHistoryFor(identity?.userId, channel, limit ?? this.defaultHistoryLimit);
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'history',
@@ -493,8 +528,8 @@ class ChatService {
         }
         return storeMessages;
     }
-    async sendChannelHistory(clientId, channel) {
-        const history = await this.getChannelHistory(channel, this.joinHistoryLimit);
+    async sendChannelHistory(clientId, channel, userId) {
+        const history = await this.getChannelHistoryFor(userId, channel, this.joinHistoryLimit);
         if (history.length > 0) {
             this.sendToClient(clientId, {
                 type: 'chat',
@@ -504,6 +539,282 @@ class ChatService {
                 timestamp: new Date().toISOString(),
             });
         }
+    }
+    // ---- Membership ------------------------------------------------------
+    /** Every row for the channel; [] when there is no store or the channel is open. */
+    async _membershipRows(channel) {
+        if (!this.membershipStore)
+            return [];
+        try {
+            return await this.membershipStore.listMembers(channel);
+        }
+        catch (err) {
+            this.logger.error('ChatMembershipStore list failed:', err && err.message);
+            // Fail closed on a closed channel we cannot read? We cannot tell
+            // whether it is closed. Treat as open so an outage does not lock
+            // every conversation, and log it loudly.
+            return [];
+        }
+    }
+    /**
+     * The channel's members as the wire reports them. A dm channel's members
+     * are in its name; a channel with no rows is open (everyone may read).
+     */
+    async describeMembers(channel) {
+        if ((0, dmChannels_1.isDmChatChannel)(channel)) {
+            const ids = (0, dmChannels_1.dmChannelMembers)(channel);
+            if (ids) {
+                return {
+                    open: false,
+                    members: ids.map((userId) => ({ userId, role: 'member', addedBy: userId, addedAt: '', historyFrom: null })),
+                };
+            }
+            // Hashed group dm: members are not derivable from the name.
+            return { open: true, members: [] };
+        }
+        const rows = await this._membershipRows(channel);
+        if (rows.length === 0)
+            return { open: true, members: [] };
+        return { open: false, members: rows.filter((r) => r.removedAt == null).map(ChatMembershipStore_1.memberView) };
+    }
+    /**
+     * Channel membership gate. True when the channel is open (no rows), is a
+     * dm channel (the dm gate owns those), or the sender is an active member.
+     * FAIL-CLOSED on a closed channel: no resolvable userId ⇒ refused.
+     */
+    async _checkMembership(clientId, channel, identity) {
+        if (!this.membershipStore || (0, dmChannels_1.isDmChatChannel)(channel))
+            return true;
+        const rows = await this._membershipRows(channel);
+        if (rows.length === 0)
+            return true;
+        const userId = identity?.userId;
+        const row = userId ? rows.find((r) => r.userId === userId) : undefined;
+        if (!row || row.removedAt != null) {
+            this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * History for a PERSON: what the channel holds, from their `historyFrom`
+     * on. A closed channel shows a non-member nothing; an open channel and a
+     * dm channel show everything (the dm gate has already run).
+     */
+    async getChannelHistoryFor(userId, channel, limit) {
+        const history = await this.getChannelHistory(channel, limit);
+        if (!this.membershipStore || (0, dmChannels_1.isDmChatChannel)(channel))
+            return history;
+        const rows = await this._membershipRows(channel);
+        if (rows.length === 0)
+            return history;
+        const row = userId ? rows.find((r) => r.userId === userId) : undefined;
+        if (!row || row.removedAt != null)
+            return [];
+        if (!row.historyFrom)
+            return history;
+        const floor = Date.parse(row.historyFrom);
+        if (!Number.isFinite(floor))
+            return history;
+        return history.filter((m) => {
+            const t = Date.parse(m.timestamp);
+            return Number.isFinite(t) && t >= floor;
+        });
+    }
+    /** `{action:'members', channel}` → who is in it, to the sender. */
+    async handleMembers(clientId, { channel }) {
+        if (!channel || typeof channel !== 'string') {
+            this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const { open, members } = await this.describeMembers(channel);
+        this.sendToClient(clientId, {
+            type: 'chat',
+            action: 'members',
+            channel,
+            open,
+            members,
+            timestamp: new Date().toISOString(),
+        });
+    }
+    /**
+     * `{action:'addMembers', channel, userIds, history:{mode,days?}, names?}`.
+     * The requester must be a member, or the channel open — in which case
+     * they become its owner and the channel closes. Each added person gets a
+     * history floor from the choice; re-adding a removed person restores
+     * them with the new floor. The thread is told, and every subscriber gets
+     * the new roster.
+     */
+    async handleAddMembers(clientId, { channel, userIds, history, names }) {
+        if (!channel || typeof channel !== 'string') {
+            this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        if (!this.membershipStore) {
+            this.sendError(clientId, 'Membership is not enabled on this gateway', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        if ((0, dmChannels_1.isDmChatChannel)(channel)) {
+            this.sendError(clientId, 'A direct message has fixed members; start a group chat instead', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const ids = Array.isArray(userIds)
+            ? Array.from(new Set(userIds.filter((u) => typeof u === 'string' && u.length > 0 && u.length <= 200)))
+            : [];
+        if (ids.length === 0 || ids.length > 50) {
+            this.sendError(clientId, 'userIds must name between 1 and 50 people', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const choice = (0, ChatMembershipStore_1.parseHistoryChoice)(history);
+        if (!choice) {
+            this.sendError(clientId, 'history must be {mode:"none"|"days"|"all", days?}', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        const actorId = identity?.userId;
+        if (!actorId) {
+            this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
+            return;
+        }
+        const rows = await this._membershipRows(channel);
+        const now = new Date().toISOString();
+        const nameOf = (id) => {
+            const given = names && typeof names === 'object' ? names[id] : undefined;
+            return typeof given === 'string' && given ? given.slice(0, 120) : id;
+        };
+        try {
+            if (rows.length === 0) {
+                // First rows close the channel; the requester owns it.
+                await this.membershipStore.putMember({ channel, userId: actorId, role: 'owner', addedBy: actorId, addedAt: now, historyFrom: null, removedAt: null });
+            }
+            else {
+                const me = rows.find((r) => r.userId === actorId);
+                if (!me || me.removedAt != null) {
+                    this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
+                    return;
+                }
+            }
+            const floor = (0, ChatMembershipStore_1.historyFloorFor)(choice);
+            const added = [];
+            for (const userId of ids) {
+                if (userId === actorId)
+                    continue;
+                const existing = rows.find((r) => r.userId === userId);
+                if (existing && existing.removedAt == null)
+                    continue; // already in
+                await this.membershipStore.putMember({
+                    channel,
+                    userId,
+                    role: existing?.role === 'owner' ? 'owner' : 'member',
+                    addedBy: actorId,
+                    addedAt: now,
+                    historyFrom: floor,
+                    removedAt: null,
+                });
+                added.push(userId);
+            }
+            if (added.length > 0) {
+                const actorName = identity?.displayName ?? actorId;
+                const list = added.map(nameOf);
+                const text = `${actorName} added ${list.length <= 3 ? list.join(', ') : `${list.slice(0, 2).join(', ')} and ${list.length - 2} others`}`;
+                await this._postMembershipMessage(channel, clientId, identity, text, {
+                    kind: 'membership',
+                    event: 'added',
+                    actorId,
+                    actorName,
+                    userIds: added,
+                    names: Object.fromEntries(added.map((id) => [id, nameOf(id)])),
+                    history: choice,
+                });
+            }
+            await this._broadcastMembers(channel, clientId);
+        }
+        catch (err) {
+            this.logger.error(`addMembers failed on ${channel}:`, err && err.message);
+            this.sendError(clientId, 'Failed to add members', ErrorCodes.SERVICE_INTERNAL_ERROR, channel);
+        }
+    }
+    /** `{action:'removeMember', channel, userId}` — an owner may remove anyone; anyone may remove themselves. */
+    async handleRemoveMember(clientId, { channel, userId, name }) {
+        if (!channel || typeof channel !== 'string' || typeof userId !== 'string' || !userId) {
+            this.sendError(clientId, 'channel and userId are required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        if (!this.membershipStore || (0, dmChannels_1.isDmChatChannel)(channel)) {
+            this.sendError(clientId, 'This channel has fixed members', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        const actorId = identity?.userId;
+        if (!actorId) {
+            this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
+            return;
+        }
+        const rows = await this._membershipRows(channel);
+        const me = rows.find((r) => r.userId === actorId);
+        if (rows.length === 0 || !me || me.removedAt != null) {
+            this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
+            return;
+        }
+        if (userId !== actorId && me.role !== 'owner') {
+            this.sendError(clientId, 'Only an owner can remove someone else', ErrorCodes.CHAT_FORBIDDEN, channel);
+            return;
+        }
+        const target = rows.find((r) => r.userId === userId);
+        if (!target || target.removedAt != null) {
+            this.sendError(clientId, 'That person is not in this channel', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        try {
+            await this.membershipStore.putMember({ ...target, removedAt: new Date().toISOString() });
+            const actorName = identity?.displayName ?? actorId;
+            const targetName = typeof name === 'string' && name ? name.slice(0, 120) : userId;
+            const text = userId === actorId ? `${actorName} left` : `${actorName} removed ${targetName}`;
+            await this._postMembershipMessage(channel, clientId, identity, text, {
+                kind: 'membership',
+                event: 'removed',
+                actorId,
+                actorName,
+                userIds: [userId],
+                names: { [userId]: targetName },
+            });
+            await this._broadcastMembers(channel, clientId);
+        }
+        catch (err) {
+            this.logger.error(`removeMember failed on ${channel}:`, err && err.message);
+            this.sendError(clientId, 'Failed to remove member', ErrorCodes.SERVICE_INTERNAL_ERROR, channel);
+        }
+    }
+    /**
+     * A membership change, as a stored message from the person who made it.
+     * Not gated on a join: the owner adding people from a picker may not be
+     * subscribed to the channel at that moment.
+     */
+    async _postMembershipMessage(channel, clientId, identity, text, metadata) {
+        const messageData = {
+            id: this.generateMessageId(),
+            clientId,
+            ...(identity?.userId ? { userId: identity.userId } : {}),
+            channel,
+            message: text,
+            metadata: {
+                ...metadata,
+                ...(identity?.displayName !== undefined ? { displayName: identity.displayName } : {}),
+                ...(identity?.avatarUrl !== undefined ? { avatarUrl: identity.avatarUrl } : {}),
+            },
+            timestamp: new Date().toISOString(),
+        };
+        this.addToChannelHistory(channel, messageData);
+        this._persistMessage(messageData).catch((err) => this.logger.error('Failed to persist membership message:', err && err.message));
+        await this.broadcastMessage(channel, messageData);
+        return messageData;
+    }
+    /** The roster, to everyone in the channel and to the requester whether or not they are subscribed. */
+    async _broadcastMembers(channel, requesterClientId) {
+        const { open, members } = await this.describeMembers(channel);
+        const frame = { type: 'chat', action: 'membersUpdated', channel, open, members, timestamp: new Date().toISOString() };
+        this.sendToClient(requesterClientId, frame);
+        await this.messageRouter.sendToChannel(channel, frame, requesterClientId);
     }
     async _persistMessage(messageData) {
         await this.chatStore.putMessage(messageData);
@@ -615,14 +926,16 @@ class ChatService {
             throw new Error('ChatService: messageRouter is required');
         this.messageRouter.sendToClient(clientId, message);
     }
-    sendError(clientId, message, errorCode = ErrorCodes.SERVICE_INTERNAL_ERROR) {
+    sendError(clientId, message, errorCode = ErrorCodes.SERVICE_INTERNAL_ERROR, channel) {
         const errorResponse = createErrorResponse(errorCode, message, {
             service: 'chat',
             clientId,
+            ...(channel ? { channel } : {}),
         });
         this.sendToClient(clientId, {
             type: 'error',
             service: 'chat',
+            ...(channel ? { channel } : {}),
             ...errorResponse,
         });
         if (this.metricsCollector && typeof this.metricsCollector.recordError === 'function') {
