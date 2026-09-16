@@ -684,26 +684,32 @@ class ChatService {
     async getChannelHistory(channel, limit) {
         const effectiveLimit = limit ?? this.defaultHistoryLimit;
         const cache = this.getChannelCache(channel);
-        // `lru-cache` iterates MOST-RECENTLY-USED FIRST, which is the opposite
-        // of reading order and cost two bugs in one line: every transcript
-        // rendered newest-message-first, and `.slice(-limit)` took the OLDEST
-        // messages — a 100-message channel asked for its last 20 returned its
-        // first 20. The second hid until a conversation outgrew the limit, at
-        // which point the missing messages looked like they were never sent.
-        const allMessages = Array.from(cache.values()).reverse();
-        if (allMessages.length > 0) {
-            // Now that the list is chronological, the tail really is the
-            // newest, and it comes back in reading order.
-            return allMessages.slice(-effectiveLimit);
-        }
-        // LRU cache empty — fall back to the store
-        const storeMessages = await this._loadHistoryFromStore(channel, effectiveLimit);
-        if (storeMessages.length > 0) {
-            for (const msg of storeMessages) {
-                cache.set(msg.id, msg);
+        const cached = Array.from(cache.values());
+        // The cache is what this process has seen — after a restart, only the
+        // messages that arrived since. It used to answer from the cache alone
+        // the moment it held anything, so one new message on a channel with
+        // days of stored history made history two messages long for everyone
+        // (measured on room:table-test: 13 stored, 2 served). When the cache
+        // cannot fill the request, the store's tail is merged in by id.
+        let merged = cached;
+        if (cached.length < effectiveLimit) {
+            const storeMessages = await this._loadHistoryFromStore(channel, effectiveLimit);
+            if (storeMessages.length > 0) {
+                const byId = new Map();
+                for (const msg of storeMessages)
+                    byId.set(msg.id, msg);
+                // The cache is the more recent view of a message this process
+                // changed (an edit whose store write is still in flight).
+                for (const msg of cached)
+                    byId.set(msg.id, msg);
+                merged = Array.from(byId.values());
+                for (const msg of storeMessages)
+                    if (!cache.has(msg.id))
+                        cache.set(msg.id, msg);
             }
         }
-        return storeMessages;
+        merged.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+        return merged.slice(-effectiveLimit);
     }
     async sendChannelHistory(clientId, channel, userId) {
         const history = await this.getChannelHistoryFor(userId, channel, this.joinHistoryLimit);
