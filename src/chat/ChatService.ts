@@ -1286,6 +1286,15 @@ export class ChatService {
             message: text,
             metadata: {
                 ...metadata,
+                // A membership line is a RECORD of what happened, not words
+                // somebody wrote, so it carries the same `system` mark every
+                // other server-posted notice does. It was the one exception,
+                // and it stamps the actor's `userId` as well — so the only
+                // thing keeping "Eve added Carol" from rendering as Eve's own
+                // editable message was a renderer that happens to check
+                // `metadata.kind === 'membership'` first. That is a
+                // coincidence to rely on, not a contract.
+                system: true,
                 ...(identity?.displayName !== undefined ? { displayName: identity.displayName } : {}),
                 ...(identity?.avatarUrl !== undefined ? { avatarUrl: identity.avatarUrl } : {}),
             },
