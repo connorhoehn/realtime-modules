@@ -123,6 +123,23 @@ export interface ChatServiceOpts {
         members: string[];
         message: ChatMessage;
     }) => void;
+    /**
+     * Fires when an identified user joins a NON-dm channel. The host records
+     * it (a "who has ever been here" index) so an OPEN channel — one with no
+     * membership rows — still has an audience for `onChannelMessage` when
+     * those people are not subscribed at the moment a message lands.
+     */
+    onChannelJoin?: (info: {
+        channel: string;
+        userId: string;
+    }) => void;
+    /**
+     * The audience of an OPEN channel beyond whoever is subscribed right
+     * now: the host's answer from its join index. Union-ed with the current
+     * subscribers, sender excluded. Closed channels never ask — their
+     * members are the audience. Errors and a missing hook mean "no extra".
+     */
+    channelAudience?: (channel: string) => Promise<string[]> | string[];
     maxMessagesPerChannel?: number;
     maxMessageLength?: number;
     maxChannelNameLength?: number;
@@ -151,6 +168,11 @@ export declare class ChatService {
         members: string[];
         message: ChatMessage;
     }) => void) | null;
+    onChannelJoin: ((info: {
+        channel: string;
+        userId: string;
+    }) => void) | null;
+    channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
     clientChannels: SubscriptionTracker;
     channelCaches: Map<string, LRUCache<string, ChatMessage>>;
     readonly maxMessagesPerChannel: number;

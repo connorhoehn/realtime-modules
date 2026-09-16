@@ -204,6 +204,20 @@ export interface ChatServiceOpts {
      * `onDmMessage`. Exceptions never fail the send.
      */
     onChannelMessage?: (info: { channel: string; members: string[]; message: ChatMessage }) => void;
+    /**
+     * Fires when an identified user joins a NON-dm channel. The host records
+     * it (a "who has ever been here" index) so an OPEN channel — one with no
+     * membership rows — still has an audience for `onChannelMessage` when
+     * those people are not subscribed at the moment a message lands.
+     */
+    onChannelJoin?: (info: { channel: string; userId: string }) => void;
+    /**
+     * The audience of an OPEN channel beyond whoever is subscribed right
+     * now: the host's answer from its join index. Union-ed with the current
+     * subscribers, sender excluded. Closed channels never ask — their
+     * members are the audience. Errors and a missing hook mean "no extra".
+     */
+    channelAudience?: (channel: string) => Promise<string[]> | string[];
 
     // ---- Tunables (all default to gateway/config/constants.ts values) ----
     maxMessagesPerChannel?: number;
@@ -304,6 +318,8 @@ export class ChatService {
     readonly enforceDmMembership: boolean;
     onDmMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
     onChannelMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
+    onChannelJoin: ((info: { channel: string; userId: string }) => void) | null;
+    channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
 
     clientChannels: SubscriptionTracker;
     channelCaches: Map<string, LRUCache<string, ChatMessage>>;
@@ -340,6 +356,8 @@ export class ChatService {
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
         this.onDmMessage = opts.onDmMessage ?? null;
         this.onChannelMessage = opts.onChannelMessage ?? null;
+        this.onChannelJoin = opts.onChannelJoin ?? null;
+        this.channelAudience = opts.channelAudience ?? null;
 
         this.maxMessagesPerChannel = opts.maxMessagesPerChannel ?? DEFAULT_MAX_MESSAGES_PER_CHANNEL;
         this.maxMessageLength = opts.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH;
@@ -468,6 +486,17 @@ export class ChatService {
             }
 
             this.clientChannels.addSubscription(clientId, channel);
+
+            // The join index: an open channel's audience is everyone who has
+            // ever joined it, not just whoever is here now. dm channels have
+            // their audience in their name. The hook never fails the join.
+            if (this.onChannelJoin && joinIdentity?.userId && !isDmChatChannel(channel)) {
+                try {
+                    this.onChannelJoin({ channel, userId: joinIdentity.userId });
+                } catch (hookErr: any) {
+                    this.logger.error('onChannelJoin hook threw (ignored):', hookErr);
+                }
+            }
 
             this.sendToClient(clientId, {
                 type: 'chat',
@@ -804,6 +833,15 @@ export class ChatService {
             for (const clientId of this.clientChannels.getClientsFor(channel)) {
                 const id = this._resolveIdentity(clientId);
                 if (id?.userId) out.add(id.userId);
+            }
+            // Plus everyone the host has seen join this open channel: the
+            // person on another page still gets the unread, as in Teams.
+            if (this.channelAudience) {
+                try {
+                    for (const userId of await this.channelAudience(channel)) if (userId) out.add(userId);
+                } catch (err: any) {
+                    this.logger.error('channelAudience hook failed (ignored):', err && err.message);
+                }
             }
         }
         if (senderUserId) out.delete(senderUserId);

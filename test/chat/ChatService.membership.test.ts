@@ -312,3 +312,58 @@ describe('ChatService onChannelMessage seam', () => {
         expect(calls).toHaveLength(0);
     });
 });
+
+describe('ChatService open-channel audience', () => {
+    it('records joins on non-dm channels only', async () => {
+        const joins: any[] = [];
+        const { router } = makeRouter();
+        const svc = new ChatService({
+            messageRouter: router,
+            logger: new NoopLogger() as any,
+            membershipStore: new MemoryChatMembershipStore(),
+            identityResolver: (clientId: string) => IDS[clientId] ?? null,
+            onChannelJoin: (info: any) => joins.push(info),
+        } as any);
+        await svc.handleAction('eve', 'join', { channel: 'general' });
+        await svc.handleAction('eve', 'join', { channel: 'chat:dm:u-carol:u-eve' });
+        expect(joins).toEqual([{ channel: 'general', userId: 'u-eve' }]);
+    });
+
+    it('unions the host audience with the subscribers for an open channel, minus the sender', async () => {
+        const calls: any[] = [];
+        const { router } = makeRouter();
+        const svc = new ChatService({
+            messageRouter: router,
+            logger: new NoopLogger() as any,
+            membershipStore: new MemoryChatMembershipStore(),
+            identityResolver: (clientId: string) => IDS[clientId] ?? null,
+            onChannelMessage: (info: any) => calls.push(info),
+            channelAudience: async (channel: string) => (channel === 'general' ? ['u-bob', 'u-carol', 'u-eve'] : []),
+        } as any);
+        await svc.handleAction('eve', 'join', { channel: 'general' });
+        await svc.handleAction('carol', 'join', { channel: 'general' });
+        await svc.handleAction('carol', 'send', { channel: 'general', message: 'hi all' });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].members.sort()).toEqual(['u-bob', 'u-eve']);
+    });
+
+    it('does not ask the host audience for a closed channel', async () => {
+        const calls: any[] = [];
+        const asked: string[] = [];
+        const { router } = makeRouter();
+        const svc = new ChatService({
+            messageRouter: router,
+            logger: new NoopLogger() as any,
+            membershipStore: new MemoryChatMembershipStore(),
+            identityResolver: (clientId: string) => IDS[clientId] ?? null,
+            onChannelMessage: (info: any) => calls.push(info),
+            channelAudience: async (channel: string) => { asked.push(channel); return ['u-bob']; },
+        } as any);
+        await svc.handleAction('eve', 'join', { channel: 'room:design' });
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'all' } });
+        calls.length = 0;
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'members only' });
+        expect(calls[0].members).toEqual(['u-carol']);
+        expect(asked).toEqual([]);
+    });
+});

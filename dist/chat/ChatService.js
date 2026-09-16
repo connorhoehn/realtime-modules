@@ -143,6 +143,8 @@ class ChatService {
     enforceDmMembership;
     onDmMessage;
     onChannelMessage;
+    onChannelJoin;
+    channelAudience;
     clientChannels;
     channelCaches;
     maxMessagesPerChannel;
@@ -174,6 +176,8 @@ class ChatService {
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
         this.onDmMessage = opts.onDmMessage ?? null;
         this.onChannelMessage = opts.onChannelMessage ?? null;
+        this.onChannelJoin = opts.onChannelJoin ?? null;
+        this.channelAudience = opts.channelAudience ?? null;
         this.maxMessagesPerChannel = opts.maxMessagesPerChannel ?? DEFAULT_MAX_MESSAGES_PER_CHANNEL;
         this.maxMessageLength = opts.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH;
         this.maxChannelNameLength = opts.maxChannelNameLength ?? DEFAULT_MAX_CHANNEL_NAME_LENGTH;
@@ -287,6 +291,17 @@ class ChatService {
                 }
             }
             this.clientChannels.addSubscription(clientId, channel);
+            // The join index: an open channel's audience is everyone who has
+            // ever joined it, not just whoever is here now. dm channels have
+            // their audience in their name. The hook never fails the join.
+            if (this.onChannelJoin && joinIdentity?.userId && !(0, dmChannels_1.isDmChatChannel)(channel)) {
+                try {
+                    this.onChannelJoin({ channel, userId: joinIdentity.userId });
+                }
+                catch (hookErr) {
+                    this.logger.error('onChannelJoin hook threw (ignored):', hookErr);
+                }
+            }
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'joined',
@@ -577,6 +592,18 @@ class ChatService {
                 const id = this._resolveIdentity(clientId);
                 if (id?.userId)
                     out.add(id.userId);
+            }
+            // Plus everyone the host has seen join this open channel: the
+            // person on another page still gets the unread, as in Teams.
+            if (this.channelAudience) {
+                try {
+                    for (const userId of await this.channelAudience(channel))
+                        if (userId)
+                            out.add(userId);
+                }
+                catch (err) {
+                    this.logger.error('channelAudience hook failed (ignored):', err && err.message);
+                }
             }
         }
         if (senderUserId)
