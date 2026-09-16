@@ -142,6 +142,7 @@ class ChatService {
     membershipStore;
     enforceDmMembership;
     onDmMessage;
+    onChannelMessage;
     clientChannels;
     channelCaches;
     maxMessagesPerChannel;
@@ -172,6 +173,7 @@ class ChatService {
         // consumers can force it either way explicitly.
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
         this.onDmMessage = opts.onDmMessage ?? null;
+        this.onChannelMessage = opts.onChannelMessage ?? null;
         this.maxMessagesPerChannel = opts.maxMessagesPerChannel ?? DEFAULT_MAX_MESSAGES_PER_CHANNEL;
         this.maxMessageLength = opts.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH;
         this.maxChannelNameLength = opts.maxChannelNameLength ?? DEFAULT_MAX_CHANNEL_NAME_LENGTH;
@@ -458,6 +460,17 @@ class ChatService {
                     this.logger.error('onDmMessage hook threw (ignored):', hookErr);
                 }
             }
+            // Channel activity seam — the same idea for rooms and named
+            // channels, so a member who is not looking gets an unread count.
+            if (this.onChannelMessage && !(0, dmChannels_1.isDmChatChannel)(channel)) {
+                try {
+                    const members = await this._channelMessageRecipients(channel, messageData.userId);
+                    this.onChannelMessage({ channel, members, message: messageData });
+                }
+                catch (hookErr) {
+                    this.logger.error('onChannelMessage hook threw (ignored):', hookErr);
+                }
+            }
             this.logger.info(`Message sent by client ${clientId} to channel ${channel}`);
         }
         catch (error) {
@@ -545,6 +558,31 @@ class ChatService {
         }
     }
     // ---- Membership ------------------------------------------------------
+    /**
+     * Who should hear about a message on a non-dm channel, sender excluded:
+     * a closed channel's active members; an open channel's currently
+     * subscribed users (the only ones this node can name — an open channel
+     * keeps no roster).
+     */
+    async _channelMessageRecipients(channel, senderUserId) {
+        const rows = await this._membershipRows(channel);
+        const out = new Set();
+        if (rows.length > 0) {
+            for (const r of rows)
+                if (!r.removedAt)
+                    out.add(r.userId);
+        }
+        else {
+            for (const clientId of this.clientChannels.getClientsFor(channel)) {
+                const id = this._resolveIdentity(clientId);
+                if (id?.userId)
+                    out.add(id.userId);
+            }
+        }
+        if (senderUserId)
+            out.delete(senderUserId);
+        return Array.from(out);
+    }
     /** Every row for the channel; [] when there is no store or the channel is open. */
     async _membershipRows(channel) {
         if (!this.membershipStore)

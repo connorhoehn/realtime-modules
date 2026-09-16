@@ -255,3 +255,60 @@ describe('ChatService membership — removal evicts live connections', () => {
         expect(subs.get('room:design')?.has('carol')).toBe(false);
     });
 });
+
+describe('ChatService onChannelMessage seam', () => {
+    it('names a closed channel\'s active members, minus the sender', async () => {
+        const calls: any[] = [];
+        const { router } = makeRouter();
+        const store = new MemoryChatMembershipStore();
+        const svc = new ChatService({
+            messageRouter: router,
+            logger: new NoopLogger() as any,
+            membershipStore: store,
+            identityResolver: (clientId: string) => IDS[clientId] ?? null,
+            onChannelMessage: (info: any) => calls.push(info),
+        } as any);
+        await svc.handleAction('eve', 'join', { channel: 'room:design' });
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol', 'u-bob'], history: { mode: 'all' } });
+        await svc.handleAction('eve', 'removeMember', { channel: 'room:design', userId: 'u-bob' });
+        calls.length = 0;
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'hello members' });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].channel).toBe('room:design');
+        expect(calls[0].members).toEqual(['u-carol']);
+        expect(calls[0].message.message).toBe('hello members');
+    });
+
+    it('names an open channel\'s current subscribers, minus the sender', async () => {
+        const calls: any[] = [];
+        const { router } = makeRouter();
+        const svc = new ChatService({
+            messageRouter: router,
+            logger: new NoopLogger() as any,
+            membershipStore: new MemoryChatMembershipStore(),
+            identityResolver: (clientId: string) => IDS[clientId] ?? null,
+            onChannelMessage: (info: any) => calls.push(info),
+        } as any);
+        await svc.handleAction('eve', 'join', { channel: 'general' });
+        await svc.handleAction('carol', 'join', { channel: 'general' });
+        await svc.handleAction('carol', 'send', { channel: 'general', message: 'hi all' });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].members).toEqual(['u-eve']);
+    });
+
+    it('does not fire for a dm channel', async () => {
+        const calls: any[] = [];
+        const { router } = makeRouter();
+        const svc = new ChatService({
+            messageRouter: router,
+            logger: new NoopLogger() as any,
+            membershipStore: new MemoryChatMembershipStore(),
+            identityResolver: (clientId: string) => IDS[clientId] ?? null,
+            onChannelMessage: (info: any) => calls.push(info),
+        } as any);
+        const dm = 'chat:dm:u-carol:u-eve';
+        await svc.handleAction('eve', 'join', { channel: dm });
+        await svc.handleAction('eve', 'send', { channel: dm, message: 'just us' });
+        expect(calls).toHaveLength(0);
+    });
+});

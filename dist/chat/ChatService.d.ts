@@ -111,6 +111,18 @@ export interface ChatServiceOpts {
         members: string[];
         message: ChatMessage;
     }) => void;
+    /**
+     * Fires after every stored message on a NON-dm channel, with who should
+     * hear about it: a closed channel's current members, an open channel's
+     * currently subscribed users — the sender excluded either way. The host
+     * turns it into unread counts / notifications; dm channels stay on
+     * `onDmMessage`. Exceptions never fail the send.
+     */
+    onChannelMessage?: (info: {
+        channel: string;
+        members: string[];
+        message: ChatMessage;
+    }) => void;
     maxMessagesPerChannel?: number;
     maxMessageLength?: number;
     maxChannelNameLength?: number;
@@ -130,6 +142,11 @@ export declare class ChatService {
     membershipStore: ChatMembershipStore | null;
     readonly enforceDmMembership: boolean;
     onDmMessage: ((info: {
+        channel: string;
+        members: string[];
+        message: ChatMessage;
+    }) => void) | null;
+    onChannelMessage: ((info: {
         channel: string;
         members: string[];
         message: ChatMessage;
@@ -184,6 +201,13 @@ export declare class ChatService {
     addToChannelHistory(channel: string, messageData: ChatMessage): void;
     getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]>;
     sendChannelHistory(clientId: string, channel: string, userId?: string): Promise<void>;
+    /**
+     * Who should hear about a message on a non-dm channel, sender excluded:
+     * a closed channel's active members; an open channel's currently
+     * subscribed users (the only ones this node can name — an open channel
+     * keeps no roster).
+     */
+    _channelMessageRecipients(channel: string, senderUserId: string | undefined): Promise<string[]>;
     /** Every row for the channel; [] when there is no store or the channel is open. */
     _membershipRows(channel: string): Promise<ChatMember[]>;
     /**
