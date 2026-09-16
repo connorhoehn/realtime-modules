@@ -9,6 +9,7 @@
 //   out: { service:'chat', action:'addMembers', channel, userIds, history:{mode,days?}, names? }
 //   out: { service:'chat', action:'removeMember', channel, userId, name? }
 //   in:  { type:'chat', action:'members'|'membersUpdated', channel, open, members }
+//        { type:'chat', action:'removed', channel, byUserId, timestamp } — this connection was removed
 //
 // `open` is true for a channel with no membership rows — everyone the
 // gateway admits is in it, and `members` is empty. The first add closes it.
@@ -21,6 +22,7 @@ function useChatMembers(channel) {
     const [members, setMembers] = (0, react_1.useState)([]);
     const [open, setOpen] = (0, react_1.useState)(true);
     const [loading, setLoading] = (0, react_1.useState)(true);
+    const [removed, setRemoved] = (0, react_1.useState)(null);
     const channelRef = (0, react_1.useRef)(channel);
     (0, react_1.useEffect)(() => { channelRef.current = channel; }, [channel]);
     const refresh = (0, react_1.useCallback)(() => {
@@ -32,9 +34,16 @@ function useChatMembers(channel) {
         const unsubscribe = onMessage((msg) => {
             if (msg.type !== 'chat' || msg.channel !== channelRef.current)
                 return;
+            const raw = msg;
+            if (msg.action === 'removed') {
+                setRemoved({ byUserId: typeof raw.byUserId === 'string' ? raw.byUserId : '', at: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString() });
+                setMembers([]);
+                setOpen(false);
+                setLoading(false);
+                return;
+            }
             if (msg.action !== 'members' && msg.action !== 'membersUpdated')
                 return;
-            const raw = msg;
             const list = Array.isArray(raw.members) ? raw.members : [];
             setMembers(list.map(asMember).filter(Boolean));
             setOpen(raw.open === true);
@@ -46,6 +55,7 @@ function useChatMembers(channel) {
         setMembers([]);
         setOpen(true);
         setLoading(true);
+        setRemoved(null);
         refresh();
     }, [channel, refresh]);
     const addMembers = (0, react_1.useCallback)((userIds, history, names) => {
@@ -68,7 +78,7 @@ function useChatMembers(channel) {
         });
     }, [send]);
     const isMember = (0, react_1.useCallback)((userId) => open || members.some((m) => m.userId === userId), [open, members]);
-    return { members, open, loading, addMembers, removeMember, refresh, isMember };
+    return { members, open, loading, addMembers, removeMember, refresh, isMember, removed };
 }
 function asMember(raw) {
     if (!raw || typeof raw !== 'object')

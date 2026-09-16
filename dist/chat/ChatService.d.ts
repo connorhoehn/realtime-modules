@@ -231,6 +231,14 @@ export declare class ChatService {
         name?: unknown;
     }): Promise<void>;
     /**
+     * Unsubscribe every live connection of `userId` from `channel` and tell
+     * each one `{type:'chat', action:'removed', channel, byUserId}` so the
+     * client can say "You were removed from #x" and drop the thread. Runs on
+     * this node's subscriptions; a multi-node deployment relies on the
+     * membership row for the other nodes' next join/send (fail closed).
+     */
+    _evictFromChannel(channel: string, userId: string, byUserId: string): Promise<void>;
+    /**
      * A membership change, as a stored message from the person who made it.
      * Not gated on a join: the owner adding people from a picker may not be
      * subscribed to the channel at that moment.

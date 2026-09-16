@@ -64,6 +64,14 @@ class SubscriptionTracker extends Map {
         return channels;
     }
     /** Snapshot of channels currently tracked for `clientId`. */
+    /** Every client subscribed to `channel` — the reverse of getChannels, walked, since the map is keyed by client. */
+    getClientsFor(channel) {
+        const out = [];
+        for (const [clientId, set] of this)
+            if (set.has(channel))
+                out.push(clientId);
+        return out;
+    }
     getChannels(clientId) {
         const set = this.get(clientId);
         return set ? Array.from(set) : [];

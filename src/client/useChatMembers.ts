@@ -8,6 +8,7 @@
 //   out: { service:'chat', action:'addMembers', channel, userIds, history:{mode,days?}, names? }
 //   out: { service:'chat', action:'removeMember', channel, userId, name? }
 //   in:  { type:'chat', action:'members'|'membersUpdated', channel, open, members }
+//        { type:'chat', action:'removed', channel, byUserId, timestamp } — this connection was removed
 //
 // `open` is true for a channel with no membership rows — everyone the
 // gateway admits is in it, and `members` is empty. The first add closes it.
@@ -44,6 +45,8 @@ export interface UseChatMembersReturn {
   refresh: () => void;
   /** True when `userId` may read the channel: it is open, or they are an active member. */
   isMember: (userId: string) => boolean;
+  /** Set when the gateway removed THIS connection from the channel (`{type:'chat', action:'removed'}`): who did it, and when. Cleared on a channel change. */
+  removed: { byUserId: string; at: string } | null;
 }
 
 export function useChatMembers(channel: string): UseChatMembersReturn {
@@ -51,6 +54,7 @@ export function useChatMembers(channel: string): UseChatMembersReturn {
   const [members, setMembers] = useState<ChatMemberEntry[]>([]);
   const [open, setOpen] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [removed, setRemoved] = useState<{ byUserId: string; at: string } | null>(null);
   const channelRef = useRef(channel);
   useEffect(() => { channelRef.current = channel; }, [channel]);
 
@@ -62,8 +66,15 @@ export function useChatMembers(channel: string): UseChatMembersReturn {
   useEffect(() => {
     const unsubscribe = onMessage((msg: GatewayMessage) => {
       if (msg.type !== 'chat' || msg.channel !== channelRef.current) return;
-      if (msg.action !== 'members' && msg.action !== 'membersUpdated') return;
       const raw = msg as Record<string, unknown>;
+      if (msg.action === 'removed') {
+        setRemoved({ byUserId: typeof raw.byUserId === 'string' ? raw.byUserId : '', at: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString() });
+        setMembers([]);
+        setOpen(false);
+        setLoading(false);
+        return;
+      }
+      if (msg.action !== 'members' && msg.action !== 'membersUpdated') return;
       const list = Array.isArray(raw.members) ? (raw.members as unknown[]) : [];
       setMembers(list.map(asMember).filter(Boolean) as ChatMemberEntry[]);
       setOpen(raw.open === true);
@@ -76,6 +87,7 @@ export function useChatMembers(channel: string): UseChatMembersReturn {
     setMembers([]);
     setOpen(true);
     setLoading(true);
+    setRemoved(null);
     refresh();
   }, [channel, refresh]);
 
@@ -111,7 +123,7 @@ export function useChatMembers(channel: string): UseChatMembersReturn {
     [open, members],
   );
 
-  return { members, open, loading, addMembers, removeMember, refresh, isMember };
+  return { members, open, loading, addMembers, removeMember, refresh, isMember, removed };
 }
 
 function asMember(raw: unknown): ChatMemberEntry | null {

@@ -197,3 +197,61 @@ describe('ChatService membership', () => {
         expect(errorsTo(sentToClient, 'eve')[0].error.code).toBe('bad-request');
     });
 });
+
+describe('ChatService membership — removal evicts live connections', () => {
+    /** A router that actually delivers: subscribed clients get every channel frame, like the gateway's local router. */
+    function makeDeliveringRouter() {
+        const inbox: Record<string, any[]> = {};
+        const subs = new Map<string, Set<string>>();
+        const router: any = {
+            redisAvailable: false,
+            sendToClient: jest.fn((clientId: string, message: any) => { (inbox[clientId] ??= []).push(message); }),
+            sendToChannel: jest.fn(async (channel: string, message: any, excludeClientId?: string | null) => {
+                for (const c of subs.get(channel) ?? []) if (c !== excludeClientId) (inbox[c] ??= []).push(message);
+            }),
+            subscribeToChannel: jest.fn(async (clientId: string, channel: string) => { (subs.get(channel) ?? subs.set(channel, new Set()).get(channel)!).add(clientId); return true; }),
+            unsubscribeFromChannel: jest.fn(async (clientId: string, channel: string) => { subs.get(channel)?.delete(clientId); }),
+            getClientData: jest.fn(() => ({})),
+        };
+        return { router, inbox, subs };
+    }
+
+    it('B is told, unsubscribed, and hears nothing further; A still gets membersUpdated', async () => {
+        const { router, inbox, subs } = makeDeliveringRouter();
+        const { svc } = makeService(router);
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-bob'], history: { mode: 'all' } });
+        await svc.handleAction('eve', 'join', { channel: 'room:design' });
+        await svc.handleAction('bob', 'join', { channel: 'room:design' });
+        expect(subs.get('room:design')).toEqual(new Set(['eve', 'bob']));
+        inbox.eve = []; inbox.bob = [];
+
+        await svc.handleAction('eve', 'removeMember', { channel: 'room:design', userId: 'u-bob', name: 'Bob Martinez' });
+
+        const removed = inbox.bob.find((m) => m.type === 'chat' && m.action === 'removed');
+        expect(removed).toMatchObject({ type: 'chat', action: 'removed', channel: 'room:design', byUserId: 'u-eve' });
+        expect(typeof removed.timestamp).toBe('string');
+        expect(subs.get('room:design')).toEqual(new Set(['eve']));
+        // Bob did not get the "removed Bob" line nor the roster.
+        expect(inbox.bob.filter((m) => m.action === 'message' || m.action === 'membersUpdated')).toEqual([]);
+        // Eve got the line and the roster without Bob.
+        expect(inbox.eve.find((m) => m.action === 'message')?.message?.message).toBe('Eve Thompson removed Bob Martinez');
+        const roster = inbox.eve.find((m) => m.action === 'membersUpdated');
+        expect(roster.members.map((m: any) => m.userId)).toEqual(['u-eve']);
+
+        inbox.bob = [];
+        await svc.handleAction('eve', 'send', { channel: 'room:design', message: 'after bob' });
+        expect(inbox.bob).toEqual([]);
+        expect(inbox.eve.some((m) => m.action === 'message' && m.message?.message === 'after bob')).toBe(true);
+    });
+
+    it('leaving evicts your own connection too', async () => {
+        const { router, inbox, subs } = makeDeliveringRouter();
+        const { svc } = makeService(router);
+        await svc.handleAction('eve', 'addMembers', { channel: 'room:design', userIds: ['u-carol'], history: { mode: 'all' } });
+        await svc.handleAction('carol', 'join', { channel: 'room:design' });
+        inbox.carol = [];
+        await svc.handleAction('carol', 'removeMember', { channel: 'room:design', userId: 'u-carol' });
+        expect(inbox.carol.find((m) => m.action === 'removed')).toMatchObject({ byUserId: 'u-carol' });
+        expect(subs.get('room:design')?.has('carol')).toBe(false);
+    });
+});

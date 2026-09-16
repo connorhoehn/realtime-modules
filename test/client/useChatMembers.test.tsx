@@ -60,3 +60,17 @@ describe('useChatMembers', () => {
     expect(sent.pop()).toEqual({ service: 'chat', action: 'members', channel: 'room:design' });
   });
 });
+
+describe('useChatMembers removed', () => {
+  it('flags the removal for its channel and clears it on a channel change', () => {
+    const { emit, wrapper } = makeGatewayContext();
+    const { result, rerender } = renderHook(({ ch }: { ch: string }) => useChatMembers(ch), { wrapper, initialProps: { ch: 'room:design' } });
+    act(() => emit({ type: 'chat', action: 'removed', channel: 'room:other', byUserId: 'u-eve', timestamp: 't' } as never));
+    expect(result.current.removed).toBeNull();
+    act(() => emit({ type: 'chat', action: 'removed', channel: 'room:design', byUserId: 'u-eve', timestamp: 't1' } as never));
+    expect(result.current.removed).toEqual({ byUserId: 'u-eve', at: 't1' });
+    expect(result.current.isMember('anyone')).toBe(false);
+    rerender({ ch: 'room:next' });
+    expect(result.current.removed).toBeNull();
+  });
+});

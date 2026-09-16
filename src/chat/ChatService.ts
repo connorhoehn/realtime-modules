@@ -588,21 +588,25 @@ export class ChatService {
 
         metadata = validateMetadata(metadata, this.logger, this.maxMetadataKeys, this.maxMetadataSize);
 
-        if (!this.clientChannels.hasSubscription(clientId, channel)) {
-            this.sendError(clientId, 'You must join the channel before sending messages');
-            return;
-        }
-
         // Resolve identity ONCE — feeds both the dm-membership gate and
         // the userId stamp below.
         const identity = this._resolveIdentity(clientId);
 
+        // Membership before subscription: a person the owner just removed
+        // was also unsubscribed, and "you must join first" would send them
+        // off to join — which is refused — when the true answer is that they
+        // are no longer a member.
         // DM membership gate (v0.23.0) — send is checked independently of
         // join (subscriptions can predate enforcement being enabled).
         if (!this._checkDmMembership(clientId, channel, identity)) {
             return;
         }
         if (!(await this._checkMembership(clientId, channel, identity))) {
+            return;
+        }
+
+        if (!this.clientChannels.hasSubscription(clientId, channel)) {
+            this.sendError(clientId, 'You must join the channel before sending messages');
             return;
         }
 
@@ -985,6 +989,11 @@ export class ChatService {
         }
         try {
             await this.membershipStore.putMember({ ...target, removedAt: new Date().toISOString() });
+            // Their live connections go first: a removed person must not see
+            // the "removed" line or anything after it. The row alone only
+            // stopped their NEXT join; a connection already subscribed kept
+            // receiving every broadcast until it reconnected.
+            await this._evictFromChannel(channel, userId, actorId);
             const actorName = identity?.displayName ?? actorId;
             const targetName = typeof name === 'string' && name ? name.slice(0, 120) : userId;
             const text = userId === actorId ? `${actorName} left` : `${actorName} removed ${targetName}`;
@@ -1000,6 +1009,27 @@ export class ChatService {
         } catch (err: any) {
             this.logger.error(`removeMember failed on ${channel}:`, err && err.message);
             this.sendError(clientId, 'Failed to remove member', ErrorCodes.SERVICE_INTERNAL_ERROR, channel);
+        }
+    }
+
+    /**
+     * Unsubscribe every live connection of `userId` from `channel` and tell
+     * each one `{type:'chat', action:'removed', channel, byUserId}` so the
+     * client can say "You were removed from #x" and drop the thread. Runs on
+     * this node's subscriptions; a multi-node deployment relies on the
+     * membership row for the other nodes' next join/send (fail closed).
+     */
+    async _evictFromChannel(channel: string, userId: string, byUserId: string): Promise<void> {
+        const timestamp = new Date().toISOString();
+        for (const victim of this.clientChannels.getClientsFor(channel)) {
+            if (this._resolveIdentity(victim)?.userId !== userId) continue;
+            try {
+                if (this.messageRouter.unsubscribeFromChannel) await this.messageRouter.unsubscribeFromChannel(victim, channel);
+            } catch (err: any) {
+                this.logger.error(`unsubscribe on removal failed for ${victim} on ${channel}:`, err && err.message);
+            }
+            this.clientChannels.removeSubscription(victim, channel);
+            this.sendToClient(victim, { type: 'chat', action: 'removed', channel, byUserId, timestamp });
         }
     }
 

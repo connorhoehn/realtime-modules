@@ -22,6 +22,11 @@ export interface UseChatMembersReturn {
     refresh: () => void;
     /** True when `userId` may read the channel: it is open, or they are an active member. */
     isMember: (userId: string) => boolean;
+    /** Set when the gateway removed THIS connection from the channel (`{type:'chat', action:'removed'}`): who did it, and when. Cleared on a channel change. */
+    removed: {
+        byUserId: string;
+        at: string;
+    } | null;
 }
 export declare function useChatMembers(channel: string): UseChatMembersReturn;
 export default useChatMembers;

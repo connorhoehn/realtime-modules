@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.46.0",
+  "version": "0.46.1",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },

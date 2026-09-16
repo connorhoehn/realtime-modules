@@ -25,6 +25,8 @@ export declare class SubscriptionTracker extends Map<string, Set<string>> {
      */
     removeClient(clientId: string): string[];
     /** Snapshot of channels currently tracked for `clientId`. */
+    /** Every client subscribed to `channel` — the reverse of getChannels, walked, since the map is keyed by client. */
+    getClientsFor(channel: string): string[];
     getChannels(clientId: string): string[];
     /** Whether `clientId` is currently tracked as subscribed to `channel`. */
     hasSubscription(clientId: string, channel: string): boolean;
