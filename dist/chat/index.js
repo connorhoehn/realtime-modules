@@ -10,13 +10,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DM_CHANNEL_NAME_MAX_LENGTH = exports.DM_GROUP_CHANNEL_PREFIX = exports.DM_CHANNEL_PREFIX = exports.dmChannelMembers = exports.dmChatChannelFor = exports.isDmChatChannel = exports.SubscriptionTracker = exports.MAX_HISTORY_DAYS = exports.memberView = exports.parseHistoryChoice = exports.historyFloorFor = exports.MemoryChatMembershipStore = exports.InMemoryChatStore = exports.ChatManifest = exports.ChatService = void 0;
+exports.DM_CHANNEL_NAME_MAX_LENGTH = exports.DM_GROUP_CHANNEL_PREFIX = exports.DM_CHANNEL_PREFIX = exports.dmChannelMembers = exports.dmChatChannelFor = exports.isDmChatChannel = exports.SubscriptionTracker = exports.MAX_HISTORY_DAYS = exports.memberView = exports.parseHistoryChoice = exports.historyFloorFor = exports.MemoryChatMembershipStore = exports.MemoryChatReadReceiptStore = exports.InMemoryChatStore = exports.ChatManifest = exports.ChatService = void 0;
 const ChatService_1 = __importDefault(require("./ChatService"));
 exports.ChatService = ChatService_1.default;
 const manifest_1 = require("./manifest");
 Object.defineProperty(exports, "ChatManifest", { enumerable: true, get: function () { return manifest_1.ChatManifest; } });
 const ChatStore_1 = require("./ChatStore");
 Object.defineProperty(exports, "InMemoryChatStore", { enumerable: true, get: function () { return ChatStore_1.InMemoryChatStore; } });
+const ChatReadReceiptStore_1 = require("./ChatReadReceiptStore");
+Object.defineProperty(exports, "MemoryChatReadReceiptStore", { enumerable: true, get: function () { return ChatReadReceiptStore_1.MemoryChatReadReceiptStore; } });
 const ChatMembershipStore_1 = require("./ChatMembershipStore");
 Object.defineProperty(exports, "MemoryChatMembershipStore", { enumerable: true, get: function () { return ChatMembershipStore_1.MemoryChatMembershipStore; } });
 Object.defineProperty(exports, "historyFloorFor", { enumerable: true, get: function () { return ChatMembershipStore_1.historyFloorFor; } });

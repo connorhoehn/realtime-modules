@@ -26,6 +26,8 @@ export { useChat } from './useChat';
 export type { UseChatReturn } from './useChat';
 export { useChatMembers } from './useChatMembers';
 export type { UseChatMembersReturn, ChatMemberEntry, ChatHistoryChoice as ChatMembersHistoryChoice } from './useChatMembers';
+export { useChatReadReceipts } from './useChatReadReceipts';
+export type { UseChatReadReceiptsReturn, UseChatReadReceiptsOpts, ChatReadReceiptEntry, ChatReceiptsDisabledReason, ReadPosition as ChatReadPosition, } from './useChatReadReceipts';
 export { usePresence } from './usePresence';
 export type { UsePresenceReturn } from './usePresence';
 export { useReactions } from './useReactions';

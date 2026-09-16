@@ -15,6 +15,7 @@ import ChatService, {
 } from './ChatService';
 import { ChatManifest } from './manifest';
 import { InMemoryChatStore } from './ChatStore';
+import { MemoryChatReadReceiptStore } from './ChatReadReceiptStore';
 import { MemoryChatMembershipStore, historyFloorFor, parseHistoryChoice, memberView, MAX_HISTORY_DAYS } from './ChatMembershipStore';
 import { SubscriptionTracker } from './SubscriptionTracker';
 import {
@@ -30,6 +31,7 @@ export {
     ChatService,
     ChatManifest,
     InMemoryChatStore,
+    MemoryChatReadReceiptStore,
     MemoryChatMembershipStore,
     historyFloorFor,
     parseHistoryChoice,
@@ -47,6 +49,7 @@ export {
 
 export type { ChatServiceOpts, ChatMessageRouter, ChatLogger, ChatSenderIdentity, ChatIdentityResolver };
 export type { ChatStore } from './ChatStore';
+export type { ChatReadReceipt, ChatReadReceiptStore } from './ChatReadReceiptStore';
 export type { ChatMembershipStore, ChatMember, ChatMemberRole, ChatMemberView, ChatHistoryChoice } from './ChatMembershipStore';
 export type { ChatMessage, ChatHistoryQuery, ChatMessagePatch } from './types';
 

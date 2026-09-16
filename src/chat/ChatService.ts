@@ -34,12 +34,24 @@
 // Everything else — handleAction dispatch, channel-cache LRU,
 // subscription tracking, DDB fallback on history reads, periodic
 // channel-cache sweep, shutdown — is preserved verbatim.
+//
+// WIRE SURFACE (inbound action → outbound frames):
+//   join | leave | send | history | typing | members | addMembers |
+//   removeMember | edit | delete | read | receipts
+// Read receipts are the last two; see the "Read receipts" section below for
+// the model (a per-member cursor, not a row per message) and the rules on
+// which channels keep them.
 
 import { LRUCache } from 'lru-cache';
 import { PeriodicSweep } from 'distributed-core';
 
 import { SubscriptionTracker } from './SubscriptionTracker';
 import { InMemoryChatStore, type ChatStore } from './ChatStore';
+import {
+    MemoryChatReadReceiptStore,
+    type ChatReadReceipt,
+    type ChatReadReceiptStore,
+} from './ChatReadReceiptStore';
 import { isDmChatChannel, dmChannelMembers } from './dmChannels';
 import {
     historyFloorFor,
@@ -62,6 +74,20 @@ const DEFAULT_HISTORY_LIMIT = 50;
 const DEFAULT_JOIN_HISTORY_LIMIT = 20;
 const DEFAULT_MAX_MESSAGE_LENGTH = 1000;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
+/**
+ * Above this many people in a channel, read receipts are off.
+ *
+ * Teams draws the same line: receipts in chats, nothing in a channel with a
+ * department in it. Two reasons, and the second is the one that matters.
+ * The cheap one is volume — every person reading is a write and a broadcast,
+ * so a 500-person channel turns one message into 500 fan-outs of no interest
+ * to anyone. The real one is that a receipt tells people when you looked. In
+ * a chat with three colleagues that is a courtesy; in a channel of two
+ * hundred it is a log of your attention published to two hundred people who
+ * did not ask for it and whom you cannot see. 20 is Teams' number and a
+ * defensible one: it is about where a chat stops being a conversation.
+ */
+const DEFAULT_RECEIPTS_MAX_MEMBERS = 20;
 
 // ---- Inlined error helpers (gateway/utils/error-codes.ts replacement) -----
 
@@ -155,6 +181,24 @@ export interface ChatServiceOpts {
      */
     membershipStore?: ChatMembershipStore;
     /**
+     * Where read cursors live. Three states on purpose:
+     *
+     *   - absent  → `MemoryChatReadReceiptStore`, same zero-config default
+     *     `chatStore` takes. Receipts work out of the box and die with the
+     *     process. On a multi-node gateway that means the LIVE receipt still
+     *     fans out (it goes through the router like any broadcast) but the
+     *     replay a client gets when it asks is only this node's — wire a
+     *     shared adapter in production.
+     *   - a store → durable receipts.
+     *   - `null`  → the feature is off: `read` is ignored and `receipts`
+     *     answers `{enabled:false, reason:'disabled'}`.
+     *
+     * Note that a store alone does not switch receipts on for a channel —
+     * see `receiptsMaxMembers` and `_receiptsAudience`. Receipts are only
+     * kept where the audience is nameable and small.
+     */
+    readReceiptStore?: ChatReadReceiptStore | null;
+    /**
      * Optional authz hook. Returns true if the client is permitted to
      * access the channel; false (after sending its own error message)
      * otherwise. Defaults to permissive — gateway swaps in a wrapper over
@@ -215,6 +259,14 @@ export interface ChatServiceOpts {
      */
     onMessageChanged?: (info: { channel: string; kind: 'edited' | 'deleted'; message: ChatMessage }) => void;
     /**
+     * Somebody's read cursor moved forward. Fires after the store write and
+     * the broadcast, fire-and-forget like the others — an exception is logged
+     * and never fails the read. This is the seam a host uses to keep its own
+     * unread state honest (a conversations index, a badge count); the service
+     * itself keeps no unread counts.
+     */
+    onReadReceipt?: (info: { channel: string; receipt: ChatReadReceipt }) => void;
+    /**
      * Fires when an identified user joins a NON-dm channel. The host records
      * it (a "who has ever been here" index) so an OPEN channel — one with no
      * membership rows — still has an audience for `onChannelMessage` when
@@ -238,6 +290,8 @@ export interface ChatServiceOpts {
     defaultHistoryLimit?: number;
     joinHistoryLimit?: number;
     cacheCleanupIntervalMs?: number;
+    /** Largest channel that keeps read receipts. See DEFAULT_RECEIPTS_MAX_MEMBERS. */
+    receiptsMaxMembers?: number;
 }
 
 // ---- Helpers --------------------------------------------------------------
@@ -325,10 +379,12 @@ export class ChatService {
     authz: (clientId: string, channel: string, service: ChatService) => boolean;
     identityResolver: ChatIdentityResolver | null;
     membershipStore: ChatMembershipStore | null;
+    readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
     onDmMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
     onChannelMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
     onMessageChanged: ((info: { channel: string; kind: 'edited' | 'deleted'; message: ChatMessage }) => void) | null;
+    onReadReceipt: ((info: { channel: string; receipt: ChatReadReceipt }) => void) | null;
     onChannelJoin: ((info: { channel: string; userId: string }) => void) | null;
     channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
 
@@ -343,6 +399,7 @@ export class ChatService {
     readonly defaultHistoryLimit: number;
     readonly joinHistoryLimit: number;
     readonly cacheCleanupIntervalMs: number;
+    readonly receiptsMaxMembers: number;
 
     isDistributed: boolean;
     private readonly _cleanupSweep: PeriodicSweep;
@@ -360,6 +417,11 @@ export class ChatService {
         this.metricsCollector = opts.metricsCollector ?? null;
         this.chatStore = opts.chatStore ?? new InMemoryChatStore();
         this.membershipStore = opts.membershipStore ?? null;
+        // `undefined` ⇒ zero-config in-memory (as chatStore does); an
+        // explicit `null` ⇒ receipts off.
+        this.readReceiptStore = opts.readReceiptStore === undefined
+            ? new MemoryChatReadReceiptStore()
+            : opts.readReceiptStore;
         this.authz = opts.authz ?? (() => true);
         this.identityResolver = opts.identityResolver ?? null;
         // DM enforcement defaults ON exactly when an identity source exists;
@@ -368,6 +430,7 @@ export class ChatService {
         this.onDmMessage = opts.onDmMessage ?? null;
         this.onChannelMessage = opts.onChannelMessage ?? null;
         this.onMessageChanged = opts.onMessageChanged ?? null;
+        this.onReadReceipt = opts.onReadReceipt ?? null;
         this.onChannelJoin = opts.onChannelJoin ?? null;
         this.channelAudience = opts.channelAudience ?? null;
 
@@ -379,6 +442,7 @@ export class ChatService {
         this.defaultHistoryLimit = opts.defaultHistoryLimit ?? DEFAULT_HISTORY_LIMIT;
         this.joinHistoryLimit = opts.joinHistoryLimit ?? DEFAULT_JOIN_HISTORY_LIMIT;
         this.cacheCleanupIntervalMs = opts.cacheCleanupIntervalMs ?? DEFAULT_CACHE_CLEANUP_INTERVAL_MS;
+        this.receiptsMaxMembers = opts.receiptsMaxMembers ?? DEFAULT_RECEIPTS_MAX_MEMBERS;
 
         // Local state management
         this.clientChannels = new SubscriptionTracker();
@@ -435,6 +499,12 @@ export class ChatService {
                     return;
                 case 'delete':
                     await this.handleDeleteMessage(clientId, data);
+                    return;
+                case 'read':
+                    await this.handleReadReceipt(clientId, data);
+                    return;
+                case 'receipts':
+                    await this.handleReceipts(clientId, data);
                     return;
                 default:
                     this.sendError(clientId, `Unknown chat action: ${action}`);
@@ -1183,6 +1253,10 @@ export class ChatService {
                 });
             }
             await this._broadcastMembers(channel, clientId);
+            // Adding people moves the receipts line: the first add closes an
+            // open channel and turns them ON, and a big enough add takes the
+            // channel over the cap and turns them off again.
+            await this._broadcastReceipts(channel, clientId);
         } catch (err: any) {
             this.logger.error(`addMembers failed on ${channel}:`, err && err.message);
             this.sendError(clientId, 'Failed to add members', ErrorCodes.SERVICE_INTERNAL_ERROR, channel);
@@ -1227,6 +1301,12 @@ export class ChatService {
             // stopped their NEXT join; a connection already subscribed kept
             // receiving every broadcast until it reconnected.
             await this._evictFromChannel(channel, userId, actorId);
+            // Their cursor goes with them: a receipt is a statement about a
+            // member of the channel, and someone who has left should not go
+            // on telling the room when they last looked at it. (A socket
+            // `leave` is NOT this — that is a closed tab, and the cursor
+            // survives it.)
+            await this._forgetReceipt(channel, userId);
             const actorName = identity?.displayName ?? actorId;
             const targetName = typeof name === 'string' && name ? name.slice(0, 120) : userId;
             const text = userId === actorId ? `${actorName} left` : `${actorName} removed ${targetName}`;
@@ -1239,6 +1319,7 @@ export class ChatService {
                 names: { [userId]: targetName },
             });
             await this._broadcastMembers(channel, clientId);
+            await this._broadcastReceipts(channel, clientId);
         } catch (err: any) {
             this.logger.error(`removeMember failed on ${channel}:`, err && err.message);
             this.sendError(clientId, 'Failed to remove member', ErrorCodes.SERVICE_INTERNAL_ERROR, channel);
@@ -1314,6 +1395,270 @@ export class ChatService {
         const frame = { type: 'chat', action: 'membersUpdated', channel, open, members, timestamp: new Date().toISOString() };
         this.sendToClient(requesterClientId, frame);
         await this.messageRouter.sendToChannel(channel, frame, requesterClientId);
+    }
+
+    // ---- Read receipts ---------------------------------------------------
+    //
+    // A receipt is a CURSOR: "this person has seen everything up to time T".
+    // See ChatReadReceiptStore for why that rather than a row per
+    // (message, reader).
+    //
+    // Two things follow from the cursor being a TIME and not a message id,
+    // and both are the answer to "what happens when the message a receipt
+    // points at changes":
+    //
+    //   - An EDIT changes nothing. The cursor does not name the message, so
+    //     there is no dangling pointer to repair, and nobody is marked
+    //     unread by it: an edit is a change to what was said, not new
+    //     traffic (the same judgement `onMessageChanged` already records for
+    //     the conversations index). Teams behaves the same way — an edited
+    //     message does not come back unread.
+    //   - A DELETE changes nothing either, for the same reason. The soft
+    //     delete keeps the record's timestamp anyway, and even a hard delete
+    //     would leave "read through 09:06" true. Compare a per-message
+    //     receipt table, where every delete orphans N rows that must be
+    //     swept or filtered forever.
+    //
+    // Leaving is the one event that DOES clear a receipt — see
+    // `_forgetReceipt`, called from `handleRemoveMember`. Note the
+    // distinction from `handleLeaveChannel`, which is a socket unsubscribe
+    // (a closed tab, a navigation) and must NOT clear anything: that person
+    // is still a member and still read what they read.
+
+    /**
+     * May this channel keep read receipts, and who is the audience if so?
+     *
+     * Receipts are kept only where the roster is NAMEABLE and SMALL:
+     *
+     *   - a member-addressed dm (`chat:dm:a:b`) — two people, both in the
+     *     channel id;
+     *   - a closed channel with at most `receiptsMaxMembers` active members.
+     *
+     * Everything else is off, and each `off` says why so a client can
+     * explain itself rather than silently rendering nothing:
+     *
+     *   - `disabled` — no store wired.
+     *   - `open-channel` — a channel with no membership rows has no roster
+     *     at all. "Seen by 3" against an unknown denominator means nothing,
+     *     the audience is unbounded, and this is exactly the Teams line:
+     *     receipts in chats, none in a channel anyone can walk into. The
+     *     way to turn them on is to add members, which closes the channel.
+     *   - `unknown-roster` — a hashed group dm (`chat:dmg:`). It IS a small
+     *     private chat, but its members are not recoverable from the name,
+     *     so the size cap cannot be enforced here. Erring towards not
+     *     telling people who looked.
+     *   - `too-many-members` — over the cap. Existing rows are left alone
+     *     rather than deleted (nothing is served while the channel is over
+     *     the line, and removing someone puts it honestly back).
+     */
+    async _receiptsAudience(channel: string): Promise<
+        { enabled: true; members: string[] }
+        | { enabled: false; members: null; reason: 'disabled' | 'open-channel' | 'unknown-roster' | 'too-many-members' }
+    > {
+        if (!this.readReceiptStore) return { enabled: false, members: null, reason: 'disabled' };
+        if (isDmChatChannel(channel)) {
+            const ids = dmChannelMembers(channel);
+            if (!ids) return { enabled: false, members: null, reason: 'unknown-roster' };
+            if (ids.length > this.receiptsMaxMembers) return { enabled: false, members: null, reason: 'too-many-members' };
+            return { enabled: true, members: ids };
+        }
+        const rows = await this._membershipRows(channel);
+        const active = rows.filter((r) => r.removedAt == null).map((r) => r.userId);
+        if (active.length === 0) return { enabled: false, members: null, reason: 'open-channel' };
+        if (active.length > this.receiptsMaxMembers) return { enabled: false, members: null, reason: 'too-many-members' };
+        return { enabled: true, members: active };
+    }
+
+    /**
+     * The channel's cursors, newest reader first, filtered to people who are
+     * still in the channel. The filter is belt-and-braces over
+     * `_forgetReceipt` — a row written before a crash, or by another node
+     * mid-removal, never outlives the membership it describes on the wire.
+     */
+    async listReadReceipts(channel: string): Promise<ChatReadReceipt[]> {
+        const audience = await this._receiptsAudience(channel);
+        if (!audience.enabled || !this.readReceiptStore) return [];
+        let rows: ChatReadReceipt[];
+        try {
+            rows = await this.readReceiptStore.listReceipts(channel);
+        } catch (err: any) {
+            this.logger.error('ChatReadReceiptStore list failed:', err && err.message);
+            return [];
+        }
+        const allowed = new Set(audience.members);
+        return rows
+            .filter((r) => allowed.has(r.userId))
+            .sort((a, b) => (a.readAt === b.readAt ? (a.userId < b.userId ? -1 : 1) : a.readAt < b.readAt ? 1 : -1));
+    }
+
+    /**
+     * `{action:'read', channel, messageId?, at?}` — "I have read up to here."
+     *
+     * The cursor the server stores is resolved in this order: the timestamp
+     * of `messageId` when it names a message we can still find, else `at`
+     * when it is a valid ISO time, else now. It is clamped to now (a client
+     * cannot claim to have read the future) and the store refuses to move it
+     * backwards, so a scroll upwards, a slow duplicate frame or a second tab
+     * on an older view cannot un-read the channel. A cursor that does not
+     * move broadcasts nothing — which is what keeps a chatty client from
+     * turning a quiet channel into a fan-out storm.
+     *
+     * The membership gates run first and answer for themselves, so a
+     * non-member gets `not-a-member` rather than a silent no-op. Unlike
+     * `typing`, this does NOT require a prior `join` on the connection: the
+     * gate that matters is membership, and a receipts hook mounted beside
+     * the transcript may send its first `read` before the transcript's join
+     * ack has come back.
+     */
+    async handleReadReceipt(
+        clientId: string,
+        { channel, messageId, at }: { channel: string; messageId?: unknown; at?: unknown },
+    ): Promise<void> {
+        if (!channel || typeof channel !== 'string') {
+            this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        if (!this._checkDmMembership(clientId, channel, identity)) return;
+        if (!(await this._checkMembership(clientId, channel, identity))) return;
+
+        const audience = await this._receiptsAudience(channel);
+        if (!audience.enabled || !this.readReceiptStore) {
+            // Not an error frame: a client scrolling a big channel would get
+            // one on every frame, and the `receipts` reply already tells it
+            // (with a reason) that receipts are off here.
+            this.logger.debug(`[chat] read ignored on ${channel}: ${audience.enabled ? 'no store' : audience.reason}`);
+            return;
+        }
+        const userId = identity?.userId;
+        if (!userId || !audience.members.includes(userId)) {
+            this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
+            return;
+        }
+
+        const now = new Date();
+        const namedMessage = typeof messageId === 'string' && messageId.length > 0;
+        const fallback = typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : null;
+        let readAt: string | null = null;
+        if (namedMessage) {
+            const target = await this._findMessage(channel, messageId as string);
+            if (target) readAt = target.timestamp;
+        }
+        if (readAt === null) readAt = fallback;
+        if (readAt === null) {
+            if (namedMessage) {
+                // They named a message nobody can find and offered no usable
+                // fallback time. Stamping `now` would silently mark the
+                // channel read to this instant, which is the one wrong
+                // answer here.
+                this.sendError(clientId, 'No such message', ErrorCodes.CHAT_NOT_FOUND, channel);
+                return;
+            }
+            readAt = now.toISOString();
+        }
+        // No cursors in the future, however the clock on the client is set.
+        if (Date.parse(readAt) > now.getTime()) readAt = now.toISOString();
+
+        const receipt: ChatReadReceipt = {
+            channel,
+            userId,
+            readAt,
+            updatedAt: now.toISOString(),
+            ...(identity?.displayName ? { displayName: identity.displayName } : {}),
+        };
+        let stored: ChatReadReceipt | null;
+        try {
+            stored = await this.readReceiptStore.advance(receipt);
+        } catch (err: any) {
+            this.logger.error('ChatReadReceiptStore advance failed:', err && err.message);
+            return;
+        }
+        if (!stored) return; // already at or past this point — nothing happened
+
+        // To the whole channel INCLUDING the reader, the way an edit goes
+        // out: their other tabs need the accepted (clamped, monotonic) value
+        // rather than whatever each of them believed it sent.
+        await this._broadcastFrame(channel, {
+            type: 'chat',
+            action: 'readReceipt',
+            channel,
+            userId: stored.userId,
+            ...(stored.displayName ? { displayName: stored.displayName } : {}),
+            readAt: stored.readAt,
+            updatedAt: stored.updatedAt,
+            timestamp: stored.updatedAt,
+        }, clientId);
+
+        if (this.onReadReceipt) {
+            try {
+                this.onReadReceipt({ channel, receipt: stored });
+            } catch (hookErr) {
+                this.logger.error('onReadReceipt hook threw (ignored):', hookErr);
+            }
+        }
+    }
+
+    /**
+     * `{action:'receipts', channel}` → the channel's cursors, to the sender.
+     * Always answers, including when receipts are off here — `enabled:false`
+     * with a reason is what lets a client stop sending `read` and say why
+     * instead of showing an empty list that looks like "nobody has read it".
+     */
+    async handleReceipts(clientId: string, { channel }: { channel: string }): Promise<void> {
+        if (!channel || typeof channel !== 'string') {
+            this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        if (!this._checkDmMembership(clientId, channel, identity)) return;
+        if (!(await this._checkMembership(clientId, channel, identity))) return;
+        this.sendToClient(clientId, await this._receiptsFrame(channel));
+    }
+
+    /** The full-state receipts frame — the reply to `receipts` and the broadcast after a roster change. */
+    async _receiptsFrame(channel: string): Promise<Record<string, unknown>> {
+        const audience = await this._receiptsAudience(channel);
+        return {
+            type: 'chat',
+            action: 'receipts',
+            channel,
+            enabled: audience.enabled,
+            ...(audience.enabled ? {} : { reason: audience.reason }),
+            limit: this.receiptsMaxMembers,
+            receipts: audience.enabled
+                ? (await this.listReadReceipts(channel)).map((r) => ({
+                    userId: r.userId,
+                    ...(r.displayName ? { displayName: r.displayName } : {}),
+                    readAt: r.readAt,
+                    updatedAt: r.updatedAt,
+                }))
+                : [],
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    /**
+     * The roster changed, so the receipts a client holds may be wrong in two
+     * ways at once — a person is gone, and the channel may have crossed the
+     * size line in either direction. Full state to everyone, like
+     * `_broadcastMembers` beside it, rather than an incremental frame per
+     * difference.
+     */
+    async _broadcastReceipts(channel: string, requesterClientId: string): Promise<void> {
+        if (!this.readReceiptStore) return;
+        const frame = await this._receiptsFrame(channel);
+        this.sendToClient(requesterClientId, frame);
+        await this.messageRouter.sendToChannel(channel, frame, requesterClientId);
+    }
+
+    /** Someone left or was removed: their cursor goes with them. Never fails the removal. */
+    async _forgetReceipt(channel: string, userId: string): Promise<void> {
+        if (!this.readReceiptStore) return;
+        try {
+            await this.readReceiptStore.deleteReceipt(channel, userId);
+        } catch (err: any) {
+            this.logger.error('ChatReadReceiptStore delete failed:', err && err.message);
+        }
     }
 
     async _persistMessage(messageData: ChatMessage): Promise<void> {
