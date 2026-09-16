@@ -52,13 +52,36 @@
 // NOTE: gateway-side ReactionService must forward the targetId field from inbound
 // frames to all subscribers for round-trip to work. The field passes through
 // opaquely in the current implementation.
+//
+// Provider-optional socket (see UseReactionsOpts.socket): pass send/onMessage
+// explicitly and the hook never touches GatewaySocketProvider context, so it
+// can render in a subtree with no provider mounted (in-call chat, doc-panel
+// chat, unit tests). Omit it and behavior is unchanged — the hook reads
+// context as before. Omit both a socket AND a provider and the hook goes
+// inert (empty reactions, no-op react/unreact/toggle) instead of throwing.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useReactions = useReactions;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
 const MAX_REACTIONS = 50;
+// Stable module-scope fallbacks for the "no socket, no provider" case.
+// Defined once so their identity never changes across renders — the
+// subscribe/unsubscribe effect below depends on `send`'s identity, and a
+// fresh closure on every render would re-fire that effect (and its
+// setAllReactions([]) call) forever.
+function noopSend() { }
+function inertOnMessage() {
+    return () => { };
+}
 function useReactions(channel, opts) {
-    const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    // Unconditional, non-throwing context read — required by rules of hooks
+    // even when opts.socket is given and the context value ends up unused.
+    const gatewayCtx = (0, GatewaySocketProvider_1.useGatewayOptional)();
+    // Explicit socket wins over context. Neither present → inert (no-op send,
+    // onMessage that never fires) instead of throwing, so a chat panel with no
+    // gateway in its tree renders without reactions rather than crashing.
+    const send = opts?.socket?.send ?? gatewayCtx?.send ?? noopSend;
+    const onMessage = opts?.socket?.onMessage ?? gatewayCtx?.onMessage ?? inertOnMessage;
     // allReactions holds every reaction for the channel (unfiltered).
     const [allReactions, setAllReactions] = (0, react_1.useState)([]);
     const channelRef = (0, react_1.useRef)(channel);

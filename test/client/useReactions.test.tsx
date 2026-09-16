@@ -36,6 +36,11 @@
 //   - Returns filtered subset of full list
 //   - Returns [] for unknown targetId
 //   - Updates reactively as new reactions arrive
+//
+// Provider-optional socket (opts.socket):
+//   - Explicit socket drives subscribe/send/receive with NO provider mounted
+//   - No socket and no provider: inert (empty reactions, no-op react/unreact/toggle), never throws
+//   - Provider path is unaffected when opts.socket is omitted (see suites above)
 
 import React from 'react';
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -772,5 +777,97 @@ describe('useReactions durable path', () => {
     act(() => { emit(storedFrame('ch-1', [stored()])); });
     act(() => { emit(removedFrame('ch-2', { targetId: 'm1', emoji: '\u{1F44D}', userId: 'u-hank' })); });
     expect(result.current.reactions).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — provider-optional socket (opts.socket)
+// ---------------------------------------------------------------------------
+
+/** Standalone send/onMessage handles, independent of GatewayContext — mirrors
+ * what a caller (e.g. a chat panel with no GatewaySocketProvider ancestor)
+ * would hold itself and pass as opts.socket. */
+function makeStandaloneSocket() {
+  const handlers = new Set<(msg: GatewayMessage) => void>();
+  const sent: Record<string, unknown>[] = [];
+  const socket = {
+    send: (msg: Record<string, unknown>) => { sent.push(msg); },
+    onMessage: (handler: (msg: GatewayMessage) => void) => {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+  };
+  const emit = (msg: GatewayMessage) => {
+    for (const h of handlers) h(msg);
+  };
+  return { socket, emit, sent };
+}
+
+describe('useReactions — provider-optional socket', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('drives subscribe/send/receive via an explicit socket with NO provider mounted', () => {
+    const { socket, emit, sent } = makeStandaloneSocket();
+    // No `wrapper` option — no GatewayContext.Provider anywhere in the tree.
+    const { result } = renderHook(() => useReactions('ch-1', { socket }));
+
+    // Subscribed on mount, over the explicit socket (not context — there is none).
+    expect(sent.some((f) => f.service === 'reaction' && f.action === 'subscribe' && f.channel === 'ch-1')).toBe(true);
+
+    act(() => {
+      result.current.react('\u{1F525}');
+    });
+    expect(sentReactions(sent)).toHaveLength(1);
+    expect(sentReactions(sent)[0]).toMatchObject({ channel: 'ch-1', emoji: '\u{1F525}' });
+
+    act(() => {
+      emit(makeReactionFrame('ch-1', { id: 'r-1', emoji: '\u{1F44D}' }));
+    });
+    expect(result.current.reactions).toHaveLength(1);
+    expect(result.current.reactions[0]!.emoji).toBe('\u{1F44D}');
+  });
+
+  it('unsubscribes over the explicit socket on unmount', () => {
+    const { socket, sent } = makeStandaloneSocket();
+    const { unmount } = renderHook(() => useReactions('ch-1', { socket }));
+    unmount();
+    expect(sent.some((f) => f.service === 'reaction' && f.action === 'unsubscribe' && f.channel === 'ch-1')).toBe(true);
+  });
+
+  it('with no socket and no provider: renders inert, never throws', () => {
+    expect(() => {
+      renderHook(() => useReactions('ch-1'));
+    }).not.toThrow();
+
+    const { result } = renderHook(() => useReactions('ch-1'));
+    expect(result.current.reactions).toEqual([]);
+    expect(result.current.reactionsFor('m1')).toEqual([]);
+
+    // react/unreact/toggle are no-ops — no socket to send on, no throw either.
+    expect(() => {
+      act(() => {
+        result.current.react('\u{1F525}');
+        result.current.unreact('\u{1F525}');
+        result.current.toggle('\u{1F525}', { targetId: 'm1', userId: 'u-1' });
+      });
+    }).not.toThrow();
+    expect(result.current.reactions).toEqual([]);
+  });
+
+  it('the explicit socket, not context, wins when both are somehow reachable', () => {
+    const { ctx, sent: ctxSent } = makeGatewayContext();
+    const { socket, sent: socketSent } = makeStandaloneSocket();
+    const { result } = renderHook(() => useReactions('ch-1', { socket }), {
+      wrapper: makeWrapper(ctx),
+    });
+
+    act(() => {
+      result.current.react('\u{1F389}');
+    });
+
+    expect(sentReactions(socketSent)).toHaveLength(1);
+    expect(sentReactions(ctxSent)).toHaveLength(0);
   });
 });

@@ -51,9 +51,16 @@
 // NOTE: gateway-side ReactionService must forward the targetId field from inbound
 // frames to all subscribers for round-trip to work. The field passes through
 // opaquely in the current implementation.
+//
+// Provider-optional socket (see UseReactionsOpts.socket): pass send/onMessage
+// explicitly and the hook never touches GatewaySocketProvider context, so it
+// can render in a subtree with no provider mounted (in-call chat, doc-panel
+// chat, unit tests). Omit it and behavior is unchanged — the hook reads
+// context as before. Omit both a socket AND a provider and the hook goes
+// inert (empty reactions, no-op react/unreact/toggle) instead of throwing.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useGateway } from './GatewaySocketProvider';
+import { useGatewayOptional } from './GatewaySocketProvider';
 import type { Reaction } from './types';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
@@ -64,6 +71,23 @@ const MAX_REACTIONS = 50;
 export interface UseReactionsOpts {
   /** Filter reactions to a specific entity (messageId, articleId, etc.). */
   targetId?: string;
+  /**
+   * Send/receive handles, when the caller holds the socket itself. Given,
+   * the hook never touches GatewaySocketProvider context — which is what
+   * lets it render in a subtree that has no provider (a chat panel inside a
+   * video call or a document, a component test with no provider wrapper).
+   *
+   * Shape matches what useGateway() returns for `send`/`onMessage`. When
+   * omitted, the hook reads GatewaySocketProvider context exactly as before
+   * (throws if there is no provider — unchanged for every existing caller).
+   * When BOTH this and a provider are absent, the hook is inert: empty
+   * reactions, no-op react/unreact/toggle. A chat panel with no gateway
+   * anywhere in its tree should render without reactions, not crash.
+   */
+  socket?: {
+    send: (message: Record<string, unknown>) => void;
+    onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
+  };
 }
 
 export interface UnreactOpts {
@@ -100,8 +124,25 @@ export interface UseReactionsReturn {
   toggle: (emoji: string, opts?: UnreactOpts & { userId: string }) => void;
 }
 
+// Stable module-scope fallbacks for the "no socket, no provider" case.
+// Defined once so their identity never changes across renders — the
+// subscribe/unsubscribe effect below depends on `send`'s identity, and a
+// fresh closure on every render would re-fire that effect (and its
+// setAllReactions([]) call) forever.
+function noopSend(): void {}
+function inertOnMessage(): () => void {
+  return () => {};
+}
+
 export function useReactions(channel: string, opts?: UseReactionsOpts): UseReactionsReturn {
-  const { send, onMessage } = useGateway();
+  // Unconditional, non-throwing context read — required by rules of hooks
+  // even when opts.socket is given and the context value ends up unused.
+  const gatewayCtx = useGatewayOptional();
+  // Explicit socket wins over context. Neither present → inert (no-op send,
+  // onMessage that never fires) instead of throwing, so a chat panel with no
+  // gateway in its tree renders without reactions rather than crashing.
+  const send = opts?.socket?.send ?? gatewayCtx?.send ?? noopSend;
+  const onMessage = opts?.socket?.onMessage ?? gatewayCtx?.onMessage ?? inertOnMessage;
   // allReactions holds every reaction for the channel (unfiltered).
   const [allReactions, setAllReactions] = useState<Reaction[]>([]);
 

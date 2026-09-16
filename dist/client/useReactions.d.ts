@@ -1,7 +1,25 @@
 import type { Reaction } from './types';
+import type { GatewayMessage } from './types';
 export interface UseReactionsOpts {
     /** Filter reactions to a specific entity (messageId, articleId, etc.). */
     targetId?: string;
+    /**
+     * Send/receive handles, when the caller holds the socket itself. Given,
+     * the hook never touches GatewaySocketProvider context — which is what
+     * lets it render in a subtree that has no provider (a chat panel inside a
+     * video call or a document, a component test with no provider wrapper).
+     *
+     * Shape matches what useGateway() returns for `send`/`onMessage`. When
+     * omitted, the hook reads GatewaySocketProvider context exactly as before
+     * (throws if there is no provider — unchanged for every existing caller).
+     * When BOTH this and a provider are absent, the hook is inert: empty
+     * reactions, no-op react/unreact/toggle. A chat panel with no gateway
+     * anywhere in its tree should render without reactions, not crash.
+     */
+    socket?: {
+        send: (message: Record<string, unknown>) => void;
+        onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
+    };
 }
 export interface UnreactOpts {
     /** Override the hook-level targetId for this single call. */
