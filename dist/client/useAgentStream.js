@@ -68,6 +68,8 @@ function useAgentStream(opts) {
     const [sessionId, setSessionIdState] = (0, react_1.useState)(null);
     const [isStreaming, setIsStreaming] = (0, react_1.useState)(false);
     const [error, setError] = (0, react_1.useState)(null);
+    const [steps, setSteps] = (0, react_1.useState)([]);
+    const [reasoning, setReasoning] = (0, react_1.useState)('');
     // Keep latest sessionId in a ref so `sendMessage` reads the freshest value
     // (its memoized closure would otherwise see the initial null and create a
     // brand-new session on every send).
@@ -101,6 +103,8 @@ function useAgentStream(opts) {
                     setSessionId(event.sessionId);
                 }
                 setStreamingText('');
+                setSteps([]);
+                setReasoning('');
                 break;
             }
             case 'RUN_FINISHED': {
@@ -242,10 +246,55 @@ function useAgentStream(opts) {
                 }
                 break;
             }
-            // All other event types (STATE_*, REASONING_*, ACTIVITY_*, RAW, META_EVENT,
-            // STEP_STARTED/FINISHED, TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK) are ignored
-            // for now — consumers that need them can subscribe via a follow-up
-            // option without breaking existing callers.
+            case 'STEP_STARTED': {
+                const stepName = event.stepName;
+                if (typeof stepName !== 'string')
+                    break;
+                setSteps((prev) => [
+                    ...prev,
+                    { name: stepName, startedAt: Date.now(), status: 'running' },
+                ]);
+                break;
+            }
+            case 'STEP_FINISHED': {
+                const stepName = event.stepName;
+                if (typeof stepName !== 'string')
+                    break;
+                setSteps((prev) => {
+                    // Close the most recent still-running step with this name (a
+                    // name can repeat across retries within one run).
+                    const idx = [...prev]
+                        .map((s, i) => ({ s, i }))
+                        .reverse()
+                        .find(({ s }) => s.name === stepName && s.status === 'running')?.i;
+                    if (idx === undefined)
+                        return prev;
+                    const next = prev.slice();
+                    next[idx] = { ...next[idx], finishedAt: Date.now(), status: 'done' };
+                    return next;
+                });
+                break;
+            }
+            case 'REASONING_MESSAGE_CONTENT': {
+                // Chain-of-thought text delta. `delta` is required on this event.
+                const delta = event.delta;
+                if (typeof delta === 'string' && delta) {
+                    setReasoning((prev) => prev + delta);
+                }
+                break;
+            }
+            case 'REASONING_MESSAGE_CHUNK': {
+                // Compact-transport sibling of REASONING_MESSAGE_CONTENT; `delta` is optional.
+                const delta = event.delta;
+                if (typeof delta === 'string' && delta) {
+                    setReasoning((prev) => prev + delta);
+                }
+                break;
+            }
+            // All other event types (STATE_*, ACTIVITY_*, RAW, META_EVENT,
+            // REASONING_START/END/ENCRYPTED_VALUE, TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK)
+            // are ignored for now — consumers that need them can subscribe via a
+            // follow-up option without breaking existing callers.
             default:
                 break;
         }
@@ -264,6 +313,8 @@ function useAgentStream(opts) {
         setStreamingText('');
         setActiveToolCalls([]);
         setError(null);
+        setSteps([]);
+        setReasoning('');
         currentMsgRef.current = { id: '', content: '', toolCalls: [] };
         const controller = new AbortController();
         abortRef.current = controller;
@@ -359,6 +410,8 @@ function useAgentStream(opts) {
         setStreamingText('');
         setActiveToolCalls([]);
         setError(null);
+        setSteps([]);
+        setReasoning('');
         setIsStreaming(false);
         setSessionId(null);
     }, [setSessionId]);
@@ -370,6 +423,8 @@ function useAgentStream(opts) {
         setStreamingText('');
         setActiveToolCalls([]);
         setError(null);
+        setSteps([]);
+        setReasoning('');
         setIsStreaming(false);
         setSessionId(sid);
         const fetcher = optsRef.current.historyFetch;
@@ -402,6 +457,8 @@ function useAgentStream(opts) {
         sessionId,
         isStreaming,
         error,
+        steps,
+        reasoning,
         sendMessage,
         reset,
         loadHistory,

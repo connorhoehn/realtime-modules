@@ -531,6 +531,103 @@ describe('useAgentStream', () => {
     );
   });
 
+  it('tracks STEP_STARTED / STEP_FINISHED as steps[], and accumulates REASONING_MESSAGE_CONTENT into reasoning', async () => {
+    const { fetch: fetchStub } = makeFetchStub([
+      encodeSse([
+        { type: 'RUN_STARTED', runId: 'r1', threadId: 't1' },
+        { type: 'STEP_STARTED', stepName: 'routing' },
+        { type: 'REASONING_MESSAGE_START', messageId: 'rm-1', role: 'reasoning' },
+        { type: 'REASONING_MESSAGE_CONTENT', messageId: 'rm-1', delta: 'checking ' },
+        { type: 'REASONING_MESSAGE_CONTENT', messageId: 'rm-1', delta: 'the graph' },
+        { type: 'REASONING_MESSAGE_END', messageId: 'rm-1' },
+        { type: 'STEP_FINISHED', stepName: 'routing' },
+        { type: 'STEP_STARTED', stepName: 'search' },
+        { type: 'STEP_FINISHED', stepName: 'search' },
+        { type: 'RUN_FINISHED' },
+      ]),
+    ]);
+
+    const { result } = renderHook(() =>
+      useAgentStream({ url: '/x', fetch: fetchStub }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage('who knows auth?');
+    });
+
+    expect(result.current.reasoning).toBe('checking the graph');
+    expect(result.current.steps).toEqual([
+      expect.objectContaining({ name: 'routing', status: 'done' }),
+      expect.objectContaining({ name: 'search', status: 'done' }),
+    ]);
+    // finishedAt/startedAt are real timestamps — just assert ordering, not a fixed clock.
+    expect(result.current.steps[0]!.finishedAt).toBeGreaterThanOrEqual(
+      result.current.steps[0]!.startedAt,
+    );
+  });
+
+  it('a STEP_STARTED with no matching STEP_FINISHED stays status "running"', async () => {
+    const { fetch: fetchStub } = makeFetchStub([
+      encodeSse([
+        { type: 'RUN_STARTED', runId: 'r1', threadId: 't1' },
+        { type: 'STEP_STARTED', stepName: 'routing' },
+        { type: 'RUN_FINISHED' },
+      ]),
+    ]);
+
+    const { result } = renderHook(() =>
+      useAgentStream({ url: '/x', fetch: fetchStub }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage('go');
+    });
+
+    expect(result.current.steps).toEqual([
+      expect.objectContaining({ name: 'routing', status: 'running' }),
+    ]);
+    expect(result.current.steps[0]!.finishedAt).toBeUndefined();
+  });
+
+  it('RUN_STARTED resets steps and reasoning for the next run', async () => {
+    // First call: a step + reasoning delta. Second call: a fresh run with
+    // neither — steps/reasoning must not leak across sendMessage calls.
+    let callCount = 0;
+    const fetchStub: typeof fetch = ((_url: RequestInfo | URL, _init?: RequestInit) => {
+      callCount++;
+      const frames =
+        callCount === 1
+          ? [
+              { type: 'RUN_STARTED', runId: 'r1', threadId: 't1' },
+              { type: 'STEP_STARTED', stepName: 'routing' },
+              { type: 'REASONING_MESSAGE_CONTENT', messageId: 'rm-1', delta: 'first run' },
+              { type: 'STEP_FINISHED', stepName: 'routing' },
+              { type: 'RUN_FINISHED' },
+            ]
+          : [
+              { type: 'RUN_STARTED', runId: 'r2', threadId: 't1' },
+              { type: 'RUN_FINISHED' },
+            ];
+      return Promise.resolve(makeStreamResponse([encodeSse(frames)]));
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useAgentStream({ url: '/x', fetch: fetchStub }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage('first');
+    });
+    expect(result.current.steps).toHaveLength(1);
+    expect(result.current.reasoning).toBe('first run');
+
+    await act(async () => {
+      await result.current.sendMessage('second');
+    });
+    expect(result.current.steps).toEqual([]);
+    expect(result.current.reasoning).toBe('');
+  });
+
   it('unmount aborts the in-flight fetch', async () => {
     // Build a fetch that returns a stream that never closes until aborted —
     // so we can assert the AbortSignal fires.

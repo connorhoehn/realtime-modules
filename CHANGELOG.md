@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.47.0 — 2026-09-16
+
+- **`useAgentStream`** (`./client`) — surfaces AG-UI `STEP_STARTED` /
+  `STEP_FINISHED` and `REASONING_*` events, previously dropped as "ignored
+  for now". Adds two fields to the hook's returned state:
+  - `steps: AgentStep[]` — `{ name, startedAt, finishedAt?, status:
+    'running' | 'done' }`, one entry per `STEP_STARTED`, closed by the next
+    matching `STEP_FINISHED` for that `stepName` (matches the most recent
+    still-running entry, so a repeated step name across a retry within one
+    run gets its own entry rather than clobbering the first).
+  - `reasoning: string` — chain-of-thought text accumulated from
+    `REASONING_MESSAGE_CONTENT`/`REASONING_MESSAGE_CHUNK` deltas.
+    `REASONING_START`/`REASONING_END`/`REASONING_ENCRYPTED_VALUE` carry no
+    text and stay ignored.
+
+  Both reset at every point the hook already resets `streamingText` for a
+  new run — `sendMessage`, `RUN_STARTED`, and `reset()` — so they never leak
+  across turns. No existing field's shape changed.
+
 ## 0.31.0 — 2026-08-26
 
 - **`useCanvasCapture`** (`./client`) — turns a `<canvas>` the page already
