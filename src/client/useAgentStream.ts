@@ -65,6 +65,19 @@ export interface Message {
 }
 
 /**
+ * A named phase of the current agent run, surfaced from AG-UI
+ * `STEP_STARTED` / `STEP_FINISHED` (`stepName`). Multi-agent runs can reuse
+ * a step name (e.g. a retry), so entries are appended in the order seen
+ * rather than keyed by name.
+ */
+export interface AgentStep {
+  name: string;
+  startedAt: number;
+  finishedAt?: number;
+  status: 'running' | 'done';
+}
+
+/**
  * Body builder — given the user-typed text plus the current sessionId (if any),
  * produce the JSON body to POST. Defaults to `{ message, sessionId? }`.
  */
@@ -97,6 +110,10 @@ export interface UseAgentStreamReturn {
   sessionId: string | null;
   isStreaming: boolean;
   error: string | null;
+  /** Named phases of the current run, from STEP_STARTED / STEP_FINISHED. Reset on RUN_STARTED. */
+  steps: AgentStep[];
+  /** Chain-of-thought text accumulated from REASONING_* deltas. Reset on RUN_STARTED. */
+  reasoning: string;
   sendMessage: (text: string) => Promise<void>;
   reset: () => void;
   loadHistory: (sessionId: string) => Promise<void>;
@@ -129,6 +146,8 @@ export function useAgentStream(
   const [sessionId, setSessionIdState] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<AgentStep[]>([]);
+  const [reasoning, setReasoning] = useState('');
 
   // Keep latest sessionId in a ref so `sendMessage` reads the freshest value
   // (its memoized closure would otherwise see the initial null and create a
@@ -168,6 +187,8 @@ export function useAgentStream(
           setSessionId(event.sessionId);
         }
         setStreamingText('');
+        setSteps([]);
+        setReasoning('');
         break;
       }
       case 'RUN_FINISHED': {
@@ -314,10 +335,52 @@ export function useAgentStream(
         }
         break;
       }
-      // All other event types (STATE_*, REASONING_*, ACTIVITY_*, RAW, META_EVENT,
-      // STEP_STARTED/FINISHED, TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK) are ignored
-      // for now — consumers that need them can subscribe via a follow-up
-      // option without breaking existing callers.
+      case 'STEP_STARTED': {
+        const stepName = event.stepName;
+        if (typeof stepName !== 'string') break;
+        setSteps((prev) => [
+          ...prev,
+          { name: stepName, startedAt: Date.now(), status: 'running' },
+        ]);
+        break;
+      }
+      case 'STEP_FINISHED': {
+        const stepName = event.stepName;
+        if (typeof stepName !== 'string') break;
+        setSteps((prev) => {
+          // Close the most recent still-running step with this name (a
+          // name can repeat across retries within one run).
+          const idx = [...prev]
+            .map((s, i) => ({ s, i }))
+            .reverse()
+            .find(({ s }) => s.name === stepName && s.status === 'running')?.i;
+          if (idx === undefined) return prev;
+          const next = prev.slice();
+          next[idx] = { ...next[idx], finishedAt: Date.now(), status: 'done' };
+          return next;
+        });
+        break;
+      }
+      case 'REASONING_MESSAGE_CONTENT': {
+        // Chain-of-thought text delta. `delta` is required on this event.
+        const delta = event.delta;
+        if (typeof delta === 'string' && delta) {
+          setReasoning((prev) => prev + delta);
+        }
+        break;
+      }
+      case 'REASONING_MESSAGE_CHUNK': {
+        // Compact-transport sibling of REASONING_MESSAGE_CONTENT; `delta` is optional.
+        const delta = event.delta;
+        if (typeof delta === 'string' && delta) {
+          setReasoning((prev) => prev + delta);
+        }
+        break;
+      }
+      // All other event types (STATE_*, ACTIVITY_*, RAW, META_EVENT,
+      // REASONING_START/END/ENCRYPTED_VALUE, TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK)
+      // are ignored for now — consumers that need them can subscribe via a
+      // follow-up option without breaking existing callers.
       default:
         break;
     }
@@ -337,6 +400,8 @@ export function useAgentStream(
     setStreamingText('');
     setActiveToolCalls([]);
     setError(null);
+    setSteps([]);
+    setReasoning('');
     currentMsgRef.current = { id: '', content: '', toolCalls: [] };
 
     const controller = new AbortController();
@@ -434,6 +499,8 @@ export function useAgentStream(
     setStreamingText('');
     setActiveToolCalls([]);
     setError(null);
+    setSteps([]);
+    setReasoning('');
     setIsStreaming(false);
     setSessionId(null);
   }, [setSessionId]);
@@ -446,6 +513,8 @@ export function useAgentStream(
     setStreamingText('');
     setActiveToolCalls([]);
     setError(null);
+    setSteps([]);
+    setReasoning('');
     setIsStreaming(false);
     setSessionId(sid);
 
@@ -480,6 +549,8 @@ export function useAgentStream(
     sessionId,
     isStreaming,
     error,
+    steps,
+    reasoning,
     sendMessage,
     reset,
     loadHistory,
