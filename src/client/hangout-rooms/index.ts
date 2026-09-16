@@ -35,6 +35,7 @@ export {
   removeMember,
   updateRoom,
   type RoomApiOptions,
+  type MemberNames,
 } from './api';
 
 // Hooks

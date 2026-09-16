@@ -177,17 +177,23 @@ async function listMembers(opts, slug) {
         return data;
     return data?.members ?? [];
 }
-/** Add a member to a private room.
- *  `POST /api/rooms/:slug/members`. */
-async function addMember(opts, slug, userId, role = 'member') {
+async function addMember(opts, slug, userId, role = 'member', names) {
     return request(opts, 'POST', `/api/rooms/${encodeURIComponent(slug)}/members`, {
         userId,
         role,
+        ...(names?.displayName ? { displayName: names.displayName } : {}),
+        ...(names?.byName ? { byName: names.byName } : {}),
     });
 }
 /** Remove a member from a private room.
  *  `DELETE /api/rooms/:slug/members/:userId`. */
-async function removeMember(opts, slug, userId) {
-    await request(opts, 'DELETE', `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(userId)}`);
+async function removeMember(opts, slug, userId, names) {
+    const q = new URLSearchParams();
+    if (names?.displayName)
+        q.set('name', names.displayName);
+    if (names?.byName)
+        q.set('byName', names.byName);
+    const query = q.toString();
+    await request(opts, 'DELETE', `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(userId)}${query ? `?${query}` : ''}`);
 }
 //# sourceMappingURL=api.js.map

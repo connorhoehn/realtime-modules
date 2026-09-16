@@ -241,15 +241,30 @@ export async function listMembers(
 
 /** Add a member to a private room.
  *  `POST /api/rooms/:slug/members`. */
+/**
+ * Names for the conversation's system line ("Eve added Carol"): the client's
+ * directory is presence-fed and knows them; the server has only profiles.
+ * Optional and additive — the membership itself never depends on them.
+ */
+export interface MemberNames {
+  /** The member being added or removed. */
+  displayName?: string;
+  /** The person doing it. */
+  byName?: string;
+}
+
 export async function addMember(
   opts: RoomApiOptions,
   slug: string,
   userId: string,
   role: RoomMemberRole = 'member',
+  names?: MemberNames,
 ): Promise<RoomMember> {
   return request<RoomMember>(opts, 'POST', `/api/rooms/${encodeURIComponent(slug)}/members`, {
     userId,
     role,
+    ...(names?.displayName ? { displayName: names.displayName } : {}),
+    ...(names?.byName ? { byName: names.byName } : {}),
   });
 }
 
@@ -259,10 +274,15 @@ export async function removeMember(
   opts: RoomApiOptions,
   slug: string,
   userId: string,
+  names?: MemberNames,
 ): Promise<void> {
+  const q = new URLSearchParams();
+  if (names?.displayName) q.set('name', names.displayName);
+  if (names?.byName) q.set('byName', names.byName);
+  const query = q.toString();
   await request<void>(
     opts,
     'DELETE',
-    `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(userId)}`,
+    `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(userId)}${query ? `?${query}` : ''}`,
   );
 }

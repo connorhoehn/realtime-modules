@@ -59,8 +59,19 @@ export declare function leaveRoom(opts: RoomApiOptions, slug: string): Promise<v
 export declare function listMembers(opts: RoomApiOptions, slug: string): Promise<RoomMember[]>;
 /** Add a member to a private room.
  *  `POST /api/rooms/:slug/members`. */
-export declare function addMember(opts: RoomApiOptions, slug: string, userId: string, role?: RoomMemberRole): Promise<RoomMember>;
+/**
+ * Names for the conversation's system line ("Eve added Carol"): the client's
+ * directory is presence-fed and knows them; the server has only profiles.
+ * Optional and additive — the membership itself never depends on them.
+ */
+export interface MemberNames {
+    /** The member being added or removed. */
+    displayName?: string;
+    /** The person doing it. */
+    byName?: string;
+}
+export declare function addMember(opts: RoomApiOptions, slug: string, userId: string, role?: RoomMemberRole, names?: MemberNames): Promise<RoomMember>;
 /** Remove a member from a private room.
  *  `DELETE /api/rooms/:slug/members/:userId`. */
-export declare function removeMember(opts: RoomApiOptions, slug: string, userId: string): Promise<void>;
+export declare function removeMember(opts: RoomApiOptions, slug: string, userId: string, names?: MemberNames): Promise<void>;
 //# sourceMappingURL=api.d.ts.map
