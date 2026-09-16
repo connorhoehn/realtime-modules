@@ -1,4 +1,4 @@
-import type { ChatMessage } from './types';
+import type { ChatMessage, ChatMessagePatch } from './types';
 export interface ChatStore {
     /**
      * Persist `message`. Last writer wins on `(channel, id)`. Adapters
@@ -11,6 +11,13 @@ export interface ChatStore {
      * (oldest first). Returns an empty array if the channel is unknown.
      */
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
+    /**
+     * Change a stored message in place — an edit (text, metadata, editedAt)
+     * or a soft delete (text '', metadata {deleted:true}, deletedAt). The
+     * whole `metadata` replaces the stored one when given. Resolves the
+     * updated record, or null when `(channel, messageId)` is unknown.
+     */
+    updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null>;
 }
 /**
  * Zero-config in-memory implementation. Intended for:
@@ -33,6 +40,7 @@ export declare class InMemoryChatStore implements ChatStore {
     private readonly messages;
     putMessage(message: ChatMessage): Promise<void>;
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
+    updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null>;
     /** Test helper — clears every channel. Not part of ChatStore. */
     _reset(): void;
 }

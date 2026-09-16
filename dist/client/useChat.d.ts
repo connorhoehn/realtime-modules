@@ -24,6 +24,10 @@ export interface UseChatReturn {
      * key handler and after every send.
      */
     setTyping: (typing: boolean) => void;
+    /** Change one of your own messages; the gateway answers everyone with messageUpdated. */
+    editMessage: (messageId: string, text: string, metadata?: Record<string, unknown>) => void;
+    /** Take one of your own messages back; a soft delete everyone sees as messageDeleted. */
+    deleteMessage: (messageId: string) => void;
 }
 export declare function useChat(channel: string): UseChatReturn;
 //# sourceMappingURL=useChat.d.ts.map

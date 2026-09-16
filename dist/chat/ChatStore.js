@@ -64,6 +64,23 @@ class InMemoryChatStore {
         const tail = bucket.slice(-cap);
         return tail.map((m) => ({ ...m, metadata: m.metadata ? { ...m.metadata } : undefined }));
     }
+    async updateMessage(channel, messageId, patch) {
+        const bucket = this.messages.get(channel);
+        const i = bucket ? bucket.findIndex((m) => m.id === messageId) : -1;
+        if (!bucket || i < 0)
+            return null;
+        const next = { ...bucket[i] };
+        if (patch.message !== undefined)
+            next.message = patch.message;
+        if (patch.metadata !== undefined)
+            next.metadata = { ...patch.metadata };
+        if (patch.editedAt !== undefined)
+            next.editedAt = patch.editedAt;
+        if (patch.deletedAt !== undefined)
+            next.deletedAt = patch.deletedAt;
+        bucket[i] = next;
+        return { ...next, metadata: next.metadata ? { ...next.metadata } : undefined };
+    }
     /** Test helper — clears every channel. Not part of ChatStore. */
     _reset() {
         this.messages.clear();

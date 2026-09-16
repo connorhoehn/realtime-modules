@@ -75,6 +75,10 @@ const ErrorCodes = {
     CHAT_FORBIDDEN: 'forbidden',
     /** The membership request itself was malformed. */
     CHAT_BAD_REQUEST: 'bad-request',
+    /** Edit/delete: no such message on that channel. */
+    CHAT_NOT_FOUND: 'not-found',
+    /** Edit: the message was already deleted. */
+    CHAT_GONE: 'gone',
 } as const;
 
 function createErrorResponse(
@@ -205,6 +209,12 @@ export interface ChatServiceOpts {
      */
     onChannelMessage?: (info: { channel: string; members: string[]; message: ChatMessage }) => void;
     /**
+     * A stored message changed after the fact — edited or deleted by its
+     * author. The host keeps its previews (the conversations index) honest
+     * with it; nothing here notifies, an edit is not new traffic.
+     */
+    onMessageChanged?: (info: { channel: string; kind: 'edited' | 'deleted'; message: ChatMessage }) => void;
+    /**
      * Fires when an identified user joins a NON-dm channel. The host records
      * it (a "who has ever been here" index) so an OPEN channel — one with no
      * membership rows — still has an audience for `onChannelMessage` when
@@ -318,6 +328,7 @@ export class ChatService {
     readonly enforceDmMembership: boolean;
     onDmMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
     onChannelMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
+    onMessageChanged: ((info: { channel: string; kind: 'edited' | 'deleted'; message: ChatMessage }) => void) | null;
     onChannelJoin: ((info: { channel: string; userId: string }) => void) | null;
     channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
 
@@ -356,6 +367,7 @@ export class ChatService {
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
         this.onDmMessage = opts.onDmMessage ?? null;
         this.onChannelMessage = opts.onChannelMessage ?? null;
+        this.onMessageChanged = opts.onMessageChanged ?? null;
         this.onChannelJoin = opts.onChannelJoin ?? null;
         this.channelAudience = opts.channelAudience ?? null;
 
@@ -417,6 +429,12 @@ export class ChatService {
                     return;
                 case 'removeMember':
                     await this.handleRemoveMember(clientId, data);
+                    return;
+                case 'edit':
+                    await this.handleEditMessage(clientId, data);
+                    return;
+                case 'delete':
+                    await this.handleDeleteMessage(clientId, data);
                     return;
                 default:
                     this.sendError(clientId, `Unknown chat action: ${action}`);
@@ -724,6 +742,140 @@ export class ChatService {
         } catch (error) {
             this.logger.error(`Error sending message to channel ${channel} for client ${clientId}:`, error);
             this.sendError(clientId, 'Failed to send message');
+        }
+    }
+
+    /**
+     * The stored message behind an edit or a delete: the channel cache
+     * first, the store when the cache has turned over. Null when unknown.
+     */
+    async _findMessage(channel: string, messageId: string): Promise<ChatMessage | null> {
+        const cached = this.getChannelCache(channel).get(messageId);
+        if (cached) return cached;
+        try {
+            const stored = await this._loadHistoryFromStore(channel, this.maxMessagesPerChannel);
+            return stored.find((m) => m.id === messageId) ?? null;
+        } catch (err: any) {
+            this.logger.error('Failed to read a message for edit/delete:', err && err.message);
+            return null;
+        }
+    }
+
+    /**
+     * The author may change or take back what they said; nobody else may.
+     * Resolves the record when the caller is its author, having answered
+     * the caller with the right refusal otherwise.
+     */
+    async _ownMessage(clientId: string, channel: string, messageId: unknown, identity: ChatSenderIdentity | null): Promise<ChatMessage | null> {
+        if (typeof messageId !== 'string' || !messageId) {
+            this.sendError(clientId, 'messageId is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return null;
+        }
+        const existing = await this._findMessage(channel, messageId);
+        if (!existing) {
+            this.sendError(clientId, 'No such message', ErrorCodes.CHAT_NOT_FOUND, channel);
+            return null;
+        }
+        if (!identity?.userId || existing.userId !== identity.userId) {
+            this.sendError(clientId, 'Only the author may change this message', ErrorCodes.CHAT_FORBIDDEN, channel);
+            return null;
+        }
+        return existing;
+    }
+
+    async _applyMessagePatch(channel: string, existing: ChatMessage, patch: { message?: string; metadata?: Record<string, unknown>; editedAt?: string; deletedAt?: string }): Promise<ChatMessage> {
+        const updated: ChatMessage = { ...existing, ...patch };
+        this.getChannelCache(channel).set(updated.id, updated);
+        try {
+            await this.chatStore.updateMessage(channel, updated.id, patch);
+        } catch (err: any) {
+            this.logger.error('Failed to persist a message change:', err && err.message);
+        }
+        return updated;
+    }
+
+    /**
+     * `{action:'edit', channel, messageId, message, metadata?}` — the author
+     * changes the text (and may merge metadata: mentions, html); everyone on
+     * the channel gets `messageUpdated` with the whole updated record.
+     */
+    async handleEditMessage(
+        clientId: string,
+        { channel, messageId, message, metadata }: { channel: string; messageId?: unknown; message?: unknown; metadata?: unknown }
+    ): Promise<void> {
+        if (!channel || typeof channel !== 'string') {
+            this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        if (typeof message !== 'string' || message.length === 0) {
+            this.sendError(clientId, 'An edit needs text', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        if (message.length > this.maxMessageLength) {
+            this.sendError(clientId, `Message must be between 1 and ${this.maxMessageLength} characters`, ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        if (!this._checkDmMembership(clientId, channel, identity)) return;
+        if (!(await this._checkMembership(clientId, channel, identity))) return;
+        const existing = await this._ownMessage(clientId, channel, messageId, identity);
+        if (!existing) return;
+        if (existing.deletedAt) {
+            this.sendError(clientId, 'That message was deleted', ErrorCodes.CHAT_GONE, channel);
+            return;
+        }
+        const merged = metadata && typeof metadata === 'object'
+            ? validateMetadata({ ...(existing.metadata ?? {}), ...(metadata as Record<string, unknown>) }, this.logger, this.maxMetadataKeys, this.maxMetadataSize)
+            : existing.metadata;
+        const editedAt = new Date().toISOString();
+        const updated = await this._applyMessagePatch(channel, existing, { message, ...(merged !== undefined ? { metadata: merged } : {}), editedAt });
+        await this._broadcastFrame(channel, { type: 'chat', action: 'messageUpdated', channel, message: updated, timestamp: editedAt }, clientId);
+        this._noteMessageChanged(channel, 'edited', updated);
+        this.logger.info(`Message ${updated.id} edited by client ${clientId} on channel ${channel}`);
+    }
+
+    /**
+     * `{action:'delete', channel, messageId}` — a soft delete: the record
+     * keeps its id, author and time; the text goes, the metadata becomes
+     * {deleted:true}. Everyone on the channel gets `messageDeleted`.
+     */
+    async handleDeleteMessage(
+        clientId: string,
+        { channel, messageId }: { channel: string; messageId?: unknown }
+    ): Promise<void> {
+        if (!channel || typeof channel !== 'string') {
+            this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
+            return;
+        }
+        const identity = this._resolveIdentity(clientId);
+        if (!this._checkDmMembership(clientId, channel, identity)) return;
+        if (!(await this._checkMembership(clientId, channel, identity))) return;
+        const existing = await this._ownMessage(clientId, channel, messageId, identity);
+        if (!existing) return;
+        const deletedAt = existing.deletedAt ?? new Date().toISOString();
+        const updated = existing.deletedAt
+            ? existing
+            : await this._applyMessagePatch(channel, existing, { message: '', metadata: { deleted: true }, deletedAt });
+        await this._broadcastFrame(channel, { type: 'chat', action: 'messageDeleted', channel, messageId: updated.id, deletedAt, timestamp: new Date().toISOString() }, clientId);
+        this._noteMessageChanged(channel, 'deleted', updated);
+        this.logger.info(`Message ${updated.id} deleted by client ${clientId} on channel ${channel}`);
+    }
+
+    _noteMessageChanged(channel: string, kind: 'edited' | 'deleted', message: ChatMessage): void {
+        if (!this.onMessageChanged) return;
+        try {
+            this.onMessageChanged({ channel, kind, message });
+        } catch (hookErr) {
+            this.logger.error('onMessageChanged hook threw (ignored):', hookErr);
+        }
+    }
+
+    /** A chat frame to every subscriber of `channel`, the sender included, the way `broadcastMessage` sends. */
+    async _broadcastFrame(channel: string, frame: Record<string, unknown>, publisherClientId?: string): Promise<void> {
+        if (publisherClientId != null) {
+            await this.messageRouter.sendToChannel(channel, frame, null, { publisherClientId });
+        } else {
+            await this.messageRouter.sendToChannel(channel, frame);
         }
     }
 

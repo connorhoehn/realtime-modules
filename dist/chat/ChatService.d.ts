@@ -124,6 +124,16 @@ export interface ChatServiceOpts {
         message: ChatMessage;
     }) => void;
     /**
+     * A stored message changed after the fact — edited or deleted by its
+     * author. The host keeps its previews (the conversations index) honest
+     * with it; nothing here notifies, an edit is not new traffic.
+     */
+    onMessageChanged?: (info: {
+        channel: string;
+        kind: 'edited' | 'deleted';
+        message: ChatMessage;
+    }) => void;
+    /**
      * Fires when an identified user joins a NON-dm channel. The host records
      * it (a "who has ever been here" index) so an OPEN channel — one with no
      * membership rows — still has an audience for `onChannelMessage` when
@@ -166,6 +176,11 @@ export declare class ChatService {
     onChannelMessage: ((info: {
         channel: string;
         members: string[];
+        message: ChatMessage;
+    }) => void) | null;
+    onMessageChanged: ((info: {
+        channel: string;
+        kind: 'edited' | 'deleted';
         message: ChatMessage;
     }) => void) | null;
     onChannelJoin: ((info: {
@@ -215,6 +230,46 @@ export declare class ChatService {
         message: string;
         metadata?: any;
     }): Promise<void>;
+    /**
+     * The stored message behind an edit or a delete: the channel cache
+     * first, the store when the cache has turned over. Null when unknown.
+     */
+    _findMessage(channel: string, messageId: string): Promise<ChatMessage | null>;
+    /**
+     * The author may change or take back what they said; nobody else may.
+     * Resolves the record when the caller is its author, having answered
+     * the caller with the right refusal otherwise.
+     */
+    _ownMessage(clientId: string, channel: string, messageId: unknown, identity: ChatSenderIdentity | null): Promise<ChatMessage | null>;
+    _applyMessagePatch(channel: string, existing: ChatMessage, patch: {
+        message?: string;
+        metadata?: Record<string, unknown>;
+        editedAt?: string;
+        deletedAt?: string;
+    }): Promise<ChatMessage>;
+    /**
+     * `{action:'edit', channel, messageId, message, metadata?}` — the author
+     * changes the text (and may merge metadata: mentions, html); everyone on
+     * the channel gets `messageUpdated` with the whole updated record.
+     */
+    handleEditMessage(clientId: string, { channel, messageId, message, metadata }: {
+        channel: string;
+        messageId?: unknown;
+        message?: unknown;
+        metadata?: unknown;
+    }): Promise<void>;
+    /**
+     * `{action:'delete', channel, messageId}` — a soft delete: the record
+     * keeps its id, author and time; the text goes, the metadata becomes
+     * {deleted:true}. Everyone on the channel gets `messageDeleted`.
+     */
+    handleDeleteMessage(clientId: string, { channel, messageId }: {
+        channel: string;
+        messageId?: unknown;
+    }): Promise<void>;
+    _noteMessageChanged(channel: string, kind: 'edited' | 'deleted', message: ChatMessage): void;
+    /** A chat frame to every subscriber of `channel`, the sender included, the way `broadcastMessage` sends. */
+    _broadcastFrame(channel: string, frame: Record<string, unknown>, publisherClientId?: string): Promise<void>;
     handleGetHistory(clientId: string, { channel, limit }: {
         channel: string;
         limit?: number;

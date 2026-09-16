@@ -73,6 +73,10 @@ export interface ChatMessage {
   message: string;
   metadata?: Record<string, unknown>;
   timestamp: string;
+  /** ISO: the author changed the text after sending. */
+  editedAt?: string;
+  /** ISO: the author took it back; text is empty and metadata is {deleted:true}. */
+  deletedAt?: string;
 }
 
 /** Presence status values accepted by the gateway's presence service. */

@@ -35,6 +35,17 @@ export interface ChatMessage {
     message: string;
     metadata?: Record<string, unknown>;
     timestamp: string;
+    /** ISO: the author changed the text after sending (Teams "Edited"). */
+    editedAt?: string;
+    /** ISO: the author took it back. The record stays, text empty, metadata {deleted:true}. */
+    deletedAt?: string;
+}
+/** What an edit or a delete changes on a stored message. */
+export interface ChatMessagePatch {
+    message?: string;
+    metadata?: Record<string, unknown>;
+    editedAt?: string;
+    deletedAt?: string;
 }
 /**
  * Query parameters for retrieving channel history.

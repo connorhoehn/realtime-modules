@@ -8,6 +8,6 @@ export { ChatService, ChatManifest, InMemoryChatStore, MemoryChatMembershipStore
 export type { ChatServiceOpts, ChatMessageRouter, ChatLogger, ChatSenderIdentity, ChatIdentityResolver };
 export type { ChatStore } from './ChatStore';
 export type { ChatMembershipStore, ChatMember, ChatMemberRole, ChatMemberView, ChatHistoryChoice } from './ChatMembershipStore';
-export type { ChatMessage, ChatHistoryQuery } from './types';
+export type { ChatMessage, ChatHistoryQuery, ChatMessagePatch } from './types';
 export default ChatService;
 //# sourceMappingURL=index.d.ts.map

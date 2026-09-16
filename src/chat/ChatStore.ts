@@ -29,7 +29,7 @@
 //     adapter does `ScanIndexForward: false` + reverse; the in-memory
 //     adapter appends to an array and slices.
 
-import type { ChatMessage } from './types';
+import type { ChatMessage, ChatMessagePatch } from './types';
 
 export interface ChatStore {
     /**
@@ -44,6 +44,14 @@ export interface ChatStore {
      * (oldest first). Returns an empty array if the channel is unknown.
      */
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
+
+    /**
+     * Change a stored message in place — an edit (text, metadata, editedAt)
+     * or a soft delete (text '', metadata {deleted:true}, deletedAt). The
+     * whole `metadata` replaces the stored one when given. Resolves the
+     * updated record, or null when `(channel, messageId)` is unknown.
+     */
+    updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null>;
 }
 
 /**
@@ -79,6 +87,19 @@ export class InMemoryChatStore implements ChatStore {
         const cap = Math.max(0, limit);
         const tail = bucket.slice(-cap);
         return tail.map((m) => ({ ...m, metadata: m.metadata ? { ...m.metadata } : undefined }));
+    }
+
+    async updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null> {
+        const bucket = this.messages.get(channel);
+        const i = bucket ? bucket.findIndex((m) => m.id === messageId) : -1;
+        if (!bucket || i < 0) return null;
+        const next: ChatMessage = { ...bucket[i] };
+        if (patch.message !== undefined) next.message = patch.message;
+        if (patch.metadata !== undefined) next.metadata = { ...patch.metadata };
+        if (patch.editedAt !== undefined) next.editedAt = patch.editedAt;
+        if (patch.deletedAt !== undefined) next.deletedAt = patch.deletedAt;
+        bucket[i] = next;
+        return { ...next, metadata: next.metadata ? { ...next.metadata } : undefined };
     }
 
     /** Test helper — clears every channel. Not part of ChatStore. */

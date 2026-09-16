@@ -99,6 +99,19 @@ function useChat(channel) {
                     const parsed = list.map(asChatMessageRaw).filter(Boolean);
                     setMessages(parsed);
                 }
+                else if (msg.action === 'messageUpdated') {
+                    const entry = asChatMessageRaw(raw.message);
+                    if (entry) {
+                        setMessages((prev) => prev.map((m) => (m.id === entry.id ? entry : m)));
+                    }
+                }
+                else if (msg.action === 'messageDeleted') {
+                    const id = typeof raw.messageId === 'string' ? raw.messageId : null;
+                    const deletedAt = typeof raw.deletedAt === 'string' ? raw.deletedAt : new Date().toISOString();
+                    if (id) {
+                        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, message: '', metadata: { deleted: true }, deletedAt } : m)));
+                    }
+                }
                 else if (msg.action === 'typing') {
                     // A peer composing (or done). The server never echoes our own.
                     const id = typeof raw.clientId === 'string' ? raw.clientId : null;
@@ -201,7 +214,25 @@ function useChat(channel) {
             frame.limit = limit;
         send(frame);
     }, [send]);
-    return { messages, sendMessage, loadHistory, typingUsers, setTyping };
+    const editMessage = (0, react_1.useCallback)((messageId, text, metadata) => {
+        send({
+            service: 'chat',
+            action: 'edit',
+            channel: channelRef.current,
+            messageId,
+            message: text,
+            ...(metadata ? { metadata } : {}),
+        });
+    }, [send]);
+    const deleteMessage = (0, react_1.useCallback)((messageId) => {
+        send({
+            service: 'chat',
+            action: 'delete',
+            channel: channelRef.current,
+            messageId,
+        });
+    }, [send]);
+    return { messages, sendMessage, loadHistory, typingUsers, setTyping, editMessage, deleteMessage };
 }
 // ---------------------------------------------------------------------------
 // Helpers
@@ -230,6 +261,8 @@ function asChatMessageRaw(raw) {
             ? m.metadata
             : undefined,
         timestamp: m.timestamp,
+        ...(typeof m.editedAt === 'string' ? { editedAt: m.editedAt } : {}),
+        ...(typeof m.deletedAt === 'string' ? { deletedAt: m.deletedAt } : {}),
     };
 }
 //# sourceMappingURL=useChat.js.map

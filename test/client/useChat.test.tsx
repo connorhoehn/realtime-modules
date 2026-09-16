@@ -272,3 +272,26 @@ describe('useChat — legacy flat-shape fallback', () => {
     expect(result.current.messages.map((m) => m.id)).toEqual(['legacy-h1']);
   });
 });
+
+describe('useChat edit and delete', () => {
+  it('sends the frames and patches the thread on messageUpdated / messageDeleted', () => {
+    const { ctx, emit, sent } = makeGatewayContext();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <GatewayContext.Provider value={ctx}>{children}</GatewayContext.Provider>
+    );
+    const { result } = renderHook(() => useChat('general'), { wrapper });
+    const base = { id: 'm1', clientId: 'c-carol', userId: 'u-carol', channel: 'general', message: 'first', timestamp: '2026-09-16T00:00:00.000Z' };
+    act(() => { emit({ type: 'chat', action: 'history', channel: 'general', messages: [base] } as unknown as GatewayMessage); });
+    expect(result.current.messages[0].message).toBe('first');
+
+    act(() => { result.current.editMessage('m1', 'second'); });
+    expect(sent.at(-1)).toEqual({ service: 'chat', action: 'edit', channel: 'general', messageId: 'm1', message: 'second' });
+    act(() => { emit({ type: 'chat', action: 'messageUpdated', channel: 'general', message: { ...base, message: 'second', editedAt: '2026-09-16T00:01:00.000Z' }, timestamp: 'x' } as unknown as GatewayMessage); });
+    expect(result.current.messages[0]).toMatchObject({ message: 'second', editedAt: '2026-09-16T00:01:00.000Z' });
+
+    act(() => { result.current.deleteMessage('m1'); });
+    expect(sent.at(-1)).toEqual({ service: 'chat', action: 'delete', channel: 'general', messageId: 'm1' });
+    act(() => { emit({ type: 'chat', action: 'messageDeleted', channel: 'general', messageId: 'm1', deletedAt: '2026-09-16T00:02:00.000Z', timestamp: 'x' } as unknown as GatewayMessage); });
+    expect(result.current.messages[0]).toMatchObject({ message: '', metadata: { deleted: true }, deletedAt: '2026-09-16T00:02:00.000Z' });
+  });
+});
