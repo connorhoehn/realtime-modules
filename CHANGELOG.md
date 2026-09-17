@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.51.0 — 2026-09-16
+
+- **`usePins`** (`./client`) — `pin()` takes an optional `sentAt`, the time the
+  message was SENT, and `PinnedMessage` carries it back.
+
+  A pinned panel had only `pinnedAt` to show, so a message sent at 19:27 and
+  pinned at 20:53 read as 20:53 in the pinned list and 19:27 in the transcript —
+  the same message at two times, and the pinned list showing the one you cannot
+  match against the transcript to find it again. The pinning act belongs in the
+  byline next to `pinnedBy`, which is where Teams and Slack put it and where
+  this already had a place to go.
+
+  The hook does not guess: no `sentAt` from the caller means the key is left off
+  the wire frame and off the optimistic row, rather than sent empty or stamped
+  from the local clock. The optimistic row is on screen for a full round trip,
+  and a wrong time shown for a moment still reads as the message's time.
+
+  Optional on both sides, so existing callers compile unchanged; pins the
+  gateway stored before it had the field come back without one, and consumers
+  fall back to `pinnedAt` or to no time at all.
+
 ## 0.47.0 — 2026-09-16
 
 - **`useAgentStream`** (`./client`) — surfaces AG-UI `STEP_STARTED` /

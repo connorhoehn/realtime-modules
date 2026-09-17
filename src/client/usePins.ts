@@ -26,7 +26,14 @@ export interface UsePinsResult {
   pins: PinnedMessage[];
   /** Ids only — what a message list needs to mark a message as pinned. */
   pinnedIds: Set<string>;
-  pin: (input: { messageId: string; text: string; author: string }) => Promise<void>;
+  /**
+   * `sentAt` is when the message was sent — optional, because the gateway
+   * would rather store nothing than a time it made up, and because callers
+   * written before it existed still compile. Pass it whenever you have the
+   * message in hand: without it the panel can only show when the pin happened,
+   * which is not the time the transcript shows.
+   */
+  pin: (input: { messageId: string; text: string; author: string; sentAt?: string }) => Promise<void>;
   unpin: (messageId: string) => Promise<void>;
   refresh: () => void;
   /** True until the first read for the current channel settles. */
@@ -101,12 +108,19 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
   useEffect(() => { channelRef.current = channel; }, [channel]);
 
   const pin = useCallback(
-    async (input: { messageId: string; text: string; author: string }) => {
+    async (input: { messageId: string; text: string; author: string; sentAt?: string }) => {
       const ch = channelRef.current;
       if (!ch || !pinFn) return;
+      // The key is left off when the caller gave nothing, rather than sent as
+      // undefined: absent is the state the gateway stores and the panel falls
+      // back on, and a present-but-empty field is a second one to handle.
+      const sentAt = input.sentAt ? { sentAt: input.sentAt } : {};
       // Optimistic: the marker appears under the click. `pinnedBy` is a
       // placeholder — the refresh below replaces it with the real one rather
-      // than inventing an identity here.
+      // than inventing an identity here. `sentAt` is NOT guessed the same way:
+      // the caller either knows when the message was sent or the row goes
+      // without, because the optimistic row is on screen for a round trip and
+      // a wrong time shown for a moment still reads as the message's time.
       setPins((prev) => [
         {
           channelId: ch,
@@ -115,11 +129,18 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
           pinnedAt: new Date().toISOString(),
           preview: input.text,
           author: input.author,
+          ...sentAt,
         },
         ...prev.filter((p) => p.messageId !== input.messageId),
       ]);
       try {
-        await pinFn({ channel: ch, ...input });
+        await pinFn({
+          channel: ch,
+          messageId: input.messageId,
+          text: input.text,
+          author: input.author,
+          ...sentAt,
+        });
         setWriteError(undefined);
       } catch (err) {
         setWriteError(err instanceof Error ? err : new Error(String(err)));

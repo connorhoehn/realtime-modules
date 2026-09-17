@@ -59,13 +59,14 @@ function makeRest(initial: PinnedMessage[] = []) {
   return {
     rows: () => rows,
     listPins: jest.fn(async (_channel: string) => [...rows]),
-    pin: jest.fn(async (input: { channel: string; messageId: string; text: string; author: string }) => {
+    pin: jest.fn(async (input: { channel: string; messageId: string; text: string; author: string; sentAt?: string }) => {
       const row = pinRow({
         channelId: input.channel,
         messageId: input.messageId,
         preview: input.text,
         author: input.author,
         pinnedBy: 'dev-bob',
+        ...(input.sentAt ? { sentAt: input.sentAt } : {}),
       });
       rows = [row, ...rows.filter((r) => r.messageId !== input.messageId)];
       return row;
@@ -179,6 +180,68 @@ describe('pinning', () => {
 
     await waitFor(() => expect(result.current.pins).toHaveLength(0));
     expect(result.current.error).toBeInstanceOf(Error);
+  });
+});
+
+// A pinned panel stamped with the pin time makes the same message read as two
+// different times depending on which panel you are in, and shows the one that
+// cannot be matched against the transcript.
+describe('the message send time', () => {
+  it('sends it to the gateway when the caller has it', async () => {
+    const rest = makeRest();
+    const { result } = renderHook(() => usePins('ch-1'), { wrapper: wrapperFor(makeGateway(rest)) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.pin({
+        messageId: 'm9', text: 'ship it', author: 'Hank', sentAt: '2026-09-05T19:27:00.000Z',
+      });
+    });
+
+    expect(rest.pin.mock.calls[0]![0].sentAt).toBe('2026-09-05T19:27:00.000Z');
+  });
+
+  // The optimistic row is on screen for a whole round trip, so it has to carry
+  // the real send time rather than wait for the refresh to supply one.
+  it('shows it under the click, before the server answers', async () => {
+    const rest = { ...makeRest(), pin: jest.fn(() => new Promise<never>(() => {})) };
+    const { result } = renderHook(() => usePins('ch-1'), { wrapper: wrapperFor(makeGateway(rest)) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      void result.current.pin({
+        messageId: 'm9', text: 'ship it', author: 'Hank', sentAt: '2026-09-05T19:27:00.000Z',
+      });
+    });
+
+    expect(result.current.pins[0]?.sentAt).toBe('2026-09-05T19:27:00.000Z');
+    // Distinct from when the pin happened — that is the byline's business.
+    expect(result.current.pins[0]?.pinnedAt).not.toBe('2026-09-05T19:27:00.000Z');
+  });
+
+  // The gateway would rather store nothing than a time it made up, so the hook
+  // must not hand it one either — the key goes missing, not empty.
+  it('omits it entirely when the caller has none', async () => {
+    const rest = makeRest();
+    const { result } = renderHook(() => usePins('ch-1'), { wrapper: wrapperFor(makeGateway(rest)) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.pin({ messageId: 'm9', text: 'ship it', author: 'Hank' });
+    });
+
+    expect(rest.pin.mock.calls[0]![0]).not.toHaveProperty('sentAt');
+  });
+
+  // Pins written before the gateway stored it come back without one, and there
+  // is no backfill; the panel falls back rather than breaking.
+  it('carries the absence through from an old pin', async () => {
+    const { result } = renderHook(() => usePins('ch-1'), {
+      wrapper: wrapperFor(makeGateway(makeRest([pinRow()]))),
+    });
+    await waitFor(() => expect(result.current.pins).toHaveLength(1));
+    expect(result.current.pins[0]?.sentAt).toBeUndefined();
+    expect(result.current.error).toBeUndefined();
   });
 });
 

@@ -135,6 +135,8 @@ export interface GatewayRest {
     messageId: string;
     text: string;
     author: string;
+    /** The message's own send time; see PinnedMessage.sentAt. */
+    sentAt?: string;
   }) => Promise<PinnedMessage | null>;
   unpin?: (channel: string, messageId: string) => Promise<void>;
 }
@@ -158,6 +160,20 @@ export interface PinnedMessage {
   preview: string;
   /** Display name of the original sender. */
   author: string;
+  /**
+   * ISO-8601: when the MESSAGE was sent, which is not when it was pinned.
+   *
+   * A pinned panel that shows `pinnedAt` makes the same message read as two
+   * different times depending on which panel you are in, and shows the one
+   * that cannot be matched against the transcript — where the message is
+   * stamped with this. The pinning act belongs in the byline, next to
+   * `pinnedBy`, the way Teams and Slack put it.
+   *
+   * Optional: pins written before the gateway stored it have none, and the
+   * gateway will not invent one. Fall back to `pinnedAt`, or to no time at
+   * all — do not treat the absence as an error.
+   */
+  sentAt?: string;
 }
 
 export interface GatewayContextValue extends UseWebSocketHookReturn {
@@ -222,7 +238,7 @@ export function createGatewayRest(url: string, token?: string): GatewayRest | nu
       return body.pins ?? [];
     },
 
-    async pin(input: { channel: string; messageId: string; text: string; author: string }) {
+    async pin(input: { channel: string; messageId: string; text: string; author: string; sentAt?: string }) {
       const body = (await json('/api/chat/pins', {
         method: 'POST',
         body: JSON.stringify(input),

@@ -3,10 +3,18 @@ export interface UsePinsResult {
     pins: PinnedMessage[];
     /** Ids only — what a message list needs to mark a message as pinned. */
     pinnedIds: Set<string>;
+    /**
+     * `sentAt` is when the message was sent — optional, because the gateway
+     * would rather store nothing than a time it made up, and because callers
+     * written before it existed still compile. Pass it whenever you have the
+     * message in hand: without it the panel can only show when the pin happened,
+     * which is not the time the transcript shows.
+     */
     pin: (input: {
         messageId: string;
         text: string;
         author: string;
+        sentAt?: string;
     }) => Promise<void>;
     unpin: (messageId: string) => Promise<void>;
     refresh: () => void;
