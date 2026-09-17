@@ -118,21 +118,22 @@ export function chat(
     });
 }
 
-export function presence(opts: {
-    heartbeatIntervalMs?: number;
-    cleanupIntervalMs?: number;
-    disconnectDelayMs?: number;
-} = {}): RealtimeFeature {
+export function presence(
+    opts: import('../presence/types').PresenceConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../presence/manifest').PresenceManifest,
         create: ({ router, logger }) => {
             const PresenceService = require('../presence/PresenceService') as any;
             const Svc = PresenceService.default ?? PresenceService;
-            return new Svc(router as any, logger as any, {
-                heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 30_000,
-                cleanupIntervalMs: opts.cleanupIntervalMs ?? 30_000,
-                disconnectDelayMs: opts.disconnectDelayMs ?? 5_000,
-            });
+            // Forward the full config — including `authorizeChannel`, which
+            // used to be unreachable through attachRealtime entirely — and
+            // let PresenceService own its own field-by-field defaulting
+            // (config value → env var → hard default). Previously this
+            // factory hardcoded 30_000/30_000/5_000 for the three fields it
+            // did pass, which shadowed the env-var fallback for anyone not
+            // explicitly setting them.
+            return new Svc(router as any, logger as any, opts);
         },
     });
 }
@@ -147,12 +148,28 @@ export function cursor(): RealtimeFeature {
     });
 }
 
-export function reactions(): RealtimeFeature {
+export function reactions(
+    opts: import('../reactions/types').ReactionConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../reactions/manifest').ReactionsManifest,
         create: ({ router, logger }) => {
             const { ReactionService } = require('../reactions/ReactionService') as typeof import('../reactions/ReactionService');
-            return new ReactionService({ messageRouter: router as any, logger: logger as any });
+            const { identityResolver, ...rest } = opts;
+            return new ReactionService({
+                messageRouter: router as any,
+                logger: logger as any,
+                config: {
+                    ...rest,
+                    // Same default as chat(): stamp userId from the
+                    // router's own identity accessor so reaction events
+                    // carry a userId without every consumer rewiring it.
+                    identityResolver: identityResolver ?? ((clientId: string) => {
+                        const userId = router.getUserIdForClient?.(clientId);
+                        return userId ? { userId } : null;
+                    }),
+                },
+            });
         },
     });
 }

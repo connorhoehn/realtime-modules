@@ -97,11 +97,14 @@ function presence(opts = {}) {
         create: ({ router, logger }) => {
             const PresenceService = require('../presence/PresenceService');
             const Svc = PresenceService.default ?? PresenceService;
-            return new Svc(router, logger, {
-                heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 30_000,
-                cleanupIntervalMs: opts.cleanupIntervalMs ?? 30_000,
-                disconnectDelayMs: opts.disconnectDelayMs ?? 5_000,
-            });
+            // Forward the full config — including `authorizeChannel`, which
+            // used to be unreachable through attachRealtime entirely — and
+            // let PresenceService own its own field-by-field defaulting
+            // (config value → env var → hard default). Previously this
+            // factory hardcoded 30_000/30_000/5_000 for the three fields it
+            // did pass, which shadowed the env-var fallback for anyone not
+            // explicitly setting them.
+            return new Svc(router, logger, opts);
         },
     });
 }
@@ -114,12 +117,26 @@ function cursor() {
         },
     });
 }
-function reactions() {
+function reactions(opts = {}) {
     return defineFeature({
         manifest: require('../reactions/manifest').ReactionsManifest,
         create: ({ router, logger }) => {
             const { ReactionService } = require('../reactions/ReactionService');
-            return new ReactionService({ messageRouter: router, logger: logger });
+            const { identityResolver, ...rest } = opts;
+            return new ReactionService({
+                messageRouter: router,
+                logger: logger,
+                config: {
+                    ...rest,
+                    // Same default as chat(): stamp userId from the
+                    // router's own identity accessor so reaction events
+                    // carry a userId without every consumer rewiring it.
+                    identityResolver: identityResolver ?? ((clientId) => {
+                        const userId = router.getUserIdForClient?.(clientId);
+                        return userId ? { userId } : null;
+                    }),
+                },
+            });
         },
     });
 }

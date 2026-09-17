@@ -279,6 +279,14 @@ export declare class ChatService {
      * the caller with the right refusal otherwise.
      */
     _ownMessage(clientId: string, channel: string, messageId: unknown, identity: ChatSenderIdentity | null): Promise<ChatMessage | null>;
+    /**
+     * Persists the patch before touching the cache, and throws on failure
+     * instead of logging and continuing. Same discipline as
+     * `handleSendMessage`'s persist-before-anything-else: an edit or delete
+     * that never reached the store must not be believed by the local cache
+     * either, or a client that asks for history right after would see a
+     * change nobody else's store agrees happened.
+     */
     _applyMessagePatch(channel: string, existing: ChatMessage, patch: {
         message?: string;
         metadata?: Record<string, unknown>;

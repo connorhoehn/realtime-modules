@@ -878,14 +878,18 @@ export class ChatService {
         return existing;
     }
 
+    /**
+     * Persists the patch before touching the cache, and throws on failure
+     * instead of logging and continuing. Same discipline as
+     * `handleSendMessage`'s persist-before-anything-else: an edit or delete
+     * that never reached the store must not be believed by the local cache
+     * either, or a client that asks for history right after would see a
+     * change nobody else's store agrees happened.
+     */
     async _applyMessagePatch(channel: string, existing: ChatMessage, patch: { message?: string; metadata?: Record<string, unknown>; editedAt?: string; deletedAt?: string }): Promise<ChatMessage> {
         const updated: ChatMessage = { ...existing, ...patch };
+        await this.chatStore.updateMessage(channel, updated.id, patch);
         this.getChannelCache(channel).set(updated.id, updated);
-        try {
-            await this.chatStore.updateMessage(channel, updated.id, patch);
-        } catch (err: any) {
-            this.logger.error('Failed to persist a message change:', err && err.message);
-        }
         return updated;
     }
 
@@ -923,7 +927,20 @@ export class ChatService {
             ? validateMetadata({ ...(existing.metadata ?? {}), ...(metadata as Record<string, unknown>) }, this.logger, this.maxMetadataKeys, this.maxMetadataSize)
             : existing.metadata;
         const editedAt = new Date().toISOString();
-        const updated = await this._applyMessagePatch(channel, existing, { message, ...(merged !== undefined ? { metadata: merged } : {}), editedAt });
+        let updated: ChatMessage;
+        try {
+            updated = await this._applyMessagePatch(channel, existing, { message, ...(merged !== undefined ? { metadata: merged } : {}), editedAt });
+        } catch (err: any) {
+            this.logger.error('Failed to persist a message edit:', err && err.message);
+            this.sendError(
+                clientId,
+                'Message could not be stored',
+                ErrorCodes.CHAT_STORE_FAILED,
+                channel,
+                { messageId: existing.id }
+            );
+            return;
+        }
         await this._broadcastFrame(channel, { type: 'chat', action: 'messageUpdated', channel, message: updated, timestamp: editedAt }, clientId);
         this._noteMessageChanged(channel, 'edited', updated);
         this.logger.info(`Message ${updated.id} edited by client ${clientId} on channel ${channel}`);
@@ -948,9 +965,24 @@ export class ChatService {
         const existing = await this._ownMessage(clientId, channel, messageId, identity);
         if (!existing) return;
         const deletedAt = existing.deletedAt ?? new Date().toISOString();
-        const updated = existing.deletedAt
-            ? existing
-            : await this._applyMessagePatch(channel, existing, { message: '', metadata: { deleted: true }, deletedAt });
+        let updated: ChatMessage;
+        if (existing.deletedAt) {
+            updated = existing;
+        } else {
+            try {
+                updated = await this._applyMessagePatch(channel, existing, { message: '', metadata: { deleted: true }, deletedAt });
+            } catch (err: any) {
+                this.logger.error('Failed to persist a message delete:', err && err.message);
+                this.sendError(
+                    clientId,
+                    'Message could not be stored',
+                    ErrorCodes.CHAT_STORE_FAILED,
+                    channel,
+                    { messageId: existing.id }
+                );
+                return;
+            }
+        }
         await this._broadcastFrame(channel, { type: 'chat', action: 'messageDeleted', channel, messageId: updated.id, deletedAt, timestamp: new Date().toISOString() }, clientId);
         this._noteMessageChanged(channel, 'deleted', updated);
         this.logger.info(`Message ${updated.id} deleted by client ${clientId} on channel ${channel}`);

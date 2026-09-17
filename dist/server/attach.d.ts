@@ -28,13 +28,9 @@ export declare function chat(opts?: Omit<import('../chat/ChatService').ChatServi
     store?: import('../chat/ChatStore').ChatStore;
     chatStore?: import('../chat/ChatStore').ChatStore;
 }): RealtimeFeature;
-export declare function presence(opts?: {
-    heartbeatIntervalMs?: number;
-    cleanupIntervalMs?: number;
-    disconnectDelayMs?: number;
-}): RealtimeFeature;
+export declare function presence(opts?: import('../presence/types').PresenceConfig): RealtimeFeature;
 export declare function cursor(): RealtimeFeature;
-export declare function reactions(): RealtimeFeature;
+export declare function reactions(opts?: import('../reactions/types').ReactionConfig): RealtimeFeature;
 export declare function activity(opts?: {
     historyStore?: import('../activity/ActivityHistoryStore').ActivityHistoryStore;
 }): RealtimeFeature;

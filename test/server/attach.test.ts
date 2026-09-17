@@ -247,6 +247,50 @@ describe('attachRealtime — end-to-end behaviour on the local router', () => {
         await teardown(server, handle);
     });
 
+    it('reactions: sent reaction carries userId end-to-end through attachRealtime (identityResolver defaults to router identity)', async () => {
+        const { server, port, handle } = await boot([reactions()], {
+            auth: async () => ({ userId: 'user-42', displayName: 'Ada' }),
+        });
+        const a = await connect(port);
+
+        a.send(JSON.stringify({ service: 'reactions', action: 'subscribe', channel: 'general' }));
+        await nextFrame(a, (f) => f.type === 'reaction' && f.action === 'reaction_subscribed');
+
+        const received = nextFrame(a, (f) => f.type === 'reaction' && f.action === 'reaction_received');
+        a.send(JSON.stringify({ service: 'reactions', action: 'send', channel: 'general', emoji: '❤️' }));
+
+        const frame = await received;
+        expect(frame.data.userId).toBe('user-42');
+
+        a.close();
+        await teardown(server, handle);
+    });
+
+    it('presence: authorizeChannel reaches PresenceService through attachRealtime', async () => {
+        const { server, port, handle } = await boot([
+            presence({
+                authorizeChannel: (_clientId: string, channel: string) => channel !== 'forbidden',
+            }),
+        ]);
+        const ws = await connect(port);
+
+        // Allowed channel subscribes normally.
+        ws.send(JSON.stringify({ service: 'presence', action: 'subscribe', channel: 'ok' }));
+        await nextFrame(ws, (f) => f.type === 'presence' && f.action === 'subscribed' && f.channel === 'ok');
+
+        // Forbidden channel must NOT produce a subscribed ack.
+        let subscribedForbidden = false;
+        const watcher = nextFrame(ws, (f) => f.action === 'subscribed' && f.channel === 'forbidden', 700)
+            .then(() => { subscribedForbidden = true; })
+            .catch(() => undefined);
+        ws.send(JSON.stringify({ service: 'presence', action: 'subscribe', channel: 'forbidden' }));
+        await watcher;
+        expect(subscribedForbidden).toBe(false);
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
     it('collab-docs: join a doc channel, receive sync frames, shutdown flushes on dispose', async () => {
         const { server, port, handle } = await boot([collabDocs()]);
         const ws = await connect(port);
