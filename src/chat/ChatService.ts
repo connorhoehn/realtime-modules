@@ -105,6 +105,13 @@ const ErrorCodes = {
     CHAT_NOT_FOUND: 'not-found',
     /** Edit: the message was already deleted. */
     CHAT_GONE: 'gone',
+    /**
+     * Send: the message was validated and authorized but the store write
+     * failed, so it was never acked `sent` and never broadcast. The client
+     * should treat it like any other failed send (offer retry), not like a
+     * delivered message that silently vanished.
+     */
+    CHAT_STORE_FAILED: 'store-failed',
 } as const;
 
 function createErrorResponse(
@@ -760,11 +767,29 @@ export class ChatService {
                 timestamp: new Date().toISOString(),
             };
 
-            // Store in local cache + persist (fire-and-forget)
+            // Persist BEFORE acking or broadcasting. This used to be
+            // fire-and-forget: the cache was updated and the message handed
+            // to every subscriber before the store write even started, so a
+            // store outage looked exactly like a successful send — the ack
+            // said `sent`, everyone's screen showed the message, and it was
+            // never actually written anywhere durable. A message that never
+            // reached the store has not been sent, no matter what the local
+            // cache and the other participants' screens say, so nothing else
+            // happens until this resolves.
+            try {
+                await this._persistMessage(messageData);
+            } catch (err: any) {
+                this.logger.error('Failed to persist chat message:', err && err.message);
+                this.sendError(
+                    clientId,
+                    'Message could not be stored',
+                    ErrorCodes.CHAT_STORE_FAILED,
+                    channel,
+                    { messageId: messageData.id }
+                );
+                return;
+            }
             this.addToChannelHistory(channel, messageData);
-            this._persistMessage(messageData).catch((err: any) =>
-                this.logger.error('Failed to persist chat message:', err && err.message)
-            );
 
             // M3 gap #9: pass the sender as the publisher identity so the
             // router can enforce ChatRoom/RealtimeChannel CRD publisher authz.
@@ -1783,12 +1808,14 @@ export class ChatService {
         clientId: string,
         message: string,
         errorCode: string = ErrorCodes.SERVICE_INTERNAL_ERROR,
-        channel?: string
+        channel?: string,
+        extra: Record<string, any> = {}
     ): void {
         const errorResponse = createErrorResponse(errorCode, message, {
             service: 'chat',
             clientId,
             ...(channel ? { channel } : {}),
+            ...extra,
         });
 
         this.sendToClient(clientId, {

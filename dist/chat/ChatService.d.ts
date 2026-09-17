@@ -501,7 +501,7 @@ export declare class ChatService {
     _checkDmMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): boolean;
     generateMessageId(): string;
     sendToClient(clientId: string, message: any): void;
-    sendError(clientId: string, message: string, errorCode?: string, channel?: string): void;
+    sendError(clientId: string, message: string, errorCode?: string, channel?: string, extra?: Record<string, any>): void;
     onClientConnect(clientId: string): Promise<void>;
     onClientDisconnect(clientId: string): Promise<void>;
     shutdown(): Promise<void>;

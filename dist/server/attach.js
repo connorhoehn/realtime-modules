@@ -73,7 +73,21 @@ function chat(opts = {}) {
         manifest: require('../chat/manifest').ChatManifest,
         create: ({ router, logger }) => {
             const { ChatService } = require('../chat/ChatService');
-            return new ChatService({ messageRouter: router, logger: logger, chatStore: opts.store });
+            const { store, chatStore, identityResolver, ...rest } = opts;
+            return new ChatService({
+                ...rest,
+                messageRouter: router,
+                logger: logger,
+                chatStore: chatStore ?? store,
+                // Default to the router's own identity accessor so chat
+                // messages carry userId (enabling edit/delete/addMembers/
+                // read receipts/DM enforcement) without every consumer
+                // having to rewire it by hand.
+                identityResolver: identityResolver ?? ((clientId) => {
+                    const userId = router.getUserIdForClient?.(clientId);
+                    return userId ? { userId } : null;
+                }),
+            });
         },
     });
 }

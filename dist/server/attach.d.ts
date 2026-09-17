@@ -23,8 +23,10 @@ export interface RealtimeFeature {
 }
 /** Identity helper — exists so feature definitions type-check at the site. */
 export declare function defineFeature(feature: RealtimeFeature): RealtimeFeature;
-export declare function chat(opts?: {
+export declare function chat(opts?: Omit<import('../chat/ChatService').ChatServiceOpts, 'messageRouter' | 'logger' | 'chatStore'> & {
+    /** @deprecated use `chatStore` — kept for backwards compatibility. */
     store?: import('../chat/ChatStore').ChatStore;
+    chatStore?: import('../chat/ChatStore').ChatStore;
 }): RealtimeFeature;
 export declare function presence(opts?: {
     heartbeatIntervalMs?: number;
