@@ -88,12 +88,32 @@ const NOOP_LOGGER: RouterLogger = {
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 
-export function chat(opts: { store?: import('../chat/ChatStore').ChatStore } = {}): RealtimeFeature {
+export function chat(
+    opts: Omit<import('../chat/ChatService').ChatServiceOpts, 'messageRouter' | 'logger' | 'chatStore'> & {
+        /** @deprecated use `chatStore` — kept for backwards compatibility. */
+        store?: import('../chat/ChatStore').ChatStore;
+        chatStore?: import('../chat/ChatStore').ChatStore;
+    } = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../chat/manifest').ChatManifest,
         create: ({ router, logger }) => {
             const { ChatService } = require('../chat/ChatService') as typeof import('../chat/ChatService');
-            return new ChatService({ messageRouter: router as any, logger: logger as any, chatStore: opts.store });
+            const { store, chatStore, identityResolver, ...rest } = opts;
+            return new ChatService({
+                ...rest,
+                messageRouter: router as any,
+                logger: logger as any,
+                chatStore: chatStore ?? store,
+                // Default to the router's own identity accessor so chat
+                // messages carry userId (enabling edit/delete/addMembers/
+                // read receipts/DM enforcement) without every consumer
+                // having to rewire it by hand.
+                identityResolver: identityResolver ?? ((clientId: string) => {
+                    const userId = router.getUserIdForClient?.(clientId);
+                    return userId ? { userId } : null;
+                }),
+            });
         },
     });
 }

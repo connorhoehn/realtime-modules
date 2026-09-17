@@ -190,6 +190,25 @@ describe('attachRealtime — end-to-end behaviour on the local router', () => {
         await teardown(server, handle);
     });
 
+    it('chat: sent message carries userId end-to-end through attachRealtime (identityResolver defaults to router identity)', async () => {
+        const { server, port, handle } = await boot([chat()], {
+            auth: async () => ({ userId: 'user-42', displayName: 'Ada' }),
+        });
+        const a = await connect(port);
+
+        a.send(JSON.stringify({ service: 'chat', action: 'join', channel: 'chat:general' }));
+        await nextFrame(a, (f) => f.type === 'chat' && f.action === 'joined');
+
+        const echoOnA = nextFrame(a, (f) => f.type === 'chat' && f.action === 'message');
+        a.send(JSON.stringify({ service: 'chat', action: 'send', channel: 'chat:general', text: 'hello', message: 'hello' }));
+
+        const onA = await echoOnA;
+        expect(onA.message.userId).toBe('user-42');
+
+        a.close();
+        await teardown(server, handle);
+    });
+
     it('authorize hook: denied subscribe produces NO joined ack (M3 gap #10)', async () => {
         const { server, port, handle } = await boot([chat()], {
             authorize: ({ kind, channel }: any) => !(kind === 'subscribe' && channel === 'chat:forbidden'),
