@@ -13,6 +13,7 @@ import {
     ProxyClientHttpError,
     ProxyClientTimeoutError,
 } from '../../src/proxy-client';
+import { createHmac } from 'crypto';
 
 // ---- Mock fetch fixture --------------------------------------------------
 
@@ -331,6 +332,91 @@ describe('GatewayProxyClient — HMAC signing (serviceAuthSecret)', () => {
         expect(authHeader).toBeDefined();
         // v1.<serviceId>.<unixTsSec>.<base64url-mac>
         expect(authHeader).toMatch(/^v1\.test-lambda-app\.\d+\.[A-Za-z0-9_-]+$/);
+    });
+
+    // Everything else here asserts the header's SHAPE. Shape is not the
+    // contract: the gateway recomputes this MAC with
+    // @connorhoehn/service-runtime's signEnvelope and compares. Change what
+    // gets hashed — the separator, the timestamp unit, the key ordering
+    // inside a payload — and every shape assertion still passes while every
+    // server-to-server call starts coming back 401.
+    //
+    // These recompute the MAC independently, so the exact signed string and
+    // the canonical form of the payload are both pinned. That is what the
+    // other side has to agree with.
+    //
+    // service-runtime is an optional peer installed from a git SHA, so it is
+    // not here to diff against; this states OUR half of the contract
+    // explicitly rather than leaving it implied by the implementation.
+    const expectedMac = (signedString: string, secret = SECRET): string =>
+        createHmac('sha256', secret)
+            .update(signedString)
+            .digest('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+
+    it('signs exactly `<serviceId>.<unixTsSec>.<canonical payload>` for a GET', async () => {
+        const { fetch: mock, calls } = makeMockFetch([{ status: 200, body: {} }]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+            serviceAuthSecret: SECRET,
+            serviceAuthClientId: CLIENT_ID,
+        });
+        await client.getHealth();
+
+        const [version, id, ts, mac] = String(calls[0].headers['x-service-auth']).split('.');
+        expect(version).toBe('v1');
+        expect(id).toBe(CLIENT_ID);
+
+        // Seconds, not milliseconds — a unit slip here reads as a replay
+        // window thousands of times too wide on one side and expired on the other.
+        const tsNum = Number(ts);
+        expect(Math.abs(tsNum - Math.floor(Date.now() / 1000))).toBeLessThan(5);
+
+        // A GET has no body: the signed payload is the empty string.
+        expect(mac).toBe(expectedMac(`${CLIENT_ID}.${ts}.`));
+    });
+
+    it('signs a POST body in its canonical form, with object keys sorted', async () => {
+        const { fetch: mock, calls } = makeMockFetch([{ status: 200, body: { delivered: 1 } }]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+            serviceAuthSecret: SECRET,
+            serviceAuthClientId: CLIENT_ID,
+        });
+
+        // Deliberately unsorted, and nested — canonicalisation has to reach in.
+        await client.publishToChannel('room:1', { text: 'hello', meta: { b: 2, a: 1 }, type: 'msg' });
+
+        const [, , ts, mac] = String(calls[0].headers['x-service-auth']).split('.');
+        // The body is { payload }; the channel rides the path, not the body.
+        const sentBody = JSON.parse(String(calls[0].body));
+        expect(Object.keys(sentBody)).toEqual(['payload']);
+
+        // The canonical form is sorted at every level, and is NOT the string
+        // actually sent on the wire — which is the whole reason both sides
+        // must canonicalise rather than hash the raw bytes.
+        const canonical = '{"payload":{"meta":{"a":1,"b":2},"text":"hello","type":"msg"}}';
+        expect(JSON.stringify(sentBody)).not.toBe(canonical);
+        expect(mac).toBe(expectedMac(`${CLIENT_ID}.${ts}.${canonical}`));
+    });
+
+    it('produces a different MAC for a different secret', async () => {
+        const { fetch: mock, calls } = makeMockFetch([{ status: 200, body: {} }]);
+        const client = new GatewayProxyClient({
+            gatewayUrl: 'https://gw.example.com',
+            fetch: mock,
+            serviceAuthSecret: 'a-different-secret',
+            serviceAuthClientId: CLIENT_ID,
+        });
+        await client.getHealth();
+
+        const [, , ts, mac] = String(calls[0].headers['x-service-auth']).split('.');
+        expect(mac).not.toBe(expectedMac(`${CLIENT_ID}.${ts}.`));
+        expect(mac).toBe(expectedMac(`${CLIENT_ID}.${ts}.`, 'a-different-secret'));
     });
 
     it('does NOT add X-Service-Auth header when serviceAuthSecret is omitted (legacy mode)', async () => {
