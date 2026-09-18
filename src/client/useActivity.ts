@@ -120,14 +120,49 @@ export function useActivity(channel: string): UseActivityReturn {
   // Subscribe / unsubscribe when channel changes. The gateway reads
   // `channelId`; `channel` is kept for legacy-server tolerance (EC v0.3.56
   // declares it as an optional deprecated field).
+  // The channel this effect last ran for, so a re-run can tell a channel
+  // change from a reconnect.
+  const subscribedChannelRef = useRef<string | null>(null);
+  // Whether the caller has asked for history on this channel, and with what.
+  const loadedHistoryRef = useRef(false);
+  const lastHistoryLimitRef = useRef<number | undefined>(undefined);
+
   useEffect(() => {
-    setEvents([]);
+    const reconnected = subscribedChannelRef.current === channel;
+    subscribedChannelRef.current = channel;
+
+    // A reconnect does NOT clear the feed. Unlike chat's join, an activity
+    // subscribe pushes nothing back — the server answers with a bare
+    // `subscribed` ack — so clearing here emptied the feed and left nothing
+    // to refill it. Every reconnect wiped the panel, permanently, with no
+    // event to say why. The events already held are still true: they
+    // happened, and a new socket does not un-happen them.
+    if (!reconnected) {
+      setEvents([]);
+      loadedHistoryRef.current = false;
+      lastHistoryLimitRef.current = undefined;
+    }
+
     send({
       service: 'activity',
       action: 'subscribe',
       channel,
       channelId: channel,
     } satisfies ClientFramePayload<'client.activity.subscribe'>);
+
+    // Anything that happened while the socket was down was missed. Re-asking
+    // fills that gap — but only for a caller who was using history, since a
+    // history frame REPLACES the list and would otherwise discard the live
+    // events this hook just protected.
+    if (reconnected && loadedHistoryRef.current) {
+      send({
+        service: 'activity',
+        action: 'getHistory',
+        channel,
+        channelId: channel,
+        limit: lastHistoryLimitRef.current ?? DEFAULT_HISTORY_LIMIT,
+      } satisfies ClientFramePayload<'client.activity.getHistory'>);
+    }
     return () => {
       send({
         service: 'activity',
@@ -148,6 +183,9 @@ export function useActivity(channel: string): UseActivityReturn {
       // action 'history' with "Unknown activity action". EC v0.3.56 now
       // declares client.activity.getHistory (hub#1497 closed the hub#1492
       // divergence), so the `satisfies` annotation is back.
+      // Remembered so a reconnect can re-ask for the same depth.
+      loadedHistoryRef.current = true;
+      lastHistoryLimitRef.current = limit;
       send({
         service: 'activity',
         action: 'getHistory',

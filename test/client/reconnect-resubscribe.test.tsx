@@ -32,6 +32,7 @@ import { useReactions } from '../../src/client/useReactions';
 import { useCursor } from '../../src/client/useCursor';
 import { useChatMembers } from '../../src/client/useChatMembers';
 import { useChatReadReceipts } from '../../src/client/useChatReadReceipts';
+import type { ActivityEvent } from '../../src/client/types';
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -71,6 +72,11 @@ class FakeWebSocket {
   serverClose(): void {
     this.readyState = 3;
     this.onclose?.({ code: 1006, reason: 'lost' });
+  }
+
+  /** Deliver an inbound frame, as the gateway would. */
+  receive(payload: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(payload) });
   }
 
   frames(match: (f: Record<string, unknown>) => boolean): Record<string, unknown>[] {
@@ -205,6 +211,71 @@ describe('channel hooks re-establish after a reconnect', () => {
 
       expect(second.frames((f) => f.action === 'history')).toHaveLength(0);
       expect(second.frames((f) => f.action === 'join')[0]!.channel).toBe('room:2');
+    });
+  });
+
+  // An activity subscribe pushes nothing back — the server answers with a bare
+  // `subscribed` ack, unlike chat's join. So clearing the feed on re-subscribe
+  // emptied the panel with nothing to refill it: every reconnect wiped it,
+  // permanently, and no event said why.
+  describe('the activity feed across a reconnect', () => {
+    const anEvent = (type: string) => ({
+      type: 'activity:event',
+      payload: { eventType: type, detail: {}, timestamp: '2026-09-18T10:00:00.000Z' },
+    });
+
+    it('keeps the events it already holds', () => {
+      const { result } = renderHook(() => useActivity('room:1'), { wrapper });
+      const first = FakeWebSocket.instances[0]!;
+      act(() => first.openAndEstablish());
+      act(() => first.receive(anEvent('doc.created')));
+      expect(result.current.events).toHaveLength(1);
+
+      const second = reconnect();
+      act(() => second.receive({ type: 'activity', action: 'subscribed', channelId: 'room:1' }));
+
+      // The whole bug: this used to be 0.
+      expect(result.current.events).toHaveLength(1);
+      expect((result.current.events[0] as ActivityEvent).eventType).toBe('doc.created');
+    });
+
+    it('still appends live events on the new socket', () => {
+      const { result } = renderHook(() => useActivity('room:1'), { wrapper });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+      act(() => FakeWebSocket.instances[0]!.receive(anEvent('doc.created')));
+
+      const second = reconnect();
+      act(() => second.receive(anEvent('doc.edited')));
+
+      expect(result.current.events.map((e) => (e as ActivityEvent).eventType))
+        .toEqual(['doc.created', 'doc.edited']);
+    });
+
+    it('re-asks for history only when the caller was using it', () => {
+      const { result } = renderHook(() => useActivity('room:1'), { wrapper });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+
+      const bare = reconnect();
+      expect(bare.frames((f) => f.action === 'getHistory')).toHaveLength(0);
+
+      act(() => result.current.loadHistory(100));
+      const after = reconnect();
+      const asked = after.frames((f) => f.action === 'getHistory');
+      expect(asked).toHaveLength(1);
+      expect(asked[0]!.limit).toBe(100);
+    });
+
+    it('clears on a channel change, which is a different read entirely', () => {
+      const { result, rerender } = renderHook(({ ch }) => useActivity(ch), {
+        wrapper,
+        initialProps: { ch: 'room:1' },
+      });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+      act(() => FakeWebSocket.instances[0]!.receive(anEvent('doc.created')));
+      expect(result.current.events).toHaveLength(1);
+
+      rerender({ ch: 'room:2' });
+      expect(result.current.events).toHaveLength(0);
     });
   });
 

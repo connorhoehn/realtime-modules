@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.67.1 — 2026-09-18
+
+- **A reconnect emptied the activity feed and left it empty.** Same root as
+  0.67.0, worse outcome.
+
+  `useActivity` cleared its events when the subscribe effect ran, which was
+  harmless while that only happened on mount. 0.65.0 made it run on every
+  reconnect.
+
+  Chat at least gets something back — join auto-pushes recent history. An
+  activity subscribe pushes nothing: the server answers with a bare
+  `subscribed` ack. So the feed was cleared and nothing refilled it. Every
+  network blip wiped the panel for good, with no event, no error and no way
+  for the app to notice.
+
+  A reconnect no longer clears. Those events are still true — they happened,
+  and a new socket does not un-happen them — and live events resume appending
+  on the new connection. A channel change still clears, because that is a
+  different read.
+
+  For the gap while the socket was down, a caller who had used `loadHistory`
+  gets it re-asked at the same depth. Only that caller: a history frame
+  REPLACES the list, so re-asking unprompted would discard the live events
+  this change just protected.
+
+
 ## 0.67.0 — 2026-09-18
 
 - **A reconnect cut `useChat` back to twenty messages.** Introduced by 0.65.0;
