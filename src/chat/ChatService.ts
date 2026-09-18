@@ -776,18 +776,29 @@ export class ChatService {
             // reached the store has not been sent, no matter what the local
             // cache and the other participants' screens say, so nothing else
             // happens until this resolves.
+            // Two properties have to hold at once here, and the original code
+            // broke both by doing the wrong half of each.
+            //
+            //   1. A store outage must not drop LIVE chat. The gateway states
+            //      this explicitly and has an integration test calling it
+            //      load-bearing (chat-ddb-store-x-chat-service): realtime
+            //      delivery is the product, and history is what degrades.
+            //   2. The sender must not be told a message was stored when it
+            //      was not. Two independent audits ranked the old silent
+            //      `sent` ack the worst defect in the system.
+            //
+            // These only looked contradictory because persistence, delivery
+            // and the ack were one undifferentiated step. They are separable:
+            // the message is still cached and still broadcast, so everyone
+            // connected sees it, and the SENDER is told it was not stored
+            // instead of being told it was. Nobody is lied to, and nobody
+            // loses live chat.
+            let stored = true;
             try {
                 await this._persistMessage(messageData);
             } catch (err: any) {
+                stored = false;
                 this.logger.error('Failed to persist chat message:', err && err.message);
-                this.sendError(
-                    clientId,
-                    'Message could not be stored',
-                    ErrorCodes.CHAT_STORE_FAILED,
-                    channel,
-                    { messageId: messageData.id }
-                );
-                return;
             }
             this.addToChannelHistory(channel, messageData);
 
@@ -799,13 +810,26 @@ export class ChatService {
             // is what makes both work at once.
             await this.broadcastMessage(channel, messageData, clientId);
 
-            this.sendToClient(clientId, {
-                type: 'chat',
-                action: 'sent',
-                messageId: messageData.id,
-                channel,
-                timestamp: messageData.timestamp,
-            });
+            if (stored) {
+                this.sendToClient(clientId, {
+                    type: 'chat',
+                    action: 'sent',
+                    messageId: messageData.id,
+                    channel,
+                    timestamp: messageData.timestamp,
+                });
+            } else {
+                // Delivered live, not durable. Saying `sent` here is the lie
+                // this whole change exists to remove — the sender would have
+                // no way to know the message will be missing on reload.
+                this.sendError(
+                    clientId,
+                    'Message was delivered but could not be stored — it may not be there later',
+                    ErrorCodes.CHAT_STORE_FAILED,
+                    channel,
+                    { messageId: messageData.id },
+                );
+            }
 
             // DM activity seam (v0.23.0) — fire-and-forget observer after a
             // successful dm send. Exceptions never fail the send path.
