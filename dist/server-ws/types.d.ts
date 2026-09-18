@@ -63,8 +63,18 @@ export interface WsHandlerOptions {
      */
     generateClientId?: () => string;
     /**
-     * Path filter. If set, only upgrade requests for `req.url`
-     * starting with this path are handled. Defaults to accept all.
+     * Path filter. When set, only upgrade requests whose path equals this or
+     * sits under it are handled; everything else returns early and is left
+     * for another listener.
+     *
+     * There is NO default, and the unset behaviour is the sharp edge: with no
+     * `path` this listener calls `handleUpgrade` on every WebSocket upgrade
+     * the server receives. `attachRealtime` is sold as attaching to an
+     * http.Server you already have, so the server that reaches it may already
+     * carry a WS endpoint of its own — and that endpoint gets claimed.
+     *
+     * Pass a path whenever the server is not exclusively realtime's. The
+     * recipes use '/realtime'.
      */
     path?: string;
 }

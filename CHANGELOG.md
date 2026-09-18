@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.60.0 — 2026-09-18
+
+- **`path` has no default, and the recipes said it did.** Documentation and
+  test only; no behaviour change.
+
+  All nine attach recipes told the reader to "point the client at the same
+  origin (`/realtime` by default)", while their own server snippet passed no
+  `path` at all. There is no default: `createWsHandler` filters by path only
+  when one is given, and with none it calls `handleUpgrade` on every WebSocket
+  upgrade the server receives.
+
+  That is a live hazard rather than a wording slip, because `attachRealtime`
+  is sold as attaching to an http.Server you already have — and a server you
+  already have may already carry a WebSocket endpoint. Without `path`, that
+  endpoint is claimed. Nothing errors; the other endpoint simply stops
+  answering. The repo's own attach test harness has always passed
+  `path: '/realtime'`, so nothing caught it.
+
+  Every recipe snippet now passes `path` and says what omitting it costs. The
+  option's own docstring carries the same warning, which is where someone
+  reaching for it will actually look.
+
+  Two tests pin the behaviour: unset claims `/`, `/realtime` and
+  `/something/else/entirely` alike; set claims only its own subtree and leaves
+  a co-existing endpoint answering. Note the handler cannot stop another
+  listener from *seeing* an upgrade — Node runs them all — so what it controls
+  is which sockets it claims, and that is what the tests assert.
+
+
 ## 0.59.0 — 2026-09-18
 
 - **`./client` imports without Tiptap installed.** It could not before, and

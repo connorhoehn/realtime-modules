@@ -14,6 +14,7 @@ const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [rooms()],
     auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);
 ```
@@ -48,8 +49,11 @@ function RoomList() {
 REST functions behind these hooks are exported from the same subpath, so SSR
 and scripts can use one transport without pulling in React.
 
-Point the client at the same origin (`/realtime` by default). All hooks share
-one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.
+Point the client at the same origin and the `path` set above —
+`ws://localhost:3000/realtime`. There is no default path: leave `path` off and
+the upgrade listener takes every WebSocket upgrade on that server, including
+one meant for an endpoint you already had. All hooks share one WebSocket via
+the provider from `@connorhoehn/realtime-modules/client`.
 
 ## 3 — UI (ui-components)
 

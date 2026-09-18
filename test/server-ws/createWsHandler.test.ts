@@ -196,9 +196,91 @@ function connect(protocols?: string | string[]): QueuedClient {
     return qc;
 }
 
+function connectPath(p: string): QueuedClient {
+    const qc = makeQueuedClient(`ws://127.0.0.1:${port}${p}`);
+    openSockets.push(qc.ws);
+    return qc;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+// `path` has no default, and the unset case is the one that surprises: the
+// listener calls handleUpgrade on EVERY upgrade the server receives. That
+// matters because attachRealtime's whole pitch is attaching to an http.Server
+// you already have — one that may already carry a WebSocket endpoint of its
+// own. The recipes used to say `/realtime` was the default; it never was.
+describe('createWsHandler — path filtering', () => {
+    it('claims every upgrade when no path is given', async () => {
+        handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0 });
+
+        for (const p of ['/', '/realtime', '/something/else/entirely']) {
+            const qc = connectPath(p);
+            await qc.open();
+            const frame = await qc.nextMessage();
+            expect(frame.type).toBe('session');
+        }
+    });
+
+    // Node runs every 'upgrade' listener — a handler cannot stop another from
+    // seeing the request. What it controls is which sockets it CLAIMS by
+    // calling handleUpgrade. With a path set it claims only its own, so a
+    // co-existing endpoint keeps working.
+    it('claims only its own path, leaving another endpoint intact', async () => {
+        const theirPath = '/my-own-socket';
+        const claimedByThem: string[] = [];
+        const otherListener = (req: any, socket: any) => {
+            const url = (req.url || '').split('?')[0];
+            if (url !== theirPath) return; // not theirs — same discipline
+            claimedByThem.push(url);
+            socket.destroy();
+        };
+
+        handle = createWsHandler({
+            server: httpServer,
+            services: {},
+            pingIntervalMs: 0,
+            path: '/realtime',
+        });
+        httpServer.on('upgrade', otherListener as any);
+
+        try {
+            const mine = connectPath('/realtime');
+            await mine.open();
+            expect((await mine.nextMessage()).type).toBe('session');
+            expect(claimedByThem).toEqual([]);
+
+            // Their endpoint: the handler returns early, so the socket is
+            // theirs to answer. It never gets a session frame from us.
+            const theirs = connectPath(theirPath);
+            let gotSession = false;
+            try {
+                const msg = await theirs.nextMessage(500);
+                if (msg && msg.type === 'session') gotSession = true;
+            } catch {
+                // expected — we did not claim it
+            }
+            expect(gotSession).toBe(false);
+            expect(claimedByThem).toEqual([theirPath]);
+        } finally {
+            httpServer.removeListener('upgrade', otherListener as any);
+        }
+    });
+
+    it('also serves paths nested under the configured one', async () => {
+        handle = createWsHandler({
+            server: httpServer,
+            services: {},
+            pingIntervalMs: 0,
+            path: '/realtime',
+        });
+
+        const qc = connectPath('/realtime/tenant-a');
+        await qc.open();
+        expect((await qc.nextMessage()).type).toBe('session');
+    });
+});
 
 describe('createWsHandler', () => {
     it('sends a session frame with clientId on connect', async () => {
