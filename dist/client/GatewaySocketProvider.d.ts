@@ -58,6 +58,18 @@ export interface GatewaySocketProviderProps {
      * piece of the tree that cannot be mounted without a browser global.
      */
     webSocketImpl?: typeof WebSocket;
+    /**
+     * Origin (and optional path prefix) for the REST half. Defaults to the
+     * socket URL's origin, which drops any path prefix the gateway is mounted
+     * under and assumes REST shares the socket's host.
+     *
+     * Pass it when neither holds: `https://example.com/gateway` for a
+     * path-prefixed deployment, `https://api.example.com` for a split origin,
+     * or `''` to make requests page-relative so a dev proxy can route them.
+     *
+     * Ignored when `rest` is given — that replaces the shim outright.
+     */
+    httpBase?: string;
 }
 /**
  * Extended WS context — `UseWebSocketHookReturn` plus a post-init message
@@ -161,8 +173,22 @@ export interface GatewayContextValue extends UseWebSocketHookReturn {
  * the only configuration a consumer should have to supply.
  */
 export declare function httpBaseFromSocketUrl(url: string): string | null;
-/** The default REST shim: plain fetch against the gateway's own origin. */
-export declare function createGatewayRest(url: string, token?: string): GatewayRest | null;
+/**
+ * The default REST shim: plain fetch against the gateway's own origin.
+ *
+ * `httpBase` overrides where the REST half lives. Omit it and the base is
+ * derived from the socket URL, which is right for the common deployment and
+ * wrong for two that are not rare: a gateway mounted under a path prefix
+ * (`wss://example.com/gateway/ws` derives `https://example.com`, dropping the
+ * prefix, so every call 404s), and a split origin where sockets terminate at
+ * `wss://ws.example.com` and REST lives at `https://api.example.com`. Pass
+ * `''` for page-relative requests — a dev server proxying `/api` wants that,
+ * not an absolute URL back to the socket's port.
+ *
+ * Empty string is a real answer here, so the parameter is checked for
+ * `undefined` rather than for truthiness.
+ */
+export declare function createGatewayRest(url: string, token?: string, httpBase?: string): GatewayRest | null;
 /**
  * Holds the full UseWebSocketHookReturn so child hooks can consume the
  * WS connection without prop-drilling. Do not call useGateway() outside
@@ -188,7 +214,7 @@ export declare const GatewayContext: React.Context<GatewayContextValue | null>;
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-export declare function GatewaySocketProvider({ url, children, features, token, channel, rest, webSocketImpl, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
+export declare function GatewaySocketProvider({ url, children, features, token, channel, rest, webSocketImpl, httpBase, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *

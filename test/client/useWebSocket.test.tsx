@@ -909,4 +909,34 @@ describe('useWebSocket', () => {
             });
         });
     });
+
+    describe('httpBase', () => {
+        // The shim taking an httpBase is only half of it if the provider does
+        // not pass one along, and the provider is what consumers mount.
+        it('forwards httpBase to the REST shim it builds', async () => {
+            const realFetch = globalThis.fetch;
+            const calls: string[] = [];
+            globalThis.fetch = (async (u: any) => {
+                calls.push(String(u));
+                return { ok: true, status: 200, json: async () => ({ enabled: true }) };
+            }) as any;
+            try {
+                const wrapper = ({ children }: { children: React.ReactNode }) => (
+                    <GatewaySocketProvider
+                        url="wss://example.com/gateway/ws"
+                        httpBase="https://example.com/gateway"
+                    >
+                        {children}
+                    </GatewaySocketProvider>
+                );
+
+                const { result } = renderHook(() => useGateway(), { wrapper });
+                await result.current.rest!.getCapability!('chat');
+
+                expect(calls[0]).toContain('https://example.com/gateway/api/capabilities');
+            } finally {
+                globalThis.fetch = realFetch;
+            }
+        });
+    });
 });

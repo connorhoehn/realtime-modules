@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.56.0 — 2026-09-18
+
+- **`httpBase`** (`./client`) — `GatewaySocketProvider` and `createGatewayRest`
+  accept where the REST half lives.
+
+  It was derived from the socket URL and only from there, on the stated
+  assumption that "the gateway serves its REST routes on the same origin it
+  accepts sockets on". Two deployments break that, and neither is exotic:
+
+  - A gateway under a path prefix. `httpBaseFromSocketUrl` keeps the origin and
+    discards the path, so `wss://example.com/gateway/ws` yields
+    `https://example.com` and every REST call misses the `/gateway` prefix.
+  - A split origin — sockets terminating at `wss://ws.example.com`, REST served
+    from `https://api.example.com`.
+
+  Both fail the way this surface keeps failing: the request 404s, and a 404 is
+  exactly what the hooks read as "this gateway has no such endpoint", so
+  capabilities report optimistically enabled and pins come back empty with
+  nothing logged.
+
+  The escape hatch was to pass a whole `rest` object — reimplementing five
+  methods, including the `status`-on-error contract the hooks depend on, to
+  change a base URL.
+
+  `httpBase: ''` is honoured as page-relative rather than treated as unset,
+  which is what a dev server proxying `/api` needs; the parameter is checked
+  against `undefined` for that reason. Omitted, the derivation is unchanged.
+  An explicit base also builds a working shim from a socket URL that does not
+  parse, where the derivation could only return null.
+
+
 ## 0.55.0 — 2026-09-18
 
 - **`useNotifications({ storage })`** (`./client`) — read-state persistence is

@@ -92,6 +92,60 @@ describe('createGatewayRest', () => {
     });
 });
 
+// Where the REST half lives. Deriving it from the socket URL is right for the
+// common deployment and silently wrong for two that are not rare — and wrong
+// in the way this whole surface keeps being wrong, since a misrouted call
+// 404s and the hooks read 404 as "no endpoint here" and degrade quietly.
+describe('createGatewayRest httpBase', () => {
+    it('keeps a path prefix the socket URL carries, which derivation drops', async () => {
+        // Derivation is origin-only: the /gateway prefix does not survive it.
+        expect(httpBaseFromSocketUrl('wss://example.com/gateway/ws')).toBe('https://example.com');
+
+        const fetchMock = mockFetch(() => ok({ enabled: true }));
+        await createGatewayRest(
+            'wss://example.com/gateway/ws',
+            undefined,
+            'https://example.com/gateway',
+        )!.getCapability!('chat');
+
+        expect(String(fetchMock.mock.calls[0]![0]))
+            .toContain('https://example.com/gateway/api/capabilities');
+    });
+
+    it('routes to a separate REST origin', async () => {
+        const fetchMock = mockFetch(() => ok({ pins: [] }));
+        await createGatewayRest('wss://ws.example.com', undefined, 'https://api.example.com')!
+            .listPins!('room:design');
+
+        expect(String(fetchMock.mock.calls[0]![0]))
+            .toMatch(/^https:\/\/api\.example\.com\/api\/chat\/pins/);
+    });
+
+    // '' is a real answer, not a missing one: a dev server proxying /api wants
+    // page-relative requests, not an absolute URL back to the socket's port.
+    it('treats an empty base as page-relative rather than as unset', async () => {
+        const fetchMock = mockFetch(() => ok({ enabled: true }));
+        await createGatewayRest('ws://localhost:4000', undefined, '')!.getCapability!('chat');
+
+        expect(String(fetchMock.mock.calls[0]![0])).toMatch(/^\/api\/capabilities/);
+    });
+
+    it('still derives from the socket URL when no base is given', async () => {
+        const fetchMock = mockFetch(() => ok({ enabled: true }));
+        await createGatewayRest('ws://localhost:18080')!.getCapability!('chat');
+
+        expect(String(fetchMock.mock.calls[0]![0])).toContain('http://localhost:18080/api/capabilities');
+    });
+
+    it('builds a shim from an explicit base even when the socket URL is unparseable', async () => {
+        const fetchMock = mockFetch(() => ok({ enabled: true }));
+        const rest = createGatewayRest('nonsense', undefined, 'https://api.example.com');
+        expect(rest).not.toBeNull();
+        await rest!.getCapability!('chat');
+        expect(String(fetchMock.mock.calls[0]![0])).toContain('https://api.example.com/api/capabilities');
+    });
+});
+
 // The same silent failure, one method over. useFeatureFlag has always called
 // rest.getFeatureFlag — through an `unknown` cast, so nothing checked that the
 // default shim implemented it. It did not, which meant every provider-mounted

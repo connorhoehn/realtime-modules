@@ -111,6 +111,18 @@ export interface GatewaySocketProviderProps {
    * piece of the tree that cannot be mounted without a browser global.
    */
   webSocketImpl?: typeof WebSocket;
+  /**
+   * Origin (and optional path prefix) for the REST half. Defaults to the
+   * socket URL's origin, which drops any path prefix the gateway is mounted
+   * under and assumes REST shares the socket's host.
+   *
+   * Pass it when neither holds: `https://example.com/gateway` for a
+   * path-prefixed deployment, `https://api.example.com` for a split origin,
+   * or `''` to make requests page-relative so a dev proxy can route them.
+   *
+   * Ignored when `rest` is given — that replaces the shim outright.
+   */
+  httpBase?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,10 +240,28 @@ export function httpBaseFromSocketUrl(url: string): string | null {
   }
 }
 
-/** The default REST shim: plain fetch against the gateway's own origin. */
-export function createGatewayRest(url: string, token?: string): GatewayRest | null {
-  const base = httpBaseFromSocketUrl(url);
-  if (!base) return null;
+/**
+ * The default REST shim: plain fetch against the gateway's own origin.
+ *
+ * `httpBase` overrides where the REST half lives. Omit it and the base is
+ * derived from the socket URL, which is right for the common deployment and
+ * wrong for two that are not rare: a gateway mounted under a path prefix
+ * (`wss://example.com/gateway/ws` derives `https://example.com`, dropping the
+ * prefix, so every call 404s), and a split origin where sockets terminate at
+ * `wss://ws.example.com` and REST lives at `https://api.example.com`. Pass
+ * `''` for page-relative requests — a dev server proxying `/api` wants that,
+ * not an absolute URL back to the socket's port.
+ *
+ * Empty string is a real answer here, so the parameter is checked for
+ * `undefined` rather than for truthiness.
+ */
+export function createGatewayRest(
+  url: string,
+  token?: string,
+  httpBase?: string,
+): GatewayRest | null {
+  const base = httpBase !== undefined ? httpBase : httpBaseFromSocketUrl(url);
+  if (base === null) return null;
   const authHeaders = (): Record<string, string> =>
     token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -356,6 +386,7 @@ export function GatewaySocketProvider({
   channel,
   rest,
   webSocketImpl,
+  httpBase,
 }: GatewaySocketProviderProps) {
   // Message-bus: child hooks register handlers; GatewaySocketProvider fans
   // each inbound frame out to all registered handlers in registration order.
@@ -438,8 +469,8 @@ export function GatewaySocketProvider({
   // surface here" and must survive as null so the hooks take their no-endpoint
   // path rather than building a shim against a URL nobody wanted used.
   const resolvedRest = useMemo<GatewayRest | null>(
-    () => (rest === undefined ? createGatewayRest(url, token) : rest),
-    [rest, url, token],
+    () => (rest === undefined ? createGatewayRest(url, token, httpBase) : rest),
+    [rest, url, token, httpBase],
   );
 
   const contextValue = useMemo<GatewayContextValue>(
