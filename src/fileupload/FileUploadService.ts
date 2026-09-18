@@ -96,7 +96,7 @@ export class InMemoryFileUploadMetadataStore implements FileUploadMetadataStore 
     }
 }
 
-interface RouterLike {
+export interface FileUploadMessageRouter {
     sendToClient(clientId: string, message: unknown): Promise<unknown> | unknown;
     sendToChannel(
         channel: string,
@@ -114,7 +114,7 @@ interface RouterLike {
     getClientData?(clientId: string): unknown;
 }
 
-interface LoggerLike {
+export interface FileUploadLogger {
     debug?: (...args: unknown[]) => void;
     info?: (...args: unknown[]) => void;
     warn?: (...args: unknown[]) => void;
@@ -122,8 +122,8 @@ interface LoggerLike {
 }
 
 export interface FileUploadServiceOptions {
-    messageRouter: RouterLike;
-    logger: LoggerLike;
+    messageRouter: FileUploadMessageRouter;
+    logger: FileUploadLogger;
     metricsCollector?: { recordMetric?: (name: string, value: number) => void };
     blobStore?: FileBlobStore;
     metadataRepo?: FileUploadMetadataStore;
@@ -203,8 +203,8 @@ export class FileUploadService {
     // instance (it reads service.messageRouter / .logger / .metricsCollector /
     // .sendError) — the SAME contract chat/subscribe/cursor/etc use. Renamed
     // from the old private `router`/`metrics` fields for that reason.
-    messageRouter: RouterLike;
-    logger: LoggerLike;
+    messageRouter: FileUploadMessageRouter;
+    logger: FileUploadLogger;
     metricsCollector?: { recordMetric?: (name: string, value: number) => void };
     readonly blobStore: FileBlobStore;
     readonly metadataRepo: FileUploadMetadataStore;

@@ -379,7 +379,7 @@ function rejectedDetail(rejection: unknown): string {
  * otherwise the final step's output (the last step in the list that finished
  * with an output) — that is what the pipeline produced.
  */
-function resultOf(snapOrFrame: { result?: unknown; output?: unknown }, stepList: Step[]): unknown {
+function resultOf(snapOrFrame: { result?: unknown; output?: unknown }, stepList: PipelineSnapshotStep[]): unknown {
   if (snapOrFrame.result !== undefined) return snapOrFrame.result;
   const ctx = snapOrFrame.output as Record<string, unknown> | undefined;
   if (ctx && ctx.result !== undefined) return ctx.result;
@@ -403,7 +403,7 @@ export function normalizeEventType(eventType: unknown): string | undefined {
   return eventType.replace(/:/g, '.');
 }
 
-type Step = {
+export type PipelineSnapshotStep = {
   stepId?: string;
   nodeId?: string;
   status?: string;
@@ -417,7 +417,7 @@ type Step = {
 export interface PipelineRunSnapshot {
   status?: string;
   currentStepIds?: string[];
-  steps?: Step[] | Record<string, Step>;
+  steps?: PipelineSnapshotStep[] | Record<string, PipelineSnapshotStep>;
   error?: { message?: string } | string;
   context?: Record<string, unknown>;
   trigger?: Record<string, unknown>;
@@ -432,7 +432,7 @@ export interface PipelineRunSnapshot {
 }
 
 /** The snapshot's steps as a list, each carrying its id (the store keys them by node id; older shapes carried an array). */
-function stepListOf(snap: PipelineRunSnapshot): Step[] {
+function stepListOf(snap: PipelineRunSnapshot): PipelineSnapshotStep[] {
   return Array.isArray(snap.steps) ? snap.steps : Object.entries(snap.steps ?? {}).map(([id, st]) => ({ stepId: id, ...st }));
 }
 
@@ -444,7 +444,7 @@ function errorMessage(err: unknown): string | undefined {
 }
 
 /** The message of a failed run: the run's own error, then the failed step's, then its last attempt's. */
-function failureMessage(snap: PipelineRunSnapshot, stepList: Step[]): string | undefined {
+function failureMessage(snap: PipelineRunSnapshot, stepList: PipelineSnapshotStep[]): string | undefined {
   const own = errorMessage(snap.error);
   if (own) return own;
   const failed = stepList.find((s) => s.status === 'failed') ?? stepList.find((s) => s.error !== undefined);

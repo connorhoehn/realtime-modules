@@ -47,6 +47,8 @@ export type {
   PipelineRunDetails,
   PipelineRunStepDetail,
   PipelineRunStepStatus,
+  // The element type of PipelineRunSnapshot.steps.
+  PipelineSnapshotStep,
   PipelineRunOpDetail,
   PipelineRunDocumentDetail,
   PipelineRunRequestError,

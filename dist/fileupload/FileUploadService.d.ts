@@ -51,7 +51,7 @@ export declare class InMemoryFileUploadMetadataStore implements FileUploadMetada
         contentType?: string;
     }): Promise<void>;
 }
-interface RouterLike {
+export interface FileUploadMessageRouter {
     sendToClient(clientId: string, message: unknown): Promise<unknown> | unknown;
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
@@ -66,15 +66,15 @@ interface RouterLike {
      */
     getClientData?(clientId: string): unknown;
 }
-interface LoggerLike {
+export interface FileUploadLogger {
     debug?: (...args: unknown[]) => void;
     info?: (...args: unknown[]) => void;
     warn?: (...args: unknown[]) => void;
     error?: (...args: unknown[]) => void;
 }
 export interface FileUploadServiceOptions {
-    messageRouter: RouterLike;
-    logger: LoggerLike;
+    messageRouter: FileUploadMessageRouter;
+    logger: FileUploadLogger;
     metricsCollector?: {
         recordMetric?: (name: string, value: number) => void;
     };
@@ -133,8 +133,8 @@ interface ActiveTransfer {
     height?: number;
 }
 export declare class FileUploadService {
-    messageRouter: RouterLike;
-    logger: LoggerLike;
+    messageRouter: FileUploadMessageRouter;
+    logger: FileUploadLogger;
     metricsCollector?: {
         recordMetric?: (name: string, value: number) => void;
     };

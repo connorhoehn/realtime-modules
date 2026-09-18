@@ -89,6 +89,7 @@ export {
   fetchIceServers,
   LVSApiError,
 } from './lib/transport';
+export type { TransportLog } from './lib/transport';
 
 export { decodeJwt, decodeArn } from './lib/jwt';
 

@@ -13,6 +13,12 @@ export type {
     FileUploadServiceOptions,
     FileUploadMetadataStore,
     FileUploadRow,
+    // The contracts a consumer must satisfy to construct the service, plus
+    // the status union its rows carry. All three appeared in exported
+    // signatures while being nameable from nowhere.
+    FileUploadMessageRouter,
+    FileUploadLogger,
+    FileUploadStatus,
 } from './FileUploadService';
 export { InMemoryFileUploadMetadataStore } from './FileUploadService';
 export {

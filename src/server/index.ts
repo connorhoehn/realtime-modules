@@ -24,6 +24,14 @@ export {
 };
 
 export type { CRDTServiceOpts, OrchestratorMessageRouter } from './CRDTService';
+// CRDTServiceOpts.awarenessLedger is an AwarenessLedger — named in an
+// exported signature while being importable from no published entry point.
+//
+// PresenceMode has the same problem and is NOT fixed here:
+// DocumentPresenceService uses `export =`, which forbids any other export
+// from that module, so exposing it needs a module-shape change rather than
+// an export line.
+export { AwarenessLedger } from './AwarenessLedger';
 
 // Re-export store contracts + memory implementations so consumers only
 // need to import from `'@connorhoehn/realtime-modules/server'`.

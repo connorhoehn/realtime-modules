@@ -36,6 +36,11 @@ import {
 } from '@tiptap/y-tiptap';
 import { docModelToPm, pmToDocModel, type PmNode, type UnsupportedForm } from '../adapters/tiptap/canvas/pmModel';
 
+// Re-exported because MaterializeResult.unsupported is UnsupportedForm[] and
+// the type was reachable from no published entry point. Type-only, so
+// ./client stays editor-agnostic at runtime.
+export type { UnsupportedForm } from '../adapters/tiptap/canvas/pmModel';
+
 /** The Y.js root that holds the canvas body. */
 export const CANVAS_BODY_KEY = 'body';
 

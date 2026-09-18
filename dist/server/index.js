@@ -34,7 +34,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -47,6 +47,15 @@ const AwarenessCoalescer_1 = __importDefault(require("./AwarenessCoalescer"));
 exports.AwarenessCoalescer = AwarenessCoalescer_1.default;
 const IdleEvictionManager_1 = __importDefault(require("./IdleEvictionManager"));
 exports.IdleEvictionManager = IdleEvictionManager_1.default;
+// CRDTServiceOpts.awarenessLedger is an AwarenessLedger — named in an
+// exported signature while being importable from no published entry point.
+//
+// PresenceMode has the same problem and is NOT fixed here:
+// DocumentPresenceService uses `export =`, which forbids any other export
+// from that module, so exposing it needs a module-shape change rather than
+// an export line.
+var AwarenessLedger_1 = require("./AwarenessLedger");
+Object.defineProperty(exports, "AwarenessLedger", { enumerable: true, get: function () { return AwarenessLedger_1.AwarenessLedger; } });
 var MemoryStore_1 = require("./stores/MemoryStore");
 Object.defineProperty(exports, "MemoryHotCache", { enumerable: true, get: function () { return MemoryStore_1.MemoryHotCache; } });
 Object.defineProperty(exports, "MemoryMetadataStore", { enumerable: true, get: function () { return MemoryStore_1.MemoryMetadataStore; } });

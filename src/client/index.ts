@@ -35,6 +35,9 @@ export { useWebSocket } from './useWebSocket';
 export type {
   UseWebSocketOptions,
   UseWebSocketHookReturn,
+  // The type of the `persist` option. It was reachable from no published
+  // entry point, so a consumer could pass the object but not name it.
+  UseWebSocketPersistConfig,
 } from './useWebSocket';
 
 // v0.2.0 — useAgentStream hook. Pairs with the server-side
@@ -50,6 +53,9 @@ export type {
   Message,
   ToolCall,
   BuildBody,
+  // `steps` is AgentStep[]; without this a caller cannot type the prop they
+  // pass it to.
+  AgentStep,
 } from './useAgentStream';
 
 export type {
@@ -206,6 +212,8 @@ export type {
   UseCanvasDocumentOptions,
   MaterializeResult,
   PmSchemaLike,
+  // MaterializeResult.unsupported is UnsupportedForm[].
+  UnsupportedForm,
 } from './useCanvasDocument';
 
 // v0.32.0 — useDictation: push-to-talk dictation where the transcript returns

@@ -185,7 +185,7 @@ export declare function suggestionOf(outputs: Record<string, unknown> | undefine
 export declare function isAwaitingReview(status: PipelineRunStatus | undefined): boolean;
 /** `pipeline:run:completed` and `pipeline.run.completed` are the same event. */
 export declare function normalizeEventType(eventType: unknown): string | undefined;
-type Step = {
+export type PipelineSnapshotStep = {
     stepId?: string;
     nodeId?: string;
     status?: string;
@@ -203,7 +203,7 @@ type Step = {
 export interface PipelineRunSnapshot {
     status?: string;
     currentStepIds?: string[];
-    steps?: Step[] | Record<string, Step>;
+    steps?: PipelineSnapshotStep[] | Record<string, PipelineSnapshotStep>;
     error?: {
         message?: string;
     } | string;

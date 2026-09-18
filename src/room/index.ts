@@ -26,6 +26,9 @@ export {
 export type {
     RoomAction,
     RoomActionPayload,
+    // Carried on an announce frame's `event` field; the barrel listed every
+    // sibling type but this one.
+    RoomAnnounceEvent,
     RoomConfig,
     RoomCrossNodePubSub,
     RoomErrorFrame,

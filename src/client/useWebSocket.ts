@@ -130,7 +130,7 @@ export interface UseWebSocketOptions {
    * the real one back — which is what this hook's own suite does, and why
    * two of its tests cannot run in parallel with anything else.
    */
-  webSocketImpl?: WSCtor;
+  webSocketImpl?: typeof WebSocket;
   onMessage?: (message: GatewayMessage) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;

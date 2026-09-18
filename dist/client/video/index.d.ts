@@ -9,6 +9,7 @@ export { useLVSViewerCount, type UseLVSViewerCountOptions, type UseLVSViewerCoun
 export { useLVSHlsPlayer, type UseLVSHlsPlayerOptions, type UseLVSHlsPlayerResult, } from './useLVSHlsPlayer';
 export { useLiveCaptions, type CaptionLine, type UseLiveCaptionsOptions, } from './useLiveCaptions';
 export { whipPublish, whepPublish, fetchIceServers, LVSApiError, } from './lib/transport';
+export type { TransportLog } from './lib/transport';
 export { decodeJwt, decodeArn } from './lib/jwt';
 export { waitForIceGather, formatBitrate, classifyNetQ, type NetQuality, } from './lib/sdp';
 //# sourceMappingURL=index.d.ts.map

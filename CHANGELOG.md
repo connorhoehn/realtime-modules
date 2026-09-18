@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.58.0 — 2026-09-18
+
+- **Types named in exported signatures are now importable.** Eleven were not,
+  from six subpaths.
+
+  TypeScript emits a `.d.ts` that mentions a module-local type without
+  complaint, so the build stays green, the signature reads correctly in an
+  editor, and the type is simply unnameable. A consumer can still pass an
+  object literal, because structural typing does not care — but cannot declare
+  a variable for it, write a factory that returns one, or type the prop they
+  forward it to. Nothing errors; the API just resists being built on. Deep
+  imports are no escape: there is no `./client/*` in `exports`, so
+  `.../client/useWebSocket` is blocked.
+
+  - `./client`, `./client/ws` — `UseWebSocketPersistConfig`, the type of the
+    `persist` option.
+  - `./client`, `./agent-streaming/client` — `AgentStep`, the element type of
+    the `steps` this hook returns.
+  - `./client` — `UnsupportedForm`, from `MaterializeResult.unsupported`.
+  - `./client/pipelines` — the element type of `PipelineRunSnapshot.steps`,
+    which was called `Step`; exported as `PipelineSnapshotStep` to sit beside
+    `PipelineRunStepDetail` and `PipelineRunStepStatus`.
+  - `./client/video` — `TransportLog`, the `log` option on every transport
+    helper the barrel already re-exports.
+  - `./fileupload` — the router and logger contracts a consumer must satisfy
+    to construct `FileUploadService`, plus `FileUploadStatus`. They were called
+    `RouterLike` and `LoggerLike`; exported as `FileUploadMessageRouter` and
+    `FileUploadLogger`, matching `CursorLogger`, `NotificationLogger` and the
+    rest.
+  - `./room` — `RoomAnnounceEvent`, carried on an announce frame's `event`.
+  - `./server` — `AwarenessLedger`, named by `CRDTServiceOpts.awarenessLedger`.
+
+  `useWebSocket`'s `webSocketImpl` was typed `WSCtor`, an unexported local
+  alias, and is now `typeof WebSocket` — which needs no export and matches
+  what `GatewaySocketProviderProps` already said.
+
+  `PresenceMode` has the same problem and is deliberately NOT fixed:
+  `DocumentPresenceService` uses `export =`, which forbids any other export
+  from that module, so exposing it needs a module-shape change rather than an
+  export line.
+
+  `test/contract/public-types.test.ts` pins all of it. Like the conformance
+  test, its assertions are the types: drop one of these exports and the suite
+  stops compiling.
+
+
 ## 0.57.0 — 2026-09-18
 
 - **`cursor()`, `social()`, `ingest()`, `pipeline()`, `typedDocuments()`**

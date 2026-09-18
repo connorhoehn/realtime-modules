@@ -8,4 +8,5 @@ export type {
   Message,
   ToolCall,
   BuildBody,
+  AgentStep,
 } from '../client/useAgentStream';

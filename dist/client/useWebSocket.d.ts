@@ -67,7 +67,7 @@ export interface UseWebSocketOptions {
      * the real one back — which is what this hook's own suite does, and why
      * two of its tests cannot run in parallel with anything else.
      */
-    webSocketImpl?: WSCtor;
+    webSocketImpl?: typeof WebSocket;
     onMessage?: (message: GatewayMessage) => void;
     onConnect?: () => void;
     onDisconnect?: () => void;
@@ -96,7 +96,5 @@ export interface UseWebSocketHookReturn extends UseWebSocketReturn {
      */
     publish: (channel: string, frame: Record<string, unknown>) => void;
 }
-type WSCtor = typeof WebSocket;
 export declare function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn;
-export {};
 //# sourceMappingURL=useWebSocket.d.ts.map

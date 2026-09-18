@@ -11,6 +11,7 @@ export { useWebSocket } from './useWebSocket';
 export type {
   UseWebSocketOptions,
   UseWebSocketHookReturn,
+  UseWebSocketPersistConfig,
 } from './useWebSocket';
 
 export type {

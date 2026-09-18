@@ -1,6 +1,7 @@
 import type * as Y from 'yjs';
 import { type DocModel } from 'distributed-core/applications/document';
 import { type UnsupportedForm } from '../adapters/tiptap/canvas/pmModel';
+export type { UnsupportedForm } from '../adapters/tiptap/canvas/pmModel';
 /** The Y.js root that holds the canvas body. */
 export declare const CANVAS_BODY_KEY = "body";
 /**
