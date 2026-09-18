@@ -16,6 +16,16 @@ export interface GatewayError {
   code: string;
   message: string;
   timestamp: string;
+  /**
+   * Which service refused, when the frame said so.
+   *
+   * `lastError` is a single slot shared by every service on the socket, so
+   * without this a chat refusal and a cursor refusal are indistinguishable
+   * after the fact. event-catalog's `ws.error` carries `service` in both of
+   * its shapes; optional because handler-level errors and older servers may
+   * omit it.
+   */
+  service?: string;
 }
 
 export interface GatewayMessage {

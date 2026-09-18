@@ -440,14 +440,37 @@ function useWebSocket(opts) {
                     establishSession(ws);
                 }
                 // Capture gateway error frames for visibility.
+                //
+                // There are two shapes on the wire and this used to read only one.
+                // event-catalog's `ws.error` declares both, with the ground truth
+                // spelled out: chat, reaction, cursor and crdt nest under
+                // `error: { code, message, … }`, while presence and activity send a
+                // flat top-level message. createWsHandler's own refusals are flat too.
+                //
+                // Reading only the flat shape meant every chat/cursor/reaction/crdt
+                // refusal — not-a-member, forbidden, channel required, unknown action —
+                // arrived here as UNKNOWN / "Gateway error", with the real reason sitting
+                // in the frame and discarded. lastError is the only place a consumer can
+                // see these at all, so that was the whole diagnosis.
                 if (parsed && parsed.type === 'error') {
                     const raw = parsed;
+                    const nested = raw.error && typeof raw.error === 'object'
+                        ? raw.error
+                        : undefined;
+                    const pick = (key) => {
+                        const flat = raw[key];
+                        if (typeof flat === 'string')
+                            return flat;
+                        const inner = nested?.[key];
+                        return typeof inner === 'string' ? inner : undefined;
+                    };
                     setLastError({
-                        code: typeof raw.code === 'string' ? raw.code : 'UNKNOWN',
-                        message: typeof raw.message === 'string' ? raw.message : 'Gateway error',
-                        timestamp: typeof raw.timestamp === 'string'
-                            ? raw.timestamp
-                            : new Date().toISOString(),
+                        code: pick('code') ?? 'UNKNOWN',
+                        message: pick('message') ?? 'Gateway error',
+                        // `service` names the originating service in BOTH shapes, and
+                        // without it a consumer cannot tell which feature refused them.
+                        service: pick('service'),
+                        timestamp: pick('timestamp') ?? new Date().toISOString(),
                     });
                 }
                 try {

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.64.0 — 2026-09-18
+
+- **Every chat, cursor, reaction and CRDT refusal read as "UNKNOWN / Gateway
+  error".** `useWebSocket` parsed one of the two error shapes on the wire.
+
+  Two shapes exist, and `@connorhoehn/event-catalog`'s `ws.error` declares both
+  with the ground truth written into it: chat, reaction, cursor and crdt nest
+  under `error: { code, message, … }`; presence and activity send a flat
+  top-level message. `createWsHandler`'s own refusals are flat too.
+
+  The parser read only the flat one. So `SERVICE_NOT_AVAILABLE` came through
+  perfectly — which is why this was never noticed — while `not-a-member`,
+  `forbidden`, "Channel name is required" and every other service-level
+  refusal landed as `UNKNOWN` with the message "Gateway error", the real
+  reason discarded from a frame that was carrying it.
+
+  `lastError` is the only place any of this surfaces: no feature hook exposes
+  an error channel, so `useGateway().lastError` is a consumer's entire view of
+  why the server said no. It now reads both shapes.
+
+  `GatewayError` gains `service`, which both shapes carry. `lastError` is one
+  slot shared by every service on the socket, so without it a chat refusal and
+  a cursor refusal are indistinguishable once stored.
+
+  Verified against a live server: the same four refusals that used to arrive
+  as UNKNOWN now carry their codes, messages and originating service.
+
+
 ## 0.63.0 — 2026-09-18
 
 - **The generic `subscribe` service was missing, so `useWebSocket().subscribe()`

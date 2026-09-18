@@ -910,6 +910,93 @@ describe('useWebSocket', () => {
         });
     });
 
+    // Two error shapes ride this socket and the parser read only one.
+    // event-catalog's `ws.error` declares both and names which services use
+    // which: chat/reaction/cursor/crdt nest under `error`, presence/activity
+    // are flat. lastError is the only place a consumer sees any of them, so
+    // dropping the nested half meant every chat refusal read as
+    // UNKNOWN / "Gateway error".
+    describe('lastError', () => {
+        it('reads the nested shape chat and cursor send', () => {
+            const { result } = renderHook(() => useWebSocket({ url: 'ws://x/ws' }));
+            const sock = FakeWebSocket.instances[0];
+            act(() => sock.openAndEstablish());
+
+            act(() =>
+                sock.receive({
+                    type: 'error',
+                    service: 'chat',
+                    channel: 'room:design',
+                    error: {
+                        code: 'not-a-member',
+                        message: 'You are not a member of this channel',
+                        service: 'chat',
+                        timestamp: '2026-09-18T10:00:00.000Z',
+                    },
+                }),
+            );
+
+            expect(result.current.lastError).toMatchObject({
+                code: 'not-a-member',
+                message: 'You are not a member of this channel',
+                service: 'chat',
+                timestamp: '2026-09-18T10:00:00.000Z',
+            });
+        });
+
+        it('still reads the flat shape presence and the handler send', () => {
+            const { result } = renderHook(() => useWebSocket({ url: 'ws://x/ws' }));
+            const sock = FakeWebSocket.instances[0];
+            act(() => sock.openAndEstablish());
+
+            act(() =>
+                sock.receive({
+                    type: 'error',
+                    code: 'SERVICE_NOT_AVAILABLE',
+                    message: "Service 'nope' not available",
+                }),
+            );
+            expect(result.current.lastError).toMatchObject({
+                code: 'SERVICE_NOT_AVAILABLE',
+                message: "Service 'nope' not available",
+            });
+        });
+
+        // presence/activity send a message with no code at all. The message is
+        // the diagnosis there, and it must survive even though the code cannot.
+        it('keeps a flat message that arrives without a code', () => {
+            const { result } = renderHook(() => useWebSocket({ url: 'ws://x/ws' }));
+            const sock = FakeWebSocket.instances[0];
+            act(() => sock.openAndEstablish());
+
+            act(() =>
+                sock.receive({
+                    type: 'error',
+                    service: 'presence',
+                    message: 'Unknown presence action: bogus',
+                }),
+            );
+            expect(result.current.lastError).toMatchObject({
+                code: 'UNKNOWN',
+                message: 'Unknown presence action: bogus',
+                service: 'presence',
+            });
+        });
+
+        it('falls back only when the frame truly carries nothing', () => {
+            const { result } = renderHook(() => useWebSocket({ url: 'ws://x/ws' }));
+            const sock = FakeWebSocket.instances[0];
+            act(() => sock.openAndEstablish());
+
+            act(() => sock.receive({ type: 'error' }));
+            expect(result.current.lastError).toMatchObject({
+                code: 'UNKNOWN',
+                message: 'Gateway error',
+            });
+            expect(result.current.lastError?.service).toBeUndefined();
+        });
+    });
+
     describe('httpBase', () => {
         // The shim taking an httpBase is only half of it if the provider does
         // not pass one along, and the provider is what consumers mount.
