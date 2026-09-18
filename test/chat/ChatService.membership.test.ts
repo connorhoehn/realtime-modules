@@ -145,8 +145,18 @@ describe('ChatService membership', () => {
     // whenever a millisecond happened to tick between the send and the add and
     // failed when it did not. Freezing the clock makes the collision certain.
     it('mode none hides a message stamped the very millisecond of the add', async () => {
-        const frozen = Date.parse('2026-09-18T12:00:00.000Z');
-        const spy = jest.spyOn(Date, 'now').mockReturnValue(frozen);
+        // setSystemTime, not a Date.now spy. The floor comes from Date.now()
+        // but a message is stamped with `new Date().toISOString()`, which a
+        // spy on Date.now does not touch — so the original version of this
+        // test only passed while the real wall clock happened to sit before
+        // the frozen instant, and started failing the moment it went past.
+        // A test that changes its answer at midday is worse than the flake it
+        // was written to replace.
+        //
+        // Timers stay real: ChatService runs a periodic cache sweep and this
+        // test has no reason to drive it.
+        jest.useFakeTimers({ doNotFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'nextTick'] });
+        jest.setSystemTime(Date.parse('2026-09-18T12:00:00.000Z'));
         try {
             const { router } = makeRouter();
             const { svc, store } = makeService(router);
@@ -165,7 +175,7 @@ describe('ChatService membership', () => {
             const seen = (await svc.getChannelHistoryFor('u-carol', 'room:frozen', 50)).map((m) => m.message);
             expect(seen).not.toContain('before');
         } finally {
-            spy.mockRestore();
+            jest.useRealTimers();
         }
     });
 

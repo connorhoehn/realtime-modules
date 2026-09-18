@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.66.1 — 2026-09-18
+
+- **A test I added in 0.51.x started failing at midday.** Fixed; it was mine.
+
+  The membership suite's frozen-clock case spied on `Date.now` to pin the
+  history floor, but a message is stamped with `new Date().toISOString()`,
+  which that spy does not touch. So the message carried the REAL time while
+  the floor carried the frozen one, and the test only passed while the wall
+  clock happened to sit before 2026-09-18T12:00:00Z. Once it went past, the
+  message sorted after the floor and the assertion inverted.
+
+  It now uses `jest.setSystemTime`, which fakes `new Date()` as well, with
+  timers left real since ChatService runs a periodic cache sweep this test has
+  no reason to drive. Verified by running it pinned to 2020 and to 2099 — a
+  test about a millisecond collision should not care what day it is.
+
+- **The chat recipe's graduation section named one of three stores.**
+
+  It taught `chat({ store })`, which is the deprecated spelling of
+  `chatStore`, and said nothing about the other two. `membershipStore` is the
+  one that matters: it has NO default, so leaving it out means `addMembers` is
+  refused — "Membership is not enabled on this gateway" — and every channel
+  stays readable by anyone who joins. A consumer following the recipe and
+  expecting private channels gets that error with nothing in the docs
+  explaining it.
+
+  That default is deliberate, not a bug: membership is opt-in and the service
+  says so plainly when you try to use it unwired. The recipe now says so too,
+  and covers `readReceiptStore` alongside it.
+
+
 ## 0.66.0 — 2026-09-18
 
 - **`usePresence` showed a ghost for every client that dropped during its

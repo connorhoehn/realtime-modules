@@ -70,8 +70,37 @@ if a composite is missing, add it to ui-components first.
 Zero-config uses in-memory state (single process, non-durable). To graduate:
 
 ```ts
-chat({ store: myChatStore })  // implement ChatStore — the gateway's DdbChatStore is the reference
+chat({ chatStore: myChatStore })  // implement ChatStore — the gateway's DdbChatStore is the reference
 ```
+
+(`store` is the old spelling of that option and still works, but `chatStore`
+is the one to write.)
+
+**Chat has three stores, and only messages are covered above.** The other two
+decide things a message store cannot:
+
+```ts
+chat({
+  chatStore: myChatStore,               // the messages
+  membershipStore: myMembershipStore,   // who is in a channel, and from when they may read
+  readReceiptStore: myReceiptStore,     // per-person read cursors
+})
+```
+
+`membershipStore` is the one to know about, because **it has no default**.
+Leave it out and `addMembers` is refused outright — "Membership is not enabled
+on this gateway" — and every channel stays readable by anyone who joins. That
+is deliberate: membership is opt-in, not something the zero-config path turns
+on behind you. But it does mean private channels need this wired before they
+are private. `MemoryChatMembershipStore` from `./chat` gets you working
+locally; it dies with the process, and an empty store means every channel is
+open again after a restart.
+
+`readReceiptStore` defaults to an in-memory one, so receipts work out of the
+box and die with the process. On multiple nodes the live receipt still fans
+out through the router, but the replay a client gets on request is only the
+node it asked — wire a shared adapter in production. Pass `null` to switch
+receipts off entirely.
 
 Multi-node? Swap the transport, not the features: pass a Redis-backed
 `RealtimeRouter` via `attachRealtime(server, { router })` — the
