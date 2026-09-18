@@ -220,7 +220,7 @@ is the same as an unpublished one.
 | `./chat` | `ChatService` — history, membership, read receipts, pins | `useChat` |
 | `./presence` | `PresenceService` — roster + status | `usePresence` |
 | `./reactions` | `ReactionService` — ephemeral and durable reactions | `useReactions` |
-| `./activity` | `ActivityService` — channel event log | `useActivity` |
+| `./activity` | `ActivityService` — app-wide event log; live events fan out globally, history is per-channel | `useActivity` |
 | `./cursor` | `CursorService` — in-memory cursor fan-out with a TTL sweep | `useCursor` |
 | `./notification` | `NotificationService` — user-scoped inbox, optional Redis store | `useNotifications` |
 | `./fileupload` | `FileUploadService` + `FileBlobStore` (local-fs default) | `useFileUpload` |
@@ -243,6 +243,10 @@ Every hook exported from `./client` has a row here — `verify-exports` fails
 the build if one does not. Channel-scoped hooks subscribe and unsubscribe
 automatically when the `channel` argument changes.
 
+"Channel-scoped" here means what the hook RECEIVES is scoped to the channel,
+not merely that it subscribes with one. `useActivity` is the exception worth
+knowing about, and its row says so.
+
 **Connection**
 
 | Hook | Returns | Channel-scoped? |
@@ -263,7 +267,7 @@ automatically when the `channel` argument changes.
 | `usePins(channel, opts?)` | `{ pins, pinnedIds, pin, unpin, refresh, isLoading, error }` | Yes |
 | `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
 | `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor, unreact, toggle }` | Yes |
-| `useActivity(channel)` | `{ events, loadHistory }` | Yes |
+| `useActivity(channel)` | `{ events, loadHistory }`. **Live events are global, not per-channel** — the server broadcasts every one to a single `activity:broadcast` channel every client is auto-subscribed to, and no frame carries a channel to filter on. `channel` scopes `loadHistory` only | History only |
 | `useCursor(channel, opts?)` | `{ cursors, move, refresh }` — live cursors, client-throttled | Yes |
 | `useFileUpload(channel)` | `{ uploads, transfers, upload, cancel, cancelTransfer, removeCompleted }` | Yes |
 | `useAttachmentSrc(opts?)` | `{ srcFor }` — bearer-authenticated download URL to a renderable object URL | No (per-attachment) |

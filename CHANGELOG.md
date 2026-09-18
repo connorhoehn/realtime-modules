@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.68.4 — 2026-09-18
+
+- **`useActivity` was documented as channel-scoped and is not.**
+  Documentation and a test; no behaviour change.
+
+  The hook takes a channel, and the README's hook table answered "Yes" under
+  Channel-scoped. Live events are global: `ActivityService` publishes every one
+  to a single `activity:broadcast` channel that every connection is
+  auto-subscribed to on connect, and neither the envelope nor the payload
+  carries a channel to filter on. `useActivity('room:1')` shows you events
+  published from `room:2`.
+
+  Measured rather than read: two clients subscribed to different channels, one
+  publishes, both receive it.
+
+  This is not a bug in the service — the hook's own header explains the design
+  and why per-frame filtering is impossible. It is a bug in what the README
+  told people, and the consequence is a real one: a per-room feed built on
+  that promise shows every room's activity to every viewer, including rooms a
+  viewer has no part in.
+
+  The hook row, the `./activity` subpath row and the recipe now say so, and the
+  hook table's preamble defines "channel-scoped" as what a hook RECEIVES
+  rather than what it subscribes with. `channel` still scopes `loadHistory`,
+  which does carry `channelId` — so the replay is per-channel while the live
+  tail is not.
+
+
 ## 0.68.3 — 2026-09-18
 
 - **The notifications recipe documented the receiving half and not the

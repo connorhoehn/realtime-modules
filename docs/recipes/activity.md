@@ -4,6 +4,17 @@
 
 App-level event stream (doc created, user joined, …) with replayable history.
 
+**It is app-level, not room-level.** Live events go to every subscriber of
+every channel: the server publishes them to one global `activity:broadcast`
+channel that each client is auto-subscribed to on connect, and no frame
+carries a channel to filter on. `useActivity('room:1')` will show you events
+published from `room:2`.
+
+The `channel` argument scopes `loadHistory` — history frames do carry
+`channelId` and the hook filters on it — so the replay is per-channel while
+the live tail is not. If a feed must not show one room's activity to another
+room's viewers, do not build it on this.
+
 ## 1 — Server (attach to your existing http.Server)
 
 ```ts

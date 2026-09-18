@@ -395,6 +395,46 @@ describe('attachRealtime — notifications are pushed through handle.services', 
     });
 });
 
+// useActivity takes a channel and the README called it channel-scoped, which
+// it is not: the service publishes every live event to one global
+// activity:broadcast channel that every connection is auto-subscribed to, and
+// no frame carries a channel to filter on. A per-room feed built on this shows
+// every room's events to every viewer.
+//
+// Pinned because it is a scoping property people will reason about — and
+// because the honest answer lives in a comment in the hook, which is not where
+// anyone looks before shipping a feed.
+describe('attachRealtime — activity is global, not per-channel', () => {
+    it('delivers an event published on one channel to a subscriber of another', async () => {
+        const { server, port, handle } = await boot([activity()], {
+            auth: async () => ({ userId: 'u-1', displayName: 'Ada' }),
+        });
+
+        const a = await connect(port);
+        const b = await connect(port);
+        a.send(JSON.stringify({ service: 'activity', action: 'subscribe', channelId: 'room:1' }));
+        b.send(JSON.stringify({ service: 'activity', action: 'subscribe', channelId: 'room:2' }));
+        await nextFrame(a, (f) => f.type === 'activity' && f.action === 'subscribed' && f.channelId === 'room:1');
+        await nextFrame(b, (f) => f.type === 'activity' && f.action === 'subscribed' && f.channelId === 'room:2');
+
+        const seenByB = nextFrame(b, (f) => f.type === 'activity:event');
+        a.send(JSON.stringify({
+            service: 'activity',
+            action: 'publish',
+            event: { eventType: 'doc.created', detail: { room: 'room:1' } },
+        }));
+
+        const frame = await seenByB;
+        expect(frame.payload.eventType).toBe('doc.created');
+        // And the server stamps identity rather than trusting the sender.
+        expect(frame.payload.userId).toBe('u-1');
+
+        a.close();
+        b.close();
+        await teardown(server, handle);
+    });
+});
+
 describe('attachRealtime — presets forward their service config', () => {
     it('cursor() passes throttle, TTL, sweep and custom modes through', async () => {
         const modes = {
