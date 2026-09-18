@@ -274,8 +274,8 @@ automatically when the `channel` argument changes.
 | Hook | Returns | Channel-scoped? |
 |---|---|---|
 | `useCRDT(opts)` | `{ content, applyLocalEdit, hasConflict, dismissConflict }` — single Y.Text. Takes `{ sendMessage, onMessage, currentChannel, connectionState }`, **not** a channel string | Via `opts.currentChannel` |
-| `useYjsDoc(opts)` | `{ ydoc, provider, synced, docVersion }` — the Y.Doc + provider bootstrap | Via `opts` |
-| `useAwarenessState(provider, opts?)` | `{ updateSection, updateMode, updateIdle, updateCursorInfo }` | No (provider-scoped) |
+| `useYjsDoc(opts)` | `{ ydoc, provider, synced, docVersion }` — the Y.Doc + provider bootstrap. Takes `{ documentId, ws, onMessage }`; all three required | Via `opts.documentId` |
+| `useAwarenessState(provider, initial)` | `{ updateSection, updateMode, updateIdle, updateCursorInfo }`. `initial` is required and wants every field including `currentSectionId` | No (provider-scoped) |
 | `useCanvasDocument(opts)` | `{ isCanvas, schemaVersion, body, exportMarkdown, materialize, importMarkdown }` | No (doc-scoped) |
 
 **Cross-channel / app-level**

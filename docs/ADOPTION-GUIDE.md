@@ -254,7 +254,9 @@ import { TiptapEditor, type CollaborationProvider }
 // Must be inside a GatewaySocketProvider.
 function CollabDoc({ documentId }: { documentId: string }) {
   const ws = useGateway();
-  const { ydoc, provider, synced } = useYjsDoc({ documentId, ws });
+  // `onMessage` is required: useGateway()'s bus is what feeds the provider
+  // the document's frames. Without it the doc mounts and never syncs.
+  const { ydoc, provider, synced } = useYjsDoc({ documentId, ws, onMessage: ws.onMessage });
   useAwarenessState(provider, {
     userId: 'me',
     displayName: 'Connor',
@@ -283,14 +285,14 @@ import { useAgentStream } from '@connorhoehn/realtime-modules/client';
 
 function AgentChat() {
   const { messages, streamingText, isStreaming, sendMessage } = useAgentStream({
-    endpoint: '/api/agents/default/stream',
+    url: '/api/agents/default/stream',
   });
 
   return (
     <>
       {messages.map((m) => <p key={m.id}>{m.content}</p>)}
       {isStreaming && <p>{streamingText}</p>}
-      <button onClick={() => sendMessage({ content: 'hello' })}>Ask</button>
+      <button onClick={() => void sendMessage('hello')}>Ask</button>
     </>
   );
 }

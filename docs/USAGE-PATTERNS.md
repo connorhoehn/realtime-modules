@@ -218,7 +218,8 @@ import {
 export function CollabDoc({ documentId }: { documentId: string }) {
   const ws = useGateway();
 
-  const { ydoc, provider, synced } = useYjsDoc({ documentId, ws });
+  // `onMessage` is required — it is the bus the provider reads frames from.
+  const { ydoc, provider, synced } = useYjsDoc({ documentId, ws, onMessage: ws.onMessage });
 
   useAwarenessState(provider, {
     userId: 'me',
@@ -479,7 +480,7 @@ import { useGateway, useYjsDoc, useAwarenessState }
 
 export function RichDoc({ documentId }: { documentId: string }) {
   const ws = useGateway();
-  const { ydoc, provider } = useYjsDoc({ documentId, ws });
+  const { ydoc, provider } = useYjsDoc({ documentId, ws, onMessage: ws.onMessage });
   const { updateCursorInfo } = useAwarenessState(provider, {
     userId: 'me',
     displayName: 'Connor',
