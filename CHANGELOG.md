@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.65.1 — 2026-09-18
+
+- **`useChatMembers` and `useChatReadReceipts` were left out of 0.65.0.** Same
+  defect, same fix.
+
+  Both ask for their state once and are answered once — nothing is pushed on
+  join, as `useChatReadReceipts` says in its own header. Both opened that
+  request from an effect whose `refresh` is `useCallback(…, [send])`, so like
+  the five hooks fixed in 0.65.0 it ran on mount and never again.
+
+  The symptom differs: not silence but staleness. After a reconnect the roster
+  and the receipts are whatever they were before the drop, so anyone added or
+  removed while offline, and any message read while offline, is invisible for
+  the rest of the session. For members that is worse than cosmetic — being
+  removed while disconnected leaves a client that still shows itself as a
+  member and still lets you type, until the send comes back `not-a-member`.
+
+  Both now carry `sessionEpoch` in those deps. Checked the rest of the surface
+  while here: `useFileUpload` holds no subscription of its own and rides
+  channel membership, so 0.65.0 already covers it; `useVideoHangout` sends
+  only on user action; `usePins` reads over REST and never had a socket
+  subscription to lose.
+
+
 ## 0.65.0 — 2026-09-18
 
 - **Channel hooks never re-subscribed after a reconnect.** `useChat`,

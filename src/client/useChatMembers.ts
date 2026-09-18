@@ -50,7 +50,7 @@ export interface UseChatMembersReturn {
 }
 
 export function useChatMembers(channel: string): UseChatMembersReturn {
-  const { send, onMessage } = useGateway();
+  const { send, onMessage, sessionEpoch } = useGateway();
   const [members, setMembers] = useState<ChatMemberEntry[]>([]);
   const [open, setOpen] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -89,7 +89,11 @@ export function useChatMembers(channel: string): UseChatMembersReturn {
     setLoading(true);
     setRemoved(null);
     refresh();
-  }, [channel, refresh]);
+    // sessionEpoch: the reply to this only ever arrives once, on request —
+    // nothing is pushed on join. Without it a reconnect leaves whatever the
+    // panel held before the drop standing for the rest of the session, so a
+    // membership change or a read that happened while offline is never seen.
+  }, [channel, refresh, sessionEpoch]);
 
   const addMembers = useCallback(
     (userIds: string[], history: ChatHistoryChoice, names?: Record<string, string>) => {

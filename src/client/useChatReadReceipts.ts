@@ -173,6 +173,9 @@ export function useChatReadReceipts(
   // Unconditional, non-throwing context read — rules of hooks, even when
   // opts.socket is given and the context value ends up unused.
   const gatewayCtx = useGatewayOptional();
+  // undefined when the caller supplied opts.socket — they own that socket's
+  // lifecycle, so there is no epoch to follow.
+  const sessionEpoch = gatewayCtx?.sessionEpoch;
   const send = opts?.socket?.send ?? gatewayCtx?.send ?? noopSend;
   const onMessage = opts?.socket?.onMessage ?? gatewayCtx?.onMessage ?? inertOnMessage;
 
@@ -257,7 +260,11 @@ export function useChatReadReceipts(
     return () => {
       if (pendingRef.current) { clearTimeout(pendingRef.current); pendingRef.current = null; }
     };
-  }, [channel, refresh]);
+    // sessionEpoch: the reply to this only ever arrives once, on request —
+    // nothing is pushed on join. Without it a reconnect leaves whatever the
+    // panel held before the drop standing for the rest of the session, so a
+    // membership change or a read that happened while offline is never seen.
+  }, [channel, refresh, sessionEpoch]);
 
   const sendRead = useCallback((position: ReadPosition | undefined) => {
     const channelNow = channelRef.current;

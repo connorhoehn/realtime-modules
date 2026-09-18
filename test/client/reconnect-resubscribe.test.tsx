@@ -30,6 +30,8 @@ import { usePresence } from '../../src/client/usePresence';
 import { useActivity } from '../../src/client/useActivity';
 import { useReactions } from '../../src/client/useReactions';
 import { useCursor } from '../../src/client/useCursor';
+import { useChatMembers } from '../../src/client/useChatMembers';
+import { useChatReadReceipts } from '../../src/client/useChatReadReceipts';
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -128,6 +130,24 @@ describe('channel hooks re-establish after a reconnect', () => {
 
     // The whole bug: this used to be 0.
     expect(second.frames(isSubscribe as (f: Record<string, unknown>) => boolean)).toHaveLength(1);
+  });
+
+  // These two ask once and are answered once — nothing is pushed on join. A
+  // reconnect that does not re-ask leaves the panel showing whatever it held
+  // before the drop, so a membership change or a read that happened while
+  // offline is never seen. Staleness rather than silence, and just as quiet.
+  it.each([
+    ['useChatMembers', () => useChatMembers('room:1'), 'members'],
+    ['useChatReadReceipts', () => useChatReadReceipts('room:1'), 'receipts'],
+  ])('%s re-asks for its state on the new socket', (_name, hook, action) => {
+    renderHook(hook as () => unknown, { wrapper });
+
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.openAndEstablish());
+    expect(first.frames((f) => f.service === 'chat' && f.action === action)).toHaveLength(1);
+
+    const second = reconnect();
+    expect(second.frames((f) => f.service === 'chat' && f.action === action)).toHaveLength(1);
   });
 
   it('survives more than one reconnect', () => {

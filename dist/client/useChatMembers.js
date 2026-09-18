@@ -18,7 +18,7 @@ exports.useChatMembers = useChatMembers;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
 function useChatMembers(channel) {
-    const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const { send, onMessage, sessionEpoch } = (0, GatewaySocketProvider_1.useGateway)();
     const [members, setMembers] = (0, react_1.useState)([]);
     const [open, setOpen] = (0, react_1.useState)(true);
     const [loading, setLoading] = (0, react_1.useState)(true);
@@ -57,7 +57,11 @@ function useChatMembers(channel) {
         setLoading(true);
         setRemoved(null);
         refresh();
-    }, [channel, refresh]);
+        // sessionEpoch: the reply to this only ever arrives once, on request —
+        // nothing is pushed on join. Without it a reconnect leaves whatever the
+        // panel held before the drop standing for the rest of the session, so a
+        // membership change or a read that happened while offline is never seen.
+    }, [channel, refresh, sessionEpoch]);
     const addMembers = (0, react_1.useCallback)((userIds, history, names) => {
         send({
             service: 'chat',
