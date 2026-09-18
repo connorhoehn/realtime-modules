@@ -98,6 +98,20 @@ function createGatewayRest(url, token) {
             }
             return (await res.json());
         },
+        async getFeatureFlag(name) {
+            const res = await fetch(`${base}/api/feature-flags/${encodeURIComponent(name)}`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            if (!res.ok) {
+                // Same shape as getCapability: `status` lets the hook tell 404 ("no
+                // feature-flag route on this gateway" — fall back to defaultValue)
+                // from a real failure.
+                const err = new Error(`feature flag query failed: ${res.status}`);
+                err.status = res.status;
+                throw err;
+            }
+            return (await res.json());
+        },
     };
 }
 /**

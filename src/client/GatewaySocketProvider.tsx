@@ -128,6 +128,17 @@ export interface GatewayRest {
     name: string,
     channel?: string,
   ) => Promise<{ enabled: boolean; version?: string; metadata?: Record<string, unknown> }>;
+  /**
+   * `GET /api/feature-flags/:name`. Declared here because useFeatureFlag has
+   * always called it — it just reached the method through an `unknown` cast,
+   * so an app bridging its own socket onto GatewayContext could type
+   * `getCapability` and not this one. Returns null when the flag is unknown;
+   * a 404 from a gateway without the route throws with `status`, which the
+   * hook reads as "fall back to defaultValue".
+   */
+  getFeatureFlag?: (
+    name: string,
+  ) => Promise<{ enabled: boolean; variant?: string; metadata?: Record<string, unknown> } | null>;
   /** Pinned messages for a channel, newest pin first. */
   listPins?: (channel: string) => Promise<PinnedMessage[]>;
   pin?: (input: {
@@ -267,6 +278,25 @@ export function createGatewayRest(url: string, token?: string): GatewayRest | nu
         throw err;
       }
       return (await res.json()) as { enabled: boolean; version?: string; metadata?: Record<string, unknown> };
+    },
+
+    async getFeatureFlag(name: string) {
+      const res = await fetch(`${base}/api/feature-flags/${encodeURIComponent(name)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        // Same shape as getCapability: `status` lets the hook tell 404 ("no
+        // feature-flag route on this gateway" — fall back to defaultValue)
+        // from a real failure.
+        const err = new Error(`feature flag query failed: ${res.status}`) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
+      return (await res.json()) as {
+        enabled: boolean;
+        variant?: string;
+        metadata?: Record<string, unknown>;
+      };
     },
   };
 }

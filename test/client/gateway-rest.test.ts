@@ -91,3 +91,43 @@ describe('createGatewayRest', () => {
         expect(createGatewayRest('nonsense')).toBeNull();
     });
 });
+
+// The same silent failure, one method over. useFeatureFlag has always called
+// rest.getFeatureFlag — through an `unknown` cast, so nothing checked that the
+// default shim implemented it. It did not, which meant every provider-mounted
+// app took the defaultValue branch no matter what the gateway would have said.
+describe('createGatewayRest().getFeatureFlag', () => {
+    it('asks the gateway for the named flag, encoded into the path', async () => {
+        const fetchMock = mockFetch(() => ok({ enabled: true }));
+        await createGatewayRest('ws://localhost:18080')!.getFeatureFlag!('checkout/flow');
+
+        expect(String(fetchMock.mock.calls[0]![0]))
+            .toBe('http://localhost:18080/api/feature-flags/checkout%2Fflow');
+    });
+
+    it('carries the bearer token when one is configured', async () => {
+        const fetchMock = mockFetch(() => ok({ enabled: true }));
+        await createGatewayRest('ws://localhost:18080', 'tok-123')!.getFeatureFlag!('new-ui');
+        expect((fetchMock.mock.calls[0]![1] as any).headers.Authorization).toBe('Bearer tok-123');
+    });
+
+    it('returns the variant and metadata, not just the boolean', async () => {
+        mockFetch(() => ok({ enabled: true, variant: 'variant-a', metadata: { rollout: 25 } }));
+        const out = await createGatewayRest('ws://localhost:18080')!.getFeatureFlag!('checkout-flow');
+        expect(out).toEqual({ enabled: true, variant: 'variant-a', metadata: { rollout: 25 } });
+    });
+
+    // Same contract as getCapability: the hook reads `status` to tell "no
+    // feature-flag route here" from a failure worth surfacing.
+    it('attaches the status so 404 stays distinguishable from a real failure', async () => {
+        mockFetch(() => ({ ok: false, status: 404, json: async () => ({}) }));
+        await expect(
+            createGatewayRest('ws://localhost:18080')!.getFeatureFlag!('x'),
+        ).rejects.toMatchObject({ status: 404 });
+
+        mockFetch(() => ({ ok: false, status: 500, json: async () => ({}) }));
+        await expect(
+            createGatewayRest('ws://localhost:18080')!.getFeatureFlag!('x'),
+        ).rejects.toMatchObject({ status: 500 });
+    });
+});

@@ -32,7 +32,7 @@ interface GetFeatureFlagFn {
     enabled: boolean;
     variant?: string;
     metadata?: Record<string, unknown>;
-  }>;
+  } | null>;
 }
 
 function makeGatewayContext(getFeatureFlagImpl?: GetFeatureFlagFn) {
@@ -292,6 +292,20 @@ describe('useFeatureFlag', () => {
     // Resolve so we don't leave a dangling promise.
     resolveFlag({ enabled: false });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
+  });
+
+  // The gateway answered, and the answer is "no such flag". That is not an
+  // error and not a reason to show the feature — it is the caller's default,
+  // same as a gateway with no feature-flag route at all.
+  it('takes the default when the gateway returns null for an unknown flag', async () => {
+    const { ctx } = makeGatewayContext(async () => null);
+    const { result } = renderHook(() => useFeatureFlag('never-defined', true), {
+      wrapper: makeWrapper(ctx),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.enabled).toBe(true);
+    expect(result.current.variant).toBeUndefined();
   });
 
   it('subscription cleanup on unmount — handler removed from set', async () => {

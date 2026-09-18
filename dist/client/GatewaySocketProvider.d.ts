@@ -71,6 +71,19 @@ export interface GatewayRest {
         version?: string;
         metadata?: Record<string, unknown>;
     }>;
+    /**
+     * `GET /api/feature-flags/:name`. Declared here because useFeatureFlag has
+     * always called it — it just reached the method through an `unknown` cast,
+     * so an app bridging its own socket onto GatewayContext could type
+     * `getCapability` and not this one. Returns null when the flag is unknown;
+     * a 404 from a gateway without the route throws with `status`, which the
+     * hook reads as "fall back to defaultValue".
+     */
+    getFeatureFlag?: (name: string) => Promise<{
+        enabled: boolean;
+        variant?: string;
+        metadata?: Record<string, unknown>;
+    } | null>;
     /** Pinned messages for a channel, newest pin first. */
     listPins?: (channel: string) => Promise<PinnedMessage[]>;
     pin?: (input: {

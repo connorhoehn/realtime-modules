@@ -52,14 +52,9 @@ export interface UseFeatureFlagResult {
 }
 
 // ---------------------------------------------------------------------------
-// Internal shape of the REST response and WS frame payload
+// Internal shape of the WS frame payload. The REST response shape lives on
+// GatewayRest.getFeatureFlag, where a consumer wiring their own can see it.
 // ---------------------------------------------------------------------------
-
-interface FeatureFlagRestResponse {
-  enabled: boolean;
-  variant?: string;
-  metadata?: Record<string, unknown>;
-}
 
 interface FeatureFlagUpdatedPayload {
   name: string;
@@ -120,25 +115,29 @@ export function useFeatureFlag(
 
     async function fetchFlag() {
       try {
-        // GatewayContextValue does not declare a `rest` field directly — it is
-        // an extension point wired by Lambda-tier consumers (e.g. OrgIQ) via a
-        // context override. Access it through an unknown cast identical to the
-        // pattern in useCapability.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rest = (gateway as unknown as { rest?: unknown }).rest as
-          | { getFeatureFlag?: (n: string) => Promise<FeatureFlagRestResponse> }
-          | undefined;
+        // `rest` is a declared field on GatewayContextValue and
+        // getFeatureFlag is part of GatewayRest, so this is an ordinary
+        // optional read. It used to be an `unknown` cast, which is why the
+        // default shim could ship without implementing the method and
+        // nothing complained.
+        const rest = gateway.rest;
 
         if (typeof rest?.getFeatureFlag === 'function') {
           try {
             const result = await rest.getFeatureFlag(name);
             if (!cancelled) {
-              setState({
-                enabled: result.enabled,
-                variant: result.variant,
-                metadata: result.metadata,
-                isLoading: false,
-              });
+              // null = the gateway answered but knows no such flag. Same
+              // outcome as no route at all: the caller's default stands.
+              setState(
+                result
+                  ? {
+                      enabled: result.enabled,
+                      variant: result.variant,
+                      metadata: result.metadata,
+                      isLoading: false,
+                    }
+                  : { enabled: defaultValue, isLoading: false },
+              );
             }
           } catch (err: unknown) {
             // 404 → endpoint not yet shipped; fall back to defaultValue.

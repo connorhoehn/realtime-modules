@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.53.0 — 2026-09-17
+
+- **`GatewayRest.getFeatureFlag`** (`./client`) — the seam `useFeatureFlag` was
+  already using, now declared and implemented.
+
+  The hook has always called `rest.getFeatureFlag(name)`, but reached it through
+  `(gateway as unknown as { rest?: unknown }).rest`. Behind that cast, two things
+  were true and neither was visible: `GatewayRest` never declared the method, so
+  an app bridging its own socket onto `GatewayContext` could type `getCapability`
+  and not this one; and `createGatewayRest` — the shim every provider-mounted app
+  gets by default — never implemented it. Every such app took the `defaultValue`
+  branch regardless of what the gateway would have said. The kill-switch was
+  wired at both ends and could not fire, which is the same failure the capability
+  shim was written to fix.
+
+  `createGatewayRest` now calls `GET /api/feature-flags/:name`, attaching `status`
+  to the error exactly as `getCapability` does, so a 404 still means "no such
+  route here, keep the default" rather than a hard failure. A gateway without the
+  route behaves as before.
+
+  The casts in `useFeatureFlag` and `useCapability` are gone — `rest` has been a
+  declared field on `GatewayContextValue` for some time, and both hooks' comments
+  still claimed otherwise. A `null` answer (flag unknown to the gateway) now
+  resolves to the caller's default instead of reaching `result.enabled` on null
+  and landing in the catch-all.
+
+
 ## 0.52.0 — 2026-09-17
 
 - **`useCursor`** (`./client`) — the client half of the cursor triple.

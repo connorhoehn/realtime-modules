@@ -56,16 +56,6 @@ export interface UseCapabilityResult {
 }
 
 // ---------------------------------------------------------------------------
-// Shape of the REST response from /api/capabilities
-// ---------------------------------------------------------------------------
-
-interface CapabilityRestResponse {
-  enabled: boolean;
-  version?: string;
-  metadata?: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
 // Shape of a capability:updated WS frame payload
 // ---------------------------------------------------------------------------
 
@@ -116,14 +106,12 @@ export function useCapability(name: string, channel?: string): UseCapabilityResu
         // is not yet shipped on the gateway, so we guard both the field and the
         // method with optional-chaining.
         //
-        // Typed as `unknown` because GatewayContextValue doesn't declare `rest`
-        // — it's an extension point that Lambda consumers wire in via context
-        // override. We access it via `(gateway as any).rest` so we don't
-        // introduce a hard dependency on proxy-client types in this hook.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rest = (gateway as unknown as { rest?: unknown }).rest as
-          | { getCapability?: (n: string, ch?: string) => Promise<CapabilityRestResponse> }
-          | undefined;
+        // `rest` is a declared, optional field on GatewayContextValue —
+        // GatewayRest, not proxy-client types, so reading it introduces no
+        // dependency. This was an `unknown` cast, which is how the
+        // sibling method getFeatureFlag stayed unimplemented in the default
+        // shim without anything noticing.
+        const rest = gateway.rest;
 
         let resolved: CapabilityDescriptor;
 
