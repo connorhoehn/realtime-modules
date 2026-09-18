@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.55.0 — 2026-09-18
+
+- **`useNotifications({ storage })`** (`./client`) — read-state persistence is
+  injectable.
+
+  The hook called `localStorage.getItem` / `.setItem` on the bare global. React
+  Native has no localStorage, so read marks silently never survived a reload
+  there — while this hook's own design notes, and the comment above its export,
+  both promised marks persist across a refresh. The failure is quiet by
+  construction: the writes were already wrapped in try/catch precisely because
+  they might not work.
+
+  It also left nothing to say for a tab-scoped app that wants sessionStorage, a
+  multi-tenant one needing a namespaced store, or a test that would rather not
+  patch a global. `useWebSocket` has taken `persist.storage: Storage` since it
+  was written; this is the same seam, one hook over.
+
+  `storage` defaults to `globalThis.localStorage`, so a browser app is
+  unchanged. `null` means memory only — the honest setting for SSR and for
+  privacy modes where the write would throw anyway. The global is now resolved
+  through a guarded read, since a privacy mode can throw on the property access
+  itself and not only on the call.
+
+
 ## 0.54.0 — 2026-09-18
 
 - **`webSocketImpl`** (`./client`) — `useWebSocket` and `GatewaySocketProvider`

@@ -438,6 +438,92 @@ describe('useNotifications', () => {
     expect(result.current.unreadCount).toBe(0);
   });
 
+  // Until options.storage existed, the hook reached for the localStorage
+  // global. React Native has none, so read marks silently never survived a
+  // reload there — while the hook's own docs said they would.
+  describe('options.storage', () => {
+    function fakeStorage(seed: Record<string, string> = {}) {
+      const data = new Map(Object.entries(seed));
+      const store: Storage & { throwOnWrite?: boolean } = {
+        get length() { return data.size; },
+        clear: () => data.clear(),
+        getItem: (k: string) => data.get(k) ?? null,
+        key: (i: number) => [...data.keys()][i] ?? null,
+        removeItem: (k: string) => { data.delete(k); },
+        setItem: (k: string, v: string) => {
+          if (store.throwOnWrite) throw new Error('denied');
+          data.set(k, v);
+        },
+      };
+      return { store, data };
+    }
+
+    it('reads and writes the injected store, leaving localStorage untouched', () => {
+      const { store, data } = fakeStorage();
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications({ storage: store }), {
+        wrapper: makeWrapper(ctx),
+      });
+
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      act(() => { result.current.markAsRead('n-1'); });
+
+      expect(JSON.parse(data.get(STORAGE_KEY)!)).toEqual({ 'n-1': true });
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('restores read marks from the injected store on mount', () => {
+      const { store } = fakeStorage({ [STORAGE_KEY]: JSON.stringify({ 'n-7': true }) });
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications({ storage: store }), {
+        wrapper: makeWrapper(ctx),
+      });
+
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-7' })); });
+
+      expect(result.current.notifications[0]!.read).toBe(true);
+      expect(result.current.unreadCount).toBe(0);
+    });
+
+    // null is the honest setting for SSR and React Native: marks work for the
+    // life of the page and nothing pretends otherwise.
+    it('keeps read-state in memory only when storage is null', () => {
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications({ storage: null }), {
+        wrapper: makeWrapper(ctx),
+      });
+
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      act(() => { result.current.markAsRead('n-1'); });
+
+      expect(result.current.notifications[0]!.read).toBe(true);
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('survives a store that throws on write', () => {
+      const { store } = fakeStorage();
+      store.throwOnWrite = true;
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications({ storage: store }), {
+        wrapper: makeWrapper(ctx),
+      });
+
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      expect(() => act(() => { result.current.markAsRead('n-1'); })).not.toThrow();
+      expect(result.current.notifications[0]!.read).toBe(true);
+    });
+
+    it('still defaults to localStorage when the option is omitted', () => {
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications(), { wrapper: makeWrapper(ctx) });
+
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      act(() => { result.current.markAsRead('n-1'); });
+
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')).toEqual({ 'n-1': true });
+    });
+  });
+
   it('multiple notification types are all accepted', () => {
     const { ctx, emit } = makeGatewayContext();
     const { result } = renderHook(() => useNotifications(), { wrapper: makeWrapper(ctx) });

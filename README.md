@@ -282,7 +282,7 @@ automatically when the `channel` argument changes.
 
 | Hook | Returns | Channel-scoped? |
 |---|---|---|
-| `useNotifications()` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }` | No (user-scoped) |
+| `useNotifications(opts?)` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }`. Read-state persists to `opts.storage` (default `localStorage`; `null` for memory only) | No (user-scoped) |
 | `useCapability(name, channel?)` | `{ capability, enabled, isLoading, error }` | No (CRD-scoped) |
 | `useCapabilities(names, channel?)` | `{ capabilities, enabled, isLoading, error }` — the set form; React forbids the singular hook in a loop | No (CRD-scoped) |
 | `useFeatureFlag(name, defaultValue?)` | `{ enabled, isLoading, variant?, metadata? }` | No (flag-scoped) |

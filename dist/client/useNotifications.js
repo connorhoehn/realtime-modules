@@ -28,9 +28,11 @@
 // Design notes:
 //   - Listens on `notification:*` frames via useGateway().onMessage (no channel
 //     filter — notifications are user-scoped).
-//   - Read-state is persisted in localStorage under STORAGE_KEY so a page
-//     refresh does not lose read marks (only the id→read map is stored, not
-//     full payloads, so stale data is never surfaced on reload).
+//   - Read-state is persisted under STORAGE_KEY so a page refresh does not
+//     lose read marks (only the id→read map is stored, not full payloads, so
+//     stale data is never surfaced on reload). The store defaults to
+//     localStorage and is injectable via `options.storage` — pass
+//     sessionStorage, a React Native shim, or null for memory only.
 //   - The in-memory list is capped at MAX_NOTIFICATIONS (default 100). When the
 //     cap is reached the oldest notification is dropped automatically.
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -56,6 +58,9 @@ const DEFAULT_STORAGE_KEY = 'rmn:notifications:read';
  */
 function useNotifications(options = {}) {
     const { maxNotifications = DEFAULT_MAX, storageKey = DEFAULT_STORAGE_KEY } = options;
+    // `undefined` means "not specified" and takes the global; `null` means the
+    // caller asked for no persistence at all. They are not the same answer.
+    const storage = options.storage === undefined ? defaultStorage() : options.storage;
     const { onMessage } = (0, GatewaySocketProvider_1.useGateway)();
     // ------------------------------------------------------------------
     // Restore persisted read-state from localStorage on first mount.
@@ -64,19 +69,22 @@ function useNotifications(options = {}) {
     const [notifications, setNotifications] = (0, react_1.useState)(() => []);
     // Keep a stable ref to the current read-map so we can persist without
     // re-registering the onMessage handler.
-    const readMapRef = (0, react_1.useRef)(loadReadMap(storageKey));
+    const readMapRef = (0, react_1.useRef)(loadReadMap(storage, storageKey));
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
-    /** Persist the current read-map to localStorage (best-effort). */
+    /** Persist the current read-map (best-effort). */
     const persistReadMap = (0, react_1.useCallback)((map) => {
+        if (!storage)
+            return;
         try {
-            localStorage.setItem(storageKey, JSON.stringify(map));
+            storage.setItem(storageKey, JSON.stringify(map));
         }
         catch {
-            // localStorage unavailable (SSR / private mode) — silently ignore.
+            // Quota, or a privacy mode that throws on write — silently ignore.
+            // A lost read mark is not worth failing a render over.
         }
-    }, [storageKey]);
+    }, [storage, storageKey]);
     /** Merge an incoming Notification with persisted read-state. */
     const applyReadState = (0, react_1.useCallback)((n) => {
         return readMapRef.current[n.id] ? { ...n, read: true } : n;
@@ -178,10 +186,25 @@ function useNotifications(options = {}) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-/** Load read-map from localStorage. Returns {} on any failure. */
-function loadReadMap(key) {
+/**
+ * The default store. Reading the property can itself throw (a privacy mode
+ * that denies storage rather than emptying it), so the access is guarded and
+ * not just the get/set calls.
+ */
+function defaultStorage() {
     try {
-        const raw = localStorage.getItem(key);
+        return globalThis.localStorage ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** Load read-map from storage. Returns {} on any failure. */
+function loadReadMap(storage, key) {
+    if (!storage)
+        return {};
+    try {
+        const raw = storage.getItem(key);
         if (!raw)
             return {};
         const parsed = JSON.parse(raw);
@@ -190,7 +213,7 @@ function loadReadMap(key) {
         }
     }
     catch {
-        // parse error or no localStorage
+        // Unreadable store, or a value that is not JSON.
     }
     return {};
 }

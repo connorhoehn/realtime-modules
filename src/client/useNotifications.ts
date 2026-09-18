@@ -27,9 +27,11 @@
 // Design notes:
 //   - Listens on `notification:*` frames via useGateway().onMessage (no channel
 //     filter — notifications are user-scoped).
-//   - Read-state is persisted in localStorage under STORAGE_KEY so a page
-//     refresh does not lose read marks (only the id→read map is stored, not
-//     full payloads, so stale data is never surfaced on reload).
+//   - Read-state is persisted under STORAGE_KEY so a page refresh does not
+//     lose read marks (only the id→read map is stored, not full payloads, so
+//     stale data is never surfaced on reload). The store defaults to
+//     localStorage and is injectable via `options.storage` — pass
+//     sessionStorage, a React Native shim, or null for memory only.
 //   - The in-memory list is capped at MAX_NOTIFICATIONS (default 100). When the
 //     cap is reached the oldest notification is dropped automatically.
 
@@ -82,6 +84,20 @@ export interface UseNotificationsOptions {
    * @default 'rmn:notifications:read'
    */
   storageKey?: string;
+  /**
+   * Where read-state is persisted. Defaults to `globalThis.localStorage`.
+   *
+   * Reaching for that global directly is what this option replaces. React
+   * Native has no localStorage, so read marks silently never survived a
+   * reload there while the hook's own docs promised they would; a tab-scoped
+   * app wanting sessionStorage, or a multi-tenant one needing a namespaced
+   * store, had nowhere to say so. Mirrors
+   * `UseWebSocketPersistConfig.storage`, which got this right first.
+   *
+   * Pass `null` to keep read-state in memory only — the honest setting for
+   * SSR and for privacy modes where a write would throw anyway.
+   */
+  storage?: Storage | null;
 }
 
 export interface UseNotificationsResult {
@@ -121,6 +137,9 @@ const DEFAULT_STORAGE_KEY = 'rmn:notifications:read';
  */
 export function useNotifications(options: UseNotificationsOptions = {}): UseNotificationsResult {
   const { maxNotifications = DEFAULT_MAX, storageKey = DEFAULT_STORAGE_KEY } = options;
+  // `undefined` means "not specified" and takes the global; `null` means the
+  // caller asked for no persistence at all. They are not the same answer.
+  const storage = options.storage === undefined ? defaultStorage() : options.storage;
   const { onMessage } = useGateway();
 
   // ------------------------------------------------------------------
@@ -132,20 +151,22 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 
   // Keep a stable ref to the current read-map so we can persist without
   // re-registering the onMessage handler.
-  const readMapRef = useRef<Record<string, boolean>>(loadReadMap(storageKey));
+  const readMapRef = useRef<Record<string, boolean>>(loadReadMap(storage, storageKey));
 
   // ------------------------------------------------------------------
   // Helpers
   // ------------------------------------------------------------------
 
-  /** Persist the current read-map to localStorage (best-effort). */
+  /** Persist the current read-map (best-effort). */
   const persistReadMap = useCallback((map: Record<string, boolean>) => {
+    if (!storage) return;
     try {
-      localStorage.setItem(storageKey, JSON.stringify(map));
+      storage.setItem(storageKey, JSON.stringify(map));
     } catch {
-      // localStorage unavailable (SSR / private mode) — silently ignore.
+      // Quota, or a privacy mode that throws on write — silently ignore.
+      // A lost read mark is not worth failing a render over.
     }
-  }, [storageKey]);
+  }, [storage, storageKey]);
 
   /** Merge an incoming Notification with persisted read-state. */
   const applyReadState = useCallback((n: Notification): Notification => {
@@ -263,17 +284,31 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Load read-map from localStorage. Returns {} on any failure. */
-function loadReadMap(key: string): Record<string, boolean> {
+/**
+ * The default store. Reading the property can itself throw (a privacy mode
+ * that denies storage rather than emptying it), so the access is guarded and
+ * not just the get/set calls.
+ */
+function defaultStorage(): Storage | null {
   try {
-    const raw = localStorage.getItem(key);
+    return (globalThis as { localStorage?: Storage }).localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Load read-map from storage. Returns {} on any failure. */
+function loadReadMap(storage: Storage | null, key: string): Record<string, boolean> {
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
       return parsed as Record<string, boolean>;
     }
   } catch {
-    // parse error or no localStorage
+    // Unreadable store, or a value that is not JSON.
   }
   return {};
 }

@@ -35,6 +35,20 @@ export interface UseNotificationsOptions {
      * @default 'rmn:notifications:read'
      */
     storageKey?: string;
+    /**
+     * Where read-state is persisted. Defaults to `globalThis.localStorage`.
+     *
+     * Reaching for that global directly is what this option replaces. React
+     * Native has no localStorage, so read marks silently never survived a
+     * reload there while the hook's own docs promised they would; a tab-scoped
+     * app wanting sessionStorage, or a multi-tenant one needing a namespaced
+     * store, had nowhere to say so. Mirrors
+     * `UseWebSocketPersistConfig.storage`, which got this right first.
+     *
+     * Pass `null` to keep read-state in memory only — the honest setting for
+     * SSR and for privacy modes where a write would throw anyway.
+     */
+    storage?: Storage | null;
 }
 export interface UseNotificationsResult {
     /** All in-memory notifications, oldest first. */
