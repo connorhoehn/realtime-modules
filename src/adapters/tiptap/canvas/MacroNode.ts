@@ -11,6 +11,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import type { JsonObject } from 'distributed-core/applications/document';
 import { macroDataFromText, macroTextFromData, minimalEdit } from './macroText';
+import { MACRO_NODE_NAME } from './nodeNames';
 
 export interface MacroNodeOptions {
   HTMLAttributes: Record<string, unknown>;
@@ -31,7 +32,7 @@ declare module '@tiptap/core' {
   }
 }
 
-export const MACRO_NODE_NAME = 'macro';
+export { MACRO_NODE_NAME } from './nodeNames';
 
 export const MacroNode = Node.create<MacroNodeOptions>({
   name: MACRO_NODE_NAME,

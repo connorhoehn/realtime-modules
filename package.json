@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.58.0",
+  "version": "0.59.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -172,51 +172,45 @@
     "@tiptap/extension-collaboration": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
+        "./adapters/tiptap"
       ]
     },
     "@tiptap/extension-placeholder": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
+        "./adapters/tiptap"
       ]
     },
     "@tiptap/extension-task-item": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
+        "./adapters/tiptap"
       ]
     },
     "@tiptap/extension-task-list": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
+        "./adapters/tiptap"
       ]
     },
     "@tiptap/react": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
+        "./adapters/tiptap"
       ]
     },
     "@tiptap/starter-kit": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
+        "./adapters/tiptap"
       ]
     },
     "@tiptap/y-tiptap": {
       "optional": true,
       "_subpaths": [
-        "./adapters/tiptap",
-        "./client"
-      ]
+        "./adapters/tiptap"
+      ],
+      "_note": "Loaded lazily by ./client/useCanvasDocument (require-on-use), so importing ./client does NOT need it installed — only calling canvasToDocModel / materialize does. ./adapters/tiptap needs it outright."
     },
     "express": {
       "optional": true,
@@ -228,10 +222,12 @@
       "optional": true,
       "_subpaths": [
         "./client",
+        "./client/ws",
         "./adapters/tiptap",
         "./agent-streaming/client",
         "./client/pipelines"
-      ]
+      ],
+      "_note": "./client/ws re-exports GatewaySocketProvider, which is a React component — the subpath is Yjs-free, not React-free."
     },
     "ws": {
       "optional": true,

@@ -16,7 +16,7 @@ declare module '@tiptap/core' {
         };
     }
 }
-export declare const MACRO_NODE_NAME = "macro";
+export { MACRO_NODE_NAME } from './nodeNames';
 export declare const MacroNode: Node<MacroNodeOptions, any>;
 /**
  * The payload of a macro node, or `null` if its text is not valid YAML.

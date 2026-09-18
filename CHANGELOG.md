@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.59.0 — 2026-09-18
+
+- **`./client` imports without Tiptap installed.** It could not before, and
+  every Tiptap peer is declared optional.
+
+  `import { useChat } from '@connorhoehn/realtime-modules/client'` threw
+  `Cannot find module '@tiptap/y-tiptap'` for anyone who had not installed it
+  — which is anyone who believed `peerDependenciesMeta`, since npm neither
+  installs an optional peer nor warns about a missing one. Nothing about the
+  failure pointed at chat.
+
+  Two paths carried it, and the second was the sillier one:
+
+  - `useCanvasDocument` imported `prosemirrorJSONToYXmlFragment` and
+    `yXmlFragmentToProsemirrorJSON` from `@tiptap/y-tiptap` at module scope,
+    and the `./client` barrel re-exports that module.
+  - `pmModel` reached `@tiptap/core` through `MacroNode` and `schema/callout`
+    purely to read `MACRO_NODE_NAME`, the callout names and
+    `normalizeCalloutVariant` — a string constant and a pure function that
+    happened to live next to Tiptap `Node` definitions.
+
+  The names and the variant vocabulary now live in `canvas/nodeNames.ts`, with
+  no Tiptap import; both Node modules re-export from there, so
+  `./adapters/tiptap` keeps the exact surface it had. The two `y-tiptap`
+  functions are loaded on use, the way `./server-ws` lazy-loads `ws`, so only
+  reading or writing a canvas document needs the package.
+
+  This is what the `./client` barrel's header has claimed all along: that
+  Tiptap lives behind `./adapters/tiptap` so consumers on Monaco, CodeMirror
+  or contentEditable "don't pull in Tiptap or ProseMirror".
+
+  `peerDependenciesMeta._subpaths` listed `./client` for all seven Tiptap
+  peers, though only `@tiptap/y-tiptap` was ever reachable from it. All seven
+  now name only `./adapters/tiptap`. `react` gained `./client/ws`, which it
+  was missing — that subpath is Yjs-free, not React-free.
+
+  `test/contract/optional-peers.test.ts` walks the built require graph and
+  asserts no subpath eagerly needs a peer whose `_subpaths` disclaims it,
+  plus imports `./client` with every `@tiptap` resolution forced to fail.
+  `y-protocols` stays eager on `./client` on purpose: that barrel is the CRDT
+  surface, its `_subpaths` says so, and `./client/ws` is the Yjs-free one.
+
+
 ## 0.58.0 — 2026-09-18
 
 - **Types named in exported signatures are now importable.** Eleven were not,

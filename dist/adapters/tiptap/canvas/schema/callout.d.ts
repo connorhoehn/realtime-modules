@@ -1,5 +1,6 @@
 import { Node } from '@tiptap/core';
-export declare const CALLOUT_NODE_NAME = "callout";
+import { type CalloutVariant } from '../nodeNames';
+export { CALLOUT_NODE_NAME } from '../nodeNames';
 /**
  * The macro name the marker leaf uses inside the blockquote.
  *
@@ -9,20 +10,9 @@ export declare const CALLOUT_NODE_NAME = "callout";
  * the inverse. Both directions are pure data — no chassis change is required,
  * because the chassis already round-trips this shape.
  */
-export declare const CALLOUT_MACRO_NAME = "callout";
-export declare const CALLOUT_VARIANTS: readonly ["info", "note", "warning", "success", "error"];
-export type CalloutVariant = (typeof CALLOUT_VARIANTS)[number];
-/**
- * The variant a value denotes, or `info`.
- *
- * Applied on the way IN from the DOM and again on the way OUT to it. Both
- * matter: an imported document, a hand-edited markdown file or a CRDT merge can
- * all put an arbitrary string here, and echoing it into `data-variant` would
- * hand an attacker a selector the consuming app's CSS never anticipated. A
- * closed set is also what lets the app theme the panel exhaustively rather than
- * defensively.
- */
-export declare function normalizeCalloutVariant(value: unknown): CalloutVariant;
+export { CALLOUT_MACRO_NAME } from '../nodeNames';
+export { CALLOUT_VARIANTS, normalizeCalloutVariant } from '../nodeNames';
+export type { CalloutVariant } from '../nodeNames';
 /**
  * `:::info ` at the start of a block, for all five variants.
  *

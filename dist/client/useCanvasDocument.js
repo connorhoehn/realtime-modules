@@ -26,7 +26,14 @@ exports.canvasToMarkdown = canvasToMarkdown;
 exports.useCanvasDocument = useCanvasDocument;
 const react_1 = require("react");
 const document_1 = require("distributed-core/applications/document");
-const y_tiptap_1 = require("@tiptap/y-tiptap");
+let yTiptap = null;
+function tiptapBridge() {
+    if (!yTiptap) {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        yTiptap = require('@tiptap/y-tiptap');
+    }
+    return yTiptap;
+}
 const pmModel_1 = require("../adapters/tiptap/canvas/pmModel");
 /** The Y.js root that holds the canvas body. */
 exports.CANVAS_BODY_KEY = 'body';
@@ -60,7 +67,7 @@ function metaToFrontMatter(meta) {
 function canvasToDocModel(ydoc) {
     const fragment = ydoc.getXmlFragment(exports.CANVAS_BODY_KEY);
     const meta = ydoc.getMap('meta').toJSON();
-    const pm = (0, y_tiptap_1.yXmlFragmentToProsemirrorJSON)(fragment);
+    const pm = tiptapBridge().yXmlFragmentToProsemirrorJSON(fragment);
     return (0, pmModel_1.pmToDocModel)(pm, metaToFrontMatter(meta));
 }
 /** The canvas body as markdown. */
@@ -79,7 +86,7 @@ function writeModel(ydoc, schema, model) {
     const { doc, unsupported } = (0, pmModel_1.docModelToPm)(model);
     ydoc.transact(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (0, y_tiptap_1.prosemirrorJSONToYXmlFragment)(schema, doc, fragment);
+        tiptapBridge().prosemirrorJSONToYXmlFragment(schema, doc, fragment);
         // Same transaction as the body write. A peer applying this update sees a
         // canvas with content or a legacy document — never the half state.
         ydoc.getMap('meta').set('schemaVersion', document_1.CANVAS_SCHEMA_VERSION);

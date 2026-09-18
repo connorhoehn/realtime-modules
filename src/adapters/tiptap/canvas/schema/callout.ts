@@ -59,8 +59,15 @@
 // See the comment on the `blockquote` case in `pmModel.ts`.
 
 import { Node, mergeAttributes, wrappingInputRule } from '@tiptap/core';
+import {
+  CALLOUT_NODE_NAME,
+  CALLOUT_VARIANTS,
+  DEFAULT_CALLOUT_VARIANT as DEFAULT_VARIANT,
+  normalizeCalloutVariant,
+  type CalloutVariant,
+} from '../nodeNames';
 
-export const CALLOUT_NODE_NAME = 'callout';
+export { CALLOUT_NODE_NAME } from '../nodeNames';
 
 /**
  * The macro name the marker leaf uses inside the blockquote.
@@ -71,29 +78,10 @@ export const CALLOUT_NODE_NAME = 'callout';
  * the inverse. Both directions are pure data — no chassis change is required,
  * because the chassis already round-trips this shape.
  */
-export const CALLOUT_MACRO_NAME = 'callout';
+export { CALLOUT_MACRO_NAME } from '../nodeNames';
 
-export const CALLOUT_VARIANTS = ['info', 'note', 'warning', 'success', 'error'] as const;
-
-export type CalloutVariant = (typeof CALLOUT_VARIANTS)[number];
-
-const DEFAULT_VARIANT: CalloutVariant = 'info';
-
-/**
- * The variant a value denotes, or `info`.
- *
- * Applied on the way IN from the DOM and again on the way OUT to it. Both
- * matter: an imported document, a hand-edited markdown file or a CRDT merge can
- * all put an arbitrary string here, and echoing it into `data-variant` would
- * hand an attacker a selector the consuming app's CSS never anticipated. A
- * closed set is also what lets the app theme the panel exhaustively rather than
- * defensively.
- */
-export function normalizeCalloutVariant(value: unknown): CalloutVariant {
-  return (CALLOUT_VARIANTS as readonly string[]).includes(value as string)
-    ? (value as CalloutVariant)
-    : DEFAULT_VARIANT;
-}
+export { CALLOUT_VARIANTS, normalizeCalloutVariant } from '../nodeNames';
+export type { CalloutVariant } from '../nodeNames';
 
 /**
  * `:::info ` at the start of a block, for all five variants.

@@ -35,13 +35,13 @@ import type {
   ListItem,
 } from 'distributed-core/applications/document';
 import { serializeDocument } from 'distributed-core/applications/document';
-import { MACRO_NODE_NAME } from './MacroNode';
+import { MACRO_NODE_NAME } from './nodeNames';
 import { macroDataFromText, macroTextFromData } from './macroText';
 import {
   CALLOUT_MACRO_NAME,
   CALLOUT_NODE_NAME,
   normalizeCalloutVariant,
-} from './schema/callout';
+} from './nodeNames';
 
 // ---------------------------------------------------------------------------
 // ProseMirror JSON shapes (structural — we never import prosemirror-model here,

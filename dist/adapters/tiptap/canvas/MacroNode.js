@@ -13,9 +13,11 @@ exports.MacroNode = exports.MACRO_NODE_NAME = void 0;
 exports.readMacroNode = readMacroNode;
 const core_1 = require("@tiptap/core");
 const macroText_1 = require("./macroText");
-exports.MACRO_NODE_NAME = 'macro';
+const nodeNames_1 = require("./nodeNames");
+var nodeNames_2 = require("./nodeNames");
+Object.defineProperty(exports, "MACRO_NODE_NAME", { enumerable: true, get: function () { return nodeNames_2.MACRO_NODE_NAME; } });
 exports.MacroNode = core_1.Node.create({
-    name: exports.MACRO_NODE_NAME,
+    name: nodeNames_1.MACRO_NODE_NAME,
     addOptions() {
         return { HTMLAttributes: {} };
     },

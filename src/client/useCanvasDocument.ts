@@ -30,10 +30,26 @@ import {
   type JsonObject,
   type JsonValue,
 } from 'distributed-core/applications/document';
-import {
-  prosemirrorJSONToYXmlFragment,
-  yXmlFragmentToProsemirrorJSON,
-} from '@tiptap/y-tiptap';
+// `@tiptap/y-tiptap` is loaded on use, not on import.
+//
+// It is an OPTIONAL peer, and this module is re-exported from the ./client
+// barrel — so a top-level import made `import { useChat } from '.../client'`
+// throw "Cannot find module '@tiptap/y-tiptap'" for anyone who had not
+// installed it, which is anyone who took the peer at its word. The barrel's
+// own header promises consumers on Monaco or CodeMirror "don't pull in Tiptap
+// or ProseMirror"; only the two functions below ever needed it, and only when
+// a canvas document is actually read or written.
+//
+// Same shape as ./server-ws lazy-loading `ws`.
+type YTiptap = typeof import('@tiptap/y-tiptap');
+let yTiptap: YTiptap | null = null;
+function tiptapBridge(): YTiptap {
+  if (!yTiptap) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    yTiptap = require('@tiptap/y-tiptap') as YTiptap;
+  }
+  return yTiptap;
+}
 import { docModelToPm, pmToDocModel, type PmNode, type UnsupportedForm } from '../adapters/tiptap/canvas/pmModel';
 
 // Re-exported because MaterializeResult.unsupported is UnsupportedForm[] and
@@ -123,7 +139,7 @@ export interface MaterializeResult {
 export function canvasToDocModel(ydoc: Y.Doc): DocModel {
   const fragment = ydoc.getXmlFragment(CANVAS_BODY_KEY);
   const meta = ydoc.getMap('meta').toJSON() as Record<string, unknown>;
-  const pm = yXmlFragmentToProsemirrorJSON(fragment) as PmNode;
+  const pm = tiptapBridge().yXmlFragmentToProsemirrorJSON(fragment) as PmNode;
   return pmToDocModel(pm, metaToFrontMatter(meta));
 }
 
@@ -150,7 +166,7 @@ function writeModel(
 
   ydoc.transact(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    prosemirrorJSONToYXmlFragment(schema as any, doc as any, fragment as any);
+    tiptapBridge().prosemirrorJSONToYXmlFragment(schema as any, doc as any, fragment as any);
     // Same transaction as the body write. A peer applying this update sees a
     // canvas with content or a legacy document — never the half state.
     ydoc.getMap('meta').set('schemaVersion', CANVAS_SCHEMA_VERSION);

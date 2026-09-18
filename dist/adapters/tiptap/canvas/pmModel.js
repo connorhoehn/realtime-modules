@@ -32,9 +32,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.docModelToPm = docModelToPm;
 exports.pmToDocModel = pmToDocModel;
 const document_1 = require("distributed-core/applications/document");
-const MacroNode_1 = require("./MacroNode");
+const nodeNames_1 = require("./nodeNames");
 const macroText_1 = require("./macroText");
-const callout_1 = require("./schema/callout");
+const nodeNames_2 = require("./nodeNames");
 // `code` must be innermost: `inlineCode` is a LEAF in the chassis model, so any
 // mark that survives alongside it has to wrap it. `link` is outermost because
 // markdown cannot express a link inside emphasis inside the same run without
@@ -184,11 +184,11 @@ function blockToPm(block, unsupported) {
             // point for a document that is already one today.
             if (marker !== undefined &&
                 marker.type === 'macro' &&
-                marker.name === callout_1.CALLOUT_MACRO_NAME &&
+                marker.name === nodeNames_2.CALLOUT_MACRO_NAME &&
                 body.length > 0) {
                 return {
-                    type: callout_1.CALLOUT_NODE_NAME,
-                    attrs: { variant: (0, callout_1.normalizeCalloutVariant)(marker.data.variant) },
+                    type: nodeNames_2.CALLOUT_NODE_NAME,
+                    attrs: { variant: (0, nodeNames_2.normalizeCalloutVariant)(marker.data.variant) },
                     content: blocksToPm(body, unsupported),
                 };
             }
@@ -202,7 +202,7 @@ function blockToPm(block, unsupported) {
         case 'macro': {
             const text = (0, macroText_1.macroTextFromData)(block.name, block.data);
             return {
-                type: MacroNode_1.MACRO_NODE_NAME,
+                type: nodeNames_1.MACRO_NODE_NAME,
                 attrs: { macroName: block.name },
                 ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
             };
@@ -402,7 +402,7 @@ function pmBlocksToModel(nodes) {
             case 'blockquote':
                 out.push({ type: 'blockquote', content: pmBlocksToModel(node.content) });
                 break;
-            case callout_1.CALLOUT_NODE_NAME:
+            case nodeNames_2.CALLOUT_NODE_NAME:
                 // The exact inverse of the `blockquote` case in `blockToPm`: re-emit
                 // the marker leaf ahead of the body. `normalizeCalloutVariant` runs
                 // again rather than trusting the attribute, because a CRDT merge or a
@@ -413,8 +413,8 @@ function pmBlocksToModel(nodes) {
                     content: [
                         {
                             type: 'macro',
-                            name: callout_1.CALLOUT_MACRO_NAME,
-                            data: { variant: (0, callout_1.normalizeCalloutVariant)(node.attrs?.variant) },
+                            name: nodeNames_2.CALLOUT_MACRO_NAME,
+                            data: { variant: (0, nodeNames_2.normalizeCalloutVariant)(node.attrs?.variant) },
                         },
                         ...pmBlocksToModel(node.content),
                     ],
@@ -423,7 +423,7 @@ function pmBlocksToModel(nodes) {
             case 'horizontalRule':
                 out.push({ type: 'thematicBreak' });
                 break;
-            case MacroNode_1.MACRO_NODE_NAME: {
+            case nodeNames_1.MACRO_NODE_NAME: {
                 const name = String(node.attrs?.macroName ?? 'unknown');
                 const text = (node.content ?? []).map((c) => c.text ?? '').join('');
                 const data = (0, macroText_1.macroDataFromText)(name, text);

@@ -59,10 +59,11 @@
 // One case stays a plain blockquote on purpose: a marker with NO body after it.
 // See the comment on the `blockquote` case in `pmModel.ts`.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Callout = exports.CALLOUT_INPUT_RULE = exports.CALLOUT_VARIANTS = exports.CALLOUT_MACRO_NAME = exports.CALLOUT_NODE_NAME = void 0;
-exports.normalizeCalloutVariant = normalizeCalloutVariant;
+exports.Callout = exports.CALLOUT_INPUT_RULE = exports.normalizeCalloutVariant = exports.CALLOUT_VARIANTS = exports.CALLOUT_MACRO_NAME = exports.CALLOUT_NODE_NAME = void 0;
 const core_1 = require("@tiptap/core");
-exports.CALLOUT_NODE_NAME = 'callout';
+const nodeNames_1 = require("../nodeNames");
+var nodeNames_2 = require("../nodeNames");
+Object.defineProperty(exports, "CALLOUT_NODE_NAME", { enumerable: true, get: function () { return nodeNames_2.CALLOUT_NODE_NAME; } });
 /**
  * The macro name the marker leaf uses inside the blockquote.
  *
@@ -72,24 +73,11 @@ exports.CALLOUT_NODE_NAME = 'callout';
  * the inverse. Both directions are pure data — no chassis change is required,
  * because the chassis already round-trips this shape.
  */
-exports.CALLOUT_MACRO_NAME = 'callout';
-exports.CALLOUT_VARIANTS = ['info', 'note', 'warning', 'success', 'error'];
-const DEFAULT_VARIANT = 'info';
-/**
- * The variant a value denotes, or `info`.
- *
- * Applied on the way IN from the DOM and again on the way OUT to it. Both
- * matter: an imported document, a hand-edited markdown file or a CRDT merge can
- * all put an arbitrary string here, and echoing it into `data-variant` would
- * hand an attacker a selector the consuming app's CSS never anticipated. A
- * closed set is also what lets the app theme the panel exhaustively rather than
- * defensively.
- */
-function normalizeCalloutVariant(value) {
-    return exports.CALLOUT_VARIANTS.includes(value)
-        ? value
-        : DEFAULT_VARIANT;
-}
+var nodeNames_3 = require("../nodeNames");
+Object.defineProperty(exports, "CALLOUT_MACRO_NAME", { enumerable: true, get: function () { return nodeNames_3.CALLOUT_MACRO_NAME; } });
+var nodeNames_4 = require("../nodeNames");
+Object.defineProperty(exports, "CALLOUT_VARIANTS", { enumerable: true, get: function () { return nodeNames_4.CALLOUT_VARIANTS; } });
+Object.defineProperty(exports, "normalizeCalloutVariant", { enumerable: true, get: function () { return nodeNames_4.normalizeCalloutVariant; } });
 /**
  * `:::info ` at the start of a block, for all five variants.
  *
@@ -97,9 +85,9 @@ function normalizeCalloutVariant(value) {
  * gesture people already have in their fingers — which is why it earns its
  * place as the *input* even though it was rejected as the *storage* form.
  */
-exports.CALLOUT_INPUT_RULE = new RegExp(`^:::(${exports.CALLOUT_VARIANTS.join('|')})\\s$`);
+exports.CALLOUT_INPUT_RULE = new RegExp(`^:::(${nodeNames_1.CALLOUT_VARIANTS.join('|')})\\s$`);
 exports.Callout = core_1.Node.create({
-    name: exports.CALLOUT_NODE_NAME,
+    name: nodeNames_1.CALLOUT_NODE_NAME,
     addOptions() {
         return { HTMLAttributes: {} };
     },
@@ -111,10 +99,10 @@ exports.Callout = core_1.Node.create({
     addAttributes() {
         return {
             variant: {
-                default: DEFAULT_VARIANT,
-                parseHTML: (element) => normalizeCalloutVariant(element.getAttribute('data-variant')),
+                default: nodeNames_1.DEFAULT_CALLOUT_VARIANT,
+                parseHTML: (element) => (0, nodeNames_1.normalizeCalloutVariant)(element.getAttribute('data-variant')),
                 renderHTML: (attributes) => ({
-                    'data-variant': normalizeCalloutVariant(attributes.variant),
+                    'data-variant': (0, nodeNames_1.normalizeCalloutVariant)(attributes.variant),
                 }),
             },
         };
@@ -134,8 +122,8 @@ exports.Callout = core_1.Node.create({
     },
     addCommands() {
         return {
-            setCallout: (variant) => ({ commands }) => commands.wrapIn(this.name, { variant: normalizeCalloutVariant(variant) }),
-            toggleCallout: (variant) => ({ commands }) => commands.toggleWrap(this.name, { variant: normalizeCalloutVariant(variant) }),
+            setCallout: (variant) => ({ commands }) => commands.wrapIn(this.name, { variant: (0, nodeNames_1.normalizeCalloutVariant)(variant) }),
+            toggleCallout: (variant) => ({ commands }) => commands.toggleWrap(this.name, { variant: (0, nodeNames_1.normalizeCalloutVariant)(variant) }),
             unsetCallout: () => ({ commands }) => commands.lift(this.name),
         };
     },
@@ -144,7 +132,7 @@ exports.Callout = core_1.Node.create({
             (0, core_1.wrappingInputRule)({
                 find: exports.CALLOUT_INPUT_RULE,
                 type: this.type,
-                getAttributes: (match) => ({ variant: normalizeCalloutVariant(match[1]) }),
+                getAttributes: (match) => ({ variant: (0, nodeNames_1.normalizeCalloutVariant)(match[1]) }),
             }),
         ];
     },
