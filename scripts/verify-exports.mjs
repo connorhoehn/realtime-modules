@@ -90,9 +90,64 @@ if (!hookTable) {
     }
 }
 
+// 5. The same coverage for the hooks that live OUTSIDE ./client.
+//
+// Check 4 only ever looked at ./client, and eight hooks behind the media
+// subpaths drifted in unmentioned because of it — useLVSContext,
+// useLiveCaptions, useVoiceCapture, useMediaEffects among them. A subpath
+// having its own barrel is not a reason for its API to be undiscoverable.
+//
+// Anywhere in README or docs/ counts here, unlike check 4: these are
+// described in prose and recipes rather than in the ./client hook table, and
+// forcing them into that table would blur the boundary the subpaths exist to
+// draw.
+const HOOK_SUBPATHS = [
+    './client/video',
+    './client/voice',
+    './client/media-effects',
+    './client/hangout-rooms',
+    './client/pipelines',
+];
+const prose = [
+    readme,
+    ...(await Promise.all(
+        (function walk(dir) {
+            const out = [];
+            for (const entry of readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })) {
+                if (entry.isDirectory()) out.push(...walk(`${dir}/${entry.name}`));
+                else if (entry.name.endsWith('.md')) out.push(`${dir}/${entry.name}`);
+            }
+            return out;
+        })('docs').map((f) => readFile(new URL(`../${f}`, import.meta.url), 'utf8')),
+    )),
+].join('\n');
+
+// Exact tokens, not substrings: `useLiveCaptionsXX` contains `useLiveCaptions`,
+// so an includes() check calls a renamed hook documented. Check 3 had the same
+// flaw and it was caught the same way — by renaming a row and watching the
+// guard stay green.
+const documentedInProse = new Set([...prose.matchAll(/\b(use[A-Z][A-Za-z]*)\b/g)].map((m) => m[1]));
+
+for (const subpath of HOOK_SUBPATHS) {
+    const target = pkg.exports?.[subpath];
+    const types = typeof target === 'string' ? target : target?.types;
+    if (!types) continue;
+    let dts;
+    try {
+        dts = await readFile(new URL('../' + types.replace(/^\.\//, ''), import.meta.url), 'utf8');
+    } catch {
+        continue; // check 1 already reports a missing backing file
+    }
+    for (const hook of new Set([...dts.matchAll(/\b(use[A-Z][A-Za-z]+)\b/g)].map((m) => m[1]))) {
+        if (!documentedInProse.has(hook)) {
+            errors.push(`${hook} is exported from ${subpath} but is documented nowhere in README or docs/`);
+        }
+    }
+}
+
 if (errors.length) {
     console.error('verify-exports FAILED:');
     for (const e of errors) console.error('  - ' + e);
     process.exit(1);
 }
-console.log(`verify-exports passed: ${Object.keys(pkg.exports).length - 1} subpaths backed + documented, every ./client hook has a row, no orphaned dist dirs.`);
+console.log(`verify-exports passed: ${Object.keys(pkg.exports).length - 1} subpaths backed + documented, every hook documented, no orphaned dist dirs.`);

@@ -296,6 +296,33 @@ automatically when the `channel` argument changes.
 | `useCanvasCapture(opts?)` | `{ track, stream, capturing, error }` — a canvas the page owns as a `MediaStreamTrack` | No (local) |
 | `useIdleDetector(opts?)` | `{ isIdle }` | No (local) |
 
+### Hooks in the media subpaths
+
+These are not exported from `./client` — they live behind their own subpaths
+so an app that never publishes video never resolves MediaPipe or the LVS
+transport. They speak to a live-video-streaming deployment, not to
+`attachRealtime`.
+
+`./client/video` — see [the streaming recipe](./docs/recipes/streaming.md):
+
+| Hook | Returns |
+|---|---|
+| `useLVSContext()` | `LVSConfig` — the `{ baseUrl, getAuthToken, log }` the provider holds, for a caller that needs it directly |
+| `useLVSPublisher(opts)` | the WHIP publish loop — `phase`, ICE and retry owned by the hook, capture owned by you |
+| `useLVSSubscriber(opts)` | the WHEP side of the same |
+| `useLVSHangout(opts)` / `useLVSHangoutShared()` | `{ participants, isJoined, isScreenSharing, isCameraEnabled, connectionState, error, videoUnavailable, toggleMute, toggleCamera, enableCamera, disableCamera, setCameraEnabled, startScreenShare, stopScreenShare, leave }`. The `Shared` form reads one hangout from context instead of opening its own |
+| `useLVSViewerCount(opts)` | `{ viewerCount, error }` — polled |
+| `useLVSRecordings(opts)` | `{ recordings, isLoading, error, refetch }` |
+| `useLVSHlsPlayer(opts)` | `{ playlistUrl, tokenExpiresInSec, ready }` — the near-realtime lane |
+| `useLiveCaptions(opts)` | `CaptionLine[]` |
+
+`./client/voice` and `./client/media-effects`:
+
+| Hook | Returns |
+|---|---|
+| `useVoiceCapture(opts)` | `{ supported, state, micActive, liveText, lastTranscript, pendingContext, error, captureId, channel, start, stop, cancel }` — ambient push-to-talk. `useDictation` in `./client` is the request/response sibling |
+| `useMediaEffects(opts?)` | a `MediaEffectsController`: `{ filterId, backgroundMode, backgroundImageUrl, faceSpriteId, active, outputTrack, previewTrack, filters, backgrounds, faceSprites, draft, isDirty, setFilter, setBackgroundMode, setBackgroundImageUrl, setFaceSpriteId, beginPreview, applyPreview, cancelPreview, warmup, attach, processStream, detach }`. The MediaPipe engine is lazy — nothing loads until an effect is switched on |
+
 ---
 
 ## Transport tiers

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.68.2 — 2026-09-18
+
+- **Eight hooks behind the media subpaths were documented nowhere.**
+  Documentation and guard only.
+
+  The hook-coverage check added in 0.52.x only ever looked at `./client`, so
+  everything behind `./client/video`, `./client/voice` and
+  `./client/media-effects` was free to drift unmentioned — and did:
+  `useLVSContext`, `useLVSHangoutShared`, `useLVSRecordings`,
+  `useLVSViewerCount`, `useLVSHlsPlayer`, `useLiveCaptions`,
+  `useVoiceCapture`, `useMediaEffects`. A subpath having its own barrel is not
+  a reason for its API to be undiscoverable.
+
+  The README now carries a short table per media subpath, next to the main
+  hook reference but separate from it, since these do not come from `./client`
+  and talk to a live-video-streaming deployment rather than to
+  `attachRealtime`.
+
+  `verify-exports` grows a fifth check covering those subpaths. It accepts a
+  mention anywhere in README or `docs/` rather than demanding a table row,
+  because these are described in prose and recipes and forcing them into the
+  `./client` table would blur the boundary the subpaths exist to draw.
+
+
 ## 0.68.1 — 2026-09-18
 
 - **Disconnect cleanup ran before a client's in-flight frames finished**,
