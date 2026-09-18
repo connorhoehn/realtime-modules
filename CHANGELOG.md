@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.66.0 — 2026-09-18
+
+- **`usePresence` showed a ghost for every client that dropped during its
+  subscribe.** After 0.65.0 the commonest ghost is you, right after your own
+  reconnect.
+
+  `PresenceService` does not delete a dropped client immediately. It marks the
+  entry `offline`, broadcasts a departure, and evicts only after a grace
+  window so a quick reconnect does not flap the roster. The eviction itself
+  broadcasts nothing.
+
+  The hook handled the departure broadcast correctly — that path deletes — but
+  took the subscribe SNAPSHOT verbatim, tombstones included. So a client that
+  subscribes during someone's grace window receives the tombstone, missed the
+  departure that preceded it, and is never told again: the ghost stays for the
+  rest of the session.
+
+  Reconnect is the ordinary way to land in that window. The hook re-subscribes
+  on the new socket (0.65.0), the snapshot still carries the old connection's
+  tombstone, and the user sees a second copy of themselves — a roster that
+  counts two people in a room holding one.
+
+  The snapshot now drops `offline` entries, which is what the departure path
+  already did. `away` and `busy` are untouched: those are members who stepped
+  out, not corpses.
+
+  Found by driving a real server — connect, hard-drop the socket, reconnect,
+  re-ask for the roster — which came back holding two entries for one user.
+
+
 ## 0.65.1 — 2026-09-18
 
 - **`useChatMembers` and `useChatReadReceipts` were left out of 0.65.0.** Same

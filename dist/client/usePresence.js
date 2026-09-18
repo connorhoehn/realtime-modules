@@ -60,12 +60,27 @@ function usePresence(channel) {
                 switch (msg.action) {
                     case 'subscribed': {
                         // Roster snapshot for the subscribed channel.
+                        //
+                        // `offline` entries are dropped, because they are tombstones
+                        // rather than members. PresenceService marks a dropped client
+                        // offline, broadcasts a departure, and only deletes it after a
+                        // grace window so a quick reconnect does not flap the roster —
+                        // and the eviction itself broadcasts nothing.
+                        //
+                        // So a client subscribing DURING someone's grace window gets the
+                        // tombstone in its snapshot, missed the departure that preceded
+                        // it, and will never be told again: the ghost stays for the rest
+                        // of the session. That includes the common case of subscribing
+                        // right after your own reconnect, where the ghost is you.
+                        //
+                        // The 'offline' broadcast path below already deletes; this makes
+                        // the snapshot agree with it.
                         if (msg.channel !== channelRef.current)
                             break;
                         const list = Array.isArray(raw.presence) ? raw.presence : [];
                         rosterMapRef.current = new Map(list
                             .map(asPresenceEntry)
-                            .filter(Boolean)
+                            .filter((e) => Boolean(e) && e.status !== 'offline')
                             .map((e) => [e.clientId, e]));
                         flush();
                         break;

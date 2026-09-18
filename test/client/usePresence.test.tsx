@@ -202,6 +202,52 @@ describe('usePresence — gateway-real inbound envelopes', () => {
     expect(result.current.roster[1]!.status).toBe('away');
   });
 
+  // PresenceService marks a dropped client offline, broadcasts a departure,
+  // and deletes it only after a grace window — with no second broadcast. A
+  // client that subscribes DURING that window gets the tombstone in its
+  // snapshot, missed the departure, and is never told again. The commonest
+  // way to land in that window is your own reconnect, where the ghost is you.
+  it('drops offline tombstones from the snapshot', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => usePresence('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    act(() => {
+      emit({
+        type: 'presence',
+        action: 'subscribed',
+        channel: 'ch-1',
+        presence: [
+          entry('c-dead', { status: 'offline' }),
+          entry('c-live'),
+          entry('c-away', { status: 'away' }),
+        ],
+      } as unknown as GatewayMessage);
+    });
+
+    // away is a real member who stepped out; offline is a corpse.
+    // (Order is the roster's own business — membership is the claim here.)
+    expect(result.current.roster.map((e) => e.clientId).sort()).toEqual(['c-away', 'c-live']);
+  });
+
+  it('a client that goes offline and comes back appears once', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => usePresence('ch-1'), { wrapper: makeWrapper(ctx) });
+
+    // Re-subscribe after a reconnect: the snapshot still carries the old
+    // connection's tombstone alongside the new one.
+    act(() => {
+      emit({
+        type: 'presence',
+        action: 'subscribed',
+        channel: 'ch-1',
+        presence: [entry('c-old', { status: 'offline' }), entry('c-new')],
+      } as unknown as GatewayMessage);
+    });
+
+    expect(result.current.roster).toHaveLength(1);
+    expect(result.current.roster[0]!.clientId).toBe('c-new');
+  });
+
   it('presence/update upserts entries pinned to the hook channel', () => {
     const { ctx, emit } = makeGatewayContext();
     const { result } = renderHook(() => usePresence('ch-1'), { wrapper: makeWrapper(ctx) });
