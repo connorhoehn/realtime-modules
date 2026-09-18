@@ -34,12 +34,12 @@ const ALL_FEATURES: Array<[string, () => RealtimeFeature]> = [
     ['chat', () => chat()],
     ['presence', () => presence()],
     ['cursor', () => cursor()],
-    ['reactions', () => reactions()],
+    ['reaction', () => reactions()],   // wire key 'reaction'; manifest identity 'reactions'
     ['activity', () => activity()],
     ['social', () => social()],
     ['call', () => calls()],
     ['ingest', () => ingest()],
-    ['pipeline-ws', () => pipeline()],
+    ['pipeline', () => pipeline()],    // wire key 'pipeline'; manifest identity 'pipeline-ws'
     ['typed-documents', () => typedDocuments()],
     ['room', () => rooms()],
     ['notification', () => notifications()],
@@ -174,6 +174,75 @@ describe('attachRealtime — à-la-carte matrix', () => {
 // manifest advertises CURSOR_THROTTLE_INTERVAL_MS, CURSOR_TTL_MS and
 // CURSOR_CLEANUP_INTERVAL_MS, nothing in src/cursor reads process.env, and the
 // preset had no options either — so all three were settable by neither route.
+// The wire name a client addresses and the manifest name a feature carries are
+// not the same string, and where they differed nothing connected: useReactions
+// sends `service: 'reaction'` while reactions() registered 'reactions', so
+// every frame came back SERVICE_NOT_AVAILABLE. The end-to-end test above did
+// not catch it because it sent 'reactions' too — the server validated against
+// itself.
+//
+// This asserts the client's side of the contract instead. Each name below is
+// what a hook in ./client actually puts on the wire; 'reaction', 'chat',
+// 'presence', 'activity', 'crdt', 'fileupload' and 'subscribe' are also
+// declared by @connorhoehn/event-catalog as canonical client frames.
+describe('attachRealtime — every service a client addresses resolves', () => {
+    const WIRE_NAMES: Array<[string, () => RealtimeFeature]> = [
+        ['chat', () => chat()],
+        ['presence', () => presence()],
+        ['reaction', () => reactions()],
+        ['activity', () => activity()],
+        ['cursor', () => cursor()],
+        ['fileupload', () => fileUploads()],
+        ['notification', () => notifications()],
+        ['crdt', () => collabDocs()],
+        ['pipeline', () => pipeline()],
+    ];
+
+    it.each(WIRE_NAMES.map(([n]) => [n]))('a frame addressed to %s is routed, not refused', async (name) => {
+        const make = WIRE_NAMES.find(([n]) => n === name)![1];
+        const { server, port, handle } = await boot([make()]);
+        const ws = await connect(port);
+
+        ws.send(JSON.stringify({ service: name, action: '__no_such_action__', channel: 'probe' }));
+
+        // The service must be REACHED. What it does with a nonsense action is
+        // its own business — only SERVICE_NOT_AVAILABLE means the name missed.
+        let refused = false;
+        try {
+            await nextFrame(
+                ws,
+                (f) => f.type === 'error' && f.code === 'SERVICE_NOT_AVAILABLE',
+                600,
+            );
+            refused = true;
+        } catch {
+            // no such frame — the name resolved
+        }
+        expect(refused).toBe(false);
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
+    // useVideoHangout sends `service: 'videohangout'`, event-catalog declares
+    // it, and this package ships no such service — CallService speaks
+    // `{ type: 'call', action: 'invite' | ... }`, a different vocabulary
+    // entirely. Pinned so the day one appears, the docs that currently say
+    // "none yet" get revisited.
+    it('videohangout has no server half here, and calls() is not it', async () => {
+        const { server, port, handle } = await boot([calls()]);
+        expect(Object.keys(handle.services)).toEqual(['call']);
+
+        const ws = await connect(port);
+        ws.send(JSON.stringify({ service: 'videohangout', action: 'start', channel: 'room:1' }));
+        const err = await nextFrame(ws, (f) => f.type === 'error');
+        expect(err.code).toBe('SERVICE_NOT_AVAILABLE');
+
+        ws.close();
+        await teardown(server, handle);
+    });
+});
+
 describe('attachRealtime — presets forward their service config', () => {
     it('cursor() passes throttle, TTL, sweep and custom modes through', async () => {
         const modes = {
@@ -221,7 +290,7 @@ describe('attachRealtime — presets forward their service config', () => {
     it.each([
         ['social', () => social({ maxChannelIdLength: 11 }), 'maxChannelIdLength', 11],
         ['ingest', () => ingest({ maxChannelLength: 12 }), 'maxChannelLength', 12],
-        ['pipeline-ws', () => pipeline({ maxChannelLength: 13 }), 'maxChannelLength', 13],
+        ['pipeline', () => pipeline({ maxChannelLength: 13 }), 'maxChannelLength', 13],
         ['typed-documents', () => typedDocuments({ maxDocumentIdLength: 14 }), 'maxDocumentIdLength', 14],
     ])('%s() forwards its config', async (name, make, field, value) => {
         const { server, handle } = await boot([(make as () => RealtimeFeature)()]);
@@ -316,11 +385,11 @@ describe('attachRealtime — end-to-end behaviour on the local router', () => {
         });
         const a = await connect(port);
 
-        a.send(JSON.stringify({ service: 'reactions', action: 'subscribe', channel: 'general' }));
+        a.send(JSON.stringify({ service: 'reaction', action: 'subscribe', channel: 'general' }));
         await nextFrame(a, (f) => f.type === 'reaction' && f.action === 'reaction_subscribed');
 
         const received = nextFrame(a, (f) => f.type === 'reaction' && f.action === 'reaction_received');
-        a.send(JSON.stringify({ service: 'reactions', action: 'send', channel: 'general', emoji: '❤️' }));
+        a.send(JSON.stringify({ service: 'reaction', action: 'send', channel: 'general', emoji: '❤️' }));
 
         const frame = await received;
         expect(frame.data.userId).toBe('user-42');

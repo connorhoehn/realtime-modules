@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.62.0 — 2026-09-18
+
+- **Reactions and pipeline were unreachable through `attachRealtime`.** Fixed;
+  this is a behaviour change on the wire key those two register under.
+
+  `useReactions` sends `service: 'reaction'`. `reactions()` registered under
+  its manifest name, `reactions`. Every frame the hook sent came back
+  `SERVICE_NOT_AVAILABLE` — subscribe, send, remove, all of it. The feature
+  attached, the recipe read correctly, and nothing worked. `usePipelineRunStatus`
+  sends `service: 'pipeline'` against a registration of `pipeline-ws`, the same
+  way.
+
+  `defineFeature` already had `serviceName` for exactly this split, with
+  `collabDocs` using it ("wire key clients address; manifest identity is
+  'document-sharing'"). Reactions and pipeline now do too. `reaction` is not a
+  guess: `@connorhoehn/event-catalog` declares `client.reaction.*` as the
+  canonical client frame.
+
+  The end-to-end reactions test did not catch this because it sent
+  `service: 'reactions'` — the name the server had chosen. It validated the
+  server against itself. It now sends what the hook sends.
+
+  A new test asserts the client's half of the contract for all nine wire names
+  a `./client` hook addresses: a frame sent to each must be routed, not
+  refused. Only `SERVICE_NOT_AVAILABLE` counts as failure — what a service does
+  with a nonsense action is its own business.
+
+- **`useVideoHangout` is not the client half of `calls()`.** Documentation
+  only.
+
+  It sends `service: 'videohangout'` and this package ships no such service, so
+  against `attachRealtime` every frame it sends is refused. It is the
+  signalling client for a live-video-streaming deployment, which serves that
+  service and returns the `joinToken` `./client/video` needs. `CallService`
+  speaks an unrelated vocabulary — `{ type: 'call', action: 'invite' |
+  'active-call' | 'ended' | 'forgotten' | 'user-status' }` — and has no hook.
+
+  Four places paired them: the README subpath table, the README migration
+  table, the recipes index and the calls recipe. All four now say what is
+  actually true, and the calls recipe shows the `useGateway()` code that does
+  work today. A test pins the refusal so this is revisited if a
+  `videohangout` service ever lands here.
+
+
 ## 0.61.0 — 2026-09-18
 
 - **The recipes said `chat()` gives you pins. It does not.** Documentation and

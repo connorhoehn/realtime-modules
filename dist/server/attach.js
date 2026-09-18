@@ -120,6 +120,13 @@ function cursor(opts = {}) {
 function reactions(opts = {}) {
     return defineFeature({
         manifest: require('../reactions/manifest').ReactionsManifest,
+        // Wire key 'reaction', manifest identity 'reactions'. Clients address
+        // the singular — useReactions sends it, and event-catalog declares
+        // `client.reaction.*` as the canonical frame. Registering under the
+        // manifest name meant every frame the hook sent came back
+        // SERVICE_NOT_AVAILABLE, so reactions did not work through
+        // attachRealtime at all.
+        serviceName: 'reaction',
         create: ({ router, logger }) => {
             const { ReactionService } = require('../reactions/ReactionService');
             const { identityResolver, ...rest } = opts;
@@ -184,6 +191,9 @@ function ingest(opts = {}) {
 function pipeline(opts = {}) {
     return defineFeature({
         manifest: require('../pipeline/manifest').PipelineWsManifest,
+        // Wire key 'pipeline', manifest identity 'pipeline-ws' — same split as
+        // reactions and crdt. usePipelineRunStatus sends `service: 'pipeline'`.
+        serviceName: 'pipeline',
         create: ({ router, logger }) => {
             const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter');
             return new PipelineWsRouter({ messageRouter: router, logger: logger, config: opts });

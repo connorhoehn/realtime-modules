@@ -13,7 +13,7 @@ matrix, all 78 pairs).
 | Reactions | [reactions](./reactions.md) | `reactions()` | `useReactions` |
 | Activity feed | [activity](./activity.md) | `activity()` | `useActivity` |
 | Rooms | [rooms](./rooms.md) | `rooms()` | none yet — frames via `useGateway()` |
-| Calls / invites | [calls](./calls.md) | `calls()` | `useVideoHangout` |
+| Calls / invites | [calls](./calls.md) | `calls()` | none yet — frames via `useGateway()` |
 | Notifications | [notifications](./notifications.md) | `notifications()` | `useNotifications` |
 | File uploads | [file-uploads](./file-uploads.md) | `fileUploads()` + REST routes you mount | `useFileUpload` |
 | Collab documents | [collab-docs](./collab-docs.md) | `collabDocs()` | `useCRDT` |

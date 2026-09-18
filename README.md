@@ -224,7 +224,7 @@ is the same as an unpublished one.
 | `./cursor` | `CursorService` — in-memory cursor fan-out with a TTL sweep | `useCursor` |
 | `./notification` | `NotificationService` — user-scoped inbox, optional Redis store | `useNotifications` |
 | `./fileupload` | `FileUploadService` + `FileBlobStore` (local-fs default) | `useFileUpload` |
-| `./call` | `CallService` — invites, call state stores, lobby channel | `useVideoHangout` |
+| `./call` | `CallService` — invites, call state stores, lobby channel | none yet — frames via `useGateway()` |
 | `./room` | `RoomService` — room lifecycle + state store | `./client/hangout-rooms` |
 | `./pipeline` | `PipelineWsRouter` — pipeline subscription fan-out + frame projection | `./client/pipelines` |
 | `./social` | `SocialService` — social-event fan-out | none yet — frames via `useGateway()` |
@@ -267,7 +267,7 @@ automatically when the `channel` argument changes.
 | `useCursor(channel, opts?)` | `{ cursors, move, refresh }` — live cursors, client-throttled | Yes |
 | `useFileUpload(channel)` | `{ uploads, transfers, upload, cancel, cancelTransfer, removeCompleted }` | Yes |
 | `useAttachmentSrc(opts?)` | `{ srcFor }` — bearer-authenticated download URL to a renderable object URL | No (per-attachment) |
-| `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }` | Yes |
+| `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }`. Addresses `service: 'videohangout'` — a live-video-streaming deployment, **not** this package's `calls()` | Yes |
 
 **Documents (CRDT)**
 
@@ -451,7 +451,7 @@ HTTP (using `./proxy-client`).
 | `import { ActivityService } from '@connorhoehn/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
 | `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(opts)` / `useYjsDoc(opts)` over WS |
 | `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
-| `import { CallService } from '@connorhoehn/realtime-modules/call'` | `useVideoHangout(channel)` over WS |
+| `import { CallService } from '@connorhoehn/realtime-modules/call'` | no hook yet; read `{type:'call'}` frames via `useGateway()`. `useVideoHangout` talks to a live-video-streaming deployment, not to this |
 | `import { PipelineWsRouter } from '@connorhoehn/realtime-modules/pipeline'` | `usePipelineRunStatus()` from `./client/pipelines` |
 | `import { ... } from '@connorhoehn/realtime-modules/{ingest,social,typed-documents}'` | no hook yet; read the frames via `useGateway()` |
 

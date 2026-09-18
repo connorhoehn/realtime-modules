@@ -24,28 +24,41 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-import { useVideoHangout } from '@connorhoehn/realtime-modules/client';
+// `calls()` speaks `{ service: 'call' }` and broadcasts
+// `{ type: 'call', action: 'invite' | 'active-call' | 'ended' | ... }`.
+// No hook in ./client sends those yet, so read them off the socket directly.
+import { useGateway } from '@connorhoehn/realtime-modules/client';
 
-function CallControls({ channel }: { channel: string }) {
-  const { session, participants, joinToken, start, join, leave, toggleVideo } =
-    useVideoHangout(channel);
+function CallInvites({ lobby }: { lobby: string }) {
+  const { send, onMessage } = useGateway();
+  const [invite, setInvite] = useState<any>(null);
 
-  if (!session) return <button onClick={() => void start()}>start a call</button>;
-
-  return (
-    <>
-      <span>{participants.length} in the call</span>
-      <button onClick={() => void join(session.id)}>join</button>
-      <button onClick={() => void leave()}>leave</button>
-      <button onClick={() => toggleVideo()}>camera</button>
-    </>
+  useEffect(
+    () =>
+      onMessage((msg: any) => {
+        if (msg.type === 'call' && msg.action === 'invite') setInvite(msg);
+      }),
+    [onMessage],
   );
+
+  const ring = () => send({ service: 'call', action: 'invite', lobby });
+
+  return invite
+    ? <button onClick={ring}>incoming call</button>
+    : <button onClick={ring}>start a call</button>;
 }
 ```
 
-This hook is the signalling half only — invites, roster, and the `joinToken`.
-The media itself is `./client/video` (`<Stage>` / `useLVSHangout`), which takes
-that token.
+**`useVideoHangout` is not the client half of `calls()`.** It sends
+`service: 'videohangout'`, and this package ships no such service — against
+`attachRealtime` every frame it sends comes back `SERVICE_NOT_AVAILABLE`. It is
+the signalling client for a live-video-streaming deployment, which serves that
+service and hands back the `joinToken` that `./client/video` (`<Stage>` /
+`useLVSHangout`) needs. Point it at that deployment, not at `calls()`.
+
+`calls()` is the invite and call-state service: who is being rung, what is
+active, what ended. Its verbs are listed above; a hook for them does not exist
+yet.
 
 Point the client at the same origin and the `path` set above —
 `ws://localhost:3000/realtime`. There is no default path: leave `path` off and
