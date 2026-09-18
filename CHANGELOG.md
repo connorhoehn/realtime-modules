@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.67.0 — 2026-09-18
+
+- **A reconnect cut `useChat` back to twenty messages.** Introduced by 0.65.0;
+  fixed here.
+
+  Joining a channel auto-pushes the server's `joinHistoryLimit`, twenty by
+  default, and a `history` frame REPLACES the hook's list rather than merging
+  into it. Both were true before 0.65.0 and harmless, because the join effect
+  only ever ran on mount.
+
+  Making every reconnect re-join turned that into a visible loss: a reader who
+  had called `loadHistory(200)` and scrolled back through a conversation
+  dropped to the last twenty the moment the network blipped, with no event, no
+  error and nothing to restore from. The hook exposes no reconnect signal, so
+  the app could not put it back either.
+
+  `useChat` now remembers the limit `loadHistory` was last called with and
+  re-asks for it after a re-join. Only after a reconnect — a first mount and a
+  channel change both start from the join push, as before — and only when the
+  caller had actually asked for history. An omitted limit travels across as
+  omitted, so "the server's default" stays the server's default rather than
+  becoming a number this hook invented.
+
+
 ## 0.66.1 — 2026-09-18
 
 - **A test I added in 0.51.x started failing at midday.** Fixed; it was mine.

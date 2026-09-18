@@ -179,7 +179,19 @@ export function useChat(channel: string): UseChatReturn {
   // Join / leave the chat channel when it changes. The gateway requires a
   // join before send, and the join auto-pushes recent history (arriving as
   // a chat/history frame), so no explicit history request is needed here.
+  // The channel this effect last ran for, so a re-run can tell a channel
+  // change from a reconnect. A different channel starts fresh; the same
+  // channel on a new session should come back the way the reader left it.
+  const joinedChannelRef = useRef<string | null>(null);
+
   useEffect(() => {
+    const reconnected = joinedChannelRef.current === channel;
+    joinedChannelRef.current = channel;
+    if (!reconnected) {
+      loadedHistoryRef.current = false;
+      lastHistoryLimitRef.current = undefined;
+    }
+
     setMessages([]);
     typingRef.current.clear();
     setTypingUsers([]);
@@ -189,6 +201,23 @@ export function useChat(channel: string): UseChatReturn {
       action: 'join',
       channel,
     } satisfies ClientFramePayload<'client.chat.join'>);
+
+    // Join auto-pushes the server's joinHistoryLimit — 20 by default — and a
+    // history frame REPLACES the list. So a reader who had asked for more
+    // than that would silently drop back to 20 on every reconnect, losing
+    // whatever they were reading, with nothing to tell them it happened.
+    // Ask again for the depth they chose.
+    if (reconnected && loadedHistoryRef.current) {
+      const frame: ClientFramePayload<'client.chat.history'> = {
+        service: 'chat',
+        action: 'history',
+        channel,
+      };
+      if (lastHistoryLimitRef.current !== undefined) {
+        frame.limit = lastHistoryLimitRef.current;
+      }
+      send(frame);
+    }
     return () => {
       send({
         service: 'chat',
@@ -201,6 +230,11 @@ export function useChat(channel: string): UseChatReturn {
     // would never fire again, and the hook would sit silently unsubscribed
     // while connectionState reads 'connected'.
   }, [channel, send, sessionEpoch]);
+
+  // What the caller last asked loadHistory for, so a reconnect can ask again
+  // for the same depth rather than dropping back to the join push.
+  const loadedHistoryRef = useRef(false);
+  const lastHistoryLimitRef = useRef<number | undefined>(undefined);
 
   // What this connection last told the channel about its own composing.
   const typingSentRef = useRef<{ typing: boolean; at: number }>({ typing: false, at: 0 });
@@ -253,6 +287,13 @@ export function useChat(channel: string): UseChatReturn {
         channel: channelRef.current,
       };
       if (limit !== undefined) frame.limit = limit;
+      // Remembered so a reconnect can restore the same depth — see the join
+      // effect. A history frame REPLACES the list, and join pushes only the
+      // server's joinHistoryLimit (20 by default), so without this a reader
+      // who had loaded 200 messages is silently cut back to 20 the moment
+      // the network blips.
+      lastHistoryLimitRef.current = limit;
+      loadedHistoryRef.current = true;
       send(frame);
     },
     [send],

@@ -150,6 +150,64 @@ describe('channel hooks re-establish after a reconnect', () => {
     expect(second.frames((f) => f.service === 'chat' && f.action === action)).toHaveLength(1);
   });
 
+  // Join auto-pushes the server's joinHistoryLimit (20 by default) and a
+  // history frame REPLACES the list. Once 0.65.0 made every reconnect re-join,
+  // a reader who had loaded more than that was silently cut back to 20 with
+  // nothing to tell them — so the hook asks again for the depth it last used.
+  describe('history depth across a reconnect', () => {
+    it('re-requests the limit the caller last asked for', () => {
+      const { result } = renderHook(() => useChat('room:1'), { wrapper });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+
+      act(() => result.current.loadHistory(200));
+
+      const second = reconnect();
+      const history = second.frames((f) => f.service === 'chat' && f.action === 'history');
+      expect(history).toHaveLength(1);
+      expect(history[0]!.limit).toBe(200);
+      // And it still re-joins — the history request is in addition, not instead.
+      expect(second.frames((f) => f.action === 'join')).toHaveLength(1);
+    });
+
+    it('asks for nothing extra when the caller never loaded history', () => {
+      renderHook(() => useChat('room:1'), { wrapper });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+
+      const second = reconnect();
+      expect(second.frames((f) => f.action === 'history')).toHaveLength(0);
+    });
+
+    // loadHistory() with no argument means "the server's default" — that has
+    // to travel as an absent limit, not as an invented number.
+    it('carries an omitted limit across as omitted', () => {
+      const { result } = renderHook(() => useChat('room:1'), { wrapper });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+
+      act(() => result.current.loadHistory());
+
+      const second = reconnect();
+      const history = second.frames((f) => f.action === 'history');
+      expect(history).toHaveLength(1);
+      expect('limit' in history[0]!).toBe(false);
+    });
+
+    // A different channel is a fresh read, not a restored one.
+    it('does not carry one channel\'s depth onto another', () => {
+      const { result, rerender } = renderHook(({ ch }) => useChat(ch), {
+        wrapper,
+        initialProps: { ch: 'room:1' },
+      });
+      act(() => FakeWebSocket.instances[0]!.openAndEstablish());
+      act(() => result.current.loadHistory(200));
+
+      rerender({ ch: 'room:2' });
+      const second = reconnect();
+
+      expect(second.frames((f) => f.action === 'history')).toHaveLength(0);
+      expect(second.frames((f) => f.action === 'join')[0]!.channel).toBe('room:2');
+    });
+  });
+
   it('survives more than one reconnect', () => {
     renderHook(() => useChat('room:1'), { wrapper });
     act(() => FakeWebSocket.instances[0]!.openAndEstablish());
