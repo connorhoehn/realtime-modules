@@ -56,6 +56,7 @@ exports.collabDocs = collabDocs;
 exports.attachRealtime = attachRealtime;
 const createWsHandler_1 = require("../server-ws/createWsHandler");
 const router_1 = require("./router");
+const subscribeService_1 = require("./subscribeService");
 /** Identity helper — exists so feature definitions type-check at the site. */
 function defineFeature(feature) {
     return feature;
@@ -293,6 +294,16 @@ function attachRealtime(server, opts) {
         }
         services[name] = feature.create({ router, logger: log });
         manifests.push(feature.manifest);
+    }
+    // Channel membership itself, always present. Not a feature to attach —
+    // useWebSocket's subscribe()/unsubscribe(), and the autoResubscribe replay
+    // on every reconnect, address `service: 'subscribe'`; with nothing under
+    // that name each of those frames came back SERVICE_NOT_AVAILABLE.
+    //
+    // Registered after the loop and only if free, so a consumer who ships
+    // their own 'subscribe' feature keeps it rather than colliding with this.
+    if (!services.subscribe) {
+        services.subscribe = (0, subscribeService_1.createSubscribeService)(router);
     }
     const consumerOnDisconnect = wsOpts.onDisconnect;
     const handle = (0, createWsHandler_1.createWsHandler)({

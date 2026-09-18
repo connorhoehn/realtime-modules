@@ -250,7 +250,7 @@ automatically when the `channel` argument changes.
 | `useGateway()` | `{ send, onMessage, onConnect, onDisconnect, state, … }` | No (provider context) |
 | `useGatewayOptional()` | The same context value, or `null` outside a provider — the non-throwing read a provider-optional hook needs | No (provider context) |
 | `useFeatures()` | `FeatureName[]` declared by the nearest provider; `[]` outside one | No (provider context) |
-| `useWebSocket(opts)` | `{ send, subscribe, unsubscribe, publish }` plus the state of `UseWebSocketReturn` — `connectionState`, `clientId`, `sessionToken`, `switchChannel`, … Takes `opts.webSocketImpl` to supply the constructor (Node, React Native, tests) | No |
+| `useWebSocket(opts)` | `{ send, subscribe, unsubscribe, publish }` plus the state of `UseWebSocketReturn` — `connectionState`, `clientId`, `sessionToken`, `switchChannel`, … `subscribe`/`unsubscribe` address the generic multiplexer, which `attachRealtime` always registers. Takes `opts.webSocketImpl` to supply the constructor (Node, React Native, tests) | No |
 
 **Channel features**
 

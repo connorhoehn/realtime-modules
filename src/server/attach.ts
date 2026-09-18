@@ -47,6 +47,7 @@ import {
     type RealtimeRouter,
     type RouterLogger,
 } from './router';
+import { createSubscribeService } from './subscribeService';
 
 // ---- feature contract ---------------------------------------------------------
 
@@ -400,6 +401,17 @@ export function attachRealtime(
         }
         services[name] = feature.create({ router, logger: log });
         manifests.push(feature.manifest);
+    }
+
+    // Channel membership itself, always present. Not a feature to attach —
+    // useWebSocket's subscribe()/unsubscribe(), and the autoResubscribe replay
+    // on every reconnect, address `service: 'subscribe'`; with nothing under
+    // that name each of those frames came back SERVICE_NOT_AVAILABLE.
+    //
+    // Registered after the loop and only if free, so a consumer who ships
+    // their own 'subscribe' feature keeps it rather than colliding with this.
+    if (!services.subscribe) {
+        services.subscribe = createSubscribeService(router as RealtimeRouter);
     }
 
     const consumerOnDisconnect = wsOpts.onDisconnect;

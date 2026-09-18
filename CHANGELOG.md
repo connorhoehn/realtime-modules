@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.63.0 — 2026-09-18
+
+- **The generic `subscribe` service was missing, so `useWebSocket().subscribe()`
+  did nothing.** `attachRealtime` now registers it unconditionally.
+
+  `subscribe()` / `unsubscribe()` are the whole channel API of the low-level
+  hook, and `autoResubscribe` replays them on every reconnect. All of it is
+  addressed to `service: 'subscribe'`, and nothing was registered under that
+  name — so against `attachRealtime` every frame came back
+  `SERVICE_NOT_AVAILABLE`, including the reconnect replay, which faithfully
+  re-sent frames that had already been refused.
+
+  This is channel membership, not a feature, so it is always present rather
+  than something to attach. A feature you supply under the name `subscribe`
+  still wins: the built-in is registered after your features and only if the
+  name is free.
+
+  The wire shape is not invented — `@connorhoehn/event-catalog` declares both
+  directions, and the ack asymmetry is its contract, honoured here: a denied
+  subscribe gets NO ack, because the catalog says the frame's absence is the
+  signal and a client reading "no ack" as "probably fine" would believe it
+  joined a channel the server refused. Unsubscribe always acks and is
+  idempotent.
+
+  `SubscribeService` and `createSubscribeService` are exported from `./server`
+  for anyone wiring `createWsHandler` by hand.
+
+  Five tests cover the acks, the silent denial, idempotent unsubscribe, the
+  two error shapes, and that a consumer's own `subscribe` feature is not
+  shadowed. The wire-name guard added in 0.62.0 now includes `subscribe`.
+
+
 ## 0.62.0 — 2026-09-18
 
 - **Reactions and pipeline were unreachable through `attachRealtime`.** Fixed;

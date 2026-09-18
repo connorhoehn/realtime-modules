@@ -32,6 +32,12 @@ export type { CRDTServiceOpts, OrchestratorMessageRouter } from './CRDTService';
 // from that module, so exposing it needs a module-shape change rather than
 // an export line.
 export { AwarenessLedger } from './AwarenessLedger';
+// The generic multiplexer attachRealtime registers itself. Exported so a
+// consumer wiring createWsHandler by hand gets the same channel membership
+// service, rather than rediscovering that useWebSocket's subscribe() has
+// nothing to talk to.
+export { SubscribeService, createSubscribeService } from './subscribeService';
+export type { SubscribeRouter } from './subscribeService';
 
 // Re-export store contracts + memory implementations so consumers only
 // need to import from `'@connorhoehn/realtime-modules/server'`.

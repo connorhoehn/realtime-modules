@@ -90,6 +90,12 @@ async function boot(features: RealtimeFeature[], opts: Record<string, unknown> =
     return { server, port, handle };
 }
 
+// attachRealtime always registers the generic multiplexer, so the services a
+// test attached are everything except that one.
+function featureServices(handle: RealtimeHandle): string[] {
+    return Object.keys(handle.services).filter((n) => n !== 'subscribe');
+}
+
 async function teardown(server: http.Server, handle: RealtimeHandle): Promise<void> {
     await handle.dispose();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -99,7 +105,9 @@ describe('attachRealtime — à-la-carte matrix', () => {
     it.each(ALL_FEATURES.map(([name]) => [name]))('feature %s boots ALONE and accepts a connection', async (name) => {
         const make = ALL_FEATURES.find(([n]) => n === name)![1];
         const { server, port, handle } = await boot([make()]);
-        expect(Object.keys(handle.services)).toEqual([name]);
+        expect(featureServices(handle)).toEqual([name]);
+        // The multiplexer rides along with every attach.
+        expect(Object.keys(handle.services)).toContain('subscribe');
         const ws = await connect(port);
         expect(handle.listClients()).toHaveLength(1);
         ws.close();
@@ -112,7 +120,7 @@ describe('attachRealtime — à-la-carte matrix', () => {
                 const [nameA, makeA] = ALL_FEATURES[i]!;
                 const [nameB, makeB] = ALL_FEATURES[j]!;
                 const { server, handle } = await boot([makeA(), makeB()]);
-                expect(Object.keys(handle.services).sort()).toEqual([nameA, nameB].sort());
+                expect(featureServices(handle).sort()).toEqual([nameA, nameB].sort());
                 await teardown(server, handle);
             }
         }
@@ -120,7 +128,7 @@ describe('attachRealtime — à-la-carte matrix', () => {
 
     it('all fourteen features boot together', async () => {
         const { server, port, handle } = await boot(ALL_FEATURES.map(([, m]) => m()));
-        expect(Object.keys(handle.services)).toHaveLength(14);
+        expect(featureServices(handle)).toHaveLength(14);
         const ws = await connect(port);
         ws.close();
         await teardown(server, handle);
@@ -157,7 +165,7 @@ describe('attachRealtime — à-la-carte matrix', () => {
             }),
         });
         const { server, port, handle } = await boot([chat(), scoreboard]);
-        expect(Object.keys(handle.services).sort()).toEqual(['chat', 'scoreboard']);
+        expect(featureServices(handle).sort()).toEqual(['chat', 'scoreboard']);
         const ws = await connect(port);
         ws.send(JSON.stringify({ service: 'scoreboard', action: 'bump' }));
         const ack = await nextFrame(ws, (f) => f.type === 'scoreboard' && f.action === 'ack');
@@ -196,6 +204,8 @@ describe('attachRealtime — every service a client addresses resolves', () => {
         ['notification', () => notifications()],
         ['crdt', () => collabDocs()],
         ['pipeline', () => pipeline()],
+        // Not a feature — attachRealtime registers it itself.
+        ['subscribe', () => chat()],
     ];
 
     it.each(WIRE_NAMES.map(([n]) => [n]))('a frame addressed to %s is routed, not refused', async (name) => {
@@ -231,7 +241,7 @@ describe('attachRealtime — every service a client addresses resolves', () => {
     // "none yet" get revisited.
     it('videohangout has no server half here, and calls() is not it', async () => {
         const { server, port, handle } = await boot([calls()]);
-        expect(Object.keys(handle.services)).toEqual(['call']);
+        expect(featureServices(handle)).toEqual(['call']);
 
         const ws = await connect(port);
         ws.send(JSON.stringify({ service: 'videohangout', action: 'start', channel: 'room:1' }));
@@ -239,6 +249,97 @@ describe('attachRealtime — every service a client addresses resolves', () => {
         expect(err.code).toBe('SERVICE_NOT_AVAILABLE');
 
         ws.close();
+        await teardown(server, handle);
+    });
+});
+
+// The generic multiplexer. useWebSocket's subscribe()/unsubscribe() are the
+// low-level hook's entire channel API and autoResubscribe replays them on
+// every reconnect — all of it addressed to `service: 'subscribe'`, which
+// nothing registered, so all of it was refused.
+//
+// Both directions are declared by @connorhoehn/event-catalog, including the
+// ack asymmetry asserted below.
+describe('attachRealtime — the subscribe service', () => {
+    it('acks a subscribe and an unsubscribe with the declared frames', async () => {
+        const { server, port, handle } = await boot([chat()]);
+        const ws = await connect(port);
+
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'room:1' }));
+        const sub = await nextFrame(ws, (f) => f.type === 'subscribe' && f.action === 'subscribed');
+        expect(sub.channel).toBe('room:1');
+
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'unsubscribe', channel: 'room:1' }));
+        const unsub = await nextFrame(ws, (f) => f.type === 'subscribe' && f.action === 'unsubscribed');
+        expect(unsub.channel).toBe('room:1');
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
+    // event-catalog is explicit that the ABSENCE of the ack is the signal —
+    // a client treating "no ack" as "probably fine" believes it is subscribed
+    // to a channel the server refused it.
+    it('sends NO ack when authorize denies the channel', async () => {
+        const { server, port, handle } = await boot([chat()], {
+            authorize: ({ channel }: { channel: string }) => channel !== 'room:secret',
+        });
+        const ws = await connect(port);
+
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'room:secret' }));
+
+        let acked = false;
+        try {
+            await nextFrame(ws, (f) => f.type === 'subscribe' && f.action === 'subscribed', 600);
+            acked = true;
+        } catch {
+            // expected — refusal is silence
+        }
+        expect(acked).toBe(false);
+
+        // And the allowed one still works on the same connection.
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'room:ok' }));
+        expect((await nextFrame(ws, (f) => f.action === 'subscribed')).channel).toBe('room:ok');
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
+    it('unsubscribe is idempotent — a channel never joined still acks', async () => {
+        const { server, port, handle } = await boot([chat()]);
+        const ws = await connect(port);
+
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'unsubscribe', channel: 'never-joined' }));
+        const f = await nextFrame(ws, (x) => x.type === 'subscribe' && x.action === 'unsubscribed');
+        expect(f.channel).toBe('never-joined');
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
+    it('refuses a channel-less frame and an unknown action', async () => {
+        const { server, port, handle } = await boot([chat()]);
+        const ws = await connect(port);
+
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'subscribe' }));
+        expect((await nextFrame(ws, (f) => f.type === 'error')).code).toBe('INVALID_PAYLOAD');
+
+        ws.send(JSON.stringify({ service: 'subscribe', action: 'dance', channel: 'room:1' }));
+        expect((await nextFrame(ws, (f) => f.code === 'UNKNOWN_ACTION')).service).toBe('subscribe');
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
+    it('a consumer feature named subscribe keeps the name', async () => {
+        const mine = defineFeature({
+            manifest: { name: 'subscribe', version: '1.0.0' },
+            create: () => ({ handleAction: () => undefined }),
+        });
+        const { server, handle } = await boot([mine]);
+
+        // Theirs, not the built-in — proved by the absence of an ack path.
+        expect(Object.keys(handle.services)).toEqual(['subscribe']);
         await teardown(server, handle);
     });
 });

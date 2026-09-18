@@ -7,6 +7,8 @@ import IdleEvictionManager from './IdleEvictionManager';
 export { CRDTService, SnapshotManager, DocumentMetadataService, DocumentPresenceService, AwarenessCoalescer, IdleEvictionManager, };
 export type { CRDTServiceOpts, OrchestratorMessageRouter } from './CRDTService';
 export { AwarenessLedger } from './AwarenessLedger';
+export { SubscribeService, createSubscribeService } from './subscribeService';
+export type { SubscribeRouter } from './subscribeService';
 export type { HotCache, SnapshotStore, VersionMeta } from './stores/SnapshotStore';
 export type { DocumentMeta, MetadataStore } from './stores/MetadataStore';
 export type { MessageRouterContract } from './stores/MessageRouterContract';
