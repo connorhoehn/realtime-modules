@@ -151,7 +151,7 @@ FeaturesContext.displayName = 'FeaturesContext';
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-function GatewaySocketProvider({ url, children, features = [], token, channel, rest, }) {
+function GatewaySocketProvider({ url, children, features = [], token, channel, rest, webSocketImpl, }) {
     // Message-bus: child hooks register handlers; GatewaySocketProvider fans
     // each inbound frame out to all registered handlers in registration order.
     const handlersRef = (0, react_1.useRef)(new Set());
@@ -166,6 +166,7 @@ function GatewaySocketProvider({ url, children, features = [], token, channel, r
         authToken: token,
         defaultChannel: channel,
         autoResubscribe: false,
+        webSocketImpl,
         onMessage: (msg) => {
             for (const handler of handlersRef.current) {
                 try {

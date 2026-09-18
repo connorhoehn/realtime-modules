@@ -56,6 +56,18 @@ export interface UseWebSocketOptions {
      * window, so the fallback never fires.
      */
     sessionTimeoutMs?: number;
+    /**
+     * WebSocket constructor to use. Defaults to `globalThis.WebSocket`.
+     *
+     * There is an environment behind each reason to pass this. Node before 22
+     * ships no global WebSocket, so an SSR render or a script reaching the
+     * gateway has to supply `ws`. React Native's global is its own
+     * implementation. A test wanting a fake had, until this option existed,
+     * exactly one way in: assign `globalThis.WebSocket` and remember to put
+     * the real one back — which is what this hook's own suite does, and why
+     * two of its tests cannot run in parallel with anything else.
+     */
+    webSocketImpl?: WSCtor;
     onMessage?: (message: GatewayMessage) => void;
     onConnect?: () => void;
     onDisconnect?: () => void;
@@ -84,5 +96,7 @@ export interface UseWebSocketHookReturn extends UseWebSocketReturn {
      */
     publish: (channel: string, frame: Record<string, unknown>) => void;
 }
+type WSCtor = typeof WebSocket;
 export declare function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn;
+export {};
 //# sourceMappingURL=useWebSocket.d.ts.map

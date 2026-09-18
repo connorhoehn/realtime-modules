@@ -119,6 +119,18 @@ export interface UseWebSocketOptions {
    * window, so the fallback never fires.
    */
   sessionTimeoutMs?: number;
+  /**
+   * WebSocket constructor to use. Defaults to `globalThis.WebSocket`.
+   *
+   * There is an environment behind each reason to pass this. Node before 22
+   * ships no global WebSocket, so an SSR render or a script reaching the
+   * gateway has to supply `ws`. React Native's global is its own
+   * implementation. A test wanting a fake had, until this option existed,
+   * exactly one way in: assign `globalThis.WebSocket` and remember to put
+   * the real one back — which is what this hook's own suite does, and why
+   * two of its tests cannot run in parallel with anything else.
+   */
+  webSocketImpl?: WSCtor;
   onMessage?: (message: GatewayMessage) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -165,10 +177,13 @@ const MAX_PRE_SESSION_QUEUE = 100;
 type WSCtor = typeof WebSocket;
 
 /**
- * Resolve a WebSocket constructor. Falls back to `globalThis.WebSocket`
- * but allows tests to inject one via an attached property.
+ * Resolve a WebSocket constructor: the caller's if given, else the global.
+ * Null when neither exists, which the caller turns into a NO_WEBSOCKET error
+ * rather than a throw — an environment without WebSocket is a configuration
+ * to report, not a crash.
  */
-function getWebSocketCtor(): WSCtor | null {
+function getWebSocketCtor(injected?: WSCtor): WSCtor | null {
+  if (injected) return injected;
   const g = globalThis as unknown as { WebSocket?: WSCtor };
   return g.WebSocket ?? null;
 }
@@ -234,6 +249,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
     persist,
     autoResubscribe = false,
     sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS,
+    webSocketImpl,
     onMessage,
     onConnect,
     onDisconnect,
@@ -276,6 +292,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   const autoResubscribeRef = useRef(autoResubscribe);
   const maxRetriesRef = useRef(maxRetries);
   const sessionTimeoutMsRef = useRef(sessionTimeoutMs);
+  const webSocketImplRef = useRef(webSocketImpl);
 
   // --- Session gating (EKS finding #9) ----------------------------------
   // The gateway drops inbound frames received before its per-connection
@@ -319,6 +336,9 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   useEffect(() => {
     sessionTimeoutMsRef.current = sessionTimeoutMs;
   }, [sessionTimeoutMs]);
+  useEffect(() => {
+    webSocketImplRef.current = webSocketImpl;
+  }, [webSocketImpl]);
 
   // --- Send helpers (stable across renders) -----------------------------
   const send = useCallback((message: Record<string, unknown>) => {
@@ -408,7 +428,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   }, [sessionToken]);
 
   useEffect(() => {
-    const Ctor = getWebSocketCtor();
+    const Ctor = getWebSocketCtor(webSocketImplRef.current);
     if (!Ctor) {
       setLastError({
         code: 'NO_WEBSOCKET',

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.54.0 — 2026-09-18
+
+- **`webSocketImpl`** (`./client`) — `useWebSocket` and `GatewaySocketProvider`
+  accept the WebSocket constructor to use.
+
+  `getWebSocketCtor()` read `globalThis.WebSocket` and nothing else, while its
+  own docstring said it "allows tests to inject one via an attached property".
+  The only attached property available was the global itself, so every caller
+  needing a different implementation had the same single move: assign
+  `globalThis.WebSocket`, and remember to put the real one back. This hook's own
+  test suite does exactly that, in a beforeEach/afterEach pair, which is the
+  clearest evidence the seam was missing.
+
+  That closed the door on Node before 22 (no global WebSocket — so no SSR render
+  and no script reaching the gateway without patching a global), on React
+  Native's own implementation, and on any test wanting a fake scoped to itself
+  rather than to the process.
+
+  Defaults to `globalThis.WebSocket`, so nothing changes for a browser app. When
+  neither the option nor the global is present the hook still reports
+  `NO_WEBSOCKET` rather than throwing — an environment without WebSocket is a
+  configuration to report, not a crash.
+
+
 ## 0.53.0 — 2026-09-17
 
 - **`GatewayRest.getFeatureFlag`** (`./client`) — the seam `useFeatureFlag` was

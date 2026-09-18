@@ -51,6 +51,13 @@ export interface GatewaySocketProviderProps {
      * Feature hooks (useChat, usePresence) read this from the ws context.
      */
     channel?: string;
+    /**
+     * WebSocket constructor, forwarded to useWebSocket. Defaults to
+     * `globalThis.WebSocket`. Pass `ws` under Node, React Native's own
+     * implementation, or a fake in a test — the provider is otherwise the one
+     * piece of the tree that cannot be mounted without a browser global.
+     */
+    webSocketImpl?: typeof WebSocket;
 }
 /**
  * Extended WS context — `UseWebSocketHookReturn` plus a post-init message
@@ -181,7 +188,7 @@ export declare const GatewayContext: React.Context<GatewayContextValue | null>;
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-export declare function GatewaySocketProvider({ url, children, features, token, channel, rest, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
+export declare function GatewaySocketProvider({ url, children, features, token, channel, rest, webSocketImpl, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *

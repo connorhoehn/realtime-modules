@@ -20,9 +20,11 @@
 // delivery — tests simulate the real-latency race (EKS finding #9) by
 // delaying the `{ type: 'session' }` frame after open.
 
+import React from 'react';
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react';
 import { useWebSocket } from '../../src/client/useWebSocket';
+import { GatewaySocketProvider, useGateway } from '../../src/client/GatewaySocketProvider';
 
 // -----------------------------------------------------------------------
 // Manual WebSocket stub installed on globalThis
@@ -830,6 +832,81 @@ describe('useWebSocket', () => {
             // The stale pre-session frame must NOT replay on the new socket
             // — connected-gated effects re-issue their own subscribes.
             expect(sock2.sent).toHaveLength(0);
+        });
+    });
+
+    // Everything above installs FakeWebSocket on globalThis and puts the real
+    // one back afterwards, because until webSocketImpl existed that was the
+    // only way in. These run with NO global at all — which is Node before 22,
+    // and the reason a consumer could not reach the gateway from a script or
+    // an SSR render without patching a global themselves.
+    describe('webSocketImpl', () => {
+        const withoutGlobal = (body: () => void) => {
+            const saved = (globalThis as any).WebSocket;
+            delete (globalThis as any).WebSocket;
+            try {
+                body();
+            } finally {
+                if (saved) (globalThis as any).WebSocket = saved;
+            }
+        };
+
+        it('connects through the injected constructor when there is no global', () => {
+            withoutGlobal(() => {
+                class Injected extends FakeWebSocket {}
+                const { result } = renderHook(() =>
+                    useWebSocket({ url: 'ws://x/ws', webSocketImpl: Injected as any }),
+                );
+
+                const sock = FakeWebSocket.instances[0];
+                expect(sock).toBeInstanceOf(Injected);
+                expect(sock.url).toContain('ws://x/ws');
+
+                act(() => sock.openAndEstablish({ clientId: 'c-1' }));
+                expect(result.current.connectionState).toBe('connected');
+                expect(result.current.clientId).toBe('c-1');
+            });
+        });
+
+        it('still reports NO_WEBSOCKET when neither the option nor the global is there', () => {
+            withoutGlobal(() => {
+                const { result } = renderHook(() => useWebSocket({ url: 'ws://x/ws' }));
+                expect(result.current.lastError?.code).toBe('NO_WEBSOCKET');
+                expect(FakeWebSocket.instances).toHaveLength(0);
+            });
+        });
+
+        it('takes precedence over the global when both are present', () => {
+            class Injected extends FakeWebSocket {}
+            renderHook(() => useWebSocket({ url: 'ws://x/ws', webSocketImpl: Injected as any }));
+            expect(FakeWebSocket.instances[0]).toBeInstanceOf(Injected);
+        });
+
+        // The hook taking the option is only half of it — nearly every
+        // consumer mounts the provider, not the hook, so the provider is
+        // where the browser-global assumption actually bites.
+        it('reaches useWebSocket through GatewaySocketProvider', () => {
+            withoutGlobal(() => {
+                class Injected extends FakeWebSocket {}
+                const wrapper = ({ children }: { children: React.ReactNode }) => (
+                    <GatewaySocketProvider
+                        url="ws://x/ws"
+                        rest={null}
+                        webSocketImpl={Injected as any}
+                    >
+                        {children}
+                    </GatewaySocketProvider>
+                );
+
+                const { result } = renderHook(() => useGateway(), { wrapper });
+
+                const sock = FakeWebSocket.instances[0];
+                expect(sock).toBeInstanceOf(Injected);
+
+                act(() => sock.openAndEstablish({ clientId: 'c-provider' }));
+                expect(result.current.connectionState).toBe('connected');
+                expect(result.current.clientId).toBe('c-provider');
+            });
         });
     });
 });

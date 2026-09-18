@@ -62,10 +62,14 @@ const DEFAULT_SESSION_TIMEOUT_MS = 3000;
 /** Cap on frames queued between socket open and session establishment. */
 const MAX_PRE_SESSION_QUEUE = 100;
 /**
- * Resolve a WebSocket constructor. Falls back to `globalThis.WebSocket`
- * but allows tests to inject one via an attached property.
+ * Resolve a WebSocket constructor: the caller's if given, else the global.
+ * Null when neither exists, which the caller turns into a NO_WEBSOCKET error
+ * rather than a throw — an environment without WebSocket is a configuration
+ * to report, not a crash.
  */
-function getWebSocketCtor() {
+function getWebSocketCtor(injected) {
+    if (injected)
+        return injected;
     const g = globalThis;
     return g.WebSocket ?? null;
 }
@@ -109,7 +113,7 @@ function safeStorageRemove(cfg, key) {
     }
 }
 function useWebSocket(opts) {
-    const { url, authToken, reconnectMs = DEFAULT_RECONNECT_MS, maxReconnectMs = DEFAULT_MAX_RECONNECT_MS, maxRetries = Infinity, defaultChannel = '', persist, autoResubscribe = false, sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS, onMessage, onConnect, onDisconnect, } = opts;
+    const { url, authToken, reconnectMs = DEFAULT_RECONNECT_MS, maxReconnectMs = DEFAULT_MAX_RECONNECT_MS, maxRetries = Infinity, defaultChannel = '', persist, autoResubscribe = false, sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS, webSocketImpl, onMessage, onConnect, onDisconnect, } = opts;
     // Persisted session keys — recomputed if `persist` changes identity.
     const persistKeysRef = (0, react_1.useRef)(persist ? persistKeys(persist) : null);
     // Keep the persist config in a ref so callbacks (disconnect, message
@@ -143,6 +147,7 @@ function useWebSocket(opts) {
     const autoResubscribeRef = (0, react_1.useRef)(autoResubscribe);
     const maxRetriesRef = (0, react_1.useRef)(maxRetries);
     const sessionTimeoutMsRef = (0, react_1.useRef)(sessionTimeoutMs);
+    const webSocketImplRef = (0, react_1.useRef)(webSocketImpl);
     // --- Session gating (EKS finding #9) ----------------------------------
     // The gateway drops inbound frames received before its per-connection
     // session bootstrap completes (it signals readiness with the
@@ -184,6 +189,9 @@ function useWebSocket(opts) {
     (0, react_1.useEffect)(() => {
         sessionTimeoutMsRef.current = sessionTimeoutMs;
     }, [sessionTimeoutMs]);
+    (0, react_1.useEffect)(() => {
+        webSocketImplRef.current = webSocketImpl;
+    }, [webSocketImpl]);
     // --- Send helpers (stable across renders) -----------------------------
     const send = (0, react_1.useCallback)((message) => {
         const ws = wsRef.current;
@@ -252,7 +260,7 @@ function useWebSocket(opts) {
         sessionTokenRef.current = sessionToken;
     }, [sessionToken]);
     (0, react_1.useEffect)(() => {
-        const Ctor = getWebSocketCtor();
+        const Ctor = getWebSocketCtor(webSocketImplRef.current);
         if (!Ctor) {
             setLastError({
                 code: 'NO_WEBSOCKET',

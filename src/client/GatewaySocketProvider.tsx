@@ -104,6 +104,13 @@ export interface GatewaySocketProviderProps {
    * Feature hooks (useChat, usePresence) read this from the ws context.
    */
   channel?: string;
+  /**
+   * WebSocket constructor, forwarded to useWebSocket. Defaults to
+   * `globalThis.WebSocket`. Pass `ws` under Node, React Native's own
+   * implementation, or a fake in a test — the provider is otherwise the one
+   * piece of the tree that cannot be mounted without a browser global.
+   */
+  webSocketImpl?: typeof WebSocket;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +355,7 @@ export function GatewaySocketProvider({
   token,
   channel,
   rest,
+  webSocketImpl,
 }: GatewaySocketProviderProps) {
   // Message-bus: child hooks register handlers; GatewaySocketProvider fans
   // each inbound frame out to all registered handlers in registration order.
@@ -365,6 +373,7 @@ export function GatewaySocketProvider({
     authToken: token,
     defaultChannel: channel,
     autoResubscribe: false,
+    webSocketImpl,
     onMessage: (msg) => {
       for (const handler of handlersRef.current) {
         try {
