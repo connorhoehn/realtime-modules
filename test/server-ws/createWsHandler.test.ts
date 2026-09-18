@@ -211,6 +211,98 @@ function connectPath(p: string): QueuedClient {
 // matters because attachRealtime's whole pitch is attaching to an http.Server
 // you already have — one that may already carry a WebSocket endpoint of its
 // own. The recipes used to say `/realtime` was the default; it never was.
+// An EventEmitter never awaits a listener, so `ws.on('message', async …)`
+// started the next frame while the previous one sat in its first await. Two
+// frames sent back to back finished in whichever order their awaits resolved.
+//
+// Every reconnect makes a channel hook send `leave` then `join` back to back.
+// If the cheaper leave resolved last, the client ended up un-joined on a
+// socket reporting itself connected — the exact silence 0.65.0 was written to
+// remove.
+describe('createWsHandler — frame ordering', () => {
+    /** A service whose per-action delay is dictated by the frame itself. */
+    function slowService(log: string[]): WsService {
+        return {
+            async handleAction(_clientId: string, action: string, data: Record<string, unknown>) {
+                log.push(`start:${action}`);
+                await new Promise((r) => setTimeout(r, Number(data.ms) || 0));
+                log.push(`end:${action}`);
+            },
+        };
+    }
+
+    it('finishes a slow frame before starting the next one', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({
+            server: httpServer,
+            services: { probe: slowService(log) },
+            pingIntervalMs: 0,
+        });
+
+        const qc = connect();
+        await qc.open();
+        await qc.nextMessage(); // session
+
+        // Sent in this order; the first is far slower than the second.
+        qc.ws.send(JSON.stringify({ service: 'probe', action: 'leave', ms: 60 }));
+        qc.ws.send(JSON.stringify({ service: 'probe', action: 'join', ms: 0 }));
+
+        await new Promise((r) => setTimeout(r, 400));
+
+        expect(log).toEqual(['start:leave', 'end:leave', 'start:join', 'end:join']);
+    });
+
+    it('keeps a burst in order', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({
+            server: httpServer,
+            services: { probe: slowService(log) },
+            pingIntervalMs: 0,
+        });
+
+        const qc = connect();
+        await qc.open();
+        await qc.nextMessage();
+
+        // Descending delays: without serialisation these finish backwards.
+        for (const [action, ms] of [['a', 40], ['b', 25], ['c', 10], ['d', 0]] as const) {
+            qc.ws.send(JSON.stringify({ service: 'probe', action, ms }));
+        }
+
+        await new Promise((r) => setTimeout(r, 600));
+
+        expect(log.filter((l) => l.startsWith('end:'))).toEqual(['end:a', 'end:b', 'end:c', 'end:d']);
+    });
+
+    // The chain must survive a throwing handler, or one bad frame would stall
+    // the connection for good.
+    it('a frame that throws does not stall the ones behind it', async () => {
+        const log: string[] = [];
+        const service: WsService = {
+            async handleAction(_clientId: string, action: string) {
+                if (action === 'boom') throw new Error('nope');
+                log.push(action);
+            },
+        };
+        handle = createWsHandler({
+            server: httpServer,
+            services: { probe: service },
+            pingIntervalMs: 0,
+        });
+
+        const qc = connect();
+        await qc.open();
+        await qc.nextMessage();
+
+        qc.ws.send(JSON.stringify({ service: 'probe', action: 'boom' }));
+        qc.ws.send(JSON.stringify({ service: 'probe', action: 'after' }));
+
+        await new Promise((r) => setTimeout(r, 300));
+
+        expect(log).toEqual(['after']);
+    });
+});
+
 describe('createWsHandler — path filtering', () => {
     it('claims every upgrade when no path is given', async () => {
         handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0 });

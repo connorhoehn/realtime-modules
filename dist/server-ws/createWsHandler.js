@@ -130,7 +130,24 @@ function createWsHandler(opts) {
             const cleanupHeartbeat = (0, transport_1.attachWsHeartbeat)(ws, pingIntervalMs);
             cleanupFns.set(clientId, cleanupHeartbeat);
         }
-        ws.on('message', async (raw) => {
+        // Frames from ONE connection are handled in the order they arrived.
+        //
+        // `ws.on('message', async …)` does not do that: an EventEmitter never
+        // awaits a listener, so the next frame starts while the previous one
+        // is still inside its first await. Two frames sent back to back then
+        // finish in whichever order their awaits happen to resolve.
+        //
+        // That is not theoretical. Every reconnect makes a channel hook send
+        // `leave` then `join` back to back, and if the cheaper `leave`
+        // resolves last the client ends up un-joined — silently, on a socket
+        // that reports itself connected. Two sends in quick succession can be
+        // stored in the wrong order for the same reason.
+        //
+        // A per-connection promise chain is the narrowest fix: this client's
+        // frames serialise, other clients stay concurrent. The websocket
+        // delivered them in order; honouring that is the service's job.
+        let frameQueue = Promise.resolve();
+        const handleFrame = async (raw) => {
             const msg = safeParse(raw);
             if (!msg) {
                 (0, transport_1.wsSend)(ws, JSON.stringify({
@@ -172,6 +189,10 @@ function createWsHandler(opts) {
                     timestamp: new Date().toISOString(),
                 }));
             }
+        };
+        ws.on('message', (raw) => {
+            // A rejected frame must not poison the chain for the next one.
+            frameQueue = frameQueue.then(() => handleFrame(raw)).catch(() => undefined);
         });
         const handleClose = async () => {
             const id = wsToId.get(ws);

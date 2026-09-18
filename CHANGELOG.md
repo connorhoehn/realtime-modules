@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.68.0 — 2026-09-18
+
+- **Frames from one connection were handled concurrently, not in order.**
+
+  `ws.on('message', async …)` reads as sequential and is not: an EventEmitter
+  never awaits a listener, so the next frame began while the previous one sat
+  in its first await. Two frames sent back to back finished in whichever order
+  their awaits happened to resolve.
+
+  Measured on a real server with a service whose delay the frame dictates:
+  send `leave` (60 ms) then `join` (0 ms) and the handler log reads
+  `start:leave → start:join → end:join → end:leave`. The leave lands last, so
+  the client is joined and then immediately un-joined.
+
+  That is the reconnect path exactly. Every channel hook sends `leave` then
+  `join` on a new session, and whether the client ends up subscribed depended
+  on which handler's awaits resolved first — a coin flip that a slower store
+  (DynamoDB, Redis) biases the wrong way. It undercuts 0.65.0, which existed
+  to stop exactly this silence. Two `send` frames in quick succession could be
+  persisted out of order for the same reason.
+
+  Each connection now has a promise chain: its frames serialise, other
+  connections stay concurrent. That is the right granularity — the websocket
+  delivered these in order, and honouring that ordering is the server's job. A
+  frame that throws is caught so it cannot stall the ones behind it.
+
+
 ## 0.67.1 — 2026-09-18
 
 - **A reconnect emptied the activity feed and left it empty.** Same root as
