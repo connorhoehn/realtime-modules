@@ -23,7 +23,18 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// usePresence
+import { usePresence } from '@connorhoehn/realtime-modules/client';
+
+function Roster({ channel }: { channel: string }) {
+  const { roster, setStatus, updateMetadata } = usePresence(channel);
+
+  useEffect(() => {
+    updateMetadata({ displayName: me.name });
+    setStatus('online');
+  }, [setStatus, updateMetadata]);
+
+  return <ul>{roster.map((p) => <li key={p.clientId}>{p.status}</li>)}</ul>;
+}
 ```
 
 Point the client at the same origin (`/realtime` by default). All hooks share

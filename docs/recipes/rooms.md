@@ -23,8 +23,30 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useChannel + the room frames (`{service:"room", action:"join"|"leave", slug}`)
+import { useHangoutRooms } from '@connorhoehn/realtime-modules/client/hangout-rooms';
+
+function RoomList() {
+  const { rooms, isLoading, createRoom, joinRoom, archiveRoom } = useHangoutRooms();
+
+  if (isLoading) return <Spinner />;
+
+  return (
+    <ul>
+      {rooms.map((r) => (
+        <li key={r.slug}>
+          {r.name}
+          {/* Resolves to the SFU session details, ready for <Stage>. */}
+          <button onClick={() => void joinRoom(r.slug)}>join</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 ```
+
+`useRoomOccupancy` and `useRoomMembers` cover who is in a room right now. The
+REST functions behind these hooks are exported from the same subpath, so SSR
+and scripts can use one transport without pulling in React.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

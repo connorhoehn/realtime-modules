@@ -23,8 +23,34 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useAwarenessState (or the cursor frames directly)
+import { useCursor } from '@connorhoehn/realtime-modules/client';
+
+function CursorLayer({ channel, myClientId }: Props) {
+  // selfClientId keeps a stale cursor of your own out of the list.
+  const { cursors, move } = useCursor(channel, { selfClientId: myClientId });
+
+  return (
+    <div onPointerMove={(e) => move({ x: e.clientX, y: e.clientY })}>
+      {cursors.map((c) => (
+        <Pointer
+          key={c.clientId}
+          x={c.position.x as number}
+          y={c.position.y as number}
+          color={c.metadata.userColor}
+          initials={c.metadata.userInitials}
+        />
+      ))}
+    </div>
+  );
+}
 ```
+
+`move` is throttled to the interval the service enforces (250 ms) and holds the
+last suppressed position for the trailing edge, so wiring it straight to
+`onPointerMove` is the intended use — the resting position still lands.
+
+Modes other than `freeform` take different position fields: `{ row, col }` for
+`table`, `{ position }` for `text`. Pass `{ mode }` to pick one.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

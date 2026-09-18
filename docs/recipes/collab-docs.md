@@ -27,8 +27,30 @@ included) before detaching the WS listener.
 ## 2 — Client (React hook)
 
 ```tsx
-// useCRDT / useYjsDoc — or skip straight to the editor adapter below.
+import { useGateway, useCRDT } from '@connorhoehn/realtime-modules/client';
+
+function SharedNote({ channel }: { channel: string }) {
+  const gateway = useGateway();
+
+  // useCRDT takes an options object, NOT a channel string.
+  const { content, applyLocalEdit, hasConflict, dismissConflict } = useCRDT({
+    sendMessage: gateway.send,
+    onMessage: gateway.onMessage,
+    currentChannel: channel,
+    connectionState: gateway.connectionState,
+  });
+
+  return (
+    <>
+      {hasConflict && <button onClick={dismissConflict}>dismiss conflict</button>}
+      <textarea value={content} onChange={(e) => applyLocalEdit(e.target.value)} />
+    </>
+  );
+}
 ```
+
+That is the single-Y.Text surface. For a rich-text document use `useYjsDoc`
+plus the editor adapter below, which binds the Y.Doc directly.
 
 ## 3 — UI (ui-components)
 

@@ -81,7 +81,7 @@ function ChatRoom({ channel }: { channel: string }) {
     <>
       <header>{roster.length} online</header>
       <ul>{messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
-      <button onClick={() => sendMessage({ message: 'hi' })}>send</button>
+      <button onClick={() => sendMessage('hi')}>send</button>
     </>
   );
 }

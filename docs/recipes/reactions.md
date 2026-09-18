@@ -23,8 +23,25 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useReactions
+import { useReactions } from '@connorhoehn/realtime-modules/client';
+
+function MessageReactions({ channel, messageId, userId }: Props) {
+  // targetId scopes the list to one message; omit it for floating call reactions.
+  const { reactions, toggle } = useReactions(channel, { targetId: messageId });
+
+  return (
+    <>
+      {reactions.map((r) => <span key={r.id}>{r.emoji}</span>)}
+      {/* The chip is a toggle — `toggle` decides which way from the list it holds. */}
+      <button onClick={() => toggle('🔥', { userId })}>🔥</button>
+    </>
+  );
+}
 ```
+
+`react` / `unreact` are there when you want to force a direction. Only
+targeted reactions are removable — a floating one is an event that already
+happened.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

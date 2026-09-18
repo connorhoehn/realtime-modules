@@ -23,8 +23,28 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useVideoHangout family (client/video) for the media; call frames for invites
+import { useVideoHangout } from '@connorhoehn/realtime-modules/client';
+
+function CallControls({ channel }: { channel: string }) {
+  const { session, participants, joinToken, start, join, leave, toggleVideo } =
+    useVideoHangout(channel);
+
+  if (!session) return <button onClick={() => void start()}>start a call</button>;
+
+  return (
+    <>
+      <span>{participants.length} in the call</span>
+      <button onClick={() => void join(session.id)}>join</button>
+      <button onClick={() => void leave()}>leave</button>
+      <button onClick={() => toggleVideo()}>camera</button>
+    </>
+  );
+}
 ```
+
+This hook is the signalling half only — invites, roster, and the `joinToken`.
+The media itself is `./client/video` (`<Stage>` / `useLVSHangout`), which takes
+that token.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

@@ -23,8 +23,27 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useFileUpload
+import { useFileUpload, useAttachmentSrc } from '@connorhoehn/realtime-modules/client';
+
+function Dropzone({ channel }: { channel: string }) {
+  // `uploads` is yours; `transfers` is everyone’s, so a peer’s progress shows too.
+  const { uploads, transfers, upload, cancel } = useFileUpload(channel);
+
+  return (
+    <input
+      type="file"
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) void upload(file);
+      }}
+    />
+  );
+}
 ```
+
+Bytes ride a plain HTTP PUT to a presigned URL, not the socket. Rendering an
+attachment needs `useAttachmentSrc` — the download route wants a bearer header
+and an `<img>` cannot send one.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

@@ -23,8 +23,35 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useChat
+import { GatewaySocketProvider, useChat } from '@connorhoehn/realtime-modules/client';
+
+function ChatRoom({ channel }: { channel: string }) {
+  const { messages, sendMessage, typingUsers, setTyping, editMessage, deleteMessage } =
+    useChat(channel);
+
+  return (
+    <>
+      <ul>{messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
+      {typingUsers.length > 0 && <em>{typingUsers.length} typing…</em>}
+      <input
+        onFocus={() => setTyping(true)}
+        onBlur={() => setTyping(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') sendMessage(e.currentTarget.value);
+        }}
+      />
+    </>
+  );
+}
+
+// Wrap once, near the root — every hook shares this one socket.
+<GatewaySocketProvider url="ws://localhost:3000" token={token}>
+  <ChatRoom channel="room:general" />
+</GatewaySocketProvider>;
 ```
+
+`sendMessage(text, metadata?)` takes the text, not an object. `editMessage`
+and `deleteMessage` act on your own messages by id.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

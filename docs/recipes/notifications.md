@@ -23,8 +23,27 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useNotifications
+import { useNotifications } from '@connorhoehn/realtime-modules/client';
+
+function Inbox() {
+  // User-scoped, not channel-scoped — no channel argument.
+  const { notifications, unreadCount, markAsRead, markAllRead } = useNotifications();
+
+  return (
+    <>
+      <button onClick={markAllRead}>{unreadCount} unread</button>
+      <ul>
+        {notifications.map((n) => (
+          <li key={n.id} onClick={() => markAsRead(n.id)}>{n.title}</li>
+        ))}
+      </ul>
+    </>
+  );
+}
 ```
+
+Read marks persist to `localStorage` by default. Pass `{ storage }` for
+sessionStorage or a React Native shim, or `{ storage: null }` for memory only.
 
 Point the client at the same origin (`/realtime` by default). All hooks share
 one WebSocket via the provider from `@connorhoehn/realtime-modules/client`.

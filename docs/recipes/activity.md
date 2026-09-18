@@ -23,7 +23,18 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 ## 2 — Client (React hook)
 
 ```tsx
-// useActivity
+import { useActivity } from '@connorhoehn/realtime-modules/client';
+
+function ActivityFeed({ channel }: { channel: string }) {
+  const { events, loadHistory } = useActivity(channel);
+
+  return (
+    <>
+      <button onClick={() => loadHistory(100)}>load more</button>
+      <ul>{events.map((e, i) => <li key={i}>{e.eventType}</li>)}</ul>
+    </>
+  );
+}
 ```
 
 Point the client at the same origin (`/realtime` by default). All hooks share
