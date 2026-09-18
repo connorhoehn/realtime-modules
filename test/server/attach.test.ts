@@ -344,6 +344,57 @@ describe('attachRealtime — the subscribe service', () => {
     });
 });
 
+// A push feature has two halves and only one of them is a hook. useNotifications
+// receives; nothing in it ever sends. The other half is notifyUser, a method on
+// the service rather than a WS action — because your app decides when someone
+// gets notified, not the browser asking for it.
+//
+// That makes handle.services the documented seam, so this pins it: the shape
+// the recipe now tells people to reach for, and the frame it produces, which
+// is the one the hook parses.
+describe('attachRealtime — notifications are pushed through handle.services', () => {
+    it('notifyUser delivers notification:new to that user\'s live connection', async () => {
+        const { server, port, handle } = await boot([notifications()], {
+            auth: async () => ({ userId: 'u-eve', displayName: 'Eve' }),
+        });
+        const ws = await connect(port);
+
+        const svc = handle.services.notification as unknown as {
+            notifyUser(u: string, i: Record<string, unknown>): Promise<{ delivered: number }>;
+        };
+        expect(typeof svc.notifyUser).toBe('function');
+
+        const incoming = nextFrame(ws, (f) => f.type === 'notification:new');
+        const res = await svc.notifyUser('u-eve', { type: 'mention', title: 'Carol mentioned you' });
+        expect(res.delivered).toBe(1);
+
+        // Exactly what useNotifications parses: payload-nested, not flat.
+        const frame = await incoming;
+        expect(frame.service).toBe('notification');
+        expect(frame.payload).toMatchObject({ type: 'mention', title: 'Carol mentioned you' });
+        expect(typeof frame.payload.id).toBe('string');
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
+    it('does not deliver to a different user', async () => {
+        const { server, port, handle } = await boot([notifications()], {
+            auth: async () => ({ userId: 'u-eve', displayName: 'Eve' }),
+        });
+        const ws = await connect(port);
+
+        const svc = handle.services.notification as unknown as {
+            notifyUser(u: string, i: Record<string, unknown>): Promise<{ delivered: number }>;
+        };
+        const res = await svc.notifyUser('u-someone-else', { type: 'mention', title: 'not for Eve' });
+        expect(res.delivered).toBe(0);
+
+        ws.close();
+        await teardown(server, handle);
+    });
+});
+
 describe('attachRealtime — presets forward their service config', () => {
     it('cursor() passes throttle, TTL, sweep and custom modes through', async () => {
         const modes = {

@@ -21,6 +21,30 @@ httpServer.listen(3000);
 
 Add more capabilities by adding entries to `features` — nothing else changes.
 
+### Sending one
+
+Attaching the feature gives you the delivery half. Nothing arrives until your
+app pushes something, and it pushes by calling the service — not by a frame
+from the browser, because who gets notified is your decision, not the
+client's. `attachRealtime` hands the services back on the handle:
+
+```ts
+const notifier = realtime.services.notification;
+
+// Wherever the thing worth telling someone about happens.
+await notifier.notifyUser('u-carol', {
+  type: 'mention',
+  title: 'Eve mentioned you in #design',
+  body: '…the pay figures are in the deck',
+  channel: 'room:design',
+});
+// → { record, delivered }   `delivered` counts that user's live connections.
+```
+
+`delivered: 0` is not an error — it means that user has no tab open. Wire a
+store (below) and they get it on reconnect; without one, the notification is
+gone.
+
 ## 2 — Client (React hook)
 
 ```tsx
@@ -45,6 +69,12 @@ function Inbox() {
 
 Read marks persist to `localStorage` by default. Pass `{ storage }` for
 sessionStorage or a React Native shim, or `{ storage: null }` for memory only.
+
+**Read state is local to the device.** The hook sends nothing — it is a
+receiver, and `markAsRead` moves a mark in local storage only. The service
+does have `markRead` / `markAllRead` actions, but no hook calls them, so a
+notification read on a laptop still shows unread on a phone. If you need read
+state to follow the user, send those frames yourself via `useGateway()`.
 
 Point the client at the same origin and the `path` set above —
 `ws://localhost:3000/realtime`. There is no default path: leave `path` off and

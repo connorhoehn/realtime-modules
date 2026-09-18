@@ -21,8 +21,15 @@
 //     service: 'notification',
 //     payload: { notifications: Notification[] } }
 //
-// Gateway won't emit these until M3+. The hook is the consumer surface; the
-// server-side wiring is deferred.
+// The sending half is NOT a frame from here. `NotificationService.notifyUser`
+// (./notification) is what produces these, called from your own server code —
+// `attachRealtime` exposes it as `handle.services.notification`. See
+// docs/recipes/notifications.md.
+//
+// This hook is receive-only on purpose: it never sends. `markAsRead` moves a
+// mark in local storage, so read state does not follow the user to another
+// device. The service has markRead / markAllRead actions for that; nothing
+// here calls them.
 //
 // ──────────────────────────────────────────────────────────────────────────────
 // Design notes:

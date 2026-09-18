@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.68.3 — 2026-09-18
+
+- **The notifications recipe documented the receiving half and not the
+  sending half.** Documentation and tests.
+
+  Attach `notifications()`, mount `useNotifications()`, and nothing ever
+  arrives — because a notification is created by your own server code calling
+  `notifyUser`, and the recipe never mentioned it. It is a method on the
+  service rather than a WS action, which is right: who gets notified is the
+  app's decision, not a frame the browser sends. `attachRealtime` exposes it
+  as `handle.services.notification`.
+
+  Verified live before writing it down: `notifyUser` delivers
+  `notification:new` in exactly the payload-nested shape `useNotifications`
+  parses, and two tests pin that — including that a different user gets
+  `delivered: 0`.
+
+  The recipe now covers it, and says what `delivered: 0` means: not an error,
+  just nobody with a tab open.
+
+- **Read state never leaves the device, and nothing said so.**
+
+  `useNotifications` sends nothing at all — `markAsRead` moves a mark in local
+  storage. The service has `markRead` / `markAllRead` actions and no hook
+  calls them, so a notification read on a laptop still shows unread on a
+  phone. Documented in both the recipe and the hook, rather than changed:
+  making the hook send would be a behaviour and product decision, not a fix.
+
+  The hook's header also still claimed "the gateway won't emit these until
+  M3+; the server-side wiring is deferred". `NotificationService` ships in
+  this package and emits them today.
+
+
 ## 0.68.2 — 2026-09-18
 
 - **Eight hooks behind the media subpaths were documented nowhere.**
