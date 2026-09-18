@@ -51,7 +51,7 @@ const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
 const DEFAULT_HISTORY_LIMIT = 50;
 function useActivity(channel) {
-    const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const { send, onMessage, sessionEpoch } = (0, GatewaySocketProvider_1.useGateway)();
     const [events, setEvents] = (0, react_1.useState)([]);
     const channelRef = (0, react_1.useRef)(channel);
     (0, react_1.useEffect)(() => {
@@ -119,7 +119,11 @@ function useActivity(channel) {
                 channelId: channel,
             });
         };
-    }, [channel, send]);
+        // sessionEpoch: a reconnect is a NEW server-side connection that has
+        // joined nothing. Keyed only on `send` — a stable callback — this effect
+        // would never fire again, and the hook would sit silently unsubscribed
+        // while connectionState reads 'connected'.
+    }, [channel, send, sessionEpoch]);
     const loadHistory = (0, react_1.useCallback)((limit = DEFAULT_HISTORY_LIMIT) => {
         // Gateway verb is 'getHistory' with `channelId` — the gateway rejects
         // action 'history' with "Unknown activity action". EC v0.3.56 now

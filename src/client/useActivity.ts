@@ -60,7 +60,7 @@ export interface UseActivityReturn {
 }
 
 export function useActivity(channel: string): UseActivityReturn {
-  const { send, onMessage } = useGateway();
+  const { send, onMessage, sessionEpoch } = useGateway();
   const [events, setEvents] = useState<ActivityEvent[]>([]);
 
   const channelRef = useRef(channel);
@@ -136,7 +136,11 @@ export function useActivity(channel: string): UseActivityReturn {
         channelId: channel,
       } satisfies ClientFramePayload<'client.activity.unsubscribe'>);
     };
-  }, [channel, send]);
+      // sessionEpoch: a reconnect is a NEW server-side connection that has
+    // joined nothing. Keyed only on `send` — a stable callback — this effect
+    // would never fire again, and the hook would sit silently unsubscribed
+    // while connectionState reads 'connected'.
+  }, [channel, send, sessionEpoch]);
 
   const loadHistory = useCallback(
     (limit: number = DEFAULT_HISTORY_LIMIT) => {

@@ -43,7 +43,7 @@ const TYPING_TTL_MS = 4_000;
 /** How often a composing client re-announces itself. Under the TTL, so a steady typist never lapses. */
 const TYPING_RESEND_MS = 2_500;
 function useChat(channel) {
-    const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const { send, onMessage, sessionEpoch } = (0, GatewaySocketProvider_1.useGateway)();
     const [messages, setMessages] = (0, react_1.useState)([]);
     // Peers composing: connection id → { name, expiresAt }. Keyed by the
     // CONNECTION, so two tabs of one person count once each and each lapses
@@ -166,7 +166,11 @@ function useChat(channel) {
                 channel,
             });
         };
-    }, [channel, send]);
+        // sessionEpoch: a reconnect is a NEW server-side connection that has
+        // joined nothing. Keyed only on `send` — a stable callback — this effect
+        // would never fire again, and the hook would sit silently unsubscribed
+        // while connectionState reads 'connected'.
+    }, [channel, send, sessionEpoch]);
     // What this connection last told the channel about its own composing.
     const typingSentRef = (0, react_1.useRef)({ typing: false, at: 0 });
     const setTyping = (0, react_1.useCallback)((typing) => {

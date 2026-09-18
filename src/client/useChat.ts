@@ -78,7 +78,7 @@ const TYPING_TTL_MS = 4_000;
 const TYPING_RESEND_MS = 2_500;
 
 export function useChat(channel: string): UseChatReturn {
-  const { send, onMessage } = useGateway();
+  const { send, onMessage, sessionEpoch } = useGateway();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Peers composing: connection id → { name, expiresAt }. Keyed by the
   // CONNECTION, so two tabs of one person count once each and each lapses
@@ -196,7 +196,11 @@ export function useChat(channel: string): UseChatReturn {
         channel,
       } satisfies ClientFramePayload<'client.chat.leave'>);
     };
-  }, [channel, send]);
+      // sessionEpoch: a reconnect is a NEW server-side connection that has
+    // joined nothing. Keyed only on `send` — a stable callback — this effect
+    // would never fire again, and the hook would sit silently unsubscribed
+    // while connectionState reads 'connected'.
+  }, [channel, send, sessionEpoch]);
 
   // What this connection last told the channel about its own composing.
   const typingSentRef = useRef<{ typing: boolean; at: number }>({ typing: false, at: 0 });

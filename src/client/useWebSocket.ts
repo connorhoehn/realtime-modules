@@ -278,6 +278,10 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
     return keys ? safeStorageGet(persist, keys.clientIdKey) : null;
   });
   const [currentChannel, setCurrentChannel] = useState<string>(defaultChannel);
+  // Bumped every time a gateway session is established — first connect and
+  // every reconnect after. See UseWebSocketReturn.sessionEpoch for why the
+  // feature hooks need it.
+  const [sessionEpoch, setSessionEpoch] = useState(0);
 
   // Stable refs for handlers + retry state — keeps the connect()
   // closure from going stale across reconnects.
@@ -464,6 +468,10 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
       reconnectAttemptRef.current = 0;
       setConnectionState('connected');
       setLastError(null);
+      // A NEW session: whatever this client had joined or subscribed to on the
+      // old socket is gone server-side. Feature hooks key their subscribe
+      // effects on this so they re-establish.
+      setSessionEpoch((n) => n + 1);
 
       // G5: only auto-resubscribe when caller opts in. Gateway's pull
       // model leaves subscribe lifecycle to feature hooks. Runs here (not
@@ -771,5 +779,6 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
     subscribe,
     unsubscribe,
     publish,
+    sessionEpoch,
   };
 }

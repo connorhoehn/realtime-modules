@@ -48,7 +48,7 @@ export interface UsePresenceReturn {
 }
 
 export function usePresence(channel: string): UsePresenceReturn {
-  const { send, onMessage } = useGateway();
+  const { send, onMessage, sessionEpoch } = useGateway();
 
   // Internal roster kept in a Map for O(1) updates; exposed as sorted array.
   const rosterMapRef = useRef<Map<string, PresenceEntry>>(new Map());
@@ -169,7 +169,11 @@ export function usePresence(channel: string): UsePresenceReturn {
         channel,
       } satisfies ClientFramePayload<'client.presence.unsubscribe'>);
     };
-  }, [channel, send]);
+      // sessionEpoch: a reconnect is a NEW server-side connection that has
+    // joined nothing. Keyed only on `send` — a stable callback — this effect
+    // would never fire again, and the hook would sit silently unsubscribed
+    // while connectionState reads 'connected'.
+  }, [channel, send, sessionEpoch]);
 
   // The gateway REPLACES the whole presence entry on every set, so carry
   // the last-known status + metadata across setStatus / updateMetadata

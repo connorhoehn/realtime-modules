@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.65.0 — 2026-09-18
+
+- **Channel hooks never re-subscribed after a reconnect.** `useChat`,
+  `usePresence`, `useActivity`, `useReactions` and `useCursor` went silently
+  dead after any network blip.
+
+  A reconnect is a new server-side connection that has joined nothing. Each
+  hook opened its subscription from an effect keyed on `[channel, send]`, and
+  `send` is `useCallback(…, [])` — stable for the hook's whole life. So the
+  effect ran once, on mount, and never again. The socket came back,
+  `connectionState` read `'connected'`, the UI looked healthy, and the channel
+  delivered nothing for the rest of the session. No throw, no log, no error
+  frame.
+
+  `useWebSocket` had already assigned the responsibility, in a comment next to
+  its auto-resubscribe: "the gateway's pull model leaves subscribe lifecycle to
+  feature hooks". No hook had a signal to act on.
+
+  `UseWebSocketReturn.sessionEpoch` is that signal — it increments on the first
+  connect and on every reconnect. The five hooks include it in their subscribe
+  deps.
+
+  It is OPTIONAL on the type on purpose. An app may bridge its own socket onto
+  `GatewayContext` instead of mounting the provider, which `./client`
+  documents, and those context objects are built by hand; requiring the field
+  would break every one of them at compile time to add something they cannot
+  meaningfully supply. Undefined means "no session signal", and a hook then
+  behaves exactly as before — which is correct, because that caller owns the
+  socket's lifecycle.
+
+  Eight tests drive the real socket path rather than a fake send/onMessage
+  pair, since the bug lived in the seam between them: each hook re-subscribing
+  on a fresh socket, three reconnects in a row, re-joining the channel the hook
+  is on NOW rather than the one it mounted with, and no churn for a
+  socket-explicit caller.
+
+
 ## 0.64.0 — 2026-09-18
 
 - **Every chat, cursor, reaction and CRDT refusal read as "UNKNOWN / Gateway

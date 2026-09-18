@@ -39,7 +39,7 @@ exports.usePresence = usePresence;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
 function usePresence(channel) {
-    const { send, onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const { send, onMessage, sessionEpoch } = (0, GatewaySocketProvider_1.useGateway)();
     // Internal roster kept in a Map for O(1) updates; exposed as sorted array.
     const rosterMapRef = (0, react_1.useRef)(new Map());
     const [roster, setRoster] = (0, react_1.useState)([]);
@@ -148,7 +148,11 @@ function usePresence(channel) {
                 channel,
             });
         };
-    }, [channel, send]);
+        // sessionEpoch: a reconnect is a NEW server-side connection that has
+        // joined nothing. Keyed only on `send` — a stable callback — this effect
+        // would never fire again, and the hook would sit silently unsubscribed
+        // while connectionState reads 'connected'.
+    }, [channel, send, sessionEpoch]);
     // The gateway REPLACES the whole presence entry on every set, so carry
     // the last-known status + metadata across setStatus / updateMetadata
     // calls (status defaults to 'online' until the first setStatus).

@@ -116,6 +116,9 @@ export function useCursor(channel: string, opts?: UseCursorOpts): UseCursorRetur
   // Unconditional, non-throwing context read — rules of hooks apply even
   // when opts.socket is given and the context value goes unused.
   const gatewayCtx = useGatewayOptional();
+  // undefined when the caller supplied opts.socket — they own that socket's
+  // lifecycle, so there is no epoch to follow.
+  const sessionEpoch = gatewayCtx?.sessionEpoch;
   const send = opts?.socket?.send ?? gatewayCtx?.send ?? noopSend;
   const onMessage = opts?.socket?.onMessage ?? gatewayCtx?.onMessage ?? inertOnMessage;
 
@@ -180,7 +183,11 @@ export function useCursor(channel: string, opts?: UseCursorOpts): UseCursorRetur
     return () => {
       send({ service: 'cursor', action: 'unsubscribe', channel });
     };
-  }, [channel, send]);
+      // sessionEpoch: a reconnect is a NEW server-side connection that has
+    // joined nothing. Keyed only on `send` — a stable callback — this effect
+    // would never fire again, and the hook would sit silently unsubscribed
+    // while connectionState reads 'connected'.
+  }, [channel, send, sessionEpoch]);
 
   // --- throttle state -------------------------------------------------
   // lastSentAt: when the last frame actually went out.

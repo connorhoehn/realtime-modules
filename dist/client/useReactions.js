@@ -77,6 +77,9 @@ function useReactions(channel, opts) {
     // Unconditional, non-throwing context read — required by rules of hooks
     // even when opts.socket is given and the context value ends up unused.
     const gatewayCtx = (0, GatewaySocketProvider_1.useGatewayOptional)();
+    // undefined when the caller supplied opts.socket — they own that socket's
+    // lifecycle, so there is no epoch to follow.
+    const sessionEpoch = gatewayCtx?.sessionEpoch;
     // Explicit socket wins over context. Neither present → inert (no-op send,
     // onMessage that never fires) instead of throwing, so a chat panel with no
     // gateway in its tree renders without reactions rather than crashing.
@@ -181,7 +184,11 @@ function useReactions(channel, opts) {
                 channel,
             });
         };
-    }, [channel, send]);
+        // sessionEpoch: a reconnect is a NEW server-side connection that has
+        // joined nothing. Keyed only on `send` — a stable callback — this effect
+        // would never fire again, and the hook would sit silently unsubscribed
+        // while connectionState reads 'connected'.
+    }, [channel, send, sessionEpoch]);
     const react = (0, react_1.useCallback)((emoji, reactOpts) => {
         const resolvedTargetId = reactOpts?.targetId ?? targetIdRef.current;
         const frame = {

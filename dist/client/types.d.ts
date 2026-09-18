@@ -27,6 +27,28 @@ export interface GatewayMessage {
  */
 export interface UseWebSocketReturn {
     connectionState: ConnectionState;
+    /**
+     * Increments each time a gateway session is established — once on the first
+     * connect, and again on every reconnect.
+     *
+     * Channel membership does not survive a reconnect: the server has a new
+     * connection and knows nothing of what the old one had joined. useWebSocket
+     * says as much where it auto-resubscribes — "the gateway's pull model leaves
+     * subscribe lifecycle to feature hooks" — but `send` is a stable callback,
+     * so an effect keyed on `[channel, send]` never fires again and the hook
+     * stays silently unsubscribed while `connectionState` reads 'connected'.
+     *
+     * Feature hooks include this in those deps. A consumer wiring frames by hand
+     * should do the same for anything that must be re-sent on a new session.
+     *
+     * Optional because an app may bridge its OWN socket onto GatewayContext
+     * rather than mount the provider — a case ./client documents — and those
+     * contexts are built by hand. Requiring this would break every one of them
+     * at compile time to add a field they cannot meaningfully supply. Undefined
+     * simply means "no session signal here", and the hooks then behave as they
+     * did: subscribe once, and leave the socket's lifecycle to whoever owns it.
+     */
+    sessionEpoch?: number;
     lastError: GatewayError | null;
     sessionToken: string | null;
     clientId: string | null;
