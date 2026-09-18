@@ -215,6 +215,7 @@ are channel-scoped: they subscribe/unsubscribe automatically when the
 | `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
 | `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor }` | Yes |
 | `useActivity(channel)` | `{ events, loadHistory }` | Yes |
+| `useCursor(channel, opts?)` | `{ cursors, move, refresh }` — live cursors, client-throttled | Yes |
 | `useFileUpload(channel)` | `{ uploads, upload, cancel, removeCompleted }` | Yes |
 | `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }` | Yes |
 | `useNotifications()` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }` | No (user-scoped) |
@@ -314,6 +315,7 @@ Set `VITE_GATEWAY_URL=ws://localhost:4000` (and optionally
 | `useChat` | Message list, compose form, load-history |
 | `usePresence` | Roster, status dropdown, metadata editor |
 | `useReactions` | Emoji palette with aggregated counts, live stream |
+| `useCursor` | Live cursor overlay — position, initials and colour per peer |
 | `useActivity` | Typed event feed, load-history |
 | `useFileUpload` | Drag-and-drop, XHR progress bars, AV scan states |
 | `useVideoHangout` | Start/join/leave, participant list, video/audio toggle, join-token display |
@@ -376,7 +378,7 @@ HTTP (using `./proxy-client`).
 | `import { ReactionService } from '@connorhoehn/realtime-modules/reactions'` | `useReactions(channel)` over WS |
 | `import { ActivityService } from '@connorhoehn/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
 | `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
-| `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | gateway-internal; consume cursor updates through `useAwarenessState` |
+| `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
 | `import { ... } from '@connorhoehn/realtime-modules/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library entry point |
 
 ---

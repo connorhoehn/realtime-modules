@@ -91,4 +91,24 @@ export interface ActivityEvent {
     userId: string | null;
     displayName: string;
 }
+/**
+ * One live cursor — post-parse mirror of cursor/types.ts CursorData, which is
+ * what CursorService stores and broadcasts. `position` is mode-dependent:
+ * `{x,y}` for freeform/canvas, `{row,col}` for table, `{position}` for text.
+ * The service stamps `mode`, `userInitials` and `userColor` into metadata on
+ * every update, so an overlay can render a labelled cursor with no extra
+ * lookup.
+ */
+export interface CursorEntry {
+    clientId: string;
+    channel: string;
+    position: Record<string, unknown>;
+    metadata: Record<string, unknown> & {
+        mode: string;
+        userInitials: string;
+        userColor: string;
+    };
+    /** ISO-8601 — when the sender generated this position. */
+    timestamp: string;
+}
 //# sourceMappingURL=types.d.ts.map

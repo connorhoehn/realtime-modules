@@ -227,3 +227,14 @@ export type {
   UseDictationOptions,
   UseDictationResult,
 } from './useDictation';
+
+// useCursor — the client half of the cursor triple. CursorService and its
+// manifest have shipped since the Wave 2 lift with no hook to match, so the
+// docs pointed consumers at useAwarenessState, which only works if a Yjs
+// document is already mounted. This hook speaks the gateway's cursor frames
+// directly: subscribe + snapshot, per-client update/remove, and a local
+// throttle matching the service's own (it silently drops anything faster),
+// with a trailing send so the resting position is not lost.
+export { useCursor } from './useCursor';
+export type { UseCursorOpts, UseCursorReturn } from './useCursor';
+export type { CursorEntry } from './types';

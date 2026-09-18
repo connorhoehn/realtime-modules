@@ -54,4 +54,7 @@ export { useCanvasDocument, canvasToDocModel, canvasToMarkdown, CANVAS_BODY_KEY,
 export type { CanvasDocument, UseCanvasDocumentOptions, MaterializeResult, PmSchemaLike, } from './useCanvasDocument';
 export { useDictation } from './useDictation';
 export type { DictationState, MicPermission, UseDictationOptions, UseDictationResult, } from './useDictation';
+export { useCursor } from './useCursor';
+export type { UseCursorOpts, UseCursorReturn } from './useCursor';
+export type { CursorEntry } from './types';
 //# sourceMappingURL=index.d.ts.map

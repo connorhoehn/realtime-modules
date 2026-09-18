@@ -6,7 +6,7 @@
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.useCursor = exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -137,4 +137,13 @@ Object.defineProperty(exports, "CANVAS_BODY_KEY", { enumerable: true, get: funct
 // reuses client/voice's PcmRecorder + contextFrame ladder unchanged.
 var useDictation_1 = require("./useDictation");
 Object.defineProperty(exports, "useDictation", { enumerable: true, get: function () { return useDictation_1.useDictation; } });
+// useCursor — the client half of the cursor triple. CursorService and its
+// manifest have shipped since the Wave 2 lift with no hook to match, so the
+// docs pointed consumers at useAwarenessState, which only works if a Yjs
+// document is already mounted. This hook speaks the gateway's cursor frames
+// directly: subscribe + snapshot, per-client update/remove, and a local
+// throttle matching the service's own (it silently drops anything faster),
+// with a trailing send so the resting position is not lost.
+var useCursor_1 = require("./useCursor");
+Object.defineProperty(exports, "useCursor", { enumerable: true, get: function () { return useCursor_1.useCursor; } });
 //# sourceMappingURL=index.js.map

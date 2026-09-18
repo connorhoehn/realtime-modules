@@ -108,7 +108,7 @@ subpaths need:
 
 | Subpath | Provides | Use when |
 | --- | --- | --- |
-| `./client` | `GatewaySocketProvider`, all hooks (`useGateway`, `useWebSocket`, `useChat`, `usePresence`, `useReactions`, `useActivity`, `useFileUpload`, `useVideoHangout`, `useNotifications`, `useCRDT`, `useYjsDoc`, `useAwarenessState`, `useIdleDetector`, `useAgentStream`, `SharedTextEditor`, `GatewayProvider`) | Browser apps with full feature set |
+| `./client` | `GatewaySocketProvider`, all hooks (`useGateway`, `useWebSocket`, `useChat`, `usePresence`, `useReactions`, `useActivity`, `useCursor`, `useFileUpload`, `useVideoHangout`, `useNotifications`, `useCRDT`, `useYjsDoc`, `useAwarenessState`, `useIdleDetector`, `useAgentStream`, `SharedTextEditor`, `GatewayProvider`) | Browser apps with full feature set |
 | `./client/ws` | `useWebSocket` only — no Yjs in bundle | Browser apps that don't use CRDT |
 | `./server-ws` | `createWsHandler` — thin `ws.Server` factory | Tests, fixtures, standalone WS servers |
 | `./agent-streaming` | AG-UI v0.1.x SSE emitter: `createAgentStream`, `agentStreamMiddleware`, full AG-UI event type tree | Express / Lambda backends streaming AI responses |
@@ -485,7 +485,7 @@ either via WS (client hooks) or HTTP (`./proxy-client`).
 | `import { ReactionService } from '…/reactions'` | `useReactions(channel)` over WS |
 | `import { ActivityService } from '…/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
 | `import { CRDTService } from '…/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
-| `import { CursorService } from '…/cursor'` | gateway-internal; consume cursor updates via `useAwarenessState` |
+| `import { CursorService } from '…/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
 | `import { … } from '…/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library replacement |
 
 There is no separately-published "server-side toolkit" replacement. If

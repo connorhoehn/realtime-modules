@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.52.0 — 2026-09-17
+
+- **`useCursor`** (`./client`) — the client half of the cursor triple.
+
+  `CursorService` and its manifest have shipped since the Wave 2 lift with no
+  hook to match, and both the README and the adoption guide answered the gap by
+  pointing at `useAwarenessState`. That answer only holds if a Yjs document is
+  already mounted, because awareness rides the CRDT provider. A channel that
+  wants Figma-style cursors over the gateway and nothing else had to hand-roll
+  the frames — which is exactly the work this package exists to absorb.
+
+  `useCursor(channel, opts?)` returns `{ cursors, move, refresh }` and speaks
+  the service's own verbs: subscribe on mount with the snapshot that comes back,
+  per-client `update` replacing in place, `remove` on disconnect or TTL sweep.
+
+  `move()` throttles locally at the interval the service enforces (250 ms), and
+  holds the suppressed position for the trailing edge. That second half is the
+  point: the service drops anything faster *silently*, so a component wired to
+  `onMouseMove` has ~95% of its frames discarded after crossing the wire, and
+  the cursor other people see freezes at the last accepted position rather than
+  where the pointer came to rest.
+
+  Socket-explicit and provider-optional like `useReactions` — pass
+  `opts.socket` and no `GatewaySocketProvider` is needed; pass neither and the
+  hook is inert rather than throwing. `opts.selfClientId` keeps a stale cursor
+  of your own out of the snapshot.
+
+
 ## 0.51.0 — 2026-09-16
 
 - **`usePins`** (`./client`) — `pin()` takes an optional `sentAt`, the time the
