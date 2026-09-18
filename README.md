@@ -184,15 +184,52 @@ require.
 
 ## Subpaths
 
+Every subpath in `package.json` `exports` appears here — `verify-exports`
+fails the build if one does not, because a published surface nobody can find
+is the same as an unpublished one.
+
+**Browser**
+
 | Subpath | Purpose | Use when |
 |---|---|---|
+| `.` | Root re-export of `./client` + `./agent-streaming` + `./server-ws` | Single-import ergonomics over tree-shaking |
 | `./client` | React hooks + `GatewaySocketProvider` | Browser apps with full feature set |
 | `./client/ws` | Yjs-free `useWebSocket`-only surface | Browser apps without CRDT |
-| `./server-ws` | Generic WS handler factory (`createWsHandler`) | Service-side WS routing / test fixtures |
-| `./adapters/tiptap` | `TiptapEditor` + `EditorToolbar` bound to Yjs | Collaborative rich-text editors |
-| `./proxy-client` | `GatewayProxyClient` — typed REST shim with optional HMAC signing | Server-to-server / Lambda |
-| `./agent-streaming` | AG-UI v0.1.x SSE emitter (`agentStreamMiddleware`) | Backends streaming AI responses |
+| `./client/video` | Camera/mic capture + publishing primitives | Surfaces that publish video |
+| `./client/media-effects` | Blur, virtual backgrounds, face sprites — lazy MediaPipe engine | Camera surfaces wanting effects |
+| `./client/voice` | Ambient push-to-talk capture + `ContextFrame` (where an utterance attaches) | Dictation / spoken remarks outside a call |
+| `./client/hangout-rooms` | Hangout room hooks + the REST functions behind them | Multi-room video apps |
+| `./client/pipelines` | `usePipelineRunStatus` — live run status merged from `pipeline:event` frames and a REST snapshot; pure helpers for SSR/scripts | Rendering a pipeline-run card |
 | `./agent-streaming/client` | `useAgentStream` React hook — no Yjs dependency | Browser apps consuming agent streams |
+| `./adapters/tiptap` | `TiptapEditor` + `EditorToolbar` bound to Yjs | Collaborative rich-text editors |
+| `./adapters/excalidraw` | Excalidraw ⇄ Yjs binding, typed structurally (no Excalidraw dependency) | Collaborative diagramming |
+
+**Server**
+
+| Subpath | Purpose | Use when |
+|---|---|---|
+| `./server-ws` | Generic WS handler factory (`createWsHandler`) | Service-side WS routing / test fixtures |
+| `./server` | CRDT/document stack — `CRDTService`, snapshots, awareness, `attachRealtime` | Hosting collaborative documents |
+| `./agent-streaming` | AG-UI v0.1.x SSE emitter (`agentStreamMiddleware`) | Backends streaming AI responses |
+| `./proxy-client` | `GatewayProxyClient` — typed REST shim with optional HMAC signing | Server-to-server / Lambda |
+
+**Feature services** — each pairs with the hook named in [Hook reference](#hook-reference); wire them into `createWsHandler`'s `services` map.
+
+| Subpath | Purpose | Client half |
+|---|---|---|
+| `./chat` | `ChatService` — history, membership, read receipts, pins | `useChat` |
+| `./presence` | `PresenceService` — roster + status | `usePresence` |
+| `./reactions` | `ReactionService` — ephemeral and durable reactions | `useReactions` |
+| `./activity` | `ActivityService` — channel event log | `useActivity` |
+| `./cursor` | `CursorService` — in-memory cursor fan-out with a TTL sweep | `useCursor` |
+| `./notification` | `NotificationService` — user-scoped inbox, optional Redis store | `useNotifications` |
+| `./fileupload` | `FileUploadService` + `FileBlobStore` (local-fs default) | `useFileUpload` |
+| `./call` | `CallService` — invites, call state stores, lobby channel | `useVideoHangout` |
+| `./room` | `RoomService` — room lifecycle + state store | `./client/hangout-rooms` |
+| `./pipeline` | `PipelineWsRouter` — pipeline subscription fan-out + frame projection | `./client/pipelines` |
+| `./social` | `SocialService` — social-event fan-out | none yet — frames via `useGateway()` |
+| `./ingest` | `IngestService` — ingest subscription fan-out | none yet — frames via `useGateway()` |
+| `./typed-documents` | `DocumentEventsService` — comments / reviews / items / workflows | none yet — frames via `useGateway()` |
 
 The root entry (`@connorhoehn/realtime-modules`) re-exports `./client`,
 `./agent-streaming`, and `./server-ws` for ergonomic single-import
@@ -379,7 +416,9 @@ HTTP (using `./proxy-client`).
 | `import { ActivityService } from '@connorhoehn/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
 | `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
 | `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
-| `import { ... } from '@connorhoehn/realtime-modules/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library entry point |
+| `import { CallService } from '@connorhoehn/realtime-modules/call'` | `useVideoHangout(channel)` over WS |
+| `import { PipelineWsRouter } from '@connorhoehn/realtime-modules/pipeline'` | `usePipelineRunStatus()` from `./client/pipelines` |
+| `import { ... } from '@connorhoehn/realtime-modules/{ingest,social,typed-documents}'` | no hook yet; read the frames via `useGateway()` |
 
 ---
 
