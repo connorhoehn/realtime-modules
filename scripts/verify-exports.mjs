@@ -66,9 +66,33 @@ if (!subpathsSection) {
     }
 }
 
+// 4. Hook coverage. Same lesson one level down: `./client` is documented as a
+// subpath, but the hooks inside it are the actual API, and eleven of
+// twenty-five had no row in the Hook reference — usePins, useChatMembers and
+// useChatReadReceipts among them, all shipped within the fortnight before
+// this check existed.
+//
+// Presence only. That a row EXISTS is checkable here; that it describes the
+// right return shape is not, and the table was wrong about useCRDT
+// (`{ doc, awareness }` for a hook that returns `{ content, applyLocalEdit,
+// … }`) for long enough to prove a name check is not a correctness check.
+const hookTable = readme.split('\n## Hook reference\n')[1]?.split('\n## ')[0] ?? '';
+if (!hookTable) {
+    errors.push('README has no `## Hook reference` section to check hooks against');
+} else {
+    const documentedHooks = new Set([...hookTable.matchAll(/^\|\s*`(use[A-Za-z]+)/gm)].map((m) => m[1]));
+    const clientDts = await readFile(new URL('../dist/client/index.d.ts', import.meta.url), 'utf8');
+    const exportedHooks = new Set([...clientDts.matchAll(/\b(use[A-Z][A-Za-z]+)\b/g)].map((m) => m[1]));
+    for (const hook of [...exportedHooks].sort()) {
+        if (!documentedHooks.has(hook)) {
+            errors.push(`${hook} is exported from ./client but has no row in README's Hook reference`);
+        }
+    }
+}
+
 if (errors.length) {
     console.error('verify-exports FAILED:');
     for (const e of errors) console.error('  - ' + e);
     process.exit(1);
 }
-console.log(`verify-exports passed: ${Object.keys(pkg.exports).length - 1} subpaths backed + documented, no orphaned dist dirs.`);
+console.log(`verify-exports passed: ${Object.keys(pkg.exports).length - 1} subpaths backed + documented, every ./client hook has a row, no orphaned dist dirs.`);

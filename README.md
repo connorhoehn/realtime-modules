@@ -239,27 +239,62 @@ access. Prefer explicit subpath imports for tree-shaking.
 
 ## Hook reference
 
-All hooks except `useGateway`, `useWebSocket`, and `useNotifications`
-are channel-scoped: they subscribe/unsubscribe automatically when the
-`channel` argument changes.
+Every hook exported from `./client` has a row here — `verify-exports` fails
+the build if one does not. Channel-scoped hooks subscribe and unsubscribe
+automatically when the `channel` argument changes.
+
+**Connection**
 
 | Hook | Returns | Channel-scoped? |
 |---|---|---|
 | `useGateway()` | `{ send, onMessage, onConnect, onDisconnect, state, … }` | No (provider context) |
-| `useWebSocket(opts)` | Low-level WS state — `connectionState`, `clientId`, `sendMessage`, … | No |
-| `useChannel(channel, opts?)` | `{ chat, presence, reactions, activity, channel }` — composite (v0.7.8) | Yes |
-| `useChat(channel)` | `{ messages, sendMessage, loadHistory }` | Yes |
+| `useGatewayOptional()` | The same context value, or `null` outside a provider — the non-throwing read a provider-optional hook needs | No (provider context) |
+| `useFeatures()` | `FeatureName[]` declared by the nearest provider; `[]` outside one | No (provider context) |
+| `useWebSocket(opts)` | `{ send, subscribe, unsubscribe, publish }` plus the state of `UseWebSocketReturn` — `connectionState`, `clientId`, `sessionToken`, `switchChannel`, … | No |
+
+**Channel features**
+
+| Hook | Returns | Channel-scoped? |
+|---|---|---|
+| `useChannel(channel, opts?)` | `{ channel, chat, presence, reactions, activity }` — composite (v0.7.8) | Yes |
+| `useChat(channel, opts?)` | `{ messages, sendMessage, loadHistory, typingUsers, setTyping, editMessage, deleteMessage }` | Yes |
+| `useChatMembers(channel, opts?)` | `{ members, open, loading, addMembers, removeMember, refresh, isMember, removed }` | Yes |
+| `useChatReadReceipts(channel, opts?)` | `{ receipts, enabled, reason, limit, loading, markRead, readersOf, readCountOf, refresh }` | Yes |
+| `usePins(channel, opts?)` | `{ pins, pinnedIds, pin, unpin, refresh, isLoading, error }` | Yes |
 | `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
-| `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor }` | Yes |
+| `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor, unreact, toggle }` | Yes |
 | `useActivity(channel)` | `{ events, loadHistory }` | Yes |
 | `useCursor(channel, opts?)` | `{ cursors, move, refresh }` — live cursors, client-throttled | Yes |
-| `useFileUpload(channel)` | `{ uploads, upload, cancel, removeCompleted }` | Yes |
+| `useFileUpload(channel)` | `{ uploads, transfers, upload, cancel, cancelTransfer, removeCompleted }` | Yes |
+| `useAttachmentSrc(opts?)` | `{ srcFor }` — bearer-authenticated download URL to a renderable object URL | No (per-attachment) |
 | `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }` | Yes |
+
+**Documents (CRDT)**
+
+| Hook | Returns | Channel-scoped? |
+|---|---|---|
+| `useCRDT(opts)` | `{ content, applyLocalEdit, hasConflict, dismissConflict }` — single Y.Text. Takes `{ sendMessage, onMessage, currentChannel, connectionState }`, **not** a channel string | Via `opts.currentChannel` |
+| `useYjsDoc(opts)` | `{ ydoc, provider, synced, docVersion }` — the Y.Doc + provider bootstrap | Via `opts` |
+| `useAwarenessState(provider, opts?)` | `{ updateSection, updateMode, updateIdle, updateCursorInfo }` | No (provider-scoped) |
+| `useCanvasDocument(opts)` | `{ isCanvas, schemaVersion, body, exportMarkdown, materialize, importMarkdown }` | No (doc-scoped) |
+
+**Cross-channel / app-level**
+
+| Hook | Returns | Channel-scoped? |
+|---|---|---|
 | `useNotifications()` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }` | No (user-scoped) |
 | `useCapability(name, channel?)` | `{ capability, enabled, isLoading, error }` | No (CRD-scoped) |
+| `useCapabilities(names, channel?)` | `{ capabilities, enabled, isLoading, error }` — the set form; React forbids the singular hook in a loop | No (CRD-scoped) |
 | `useFeatureFlag(name, defaultValue?)` | `{ enabled, isLoading, variant?, metadata? }` | No (flag-scoped) |
-| `useCRDT(channel)` | `{ doc, awareness }` | Yes |
-| `useAgentStream(opts)` | `{ messages, streamingText, activeToolCalls, isStreaming, sendMessage, … }` | Per-stream |
+| `useAgentStream(opts)` | `{ messages, streamingText, activeToolCalls, sessionId, isStreaming, error, steps, reasoning, sendMessage, reset, loadHistory }` | Per-stream |
+
+**Media / local device**
+
+| Hook | Returns | Channel-scoped? |
+|---|---|---|
+| `useDictation(opts?)` | `{ supported, state, micActive, permission, pendingContext, lastTranscript, error, start, stop, cancel }` | No (local) |
+| `useCanvasCapture(opts?)` | `{ track, stream, capturing, error }` — a canvas the page owns as a `MediaStreamTrack` | No (local) |
+| `useIdleDetector(opts?)` | `{ isIdle }` | No (local) |
 
 ---
 
@@ -414,7 +449,7 @@ HTTP (using `./proxy-client`).
 | `import { PresenceService } from '@connorhoehn/realtime-modules/presence'` | `usePresence(channel)` over WS, or `proxy.getPresence()` over HTTP |
 | `import { ReactionService } from '@connorhoehn/realtime-modules/reactions'` | `useReactions(channel)` over WS |
 | `import { ActivityService } from '@connorhoehn/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
-| `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
+| `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(opts)` / `useYjsDoc(opts)` over WS |
 | `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
 | `import { CallService } from '@connorhoehn/realtime-modules/call'` | `useVideoHangout(channel)` over WS |
 | `import { PipelineWsRouter } from '@connorhoehn/realtime-modules/pipeline'` | `usePipelineRunStatus()` from `./client/pipelines` |

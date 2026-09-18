@@ -484,7 +484,7 @@ either via WS (client hooks) or HTTP (`./proxy-client`).
 | `import { PresenceService } from '…/presence'` | `usePresence(channel)` over WS, or `proxy.getPresence()` over HTTP |
 | `import { ReactionService } from '…/reactions'` | `useReactions(channel)` over WS |
 | `import { ActivityService } from '…/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
-| `import { CRDTService } from '…/server'` | `useCRDT(channel)` / `useYjsDoc()` over WS |
+| `import { CRDTService } from '…/server'` | `useCRDT(opts)` / `useYjsDoc(opts)` over WS |
 | `import { CursorService } from '…/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
 | `import { … } from '…/{ingest,pipeline,social,call,typed-documents}'` | gateway-internal; no library replacement |
 
