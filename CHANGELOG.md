@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.68.1 — 2026-09-18
+
+- **Disconnect cleanup ran before a client's in-flight frames finished**,
+  leaving a permanent phantom in the presence roster.
+
+  A close is another event on the same connection, and it arrived after those
+  frames. Running cleanup first lets a frame complete for a client every
+  service has already forgotten — and re-register it.
+
+  Presence is where it shows: `onClientDisconnect` marks the entry offline and
+  schedules eviction, then the queued `presence/set` lands and marks it ONLINE
+  again. No further close will ever fire for that connection, so it sits in
+  every subscriber's roster forever. The offline filter added in 0.66.0 cannot
+  catch it, because the status is online.
+
+  Measured against a real server: a client subscribes, sends a slow frame and
+  a presence update, then hard-drops. Three seconds later the roster still
+  read `online`. With the fix it reads `offline` — the ordinary tombstone the
+  eviction path and the 0.66.0 filter already handle.
+
+  A closing connection now waits for its own queue before tearing down,
+  bounded at five seconds so a handler that never settles cannot hold cleanup
+  open with it. An idle queue closes immediately, which the third test pins.
+
+
 ## 0.68.0 — 2026-09-18
 
 - **Frames from one connection were handled concurrently, not in order.**

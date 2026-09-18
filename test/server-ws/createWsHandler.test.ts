@@ -303,6 +303,95 @@ describe('createWsHandler — frame ordering', () => {
     });
 });
 
+// A close is another event on the same connection, and it arrived after the
+// frames still in flight. Running cleanup first lets a frame complete for a
+// client every service has already forgotten — and re-register it.
+//
+// Presence is where that bites: onClientDisconnect marks the entry offline,
+// then the queued presence/set lands and marks it ONLINE again. No further
+// close will ever fire for that connection, so it stays in every subscriber's
+// roster permanently, and the offline filter cannot catch it because the
+// status is online.
+describe('createWsHandler — cleanup waits for in-flight frames', () => {
+    it('finishes a pending frame before onClientDisconnect', async () => {
+        const log: string[] = [];
+        const service: WsService = {
+            async handleAction(_clientId: string, action: string) {
+                log.push(`start:${action}`);
+                await new Promise((r) => setTimeout(r, 120));
+                log.push(`end:${action}`);
+            },
+            onClientDisconnect() {
+                log.push('cleanup');
+            },
+        };
+        handle = createWsHandler({
+            server: httpServer,
+            services: { probe: service },
+            pingIntervalMs: 0,
+        });
+
+        const qc = connect();
+        await qc.open();
+        await qc.nextMessage();
+
+        qc.ws.send(JSON.stringify({ service: 'probe', action: 'last-message' }));
+        setTimeout(() => qc.ws.terminate(), 20); // drop mid-frame
+
+        await new Promise((r) => setTimeout(r, 600));
+
+        expect(log).toEqual(['start:last-message', 'end:last-message', 'cleanup']);
+    });
+
+    it('still cleans up when the pending frame throws', async () => {
+        const log: string[] = [];
+        const service: WsService = {
+            async handleAction() {
+                await new Promise((r) => setTimeout(r, 60));
+                throw new Error('nope');
+            },
+            onClientDisconnect() {
+                log.push('cleanup');
+            },
+        };
+        handle = createWsHandler({
+            server: httpServer,
+            services: { probe: service },
+            pingIntervalMs: 0,
+        });
+
+        const qc = connect();
+        await qc.open();
+        await qc.nextMessage();
+
+        qc.ws.send(JSON.stringify({ service: 'probe', action: 'boom' }));
+        setTimeout(() => qc.ws.terminate(), 10);
+
+        await new Promise((r) => setTimeout(r, 500));
+
+        expect(log).toEqual(['cleanup']);
+    });
+
+    it('cleans up promptly when nothing is in flight', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({
+            server: httpServer,
+            services: { probe: { handleAction: () => undefined, onClientDisconnect: () => { log.push('cleanup'); } } },
+            pingIntervalMs: 0,
+        });
+
+        const qc = connect();
+        await qc.open();
+        await qc.nextMessage();
+        qc.ws.terminate();
+
+        // Well under FRAME_DRAIN_TIMEOUT_MS — an idle queue must not make a
+        // closing connection wait out the bound.
+        await new Promise((r) => setTimeout(r, 250));
+        expect(log).toEqual(['cleanup']);
+    });
+});
+
 describe('createWsHandler — path filtering', () => {
     it('claims every upgrade when no path is given', async () => {
         handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0 });

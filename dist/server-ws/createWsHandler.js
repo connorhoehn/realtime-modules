@@ -44,6 +44,12 @@ function safeParse(raw) {
         return null;
     }
 }
+/**
+ * How long a closing connection waits for its own in-flight frames before
+ * cleanup runs regardless. Generous: any sane handler settles far inside it,
+ * and the only thing it guards against is one that never does.
+ */
+const FRAME_DRAIN_TIMEOUT_MS = 5_000;
 function createWsHandler(opts) {
     // Lazy-require ws so consumers without server-side code never load it.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -199,6 +205,29 @@ function createWsHandler(opts) {
             if (!id)
                 return;
             wsToId.delete(ws);
+            // Let this client's in-flight frames finish before tearing it
+            // down. A close is just another event, and it arrived after those
+            // frames — running cleanup first means a frame completes for a
+            // client every service has already forgotten, and re-registers it.
+            //
+            // Presence shows the cost plainly: onClientDisconnect marks the
+            // entry offline and schedules eviction, then the queued
+            // presence/set lands and re-registers the client as ONLINE. No
+            // further close will ever fire for that connection, so it sits in
+            // every subscriber's roster forever — and the offline filter
+            // added in 0.66.0 cannot help, because the status is online.
+            //
+            // Bounded, because a handler that never settles must not hold a
+            // connection's cleanup open with it. Past the bound we tear down
+            // anyway and accept the interleaving.
+            await Promise.race([
+                frameQueue.catch(() => undefined),
+                new Promise((resolve) => {
+                    const t = setTimeout(resolve, FRAME_DRAIN_TIMEOUT_MS);
+                    if (typeof t === 'object' && typeof t.unref === 'function')
+                        t.unref();
+                }),
+            ]);
             clients.delete(id);
             const cleanup = cleanupFns.get(id);
             if (cleanup) {
