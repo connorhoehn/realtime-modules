@@ -38,16 +38,29 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 import { useActivity } from '@connorhoehn/realtime-modules/client';
 
 function ActivityFeed({ channel }: { channel: string }) {
-  const { events, loadHistory } = useActivity(channel);
+  const { events, loadHistory, publish } = useActivity(channel);
 
   return (
     <>
       <button onClick={() => loadHistory(100)}>load more</button>
-      <ul>{events.map((e, i) => <li key={i}>{e.eventType}</li>)}</ul>
+      <button onClick={() => publish('doc.created', { docId: 'd-1' })}>
+        record one
+      </button>
+      <ul>
+        {events.map((e, i) => (
+          <li key={i}>{e.displayName} — {e.eventType}</li>
+        ))}
+      </ul>
     </>
   );
 }
 ```
+
+`publish(eventType, detail?)` is the write half. You supply the type and the
+detail; the server stamps `timestamp`, `userId` and `displayName` from the
+connection's own auth context, so a client cannot publish as someone else. The
+event arrives back through the normal broadcast, so the list fills from the
+server's copy rather than an optimistic one.
 
 Point the client at the same origin and the `path` set above —
 `ws://localhost:3000/realtime`. There is no default path: leave `path` off and

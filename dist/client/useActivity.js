@@ -155,6 +155,25 @@ function useActivity(channel) {
         // would never fire again, and the hook would sit silently unsubscribed
         // while connectionState reads 'connected'.
     }, [channel, send, sessionEpoch]);
+    // ActivityService accepts `publish`, and until now the hook did not expose
+    // it — so recording an event meant hand-rolling the frame through
+    // useGateway(), duplicating the envelope this file already owns.
+    //
+    // No `satisfies` annotation: event-catalog declares the activity service's
+    // subscribe / unsubscribe / getHistory but not publish. The verb is real on
+    // both servers — EC declares the INBOUND `ws.activity.published` as
+    // "confirmation sent back to the client that published an activity event" —
+    // so the omission is a gap in the catalog's outbound set rather than a
+    // missing capability. Same footing as the cursor verbs.
+    const publish = (0, react_1.useCallback)((eventType, detail) => {
+        if (!eventType)
+            return; // the server refuses it anyway; no point in the round trip
+        send({
+            service: 'activity',
+            action: 'publish',
+            event: { eventType, detail: detail ?? {} },
+        });
+    }, [send]);
     const loadHistory = (0, react_1.useCallback)((limit = DEFAULT_HISTORY_LIMIT) => {
         // Gateway verb is 'getHistory' with `channelId` — the gateway rejects
         // action 'history' with "Unknown activity action". EC v0.3.56 now
@@ -171,7 +190,7 @@ function useActivity(channel) {
             limit,
         });
     }, [send]);
-    return { events, loadHistory };
+    return { events, loadHistory, publish };
 }
 // ---------------------------------------------------------------------------
 // Helpers

@@ -267,7 +267,7 @@ knowing about, and its row says so.
 | `usePins(channel, opts?)` | `{ pins, pinnedIds, pin, unpin, refresh, isLoading, error }` | Yes |
 | `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
 | `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor, unreact, toggle }` | Yes |
-| `useActivity(channel)` | `{ events, loadHistory }`. **Live events are global, not per-channel** — the server broadcasts every one to a single `activity:broadcast` channel every client is auto-subscribed to, and no frame carries a channel to filter on. `channel` scopes `loadHistory` only | History only |
+| `useActivity(channel)` | `{ events, loadHistory, publish }` — `publish(eventType, detail?)` records one; the server stamps identity. **Live events are global, not per-channel** — the server broadcasts every one to a single `activity:broadcast` channel every client is auto-subscribed to, and no frame carries a channel to filter on. `channel` scopes `loadHistory` only | History only |
 | `useCursor(channel, opts?)` | `{ cursors, move, refresh }` — live cursors, client-throttled | Yes |
 | `useFileUpload(channel)` | `{ uploads, transfers, upload, cancel, cancelTransfer, removeCompleted }` | Yes |
 | `useAttachmentSrc(opts?)` | `{ srcFor }` — bearer-authenticated download URL to a renderable object URL | No (per-attachment) |

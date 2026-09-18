@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.69.0 — 2026-09-18
+
+- **`useActivity` gains `publish`** — the write half of a feed that could only
+  be read.
+
+  `ActivityService` has always accepted `{ service: 'activity', action:
+  'publish', event: { eventType, detail? } }`. The hook exposed `events` and
+  `loadHistory` and nothing else, so recording an event meant dropping to
+  `useGateway().send()` and hand-rolling an envelope this hook already owns.
+
+  `publish(eventType, detail?)` takes the type and the detail. It cannot take
+  more: the server stamps `timestamp`, `userId` and `displayName` from the
+  connection's own auth context, so a client cannot publish as somebody else.
+  The event returns through the normal broadcast — the publisher is not
+  excluded from it — so `events` fills from the server's enriched copy rather
+  than an optimistic local one, and shows what every other subscriber sees.
+
+  No `satisfies` annotation on the send-site: event-catalog declares this
+  service's subscribe, unsubscribe and getHistory but not publish. The verb is
+  real on both servers — EC declares the inbound `ws.activity.published` as
+  "confirmation sent back to the client that published an activity event" —
+  so the omission is a gap in the catalog's outbound set, not a missing
+  capability. The cursor verbs sit on the same footing.
+
+  Checked against a running server: the frame the hook sends comes back as a
+  broadcast carrying `userId: 'u-ada'` plus the `activity/published` ack.
+
+
 ## 0.68.4 — 2026-09-18
 
 - **`useActivity` was documented as channel-scoped and is not.**

@@ -390,4 +390,70 @@ describe('useActivity — outbound frames', () => {
     expect(sent[1]).toMatchObject({ action: 'unsubscribe', channelId: 'ch-1' });
     expect(sent[2]).toMatchObject({ action: 'subscribe', channelId: 'ch-2' });
   });
+
+  // ActivityService has always accepted `publish`; the hook did not expose it,
+  // so recording an event meant hand-rolling the frame through useGateway().
+  describe('publish', () => {
+    it('sends the event under the envelope the service expects', () => {
+      const { ctx, sent } = makeGatewayContext();
+      const { result } = renderHook(() => useActivity('ch-1'), { wrapper: makeWrapper(ctx) });
+
+      act(() => result.current.publish('doc.created', { docId: 'd-1' }));
+
+      const frame = sent.find((f) => f.action === 'publish');
+      expect(frame).toEqual({
+        service: 'activity',
+        action: 'publish',
+        event: { eventType: 'doc.created', detail: { docId: 'd-1' } },
+      });
+    });
+
+    it('defaults detail to an empty object rather than omitting it', () => {
+      const { ctx, sent } = makeGatewayContext();
+      const { result } = renderHook(() => useActivity('ch-1'), { wrapper: makeWrapper(ctx) });
+
+      act(() => result.current.publish('user.joined'));
+
+      const frame = sent.find((f) => f.action === 'publish');
+      expect((frame as Record<string, any>).event).toEqual({ eventType: 'user.joined', detail: {} });
+    });
+
+    // The server refuses an empty eventType; there is no reason to spend a
+    // round trip discovering that.
+    it('sends nothing when eventType is empty', () => {
+      const { ctx, sent } = makeGatewayContext();
+      const { result } = renderHook(() => useActivity('ch-1'), { wrapper: makeWrapper(ctx) });
+
+      act(() => result.current.publish(''));
+
+      expect(sent.filter((f) => f.action === 'publish')).toHaveLength(0);
+    });
+
+    // The publisher is not excluded from the broadcast, so `events` fills from
+    // the server's enriched copy — carrying the userId it stamped — rather
+    // than from an optimistic local one.
+    it('shows the published event from the server broadcast, not optimistically', () => {
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useActivity('ch-1'), { wrapper: makeWrapper(ctx) });
+
+      act(() => result.current.publish('doc.created'));
+      expect(result.current.events).toHaveLength(0);
+
+      act(() => {
+        emit({
+          type: 'activity:event',
+          payload: {
+            eventType: 'doc.created',
+            detail: {},
+            timestamp: '2026-09-18T10:00:00.000Z',
+            userId: 'u-1',
+            displayName: 'Ada',
+          },
+        } as unknown as GatewayMessage);
+      });
+
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]!.userId).toBe('u-1');
+    });
+  });
 });

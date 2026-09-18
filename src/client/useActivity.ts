@@ -57,6 +57,21 @@ const DEFAULT_HISTORY_LIMIT = 50;
 export interface UseActivityReturn {
   events: ActivityEvent[];
   loadHistory: (limit?: number) => void;
+  /**
+   * Record an activity event.
+   *
+   * The server stamps `timestamp`, `userId` and `displayName` from the
+   * connection's own auth context, so a client cannot publish as somebody
+   * else — you supply the type and the detail, and nothing more.
+   *
+   * The event comes back through the normal broadcast (the publisher is not
+   * excluded from it), so `events` updates from the server's copy rather than
+   * an optimistic one, and what you see is what everyone else sees.
+   *
+   * Remember this feed is global: what you publish here reaches every
+   * subscriber on every channel, not just this hook's.
+   */
+  publish: (eventType: string, detail?: Record<string, unknown>) => void;
 }
 
 export function useActivity(channel: string): UseActivityReturn {
@@ -177,6 +192,28 @@ export function useActivity(channel: string): UseActivityReturn {
     // while connectionState reads 'connected'.
   }, [channel, send, sessionEpoch]);
 
+  // ActivityService accepts `publish`, and until now the hook did not expose
+  // it — so recording an event meant hand-rolling the frame through
+  // useGateway(), duplicating the envelope this file already owns.
+  //
+  // No `satisfies` annotation: event-catalog declares the activity service's
+  // subscribe / unsubscribe / getHistory but not publish. The verb is real on
+  // both servers — EC declares the INBOUND `ws.activity.published` as
+  // "confirmation sent back to the client that published an activity event" —
+  // so the omission is a gap in the catalog's outbound set rather than a
+  // missing capability. Same footing as the cursor verbs.
+  const publish = useCallback(
+    (eventType: string, detail?: Record<string, unknown>) => {
+      if (!eventType) return; // the server refuses it anyway; no point in the round trip
+      send({
+        service: 'activity',
+        action: 'publish',
+        event: { eventType, detail: detail ?? {} },
+      });
+    },
+    [send],
+  );
+
   const loadHistory = useCallback(
     (limit: number = DEFAULT_HISTORY_LIMIT) => {
       // Gateway verb is 'getHistory' with `channelId` — the gateway rejects
@@ -197,7 +234,7 @@ export function useActivity(channel: string): UseActivityReturn {
     [send],
   );
 
-  return { events, loadHistory };
+  return { events, loadHistory, publish };
 }
 
 // ---------------------------------------------------------------------------
