@@ -139,6 +139,36 @@ describe('ChatService membership', () => {
         expect(await svc.getChannelHistoryFor('u-bob', 'room:design', 50)).toEqual([]);
     });
 
+    // The same-millisecond case, pinned rather than left to the clock. This
+    // test used to exist only by accident: the suite below re-added a member
+    // with mode 'none' and asserted the old message was hidden, which held
+    // whenever a millisecond happened to tick between the send and the add and
+    // failed when it did not. Freezing the clock makes the collision certain.
+    it('mode none hides a message stamped the very millisecond of the add', async () => {
+        const frozen = Date.parse('2026-09-18T12:00:00.000Z');
+        const spy = jest.spyOn(Date, 'now').mockReturnValue(frozen);
+        try {
+            const { router } = makeRouter();
+            const { svc, store } = makeService(router);
+            await svc.handleAction('eve', 'join', { channel: 'room:frozen' });
+            await svc.handleAction('eve', 'send', { channel: 'room:frozen', message: 'before' });
+            await svc.handleAction('eve', 'addMembers', {
+                channel: 'room:frozen',
+                userIds: ['u-carol'],
+                history: { mode: 'none' },
+            });
+
+            // Floor and message share an instant exactly.
+            const row = (await store.getMember('room:frozen', 'u-carol'))!;
+            expect(row.historyFrom).toBe('2026-09-18T12:00:00.000Z');
+
+            const seen = (await svc.getChannelHistoryFor('u-carol', 'room:frozen', 50)).map((m) => m.message);
+            expect(seen).not.toContain('before');
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     it('all-history keeps no floor; a removed member is out until re-added with a new floor', async () => {
         const { router, sentToClient, sendToChannelCalls } = makeRouter();
         const { svc, store } = makeService(router);

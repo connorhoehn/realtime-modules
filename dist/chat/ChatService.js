@@ -943,9 +943,17 @@ class ChatService {
         const floor = Date.parse(row.historyFrom);
         if (!Number.isFinite(floor))
             return history;
+        // Strictly after the floor, not at it. `mode: 'none'` sets the floor to
+        // the instant of the add, so a message stamped that same millisecond
+        // already existed when they were added — which is the one thing that
+        // mode is for hiding. An inclusive compare handed it to them whenever
+        // the channel was busy enough for the two to land in the same
+        // millisecond, and the cost of the other edge is symmetrical and
+        // smaller: a message sent in that same millisecond is not shown, where
+        // showing history nobody granted is a permission leak.
         return history.filter((m) => {
             const t = Date.parse(m.timestamp);
-            return Number.isFinite(t) && t >= floor;
+            return Number.isFinite(t) && t > floor;
         });
     }
     /** `{action:'members', channel}` → who is in it, to the sender. */
