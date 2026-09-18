@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.57.0 — 2026-09-18
+
+- **`cursor()`, `social()`, `ingest()`, `pipeline()`, `typedDocuments()`**
+  (`./server`) — the five `attachRealtime` presets that took no arguments now
+  forward their service's config.
+
+  Each wraps a service with a real options bag, and each threw it away.
+  `presence()` carries a note about `authorizeChannel` having "used to be
+  unreachable through attachRealtime entirely"; these five were the same bug,
+  unfixed, and `attachRealtime` is the path the README and every recipe point
+  at.
+
+  Cursor was the worst case, because neither route worked. `CursorManifest`
+  advertises `CURSOR_THROTTLE_INTERVAL_MS`, `CURSOR_TTL_MS` and
+  `CURSOR_CLEANUP_INTERVAL_MS` with defaults and descriptions, and nothing in
+  `src/cursor` reads `process.env` — the service takes those three from
+  `CursorConfig` or from hard-coded constants. With the preset taking no
+  options either, all three were settable by neither environment nor code, and
+  so were `supportedModes` and the service-level `authorizeChannel`.
+
+  Note the env-var declarations are still inert for chat, cursor, reactions and
+  activity — `presence` and `fileupload` read theirs. That is a separate
+  inconsistency and is left alone here; after this change every one of those
+  values is at least reachable in code.
+
+
 ## 0.56.0 — 2026-09-18
 
 - **`httpBase`** (`./client`) — `GatewaySocketProvider` and `createGatewayRest`

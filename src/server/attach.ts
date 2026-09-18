@@ -138,12 +138,14 @@ export function presence(
     });
 }
 
-export function cursor(): RealtimeFeature {
+export function cursor(
+    opts: import('../cursor/types').CursorConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../cursor/manifest').CursorManifest,
         create: ({ router, logger }) => {
             const { CursorService } = require('../cursor/CursorService') as typeof import('../cursor/CursorService');
-            return new CursorService({ messageRouter: router as any, logger: logger as any });
+            return new CursorService({ messageRouter: router as any, logger: logger as any, config: opts });
         },
     });
 }
@@ -186,12 +188,14 @@ export function activity(opts: {
     });
 }
 
-export function social(): RealtimeFeature {
+export function social(
+    opts: import('../social/types').SocialConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../social/manifest').SocialManifest,
         create: ({ router, logger }) => {
             const { SocialService } = require('../social/SocialService') as typeof import('../social/SocialService');
-            return new SocialService({ messageRouter: router as any, logger: logger as any });
+            return new SocialService({ messageRouter: router as any, logger: logger as any, config: opts });
         },
     });
 }
@@ -214,32 +218,38 @@ export function calls(opts: {
     });
 }
 
-export function ingest(): RealtimeFeature {
+export function ingest(
+    opts: import('../ingest/types').IngestConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../ingest/manifest').IngestManifest,
         create: ({ router, logger }) => {
             const { IngestService } = require('../ingest/IngestService') as typeof import('../ingest/IngestService');
-            return new IngestService({ messageRouter: router as any, logger: logger as any });
+            return new IngestService({ messageRouter: router as any, logger: logger as any, config: opts });
         },
     });
 }
 
-export function pipeline(): RealtimeFeature {
+export function pipeline(
+    opts: import('../pipeline/types').PipelineConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../pipeline/manifest').PipelineWsManifest,
         create: ({ router, logger }) => {
             const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter') as typeof import('../pipeline/PipelineWsRouter');
-            return new PipelineWsRouter({ messageRouter: router as any, logger: logger as any });
+            return new PipelineWsRouter({ messageRouter: router as any, logger: logger as any, config: opts });
         },
     });
 }
 
-export function typedDocuments(): RealtimeFeature {
+export function typedDocuments(
+    opts: import('../typed-documents/types').DocumentEventsConfig = {},
+): RealtimeFeature {
     return defineFeature({
         manifest: require('../typed-documents/manifest').TypedDocumentsManifest,
         create: ({ router, logger }) => {
             const { DocumentEventsService } = require('../typed-documents/DocumentEventsService') as typeof import('../typed-documents/DocumentEventsService');
-            return new DocumentEventsService({ messageRouter: router as any, logger: logger as any });
+            return new DocumentEventsService({ messageRouter: router as any, logger: logger as any, config: opts });
         },
     });
 }

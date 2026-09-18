@@ -108,12 +108,12 @@ function presence(opts = {}) {
         },
     });
 }
-function cursor() {
+function cursor(opts = {}) {
     return defineFeature({
         manifest: require('../cursor/manifest').CursorManifest,
         create: ({ router, logger }) => {
             const { CursorService } = require('../cursor/CursorService');
-            return new CursorService({ messageRouter: router, logger: logger });
+            return new CursorService({ messageRouter: router, logger: logger, config: opts });
         },
     });
 }
@@ -149,12 +149,12 @@ function activity(opts = {}) {
         },
     });
 }
-function social() {
+function social(opts = {}) {
     return defineFeature({
         manifest: require('../social/manifest').SocialManifest,
         create: ({ router, logger }) => {
             const { SocialService } = require('../social/SocialService');
-            return new SocialService({ messageRouter: router, logger: logger });
+            return new SocialService({ messageRouter: router, logger: logger, config: opts });
         },
     });
 }
@@ -172,30 +172,30 @@ function calls(opts = {}) {
         },
     });
 }
-function ingest() {
+function ingest(opts = {}) {
     return defineFeature({
         manifest: require('../ingest/manifest').IngestManifest,
         create: ({ router, logger }) => {
             const { IngestService } = require('../ingest/IngestService');
-            return new IngestService({ messageRouter: router, logger: logger });
+            return new IngestService({ messageRouter: router, logger: logger, config: opts });
         },
     });
 }
-function pipeline() {
+function pipeline(opts = {}) {
     return defineFeature({
         manifest: require('../pipeline/manifest').PipelineWsManifest,
         create: ({ router, logger }) => {
             const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter');
-            return new PipelineWsRouter({ messageRouter: router, logger: logger });
+            return new PipelineWsRouter({ messageRouter: router, logger: logger, config: opts });
         },
     });
 }
-function typedDocuments() {
+function typedDocuments(opts = {}) {
     return defineFeature({
         manifest: require('../typed-documents/manifest').TypedDocumentsManifest,
         create: ({ router, logger }) => {
             const { DocumentEventsService } = require('../typed-documents/DocumentEventsService');
-            return new DocumentEventsService({ messageRouter: router, logger: logger });
+            return new DocumentEventsService({ messageRouter: router, logger: logger, config: opts });
         },
     });
 }

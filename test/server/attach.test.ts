@@ -168,6 +168,69 @@ describe('attachRealtime — à-la-carte matrix', () => {
     });
 });
 
+// Five presets used to take no arguments at all, so every tunable on the
+// service behind them was unreachable through attachRealtime — the path the
+// README and every recipe tell you to use. Cursor was the worst of them: its
+// manifest advertises CURSOR_THROTTLE_INTERVAL_MS, CURSOR_TTL_MS and
+// CURSOR_CLEANUP_INTERVAL_MS, nothing in src/cursor reads process.env, and the
+// preset had no options either — so all three were settable by neither route.
+describe('attachRealtime — presets forward their service config', () => {
+    it('cursor() passes throttle, TTL, sweep and custom modes through', async () => {
+        const modes = {
+            hex: { name: 'Hex grid', description: 'q/r axial', requiredFields: ['q', 'r'], optionalFields: [] },
+        };
+        const { server, handle } = await boot([
+            cursor({ throttleInterval: 40, cursorTTL: 1234, cleanupInterval: 567, supportedModes: modes }),
+        ]);
+
+        const svc = handle.services.cursor as any;
+        expect(svc.throttleInterval).toBe(40);
+        expect(svc.cursorTTL).toBe(1234);
+        expect(svc.cleanupInterval).toBe(567);
+        // Replaces the built-in catalog rather than merging, per CursorConfig.
+        expect(Object.keys(svc.supportedModes)).toEqual(['hex']);
+
+        await teardown(server, handle);
+    });
+
+    it('cursor() with no argument keeps the documented defaults', async () => {
+        const { server, handle } = await boot([cursor()]);
+        const svc = handle.services.cursor as any;
+
+        expect(svc.throttleInterval).toBe(250);
+        expect(svc.cursorTTL).toBe(30_000);
+        expect(svc.cleanupInterval).toBe(10_000);
+        expect(Object.keys(svc.supportedModes).sort()).toEqual(['canvas', 'freeform', 'table', 'text']);
+
+        await teardown(server, handle);
+    });
+
+    it('cursor() can refuse a channel at the service, not only at the router', async () => {
+        const seen: string[] = [];
+        const { server, handle } = await boot([
+            cursor({ authorizeChannel: (_clientId, channel) => { seen.push(channel); return false; } }),
+        ]);
+        const svc = handle.services.cursor as any;
+
+        await svc.handleAction('c-1', 'subscribe', { channel: 'room:secret' });
+
+        expect(seen).toEqual(['room:secret']);
+        await teardown(server, handle);
+    });
+
+    it.each([
+        ['social', () => social({ maxChannelIdLength: 11 }), 'maxChannelIdLength', 11],
+        ['ingest', () => ingest({ maxChannelLength: 12 }), 'maxChannelLength', 12],
+        ['pipeline-ws', () => pipeline({ maxChannelLength: 13 }), 'maxChannelLength', 13],
+        ['typed-documents', () => typedDocuments({ maxDocumentIdLength: 14 }), 'maxDocumentIdLength', 14],
+    ])('%s() forwards its config', async (name, make, field, value) => {
+        const { server, handle } = await boot([(make as () => RealtimeFeature)()]);
+        const svc = handle.services[name as string] as any;
+        expect(svc[field as string]).toBe(value);
+        await teardown(server, handle);
+    });
+});
+
 describe('attachRealtime — end-to-end behaviour on the local router', () => {
     it('chat: join + send round-trips with sender echo', async () => {
         const { server, port, handle } = await boot([chat()]);

@@ -29,19 +29,19 @@ export declare function chat(opts?: Omit<import('../chat/ChatService').ChatServi
     chatStore?: import('../chat/ChatStore').ChatStore;
 }): RealtimeFeature;
 export declare function presence(opts?: import('../presence/types').PresenceConfig): RealtimeFeature;
-export declare function cursor(): RealtimeFeature;
+export declare function cursor(opts?: import('../cursor/types').CursorConfig): RealtimeFeature;
 export declare function reactions(opts?: import('../reactions/types').ReactionConfig): RealtimeFeature;
 export declare function activity(opts?: {
     historyStore?: import('../activity/ActivityHistoryStore').ActivityHistoryStore;
 }): RealtimeFeature;
-export declare function social(): RealtimeFeature;
+export declare function social(opts?: import('../social/types').SocialConfig): RealtimeFeature;
 export declare function calls(opts?: {
     stateStore?: import('../call/CallStateStore').CallStateStore;
     config?: import('../call/types').CallConfig;
 }): RealtimeFeature;
-export declare function ingest(): RealtimeFeature;
-export declare function pipeline(): RealtimeFeature;
-export declare function typedDocuments(): RealtimeFeature;
+export declare function ingest(opts?: import('../ingest/types').IngestConfig): RealtimeFeature;
+export declare function pipeline(opts?: import('../pipeline/types').PipelineConfig): RealtimeFeature;
+export declare function typedDocuments(opts?: import('../typed-documents/types').DocumentEventsConfig): RealtimeFeature;
 export declare function rooms(opts?: {
     stateStore?: import('../room/RoomStateStore').RoomStateStore;
     config?: import('../room/types').RoomConfig;
