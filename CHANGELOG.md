@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.61.0 — 2026-09-18
+
+- **The recipes said `chat()` gives you pins. It does not.** Documentation and
+  tests only; no behaviour change.
+
+  `attachRealtime` adds exactly one thing to your server, the WS upgrade
+  listener. It mounts no HTTP routes, and two documented views need them:
+  pins are channel state served over REST, and file BYTES ride a plain HTTP
+  PUT rather than the socket. The conversation recipe's table listed `pins` as
+  needing `chat()` and `files` as needing `chat()` + `fileUploads()`, so a
+  reader attaches the feature, mounts `usePins`, and gets a read error against
+  a route nobody serves. There is no pin store anywhere in this package —
+  `usePins` says in its own header that it is "the client half".
+
+  Both rows now say which routes are yours, and the recipe publishes the exact
+  shapes `GatewayRest` expects for all three pin endpoints and the two upload
+  ones, so it is an afternoon rather than a dead end. `FileBlobStore` is the
+  disk half of the upload routes and was already exported.
+
+  Five tests in `gateway-rest.test.ts` pin those shapes — method, path, body,
+  and that an absent `sentAt` stays off the wire rather than being sent empty.
+  They were internal details until the recipe published them as a contract a
+  consumer implements against.
+
+- **`rooms()` has no client hook, and the recipe implied otherwise.**
+
+  `./client/hangout-rooms` is a REST client for a rooms API with an optional
+  WS adapter that reads `{ type: 'room.member-joined' }`. `RoomService`
+  broadcasts `{ type: 'room', action: 'member-joined' }`. Same events,
+  different envelope, so nothing arrives — they are halves of two different
+  systems that share a word. The rooms recipe now says so instead of pairing
+  them, and the recipes index lists the room service's client half as "none
+  yet" rather than naming `useChannel`, which never spoke those frames either.
+
+  The index also still credited cursors to `useAwarenessState`; `useCursor`
+  has existed since 0.52.0.
+
+
 ## 0.60.0 — 2026-09-18
 
 - **`path` has no default, and the recipes said it did.** Documentation and

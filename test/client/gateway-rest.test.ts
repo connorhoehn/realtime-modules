@@ -92,6 +92,67 @@ describe('createGatewayRest', () => {
     });
 });
 
+// The pin routes are a contract a CONSUMER implements: attachRealtime mounts
+// no HTTP routes, so anyone using usePins against their own server writes
+// these three themselves (docs/recipes/conversation.md publishes the shapes).
+// That makes the exact method, path and body load-bearing rather than internal.
+describe('createGatewayRest pin routes', () => {
+    it('lists by channel on the query string and unwraps `pins`', async () => {
+        const fetchMock = mockFetch(() => ok({ pins: [{ channelId: 'room:design', messageId: 'm-1' }] }));
+        const out = await createGatewayRest('ws://localhost:18080')!.listPins!('room:design');
+
+        expect(String(fetchMock.mock.calls[0]![0]))
+            .toBe('http://localhost:18080/api/chat/pins?channel=room%3Adesign');
+        expect(out).toEqual([{ channelId: 'room:design', messageId: 'm-1' }]);
+    });
+
+    it('returns [] when the server omits `pins` entirely', async () => {
+        mockFetch(() => ok({}));
+        expect(await createGatewayRest('ws://localhost:18080')!.listPins!('room:design')).toEqual([]);
+    });
+
+    it('POSTs the pin body as given and unwraps `pin`', async () => {
+        const fetchMock = mockFetch(() => ok({ pin: { messageId: 'm-1' } }));
+        const input = {
+            channel: 'room:design',
+            messageId: 'm-1',
+            text: 'the decision',
+            author: 'Carol Johnson',
+            sentAt: '2026-09-18T09:00:00.000Z',
+        };
+        const out = await createGatewayRest('ws://localhost:18080')!.pin!(input);
+
+        const [url, init] = fetchMock.mock.calls[0] as [unknown, any];
+        expect(String(url)).toBe('http://localhost:18080/api/chat/pins');
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body)).toEqual(input);
+        expect(init.headers['Content-Type']).toBe('application/json');
+        expect(out).toEqual({ messageId: 'm-1' });
+    });
+
+    // sentAt is optional and must stay OFF the wire when absent — the server
+    // is not meant to invent a send time for a pin that carries none.
+    it('omits sentAt rather than sending it empty', async () => {
+        const fetchMock = mockFetch(() => ok({ pin: null }));
+        await createGatewayRest('ws://localhost:18080')!.pin!({
+            channel: 'room:design', messageId: 'm-2', text: 'x', author: 'Eve Thompson',
+        });
+
+        const body = JSON.parse((fetchMock.mock.calls[0] as [unknown, any])[1].body);
+        expect('sentAt' in body).toBe(false);
+    });
+
+    it('DELETEs with the channel and messageId in the body', async () => {
+        const fetchMock = mockFetch(() => ok({}));
+        await createGatewayRest('ws://localhost:18080')!.unpin!('room:design', 'm-1');
+
+        const [url, init] = fetchMock.mock.calls[0] as [unknown, any];
+        expect(String(url)).toBe('http://localhost:18080/api/chat/pins');
+        expect(init.method).toBe('DELETE');
+        expect(JSON.parse(init.body)).toEqual({ channel: 'room:design', messageId: 'm-1' });
+    });
+});
+
 // Where the REST half lives. Deriving it from the socket URL is right for the
 // common deployment and silently wrong for two that are not rare — and wrong
 // in the way this whole surface keeps being wrong, since a misrouted call

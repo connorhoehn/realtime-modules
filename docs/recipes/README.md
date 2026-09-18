@@ -9,15 +9,15 @@ matrix, all 78 pairs).
 |---|---|---|---|
 | Live chat | [chat](./chat.md) | `chat()` | `useChat` |
 | Presence | [presence](./presence.md) | `presence()` | `usePresence` |
-| Live cursors | [cursors](./cursors.md) | `cursor()` | `useAwarenessState` |
+| Live cursors | [cursors](./cursors.md) | `cursor()` | `useCursor` |
 | Reactions | [reactions](./reactions.md) | `reactions()` | `useReactions` |
 | Activity feed | [activity](./activity.md) | `activity()` | `useActivity` |
-| Rooms | [rooms](./rooms.md) | `rooms()` | `useChannel` |
+| Rooms | [rooms](./rooms.md) | `rooms()` | none yet — frames via `useGateway()` |
 | Calls / invites | [calls](./calls.md) | `calls()` | `useVideoHangout` |
 | Notifications | [notifications](./notifications.md) | `notifications()` | `useNotifications` |
-| File uploads | [file-uploads](./file-uploads.md) | `fileUploads()` | `useFileUpload` |
+| File uploads | [file-uploads](./file-uploads.md) | `fileUploads()` + REST routes you mount | `useFileUpload` |
 | Collab documents | [collab-docs](./collab-docs.md) | `collabDocs()` | `useCRDT` |
-| Pinned messages | [conversation](./conversation.md) | `chat()` | `usePins` |
+| Pinned messages | [conversation](./conversation.md) | `chat()` + REST routes you mount | `usePins` |
 
 **Broadcasting:** [streaming](./streaming.md) covers the other shape — one
 publisher, many viewers — and the choice that decides whether it scales:

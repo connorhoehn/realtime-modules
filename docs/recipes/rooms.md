@@ -49,6 +49,19 @@ function RoomList() {
 REST functions behind these hooks are exported from the same subpath, so SSR
 and scripts can use one transport without pulling in React.
 
+**These hooks do not talk to `rooms()`.** `./client/hangout-rooms` is a REST
+client for a rooms API — `GET/POST ${baseUrl}/api/rooms…` — with an optional
+WS adapter for live echoes. Its adapter reads frames shaped
+`{ type: 'room.member-joined' }`, while `RoomService` broadcasts
+`{ type: 'room', action: 'member-joined' }`. Same events, different envelope,
+so nothing arrives. The two halves are wired to different servers by design:
+the hooks expect a deployment serving the rooms REST API, `rooms()` is the WS
+membership and occupancy service.
+
+Attach `rooms()` when you want the WS side — subscribe, join, leave, announce,
+and the occupancy broadcasts — and read those frames through `useGateway()`
+until a hook exists for them.
+
 Point the client at the same origin and the `path` set above —
 `ws://localhost:3000/realtime`. There is no default path: leave `path` off and
 the upgrade listener takes every WebSocket upgrade on that server, including

@@ -34,10 +34,46 @@ Nothing new to attach. The views map onto capabilities you already run:
 | View | Needs |
 |---|---|
 | `chat` | `chat()` |
-| `files` | `chat()` + `fileUploads()` |
+| `files` | `chat()` + `fileUploads()` — **plus two HTTP routes you mount.** See below. |
 | `documents` | `collabDocs()` |
-| `pins` | `chat()` (pins are channel state, served over REST) |
+| `pins` | `chat()` + **three HTTP routes you mount.** See below. |
 | `calls` | `calls()` — **and a lobby.** See below. |
+
+**Two views need HTTP routes this package does not ship.** Every feature above
+is a WebSocket service, and `attachRealtime` adds exactly one thing to your
+server: the WS upgrade listener. It mounts no routes. Pins are channel state
+served over REST, and file BYTES ride a plain HTTP PUT rather than the socket —
+so for those two, attaching the feature is half the job. Nothing errors at
+startup; `usePins` surfaces a read error and the files view simply never
+completes an upload.
+
+Pins — `usePins` reaches these through `GatewayRest`, so the shapes are fixed:
+
+```
+GET    /api/chat/pins?channel=<id>   -> { pins: PinnedMessage[] }   newest first
+POST   /api/chat/pins                <- { channel, messageId, text, author, sentAt? }
+                                     -> { pin: PinnedMessage | null }
+DELETE /api/chat/pins                <- { channel, messageId }
+```
+
+`PinnedMessage` is exported from `./client`. `sentAt` is the message's own send
+time and is optional — a pin written without one has none, and the panel falls
+back rather than treating it as an error.
+
+Files — `FileUploadService` mints the URLs over the socket and expects your
+server to answer them:
+
+```
+PUT /api/uploads/:id    the bytes, Authorization: Bearer <the socket's token>
+GET /api/uploads/:id    the same id, for download
+```
+
+`FileBlobStore` from `./fileupload` is the disk half of that (put / get / stat,
+path traversal already handled); the two routes around it are yours. Point
+`FILEUPLOAD_PUBLIC_BASE` at wherever you mount them.
+
+Or point the client at a deployment that already serves all of this — the
+websocket-gateway — and skip both.
 
 `mentions` is deliberately absent. Mentions span every conversation, so a
 per-channel tab claims a scope it does not have: it would show you the same
