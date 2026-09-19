@@ -471,9 +471,23 @@ export interface WorkGraphRepository {
 }
 
 export interface WorkSharingRepository {
-  getGrant(organizationId: string, grantId: OpaqueWorkId, now: IsoTimestamp): Promise<WorkSharingGrant | null>;
-  listEffectiveGrants(organizationId: string, ownerId: string, viewerId: string, now: IsoTimestamp): Promise<WorkSharingGrant[]>;
-  putGrant(grant: WorkSharingGrant, expectedRevision: number | null): Promise<WorkSharingGrant>;
+  getGrant(organizationId: string, grantId: OpaqueWorkId, now: IsoTimestamp): Promise<WorkSharingGrant | WorkHistoryGrant | null>;
+  listEffectiveGrants(
+    organizationId: string,
+    ownerId: string,
+    viewer: WorkSharingViewerContext,
+    now: IsoTimestamp,
+  ): Promise<Array<WorkSharingGrant | WorkHistoryGrant>>;
+  putGrant(
+    grant: WorkSharingGrant | WorkHistoryGrant,
+    expectedRevision: number | null,
+  ): Promise<WorkSharingGrant | WorkHistoryGrant>;
+}
+
+/** Server-resolved audience memberships; browsers cannot assert these IDs. */
+export interface WorkSharingViewerContext {
+  viewerId: string;
+  conversationIds: string[];
 }
 
 export interface WorkSourceAuthorizationAdapter {
