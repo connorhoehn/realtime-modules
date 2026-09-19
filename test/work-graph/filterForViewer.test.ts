@@ -126,12 +126,12 @@ describe('filterForViewer', () => {
       nodeDecisions: new Map([[nodeA, placeholder], [nodeB, decision(nodeB)]]),
     }));
     expect(graph.nodes[0]).toEqual({
-      id: 'existence:A shared work item', kind: 'task', title: 'A shared work item', status: 'idle', updatedAt: '1970-01-01T00:00:00.000Z',
+      id: 'work_placeholder_1', kind: 'task', title: 'A shared work item', status: 'idle', updatedAt: '1970-01-01T00:00:00.000Z',
       disclosure: 'existence', capabilities: [], locked: true,
     });
     expect(JSON.stringify(graph.nodes[0])).not.toContain(nodeA);
     expect(JSON.stringify(graph.nodes[0])).not.toContain('Secret Project Title');
     expect(graph.edges).toHaveLength(1);
-    expect(graph.edges[0]).toMatchObject({ fromId: nodeB, toId: 'existence:A shared work item' });
+    expect(graph.edges[0]).toMatchObject({ fromId: nodeB, toId: 'work_placeholder_1' });
   });
 });

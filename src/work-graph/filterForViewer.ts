@@ -55,15 +55,15 @@ function safeCapabilities(decision: DisclosureDecision): CollaborationCapability
   return (decision.capabilities ?? []).filter((capability): capability is CollaborationCapability => capabilities.has(capability));
 }
 
-function existenceNode(decision: DisclosureDecision): ViewerWorkNode | undefined {
+function existenceNode(decision: DisclosureDecision, publicId: OpaqueWorkId): ViewerWorkNode | undefined {
   const label = decision.existenceLabel?.trim();
   if (!label) return undefined;
 
   // This deliberately does not read a field from InternalWorkNode. `id` is a
-  // viewer-local namespace derived solely from the policy adapter's sanitized
-  // label, so no internal identifier or title crosses the boundary.
+  // viewer-local opaque value assigned by the projection loop, so neither an
+  // internal identifier nor the sanitized label is repeated in the id field.
   return {
-    id: `existence:${label}`,
+    id: publicId,
     kind: 'task',
     title: label,
     status: 'idle',
@@ -74,9 +74,13 @@ function existenceNode(decision: DisclosureDecision): ViewerWorkNode | undefined
   };
 }
 
-function viewerNode(node: InternalWorkNode, decision: DisclosureDecision): ViewerWorkNode | undefined {
+function viewerNode(
+  node: InternalWorkNode,
+  decision: DisclosureDecision,
+  existencePublicId: OpaqueWorkId,
+): ViewerWorkNode | undefined {
   const disclosure = decision.maximumDisclosure;
-  if (disclosure === 'existence') return existenceNode(decision);
+  if (disclosure === 'existence') return existenceNode(decision, existencePublicId);
   if (disclosure !== 'summary' && disclosure !== 'details') return undefined;
 
   const base: ViewerWorkNode = {
@@ -158,13 +162,19 @@ export function filterForViewer(state: WorkProjectionState, policy: WorkGraphPol
 
   const visibleNodes = new Map<OpaqueWorkId, ViewerWorkNode>();
   const publicIds = new Set<OpaqueWorkId>();
+  let placeholderSequence = 0;
   for (const node of Object.values(state.nodes)) {
     if (node.deletedAt || node.organizationId !== state.organizationId || node.actorId !== state.actorId) continue;
     const decision = allowedDecision(policy.nodeDecisions, node.id, policy.scope.policyRevision);
     if (!decision) continue;
-    const projected = viewerNode(node, decision);
-    // Do not make a placeholder ambiguous. Omitting it is safer than using the
-    // private node id to disambiguate two equal public existence labels.
+    let existencePublicId: OpaqueWorkId = 'work_placeholder_unused';
+    if (decision.maximumDisclosure === 'existence') {
+      do {
+        placeholderSequence += 1;
+        existencePublicId = `work_placeholder_${placeholderSequence}`;
+      } while (publicIds.has(existencePublicId));
+    }
+    const projected = viewerNode(node, decision, existencePublicId);
     if (!projected || publicIds.has(projected.id)) continue;
     publicIds.add(projected.id);
     visibleNodes.set(node.id, projected);
