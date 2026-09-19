@@ -34,6 +34,8 @@ describe('projectWorkEvent', () => {
       eventId: 'old-start', sourceSequence: '2', occurredAt: '2026-09-19T14:02:00.000Z',
     }));
     expect(Object.values(afterOld.nodes).find((node) => node.kind === 'run')?.status).toBe('completed');
+    expect(Object.values(afterOld.edges)).toEqual(Object.values(completed.edges));
+    expect(afterOld.sourceCheckpoints['cloud-compute']).toBe('3');
   });
 
   test('tombstones deleted resources and incident edges', () => {
@@ -42,7 +44,119 @@ describe('projectWorkEvent', () => {
       eventId: 'deleted', sourceSequence: '4', occurredAt: '2026-09-19T14:04:00.000Z',
       payload: { ...cloudPayload, lifecycle: 'deleted' },
     }));
-    expect(Object.values(deleted.nodes).every((node) => node.deletedAt)).toBe(true);
+    expect(Object.values(deleted.nodes).filter((node) => node.deletedAt).map((node) => node.kind)).toEqual(['terminal']);
+    expect(Object.values(deleted.edges).every((edge) => edge.deletedAt)).toBe(true);
+  });
+
+  test('keeps a shared project and its other terminal when a minimal delete arrives', () => {
+    const first = projectWorkEvent(empty(), event());
+    const second = projectWorkEvent(first, event({
+      eventId: 'second-box', sourceSequence: '2',
+      payload: { ...cloudPayload, boxId: 'second-box', jobId: undefined },
+    }));
+    const deleted = projectWorkEvent(second, event({
+      eventId: 'deleted-box', sourceSequence: '3', occurredAt: '2026-09-19T14:04:00.000Z',
+      payload: { kind: 'cloud-compute', lifecycle: 'deleted', boxId: cloudPayload.boxId },
+    }));
+    const project = Object.values(deleted.nodes).find((node) => node.kind === 'project')!;
+    const liveTerminal = Object.values(deleted.nodes).find((node) => node.sourceRef.resourceId === 'second-box')!;
+    expect(project.deletedAt).toBeUndefined();
+    expect(liveTerminal.deletedAt).toBeUndefined();
+    expect(Object.values(deleted.edges).filter((edge) => !edge.deletedAt)).toEqual([
+      expect.objectContaining({ fromId: liveTerminal.id, toId: project.id }),
+    ]);
+  });
+
+  test('does not let a delayed delete hide a newer terminal or its relationships', () => {
+    const current = projectWorkEvent(empty(), event({ sourceSequence: '3' }));
+    const delayed = projectWorkEvent(current, event({
+      eventId: 'old-delete', sourceSequence: '2',
+      payload: { ...cloudPayload, lifecycle: 'deleted' },
+    }));
+    expect(delayed.nodes).toEqual(current.nodes);
+    expect(delayed.edges).toEqual(current.edges);
+  });
+
+  test('uses source-scoped event IDs and still deduplicates within one source', () => {
+    const cloud = projectWorkEvent(empty(), event());
+    const pipelineEvent = event({
+      source: 'pipeline', resource: { source: 'pipeline', resourceId: 'pipeline-1' },
+      payload: { kind: 'pipeline', lifecycle: 'started', pipelineId: 'pipeline-1', runId: 'pipeline-run-1', attempt: 1 },
+    });
+    const pipeline = projectWorkEvent(cloud, pipelineEvent);
+    expect(pipeline.revision).toBe(cloud.revision + 1);
+    expect(Object.values(pipeline.nodes).some((node) => node.sourceRef.resourceId === 'pipeline-run-1')).toBe(true);
+    expect(projectWorkEvent(pipeline, pipelineEvent)).toBe(pipeline);
+  });
+
+  test('falls back to timestamps when only one event has a source sequence', () => {
+    const current = projectWorkEvent(empty(), event({
+      eventId: 'completed', sourceSequence: '3', occurredAt: '2026-09-19T14:03:00.000Z',
+      payload: { ...cloudPayload, lifecycle: 'completed' },
+    }));
+    const delayed = projectWorkEvent(current, event({
+      eventId: 'unsequenced-old', sourceSequence: undefined, occurredAt: '2026-09-19T14:02:00.000Z',
+    }));
+    expect(delayed.nodes).toEqual(current.nodes);
+    expect(delayed.edges).toEqual(current.edges);
+  });
+
+  test('orders large sequence counters without rounding or falling back to timestamps', () => {
+    const current = projectWorkEvent(empty(), event({
+      eventId: 'completed', sourceSequence: '9007199254740993', occurredAt: '2026-09-19T14:03:00.000Z',
+      payload: { ...cloudPayload, lifecycle: 'completed' },
+    }));
+    const delayed = projectWorkEvent(current, event({
+      eventId: 'older-sequence-later-clock', sourceSequence: '9007199254740992', occurredAt: '2026-09-19T14:04:00.000Z',
+    }));
+    expect(delayed.nodes).toEqual(current.nodes);
+    expect(delayed.edges).toEqual(current.edges);
+    expect(delayed.sourceCheckpoints['cloud-compute']).toBe('9007199254740993');
+  });
+
+  test('deleting a transcript keeps its meeting and other transcripts', () => {
+    const meetingEvent = (id: string, sequence: string, transcriptId: string, lifecycle: 'transcript-ready' | 'transcript-deleted') => event({
+      eventId: id, source: 'meeting', sourceSequence: sequence,
+      resource: { source: 'meeting', resourceId: 'meeting-1' },
+      payload: { kind: 'meeting', lifecycle, meetingId: 'meeting-1', transcriptId },
+    });
+    const first = projectWorkEvent(empty(), meetingEvent('first', '1', 'transcript-1', 'transcript-ready'));
+    const second = projectWorkEvent(first, meetingEvent('second', '2', 'transcript-2', 'transcript-ready'));
+    const deleted = projectWorkEvent(second, meetingEvent('deleted', '3', 'transcript-1', 'transcript-deleted'));
+    expect(Object.values(deleted.nodes).filter((node) => node.deletedAt).map((node) => node.sourceRef.resourceId)).toEqual(['transcript-1']);
+    expect(Object.values(deleted.edges).filter((edge) => !edge.deletedAt)).toHaveLength(1);
+    expect(Object.values(deleted.nodes).find((node) => node.kind === 'meeting')).toEqual(Object.values(second.nodes).find((node) => node.kind === 'meeting'));
+  });
+
+  test('deleting a recording does not delete its meeting or ready transcript', () => {
+    const ready = event({
+      eventId: 'ready', source: 'meeting',
+      resource: { source: 'meeting', resourceId: 'meeting-1' },
+      payload: { kind: 'meeting', lifecycle: 'transcript-ready', meetingId: 'meeting-1', recordingId: 'recording-1', transcriptId: 'transcript-1' },
+    });
+    const current = projectWorkEvent(empty(), ready);
+    const deleted = projectWorkEvent(current, {
+      ...ready, eventId: 'recording-deleted', sourceSequence: '2',
+      payload: { kind: 'meeting', lifecycle: 'recording-deleted', meetingId: 'meeting-1', recordingId: 'recording-1' },
+    });
+    expect(deleted.nodes).toEqual(current.nodes);
+    expect(deleted.edges).toEqual(current.edges);
+  });
+
+  test('document deletion retains historical changes and removes every incident edge', () => {
+    const save = (revisionId: string, sequence: string) => event({
+      eventId: revisionId, source: 'document', sourceSequence: sequence,
+      resource: { source: 'document', resourceId: 'doc-1' },
+      payload: { kind: 'document', lifecycle: 'revision-saved', documentId: 'doc-1', revisionId },
+    });
+    const first = projectWorkEvent(empty(), save('rev-1', '1'));
+    const second = projectWorkEvent(first, save('rev-2', '2'));
+    const deleted = projectWorkEvent(second, event({
+      ...save('rev-3', '3'), eventId: 'doc-deleted',
+      payload: { kind: 'document', lifecycle: 'deleted', documentId: 'doc-1', revisionId: 'rev-3' },
+    }));
+    expect(Object.values(deleted.nodes).filter((node) => node.deletedAt).map((node) => node.kind)).toEqual(['document']);
+    expect(Object.values(deleted.nodes).filter((node) => node.kind === 'change')).toHaveLength(2);
     expect(Object.values(deleted.edges).every((edge) => edge.deletedAt)).toBe(true);
   });
 
