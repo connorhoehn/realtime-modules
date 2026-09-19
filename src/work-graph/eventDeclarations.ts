@@ -101,7 +101,38 @@ export const workGraphHeartbeatDeclaration: WorkGraphEventDeclaration = {
   version: 1, compatibilityMode: 'backward',
 };
 
-export const workGraphEventDeclarations = [...workGraphLifecycleDeclarations, workGraphHeartbeatDeclaration] as const;
+export const workGraphProjectionChangedDeclaration: WorkGraphEventDeclaration = {
+  name: 'work-graph.projection.changed.v1',
+  namespace: 'work-graph',
+  transport: 'durable',
+  producer: 'platform-api',
+  description: 'A private work-graph projection revision is ready for authorized gateway replay.',
+  tags: ['privacy:private', 'schema:v1', 'projection', `max-bytes:${WORK_GRAPH_LIMITS.sourceEventBytes}`],
+  version: 1,
+  compatibilityMode: 'backward',
+  queue: 'work-graph-projection-changed-v1',
+  retention: WORK_GRAPH_LIMITS.eventRetentionDays * 24 * 60 * 60,
+  dlqAfterAttempts: 5,
+  schema: {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    additionalProperties: false,
+    required: ['organizationId', 'actorId', 'day', 'revision', 'sourceEventId'],
+    properties: {
+      organizationId: identifier,
+      actorId: identifier,
+      day: { type: 'string', format: 'date' },
+      revision: { type: 'integer', minimum: 1 },
+      sourceEventId: identifier,
+    },
+  },
+};
+
+export const workGraphEventDeclarations = [
+  ...workGraphLifecycleDeclarations,
+  workGraphHeartbeatDeclaration,
+  workGraphProjectionChangedDeclaration,
+] as const;
 
 /** Event-catalog JSON Schema cannot enforce UTF-8 envelope byte length. */
 export function isWithinWorkGraphEventLimit(value: unknown): boolean {

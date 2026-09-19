@@ -1,5 +1,5 @@
 import { WORK_GRAPH_LIMITS } from '../../src/work-graph/contracts';
-import { isWithinWorkGraphEventLimit, workGraphEventDeclarations, workGraphHeartbeatDeclaration, workGraphLifecycleDeclarations } from '../../src/work-graph/eventDeclarations';
+import { isWithinWorkGraphEventLimit, workGraphEventDeclarations, workGraphHeartbeatDeclaration, workGraphLifecycleDeclarations, workGraphProjectionChangedDeclaration } from '../../src/work-graph/eventDeclarations';
 
 describe('work graph event declarations', () => {
   test('declares one durable lifecycle producer per source and a distinct transient heartbeat', () => {
@@ -18,8 +18,19 @@ describe('work graph event declarations', () => {
       ['work-graph.conversation.lifecycle.v1', 'websocket-gateway'],
       ['work-graph.meeting.lifecycle.v1', 'platform-api'],
       ['work-graph.local-compute.heartbeat.v1', 'aws-agentcore'],
+      ['work-graph.projection.changed.v1', 'platform-api'],
     ]);
     expect(workGraphEventDeclarations.every((entry) => entry.version === 1 && entry.compatibilityMode === 'backward')).toBe(true);
+  });
+
+  test('declares durable private projection notifications for authorized gateway replay', () => {
+    expect(workGraphProjectionChangedDeclaration).toMatchObject({
+      name: 'work-graph.projection.changed.v1',
+      producer: 'platform-api',
+      transport: 'durable',
+      queue: 'work-graph-projection-changed-v1',
+      dlqAfterAttempts: 5,
+    });
   });
 
   test('schemas are allowlists and omit private raw fields', () => {

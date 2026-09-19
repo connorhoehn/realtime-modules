@@ -46,6 +46,7 @@ export { useCapability } from './useCapability';
 export type { CapabilityDescriptor, UseCapabilityResult, } from './useCapability';
 export { useCapabilities } from './useCapabilities';
 export type { UseCapabilitiesResult } from './useCapabilities';
+export * from './work-graph';
 export { useFeatureFlag } from './useFeatureFlag';
 export type { UseFeatureFlagResult } from './useFeatureFlag';
 export { useChannel } from './useChannel';

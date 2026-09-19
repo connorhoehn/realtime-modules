@@ -125,6 +125,10 @@
     "./work-graph": {
       "types": "./dist/work-graph/index.d.ts",
       "default": "./dist/work-graph/index.js"
+    },
+    "./work-graph/server": {
+      "types": "./dist/work-graph/server.d.ts",
+      "default": "./dist/work-graph/server.js"
     }
   },
   "files": [

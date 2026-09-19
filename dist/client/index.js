@@ -5,6 +5,20 @@
 // Tiptap-specific code lives behind the separate `./adapters/tiptap`
 // subpath so consumers using Monaco / CodeMirror / contentEditable don't
 // pull in Tiptap or ProseMirror.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useCursor = exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
@@ -97,6 +111,7 @@ Object.defineProperty(exports, "useCapability", { enumerable: true, get: functio
 // list — the whole point of an embeddable module — cannot use the singular hook.
 var useCapabilities_1 = require("./useCapabilities");
 Object.defineProperty(exports, "useCapabilities", { enumerable: true, get: function () { return useCapabilities_1.useCapabilities; } });
+__exportStar(require("./work-graph"), exports);
 // v0.7.7 — useFeatureFlag: app-level boolean/variant feature flag hook.
 // Orthogonal to useCapability (CRD-driven, infrastructure-level). Designed for
 // A/B testing, gradual rollouts, and kill-switches. Queries
