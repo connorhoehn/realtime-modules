@@ -174,6 +174,8 @@ export type {
 export { useCapabilities } from './useCapabilities';
 export type { UseCapabilitiesResult } from './useCapabilities';
 
+export * from './work-graph';
+
 // v0.7.7 — useFeatureFlag: app-level boolean/variant feature flag hook.
 // Orthogonal to useCapability (CRD-driven, infrastructure-level). Designed for
 // A/B testing, gradual rollouts, and kill-switches. Queries
