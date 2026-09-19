@@ -17,6 +17,32 @@ const event = (over: Partial<AuthenticatedWorkEvent> = {}): AuthenticatedWorkEve
 const cloudPayload = validCloudEventFixture.payload as CloudComputePayload;
 
 describe('projectWorkEvent', () => {
+  test('keeps distinct resources that collide under the former 32-bit hash', () => {
+    const first = projectWorkEvent(empty(), event({
+      payload: { kind: 'cloud-compute', lifecycle: 'started', boxId: 'box-eb5f6a08' },
+    }));
+    const second = projectWorkEvent(first, event({
+      eventId: 'other-resource', sourceSequence: '2',
+      payload: { kind: 'cloud-compute', lifecycle: 'started', boxId: 'box-49de7046' },
+    }));
+    expect(Object.values(second.nodes).map((node) => node.sourceRef.resourceId).sort()).toEqual(['box-49de7046', 'box-eb5f6a08']);
+    expect(new Set(Object.keys(second.nodes)).size).toBe(2);
+  });
+
+  test('scopes resource identities to their owner and organization', () => {
+    const first = projectWorkEvent(empty(), event());
+    const otherOwner = { ...empty(), actorId: 'another-owner' };
+    const second = projectWorkEvent(otherOwner, event({ actor: { ...validCloudEventFixture.actor, actorId: otherOwner.actorId } }));
+    const otherOrganization = { ...empty(), organizationId: 'another-org' };
+    const third = projectWorkEvent(otherOrganization, event({
+      actor: { ...validCloudEventFixture.actor, organizationId: otherOrganization.organizationId },
+      producer: { ...validCloudEventFixture.producer, organizationId: otherOrganization.organizationId },
+    }));
+    expect(Object.keys(second.nodes).some((id) => id in first.nodes)).toBe(false);
+    expect(Object.keys(third.nodes).some((id) => id in first.nodes)).toBe(false);
+    expect(Object.keys(second.edges).some((id) => id in first.edges)).toBe(false);
+  });
+
   test('deduplicates replayed events and creates explicit compute relations', () => {
     const first = projectWorkEvent(empty(), event());
     const replay = projectWorkEvent(first, event());

@@ -8,18 +8,10 @@ import type {
   WorkSourceRef,
   WorkStatus,
 } from './contracts';
+import { opaqueWorkId } from './opaqueId';
 
-function opaqueId(prefix: 'node' | 'edge', ...parts: string[]): string {
-  let hash = 0x811c9dc5;
-  for (const character of parts.join('\u001f')) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return `wg_${prefix}_${hash.toString(16).padStart(8, '0')}`;
-}
-
-function nodeId(kind: WorkNodeKind, ref: WorkSourceRef): string {
-  return opaqueId('node', kind, ref.source, ref.resourceId);
+function nodeId(state: WorkProjectionState, kind: WorkNodeKind, ref: WorkSourceRef): string {
+  return opaqueWorkId('node', state.organizationId, state.actorId, kind, ref.source, ref.resourceId);
 }
 
 function numericSequence(value: string | undefined): bigint | undefined {
@@ -149,7 +141,7 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
 
 function upsertNode(state: WorkProjectionState, event: AuthenticatedWorkEvent, input: NodeInput): InternalWorkNode {
   const ref = sourceRef(event, input.resourceId);
-  const id = nodeId(input.kind, ref);
+  const id = nodeId(state, input.kind, ref);
   const existing = state.nodes[id];
   if (existing && !isNewer(event, existing)) return existing;
   return {
@@ -201,10 +193,10 @@ export function projectWorkEvent(current: WorkProjectionState, event: Authentica
     if (node.deletedAt && node.sourceEventId === event.eventId) deletedNodeIds.add(node.id);
   }
   for (const input of inputs.edges) {
-    const fromId = nodeId(input.from.kind, sourceRef(event, input.from.resourceId));
-    const toId = nodeId(input.to.kind, sourceRef(event, input.to.resourceId));
+    const fromId = nodeId(next, input.from.kind, sourceRef(event, input.from.resourceId));
+    const toId = nodeId(next, input.to.kind, sourceRef(event, input.to.resourceId));
     if (!next.nodes[fromId] || !next.nodes[toId] || next.nodes[fromId].deletedAt || next.nodes[toId].deletedAt) continue;
-    const id = opaqueId('edge', fromId, toId, input.relation);
+    const id = opaqueWorkId('edge', fromId, toId, input.relation);
     const existing = next.edges[id];
     if (existing && !isNewer(event, existing)) continue;
     const edge: InternalWorkEdge = {

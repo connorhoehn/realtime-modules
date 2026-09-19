@@ -9,6 +9,7 @@ import type {
   WorkGraphPolicyInput,
   WorkProjectionState,
 } from './contracts';
+import { opaqueWorkId } from './opaqueId';
 
 /** The only shape this module may hand to a browser-facing route. */
 export interface FilteredWorkGraph {
@@ -162,18 +163,17 @@ export function filterForViewer(state: WorkProjectionState, policy: WorkGraphPol
 
   const visibleNodes = new Map<OpaqueWorkId, ViewerWorkNode>();
   const publicIds = new Set<OpaqueWorkId>();
-  let placeholderSequence = 0;
   for (const node of Object.values(state.nodes)) {
     if (node.deletedAt || node.organizationId !== state.organizationId || node.actorId !== state.actorId) continue;
     const decision = allowedDecision(policy.nodeDecisions, node.id, policy.scope.policyRevision);
     if (!decision) continue;
-    let existencePublicId: OpaqueWorkId = 'work_placeholder_unused';
-    if (decision.maximumDisclosure === 'existence') {
-      do {
-        placeholderSequence += 1;
-        existencePublicId = `work_placeholder_${placeholderSequence}`;
-      } while (publicIds.has(existencePublicId));
-    }
+    // Stable within this viewer/query/policy, even when neighboring nodes are
+    // removed or reordered. A new policy or viewer cannot reuse its identity.
+    const existencePublicId = decision.maximumDisclosure === 'existence'
+      ? opaqueWorkId('placeholder', policy.scope.organizationId, policy.scope.viewerId,
+        policy.scope.personId, policy.scope.day, policy.scope.timezone,
+        policy.scope.policyRevision, node.id)
+      : 'work_placeholder_unused';
     const projected = viewerNode(node, decision, existencePublicId);
     if (!projected || publicIds.has(projected.id)) continue;
     publicIds.add(projected.id);

@@ -126,12 +126,37 @@ describe('filterForViewer', () => {
       nodeDecisions: new Map([[nodeA, placeholder], [nodeB, decision(nodeB)]]),
     }));
     expect(graph.nodes[0]).toEqual({
-      id: 'work_placeholder_1', kind: 'task', title: 'A shared work item', status: 'idle', updatedAt: '1970-01-01T00:00:00.000Z',
+      id: expect.stringMatching(/^wg_placeholder_[a-f0-9]{64}$/), kind: 'task', title: 'A shared work item', status: 'idle', updatedAt: '1970-01-01T00:00:00.000Z',
       disclosure: 'existence', capabilities: [], locked: true,
     });
     expect(JSON.stringify(graph.nodes[0])).not.toContain(nodeA);
     expect(JSON.stringify(graph.nodes[0])).not.toContain('Secret Project Title');
     expect(graph.edges).toHaveLength(1);
-    expect(graph.edges[0]).toMatchObject({ fromId: nodeB, toId: 'work_placeholder_1' });
+    expect(graph.edges[0]).toMatchObject({ fromId: nodeB, toId: graph.nodes[0].id });
+  });
+
+  test('keeps a placeholder identity after another node is removed or reordered', () => {
+    const nodeDecisions = new Map([nodeA, nodeB].map((id) => [id, { ...decision(id, 'existence'), existenceLabel: 'Shared work' }]));
+    const allowed = policy(undefined, { nodeDecisions });
+    const original = state();
+    const before = filterForViewer(original, allowed);
+    const reordered = { ...original, nodes: { [nodeB]: original.nodes[nodeB], [nodeA]: original.nodes[nodeA] } };
+    expect(filterForViewer(reordered, allowed).nodes.map((node) => node.id)).toEqual([before.nodes[1].id, before.nodes[0].id]);
+    const removed = { ...original, nodes: { [nodeB]: original.nodes[nodeB] } };
+    expect(filterForViewer(removed, allowed).nodes[0].id).toBe(before.nodes[1].id);
+  });
+
+  test('does not reuse existence identities across viewers or policy revisions', () => {
+    const nodeDecisions = new Map([[nodeA, { ...decision(nodeA, 'existence'), existenceLabel: 'Shared work' }]]);
+    const firstPolicy = policy(undefined, { nodeDecisions });
+    const first = filterForViewer(state(), firstPolicy).nodes[0].id;
+    const second = filterForViewer(state(), policy('another-viewer', { nodeDecisions })).nodes[0].id;
+    const nextPolicy = {
+      ...firstPolicy,
+      scope: { ...firstPolicy.scope, policyRevision: 'policy-2' },
+      nodeDecisions: new Map([[nodeA, { ...nodeDecisions.get(nodeA)!, policyRevision: 'policy-2' }]]),
+    };
+    const third = filterForViewer(state(), nextPolicy).nodes[0].id;
+    expect(new Set([first, second, third]).size).toBe(3);
   });
 });
