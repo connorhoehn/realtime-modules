@@ -121,6 +121,10 @@
     "./typed-documents": {
       "types": "./dist/typed-documents/index.d.ts",
       "default": "./dist/typed-documents/index.js"
+    },
+    "./work-graph": {
+      "types": "./dist/work-graph/index.d.ts",
+      "default": "./dist/work-graph/index.js"
     }
   },
   "files": [
