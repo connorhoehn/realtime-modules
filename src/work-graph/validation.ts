@@ -192,7 +192,7 @@ function isEventPayload(value: unknown, source: WorkSourceKind): boolean {
 }
 
 function isViewerNode(value: unknown): value is ViewerWorkNode {
-  return hasExactKeys(value, ['id', 'kind', 'title', 'status', 'disclosure', 'capabilities'], ['description', 'startedAt', 'updatedAt', 'endedAt', 'locked'])
+  return hasExactKeys(value, ['id', 'kind', 'title', 'status', 'disclosure', 'updatedAt', 'capabilities'], ['description', 'startedAt', 'endedAt', 'locked'])
     && isId(value.id) && nodeKinds.has(value.kind as string)
     && stringWithin(value.title, WORK_GRAPH_LIMITS.labelLength)
     && (value.description === undefined || stringWithin(value.description, WORK_GRAPH_LIMITS.descriptionLength))
@@ -200,13 +200,13 @@ function isViewerNode(value: unknown): value is ViewerWorkNode {
     && Array.isArray(value.capabilities) && value.capabilities.every((capability) => capabilities.has(capability as CollaborationCapability))
     && new Set(value.capabilities).size === value.capabilities.length
     && (value.startedAt === undefined || isTimestamp(value.startedAt))
-    && (value.updatedAt === undefined || isTimestamp(value.updatedAt))
+    && isTimestamp(value.updatedAt)
     && (value.endedAt === undefined || isTimestamp(value.endedAt))
     && (value.locked === undefined || typeof value.locked === 'boolean');
 }
 
 function isViewerEdge(value: unknown): value is ViewerWorkEdge {
-  return hasExactKeys(value, ['id', 'fromId', 'toId', 'relation', 'status', 'disclosure', 'capabilities'], ['label', 'startedAt', 'updatedAt', 'endedAt'])
+  return hasExactKeys(value, ['id', 'fromId', 'toId', 'relation', 'status', 'disclosure', 'updatedAt', 'capabilities'], ['label', 'startedAt', 'endedAt'])
     && isId(value.id) && isId(value.fromId) && isId(value.toId) && value.fromId !== value.toId
     && relations.has(value.relation as string) && statuses.has(value.status as string)
     && disclosures.has(value.disclosure as DisclosureLevel)
@@ -214,7 +214,7 @@ function isViewerEdge(value: unknown): value is ViewerWorkEdge {
     && Array.isArray(value.capabilities) && value.capabilities.every((capability) => capabilities.has(capability as CollaborationCapability))
     && new Set(value.capabilities).size === value.capabilities.length
     && (value.startedAt === undefined || isTimestamp(value.startedAt))
-    && (value.updatedAt === undefined || isTimestamp(value.updatedAt))
+    && isTimestamp(value.updatedAt)
     && (value.endedAt === undefined || isTimestamp(value.endedAt));
 }
 

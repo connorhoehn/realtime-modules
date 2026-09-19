@@ -39,6 +39,7 @@ describe('work graph protocol validation', () => {
       title: 'Project',
       status: 'running' as const,
       disclosure: 'summary' as const,
+      updatedAt: '2026-09-19T14:00:00.000Z',
       capabilities: [],
     };
     expect(validateWorkGraphSnapshot({
@@ -51,6 +52,7 @@ describe('work graph protocol validation', () => {
         relation: 'runs-in',
         status: 'running',
         disclosure: 'summary',
+        updatedAt: '2026-09-19T14:00:00.000Z',
         capabilities: [],
       }],
     }).ok).toBe(false);
@@ -87,5 +89,12 @@ describe('work graph protocol validation', () => {
   it('rejects impossible calendar and timestamp values', () => {
     expect(validateWorkReference({ ...nodeReferenceFixture, day: '2026-02-30' }).ok).toBe(false);
     expect(validateAuthenticatedWorkEvent({ ...validCloudEventFixture, occurredAt: '2026-02-30T14:00:00.000Z' }).ok).toBe(false);
+  });
+
+  it('requires viewer update timestamps used for ordering', () => {
+    expect(validateWorkGraphSnapshot({
+      ...emptySnapshotFixture,
+      nodes: [{ id: 'wg_node_missing_time', kind: 'task', title: 'Task', status: 'idle', disclosure: 'summary', capabilities: [] }],
+    }).ok).toBe(false);
   });
 });
