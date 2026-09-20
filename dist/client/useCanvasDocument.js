@@ -46,18 +46,7 @@ exports.CANVAS_BODY_KEY = 'body';
  * scalar needing a typed FieldChange with compare-and-set" problem — on a
  * canvas an ordinary suggestion mark covers it.
  */
-const NON_FRONT_MATTER = new Set(['title', 'schemaVersion', 'importSourceRevision', 'tenantId', 'documentId', 'createdBy']);
-function metaToFrontMatter(meta) {
-    const out = {};
-    for (const [key, value] of Object.entries(meta)) {
-        if (NON_FRONT_MATTER.has(key))
-            continue;
-        if (value === undefined)
-            continue;
-        out[key] = value;
-    }
-    return out;
-}
+const meta_1 = require("../adapters/tiptap/canvas/meta");
 /**
  * Reads the canvas body straight out of the CRDT as a `DocModel`.
  *
@@ -68,7 +57,7 @@ function canvasToDocModel(ydoc) {
     const fragment = ydoc.getXmlFragment(exports.CANVAS_BODY_KEY);
     const meta = ydoc.getMap('meta').toJSON();
     const pm = tiptapBridge().yXmlFragmentToProsemirrorJSON(fragment);
-    return (0, pmModel_1.pmToDocModel)(pm, metaToFrontMatter(meta));
+    return (0, pmModel_1.pmToDocModel)(pm, (0, meta_1.canvasFrontMatter)(meta));
 }
 /** The canvas body as markdown. */
 function canvasToMarkdown(ydoc) {

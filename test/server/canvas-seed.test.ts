@@ -4,11 +4,16 @@ import Image from '@tiptap/extension-image';
 import { TableKit } from '@tiptap/extension-table';
 import * as Y from 'yjs';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { createCanvasSeed } from '../../src/server/canvasSeed';
+import { createCanvasSeed, exportCanvasProjection } from '../../src/server/canvasSeed';
 it('headless seed retains native table/image nodes and marks canvas schema', () => {
   const schema = getSchema([StarterKit, Image.configure({ inline: false }), TableKit]);
   const seed = createCanvasSeed('---\nteam: acme\nschemaVersion: 99\n---\n| A | B |\n| --- | --- |\n| one | two |\n\n![evidence](/api/uploads/asset)', { schema });
   expect(seed.unsupported).toEqual([]);
+  const projected = exportCanvasProjection(seed.snapshot).markdown;
+  expect(projected).toContain('/api/uploads/asset');
+  expect(projected).toContain('| one | two |');
+  expect(projected).toContain('team: acme');
+  expect(projected).not.toContain('schemaVersion');
   const doc = new Y.Doc();
   try {
     Y.applyUpdate(doc, Buffer.from(seed.snapshot, 'base64'));

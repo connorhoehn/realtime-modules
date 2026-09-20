@@ -160,6 +160,15 @@ class GatewayProvider extends observable_1.Observable {
         for (const [id, update] of this._pendingUpdates)
             this.sendPending(id, update);
     }
+    /** Used after a server-authoritative replacement; callers retain recovery bytes separately. */
+    discardPendingUpdates() {
+        if (this._flushTimer)
+            clearTimeout(this._flushTimer);
+        this._flushTimer = null;
+        this._batch = [];
+        this._pendingUpdates.clear();
+        this.setPersistenceState('idle');
+    }
     applyPersisted(updateId) {
         if (!this._pendingUpdates.delete(updateId))
             return;

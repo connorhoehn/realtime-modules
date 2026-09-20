@@ -29,6 +29,8 @@ export interface UseYjsDocOptions {
    * Consumers (observers in sibling hooks) can use it to re-attach.
    */
   onDocReplaced?: (ydoc: Y.Doc, provider: GatewayProvider) => void;
+  /** A remote restore replaced unacknowledged local edits; retain/export these bytes for recovery. */
+  onUnpersistedChanges?: (snapshot: Uint8Array) => void;
 }
 
 export interface UseYjsDocReturn {
@@ -38,6 +40,7 @@ export interface UseYjsDocReturn {
   persistenceState: DocumentPersistenceState;
   pendingUpdateCount: number;
   retryPersistence: () => void;
+  recoverySnapshot: Uint8Array | null;
   /**
    * Bumped every time the underlying Y.Doc / provider is recreated
    * (initial mount counts as 0). Sibling hooks can depend on this
@@ -50,6 +53,9 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
   const { documentId, ws, onMessage, onDocReplaced } = options;
 
   const [synced, setSynced] = useState(false);
+  const [recoverySnapshot, setRecoverySnapshot] = useState<Uint8Array | null>(null);
+  const recoveryCallbackRef = useRef(options.onUnpersistedChanges);
+  recoveryCallbackRef.current = options.onUnpersistedChanges;
   const [persistenceState, setPersistenceState] = useState<DocumentPersistenceState>('idle');
   const [pendingUpdateCount, setPendingUpdateCount] = useState(0);
   const onPersistence = (state: DocumentPersistenceState, count: number) => { setPersistenceState(state); setPendingUpdateCount(count); };
@@ -65,6 +71,7 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
 
   // ---- Setup / teardown --------------------------------------------------
   useEffect(() => {
+    setRecoverySnapshot(null);
     const ydoc = new Y.Doc({ gc: false });
     ydocRef.current = ydoc;
 
@@ -161,6 +168,12 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
         const oldDoc = ydocRef.current;
         const oldProvider = providerRef.current;
         if (oldProvider) {
+          if (oldDoc && oldProvider.pendingUpdateCount > 0) {
+            const recovery = Y.encodeStateAsUpdate(oldDoc);
+            setRecoverySnapshot(recovery);
+            try { recoveryCallbackRef.current?.(recovery); } catch { /* Recovery bytes remain available in hook state. */ }
+          }
+          oldProvider.discardPendingUpdates();
           oldProvider.off('synced', onSynced);
           oldProvider.destroy();
         }
@@ -260,6 +273,7 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
     persistenceState,
     pendingUpdateCount,
     retryPersistence: () => providerRef.current?.retryPersistence(),
+    recoverySnapshot,
     docVersion,
   };
 }

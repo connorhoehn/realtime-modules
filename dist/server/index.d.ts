@@ -21,5 +21,5 @@ export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHa
 export { LocalRealtimeRouter, } from './router';
 export type { RealtimeRouter, RouterLogger, ChannelAuthorize, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 export * from "./documentGrant";
-export { createCanvasSeed } from "./canvasSeed";
+export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";
 //# sourceMappingURL=index.d.ts.map

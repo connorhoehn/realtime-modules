@@ -107,4 +107,4 @@ export type {
 
 export * from "./documentGrant";
 
-export { createCanvasSeed } from "./canvasSeed";
+export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";

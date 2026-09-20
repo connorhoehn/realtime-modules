@@ -24,3 +24,17 @@ it('never interprets sync as durable save and preserves failed pending bytes for
     expect(provider.pendingUpdateCount).toBe(0);
   } finally { provider.destroy(); doc.destroy(); jest.useRealTimers(); }
 });
+
+it('does not replay discarded pre-restore edits when the provider is destroyed', () => {
+  jest.useFakeTimers();
+  const doc = new Y.Doc(), send = jest.fn();
+  const provider = new GatewayProvider(doc, 'doc:test', send);
+  doc.getText('body').insert(0, 'pre-restore edits');
+  const recovery = Y.encodeStateAsUpdate(doc);
+  provider.discardPendingUpdates();
+  provider.destroy();
+  expect(send.mock.calls.filter(([frame]) => frame.action === 'update')).toHaveLength(0);
+  const recovered = new Y.Doc(); Y.applyUpdate(recovered, recovery);
+  expect(recovered.getText('body').toString()).toBe('pre-restore edits');
+  recovered.destroy(); doc.destroy(); jest.useRealTimers();
+});

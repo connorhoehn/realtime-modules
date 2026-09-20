@@ -6,4 +6,8 @@ export declare function createCanvasSeed(markdown: string, options: {
     snapshot: string;
     unsupported: UnsupportedForm[];
 };
+/** Derived source/search projection of an acknowledged binary snapshot; never a replacement persistence format. */
+export declare function exportCanvasProjection(snapshot: string): {
+    markdown: string;
+};
 //# sourceMappingURL=canvasSeed.d.ts.map

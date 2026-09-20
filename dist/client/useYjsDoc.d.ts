@@ -11,6 +11,8 @@ export interface UseYjsDocOptions {
      * Consumers (observers in sibling hooks) can use it to re-attach.
      */
     onDocReplaced?: (ydoc: Y.Doc, provider: GatewayProvider) => void;
+    /** A remote restore replaced unacknowledged local edits; retain/export these bytes for recovery. */
+    onUnpersistedChanges?: (snapshot: Uint8Array) => void;
 }
 export interface UseYjsDocReturn {
     ydoc: Y.Doc | null;
@@ -19,6 +21,7 @@ export interface UseYjsDocReturn {
     persistenceState: DocumentPersistenceState;
     pendingUpdateCount: number;
     retryPersistence: () => void;
+    recoverySnapshot: Uint8Array | null;
     /**
      * Bumped every time the underlying Y.Doc / provider is recreated
      * (initial mount counts as 0). Sibling hooks can depend on this

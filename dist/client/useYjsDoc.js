@@ -43,6 +43,9 @@ const GatewayProvider_1 = require("./GatewayProvider");
 function useYjsDoc(options) {
     const { documentId, ws, onMessage, onDocReplaced } = options;
     const [synced, setSynced] = (0, react_1.useState)(false);
+    const [recoverySnapshot, setRecoverySnapshot] = (0, react_1.useState)(null);
+    const recoveryCallbackRef = (0, react_1.useRef)(options.onUnpersistedChanges);
+    recoveryCallbackRef.current = options.onUnpersistedChanges;
     const [persistenceState, setPersistenceState] = (0, react_1.useState)('idle');
     const [pendingUpdateCount, setPendingUpdateCount] = (0, react_1.useState)(0);
     const onPersistence = (state, count) => { setPersistenceState(state); setPendingUpdateCount(count); };
@@ -55,6 +58,7 @@ function useYjsDoc(options) {
     const channel = `doc:${documentId}`;
     // ---- Setup / teardown --------------------------------------------------
     (0, react_1.useEffect)(() => {
+        setRecoverySnapshot(null);
         const ydoc = new Y.Doc({ gc: false });
         ydocRef.current = ydoc;
         const provider = new GatewayProvider_1.GatewayProvider(ydoc, channel, ws.sendMessage);
@@ -145,6 +149,15 @@ function useYjsDoc(options) {
                 const oldDoc = ydocRef.current;
                 const oldProvider = providerRef.current;
                 if (oldProvider) {
+                    if (oldDoc && oldProvider.pendingUpdateCount > 0) {
+                        const recovery = Y.encodeStateAsUpdate(oldDoc);
+                        setRecoverySnapshot(recovery);
+                        try {
+                            recoveryCallbackRef.current?.(recovery);
+                        }
+                        catch { /* Recovery bytes remain available in hook state. */ }
+                    }
+                    oldProvider.discardPendingUpdates();
                     oldProvider.off('synced', onSynced);
                     oldProvider.destroy();
                 }
@@ -237,6 +250,7 @@ function useYjsDoc(options) {
         persistenceState,
         pendingUpdateCount,
         retryPersistence: () => providerRef.current?.retryPersistence(),
+        recoverySnapshot,
         docVersion,
     };
 }

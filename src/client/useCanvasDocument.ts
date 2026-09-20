@@ -79,17 +79,7 @@ export type PmSchemaLike = { nodes: unknown; marks: unknown };
  * scalar needing a typed FieldChange with compare-and-set" problem — on a
  * canvas an ordinary suggestion mark covers it.
  */
-const NON_FRONT_MATTER = new Set(['title', 'schemaVersion', 'importSourceRevision', 'tenantId', 'documentId', 'createdBy']);
-
-function metaToFrontMatter(meta: Record<string, unknown>): JsonObject {
-  const out: JsonObject = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (NON_FRONT_MATTER.has(key)) continue;
-    if (value === undefined) continue;
-    out[key] = value as JsonValue;
-  }
-  return out;
-}
+import { canvasFrontMatter as metaToFrontMatter } from '../adapters/tiptap/canvas/meta';
 
 export interface CanvasDocument {
   /** True when `meta.schemaVersion >= 2`. The one gate. */

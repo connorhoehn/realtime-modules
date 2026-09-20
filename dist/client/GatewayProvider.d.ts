@@ -27,6 +27,8 @@ export declare class GatewayProvider extends Observable<string> {
     private sendPending;
     /** Idempotent Yjs updates can be resent after reconnect or an explicit retry. */
     retryPersistence(): void;
+    /** Used after a server-authoritative replacement; callers retain recovery bytes separately. */
+    discardPendingUpdates(): void;
     applyPersisted(updateId: string): void;
     applyPersistenceError(updateId: string): void;
     /** Whether we have received at least one snapshot from the server. */
