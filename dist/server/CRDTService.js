@@ -301,33 +301,56 @@ class CRDTService {
         const next = previous.catch(() => undefined).then(async () => {
             if (!await this.authorize(clientId, channel, 'seed'))
                 throw new Error('Document seed denied');
-            const state = await this.ensureHydratedState(channel);
-            if (!await this.authorize(clientId, channel, 'seed'))
-                throw new Error('Document seed denied');
-            const meta = state.ydoc.getMap('meta');
-            const current = meta.get('importSourceRevision');
-            if (current !== undefined && current !== sourceRevision)
-                throw new Error('Document already seeded from another source revision');
-            const alreadySeeded = current === sourceRevision;
-            if (!alreadySeeded) {
-                if (Y.encodeStateVector(state.ydoc).byteLength > 1)
-                    throw new Error('Cannot seed an existing document');
-                const candidate = new Y.Doc();
-                try {
-                    Y.applyUpdate(candidate, Buffer.from(snapshot, 'base64'));
-                    if (candidate.getMap('meta').get('schemaVersion') !== 2)
-                        throw new Error('Seed requires canvas schema version 2');
-                    candidate.getMap('meta').set('importSourceRevision', sourceRevision);
-                    Y.applyUpdate(state.ydoc, Y.encodeStateAsUpdate(candidate));
-                    state.operationsSinceSnapshot++;
+            const wasSubscribed = (this.messageRouter.getClientData?.(clientId)?.channels ?? []).includes(channel);
+            const admitted = await this.messageRouter.subscribeToChannel?.(clientId, channel);
+            if (admitted === false)
+                throw new Error('Document ownership admission rejected');
+            try {
+                const state = await this.ensureHydratedState(channel);
+                if (!await this.authorize(clientId, channel, 'seed'))
+                    throw new Error('Document seed denied');
+                const meta = state.ydoc.getMap('meta');
+                const current = meta.get('importSourceRevision');
+                if (current !== undefined && current !== sourceRevision)
+                    throw new Error('Document already seeded from another source revision');
+                const alreadySeeded = current === sourceRevision;
+                if (!alreadySeeded) {
+                    if (Y.encodeStateVector(state.ydoc).byteLength > 1)
+                        throw new Error('Cannot seed an existing document');
+                    const candidate = new Y.Doc();
+                    try {
+                        Y.applyUpdate(candidate, Buffer.from(snapshot, 'base64'));
+                        if (candidate.getMap('meta').get('schemaVersion') !== 2)
+                            throw new Error('Seed requires canvas schema version 2');
+                        candidate.getMap('meta').set('importSourceRevision', sourceRevision);
+                        Y.applyUpdate(state.ydoc, Y.encodeStateAsUpdate(candidate));
+                        state.operationsSinceSnapshot++;
+                    }
+                    finally {
+                        candidate.destroy();
+                    }
                 }
-                finally {
-                    candidate.destroy();
+                // Retrying after a failed first write must persist again before reporting success.
+                await this.snapshotManager.writeSnapshot(channel);
+                if (channel.startsWith('doc:')) {
+                    const documentId = channel.slice(4);
+                    const store = this.metadataService.metadataStore;
+                    const ownerId = (this.messageRouter.getClientData?.(clientId)?.userContext?.userId);
+                    if (!ownerId)
+                        throw new Error('Document seed requires a verified actor');
+                    const now = Date.now();
+                    const record = { documentId, title: typeof input.title === 'string' ? input.title.slice(0, 512) : 'Untitled', docType: typeof input.type === 'string' ? input.type.slice(0, 128) : 'custom', ownerId, status: 'draft', createdAt: now, updatedAt: now };
+                    if (store.createDocumentIfAbsent)
+                        await store.createDocumentIfAbsent(record);
+                    else if (!await store.getDocument(documentId))
+                        await store.putDocument(record);
                 }
+                return { sourceRevision, alreadySeeded };
             }
-            // Retrying after a failed first write must persist again before reporting success.
-            await this.snapshotManager.writeSnapshot(channel);
-            return { sourceRevision, alreadySeeded };
+            finally {
+                if (!wasSubscribed)
+                    await this.messageRouter.unsubscribeFromChannel?.(clientId, channel);
+            }
         });
         this.seedOperations.set(channel, next);
         try {

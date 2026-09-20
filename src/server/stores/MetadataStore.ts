@@ -76,6 +76,8 @@ export interface DocumentMeta {
 }
 
 export interface MetadataStore {
+    /** Atomic bootstrap: false means an existing row was preserved. Durable adapters should implement this. */
+    createDocumentIfAbsent?(meta: DocumentMeta): Promise<boolean>;
     /** Upsert metadata for a document. Last writer wins. */
     putDocument(meta: DocumentMeta): Promise<void>;
 

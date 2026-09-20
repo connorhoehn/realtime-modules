@@ -115,6 +115,8 @@ declare class CRDTService {
         channel: string;
         snapshot: string;
         sourceRevision: string;
+        title?: string;
+        type?: string;
     }): Promise<{
         sourceRevision: string;
         alreadySeeded: boolean;

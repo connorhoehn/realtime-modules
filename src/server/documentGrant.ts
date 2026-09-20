@@ -51,6 +51,7 @@ export async function verifyDocumentGrant(token: string, options: DocumentGrantV
   const now = Math.floor((options.now?.() ?? Date.now()) / 1000);
   if (!valid(claims, now) || claims.iss !== options.issuer || claims.aud !== (options.audience ?? 'realtime-documents')) throw new Error('Invalid document grant claims');
   const epoch = await options.getSessionEpoch(claims);
+  if (!valid(claims, Math.floor((options.now?.() ?? Date.now()) / 1000))) throw new Error('Document grant expired during verification');
   if (epoch === null || epoch !== claims.sessionEpoch) throw new Error('Document session revoked');
   return claims;
 }

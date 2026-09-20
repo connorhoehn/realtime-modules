@@ -348,12 +348,16 @@ class CRDTService {
     }
 
     /** Single-owner idempotent seed. Caller supplies a schema-validated binary Yjs document, never Markdown reconstruction. */
-    async seedDocument(clientId: string, input: { channel: string; snapshot: string; sourceRevision: string }): Promise<{ sourceRevision: string; alreadySeeded: boolean }> {
+    async seedDocument(clientId: string, input: { channel: string; snapshot: string; sourceRevision: string; title?: string; type?: string }): Promise<{ sourceRevision: string; alreadySeeded: boolean }> {
         const { channel, snapshot, sourceRevision } = input;
         if (!this._validateChannel(channel) || !sourceRevision || sourceRevision.length > 512 || typeof snapshot !== 'string' || snapshot.length > 8 * 1024 * 1024) throw new Error('Invalid document seed');
         const previous = this.seedOperations.get(channel) ?? Promise.resolve();
         const next = previous.catch(() => undefined).then(async () => {
             if (!await this.authorize(clientId, channel, 'seed')) throw new Error('Document seed denied');
+            const wasSubscribed = ((this.messageRouter.getClientData?.(clientId) as any)?.channels ?? []).includes(channel);
+            const admitted = await this.messageRouter.subscribeToChannel?.(clientId, channel);
+            if (admitted === false) throw new Error('Document ownership admission rejected');
+            try {
             const state = await this.ensureHydratedState(channel);
             if (!await this.authorize(clientId, channel, 'seed')) throw new Error('Document seed denied');
             const meta = state.ydoc.getMap('meta');
@@ -373,7 +377,18 @@ class CRDTService {
             }
             // Retrying after a failed first write must persist again before reporting success.
             await this.snapshotManager.writeSnapshot(channel);
+            if (channel.startsWith('doc:')) {
+                const documentId = channel.slice(4);
+                const store = this.metadataService.metadataStore;
+                const ownerId = ((this.messageRouter.getClientData?.(clientId) as any)?.userContext?.userId) as string | undefined;
+                if (!ownerId) throw new Error('Document seed requires a verified actor');
+                const now = Date.now();
+                const record = { documentId, title: typeof input.title === 'string' ? input.title.slice(0, 512) : 'Untitled', docType: typeof input.type === 'string' ? input.type.slice(0, 128) : 'custom', ownerId, status: 'draft' as const, createdAt: now, updatedAt: now };
+                if (store.createDocumentIfAbsent) await store.createDocumentIfAbsent(record);
+                else if (!await store.getDocument(documentId)) await store.putDocument(record);
+            }
             return { sourceRevision, alreadySeeded };
+            } finally { if (!wasSubscribed) await this.messageRouter.unsubscribeFromChannel?.(clientId, channel); }
         });
         this.seedOperations.set(channel, next);
         try { return await next; }

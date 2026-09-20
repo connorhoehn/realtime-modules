@@ -48,3 +48,23 @@ it('rechecks revocation after hydration before accepting bytes', async () => {
   try { await service.handleUpdate('alice', { channel, update: seed().snapshot }); expect(service.channelStates.get(channel)?.ydoc.getMap('meta').size).toBe(0); }
   finally { await service.shutdown(); }
 });
+it('seed obtains existing ownership admission and leaves metadata unchanged on retry', async () => {
+  const { service, router } = setup(async () => true);
+  const admission = jest.fn(async () => false);
+  (router as any).subscribeToChannel = admission;
+  const leave = jest.fn();
+  (router as any).unsubscribeFromChannel = leave;
+  try {
+    await expect(service.seedDocument('alice', seed())).rejects.toThrow('ownership');
+    expect(service.channelStates.has(channel)).toBe(false);
+    admission.mockResolvedValue(true);
+    const input = { ...seed(), title: 'Source title', type: 'assessment' };
+    await service.seedDocument('alice', input);
+    const stored = await service.metadataService.metadataStore.getDocument(channel.slice(4));
+    expect(stored).toMatchObject({ title: 'Source title', ownerId: 'alice', docType: 'assessment' });
+    await service.metadataService.metadataStore.putDocument({ ...stored!, title: 'Changed by owner' });
+    await service.seedDocument('alice', input);
+    expect((await service.metadataService.metadataStore.getDocument(channel.slice(4)))?.title).toBe('Changed by owner');
+    expect(leave).toHaveBeenCalledTimes(2);
+  } finally { await service.shutdown(); }
+});
