@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.69.3 — 2026-09-20
+
+- CRDT subscription admission now honors an explicit `false` from the supplied
+  router. Rejected clients receive no hydration, snapshot or subscription success.
+  Legacy routers returning void remain compatible. The TypeScript router contract
+  now accepts boolean admission results, matching the existing gateway.
+- Destroy test awareness clients after each ledger case so the full test process
+  exits normally. Validation: 1,342 tests pass; build and 29 export checks pass.
+
 ## 0.69.2 — 2026-09-20
 
 - Failed or corrupt durable snapshot reads now reject instead of producing an

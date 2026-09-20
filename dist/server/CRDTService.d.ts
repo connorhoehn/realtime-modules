@@ -40,7 +40,8 @@ interface ChannelState {
     hydrated: boolean;
 }
 export interface OrchestratorMessageRouter extends MessageRouterContract {
-    subscribeToChannel?(clientId: string, channel: string): Promise<void> | void;
+    /** Explicit false rejects admission; void preserves legacy router compatibility. */
+    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     sendToClient?(clientId: string, message: any): void;
 }

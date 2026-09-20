@@ -1,13 +1,22 @@
-import { describe, it, expect } from '@jest/globals';
+import { afterEach, describe, it, expect } from '@jest/globals';
 import * as Y from 'yjs';
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness';
 import { AwarenessLedger } from '../../src/server/AwarenessLedger';
 
 const b64 = (u: Uint8Array) => Buffer.from(u).toString('base64');
+const clients = new Set<Awareness>();
+function awarenessClient() {
+    const client = new Awareness(new Y.Doc());
+    clients.add(client);
+    return client;
+}
+afterEach(() => {
+    for (const client of clients) { client.destroy(); client.doc.destroy(); }
+    clients.clear();
+});
 
 function announce(name: string) {
-    const doc = new Y.Doc();
-    const a = new Awareness(doc);
+    const a = awarenessClient();
     a.setLocalStateField('user', { displayName: name });
     return { a, update: b64(encodeAwarenessUpdate(a, [a.clientID])) };
 }
@@ -18,7 +27,7 @@ describe('AwarenessLedger', () => {
         const alice = announce('Alice');
         ledger.remember('conn-1', 'doc:x', alice.update);
 
-        const peer = new Awareness(new Y.Doc());
+        const peer = awarenessClient();
         applyAwarenessUpdate(peer, Buffer.from(alice.update, 'base64'), 'test');
         expect(peer.getStates().has(alice.a.clientID)).toBe(true);
 

@@ -67,7 +67,8 @@ interface ChannelState {
 // (chat/presence/etc. share the same router) so we widen the constructor
 // parameter via this orchestrator-local extension type.
 export interface OrchestratorMessageRouter extends MessageRouterContract {
-    subscribeToChannel?(clientId: string, channel: string): Promise<void> | void;
+    /** Explicit false rejects admission; void preserves legacy router compatibility. */
+    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     sendToClient?(clientId: string, message: any): void;
 }
@@ -557,7 +558,11 @@ class CRDTService {
             // Join before loading so remote edits arriving during hydration
             // still enter the pending-update buffer.
             if (this.messageRouter.subscribeToChannel) {
-                await this.messageRouter.subscribeToChannel(clientId, channel);
+                const admitted = await this.messageRouter.subscribeToChannel(clientId, channel);
+                if (admitted === false) {
+                    this.sendError(clientId, 'Document subscription was rejected');
+                    return;
+                }
             }
             this.evictionManager.cancelEviction(channel);
             let state: ChannelState;

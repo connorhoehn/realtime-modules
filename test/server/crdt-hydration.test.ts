@@ -21,6 +21,18 @@ function bytes(text: string) {
 }
 
 describe('durable document hydration', () => {
+    it('does not hydrate or acknowledge a router-rejected subscription', async () => {
+        const { service, store, router } = fixture();
+        router.subscribeToChannel.mockResolvedValue(false);
+        const read = jest.spyOn(store, 'getLatestSnapshot');
+        try {
+            await service.handleSubscribe('one', { channel });
+            expect(read).not.toHaveBeenCalled();
+            expect(service.channelStates.has(channel)).toBe(false);
+            expect(router.sendToClient.mock.calls.some(([, frame]) => frame.action === 'subscribed')).toBe(false);
+            expect(router.sendToClient).toHaveBeenCalledWith('one', expect.objectContaining({ type: 'error' }));
+        } finally { await service.shutdown(); }
+    });
     it('does not expose an empty document on a failed read, and retries after recovery', async () => {
         const { service, store, router } = fixture();
         await store.putSnapshot(channel, gzipSync(bytes('durable')), { timestamp: 1 });

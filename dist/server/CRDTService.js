@@ -512,7 +512,11 @@ class CRDTService {
             // Join before loading so remote edits arriving during hydration
             // still enter the pending-update buffer.
             if (this.messageRouter.subscribeToChannel) {
-                await this.messageRouter.subscribeToChannel(clientId, channel);
+                const admitted = await this.messageRouter.subscribeToChannel(clientId, channel);
+                if (admitted === false) {
+                    this.sendError(clientId, 'Document subscription was rejected');
+                    return;
+                }
             }
             this.evictionManager.cancelEviction(channel);
             let state;
