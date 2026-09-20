@@ -55,7 +55,8 @@ function isId(value) {
     return stringWithin(value) && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
 }
 function isCursor(value) {
-    return stringWithin(value) && !/[\u0000-\u001f\u007f]/.test(value);
+    return stringWithin(value, contracts_1.WORK_GRAPH_LIMITS.cursorLength)
+        && !/[\u0000-\u001f\u007f]/.test(value);
 }
 function isNonNegativeInteger(value) {
     return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;

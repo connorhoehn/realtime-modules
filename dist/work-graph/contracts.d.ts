@@ -9,6 +9,8 @@
 export declare const WORK_GRAPH_SCHEMA_VERSION: 1;
 export declare const WORK_GRAPH_LIMITS: {
     readonly idLength: 128;
+    /** Signed snapshot/replay cursors carry the bound query scope and HMAC. */
+    readonly cursorLength: 4096;
     readonly labelLength: 160;
     readonly descriptionLength: 1000;
     readonly timezoneLength: 64;

@@ -12,6 +12,8 @@ exports.WORK_GRAPH_LIMITS = exports.WORK_GRAPH_SCHEMA_VERSION = void 0;
 exports.WORK_GRAPH_SCHEMA_VERSION = 1;
 exports.WORK_GRAPH_LIMITS = {
     idLength: 128,
+    /** Signed snapshot/replay cursors carry the bound query scope and HMAC. */
+    cursorLength: 4_096,
     labelLength: 160,
     descriptionLength: 1_000,
     timezoneLength: 64,

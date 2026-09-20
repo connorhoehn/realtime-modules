@@ -74,6 +74,18 @@ describe('work graph protocol validation', () => {
     }).ok).toBe(false);
   });
 
+  it('accepts scoped signed cursors longer than resource IDs but still bounds them', () => {
+    const signedCursor = `wg1.${'a'.repeat(500)}.signature`;
+    expect(validateWorkGraphSnapshot({
+      ...emptySnapshotFixture,
+      cursor: signedCursor,
+    }).ok).toBe(true);
+    expect(validateWorkGraphSnapshot({
+      ...emptySnapshotFixture,
+      cursor: `wg1.${'a'.repeat(4_096)}`,
+    }).ok).toBe(false);
+  });
+
   it('rejects a reference target that mixes node and edge forms', () => {
     expect(validateWorkReference({
       ...nodeReferenceFixture,

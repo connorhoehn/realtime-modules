@@ -75,7 +75,8 @@ function isId(value: unknown): value is string {
 }
 
 function isCursor(value: unknown): value is string {
-  return stringWithin(value) && !/[\u0000-\u001f\u007f]/.test(value);
+  return stringWithin(value, WORK_GRAPH_LIMITS.cursorLength)
+    && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
