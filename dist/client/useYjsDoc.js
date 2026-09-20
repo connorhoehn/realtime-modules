@@ -90,6 +90,12 @@ function useYjsDoc(options) {
             const curProvider = providerRef.current;
             const curDoc = ydocRef.current;
             if (curProvider) {
+                if (curDoc && curProvider.pendingUpdateCount > 0) {
+                    try {
+                        recoveryCallbackRef.current?.(Y.encodeStateAsUpdate(curDoc));
+                    }
+                    catch { /* Host recovery must not prevent cleanup. */ }
+                }
                 curProvider.off('synced', onSynced);
                 curProvider.off('persistence', onPersistence);
                 curProvider.destroy();

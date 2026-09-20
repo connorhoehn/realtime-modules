@@ -9,6 +9,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react';
 import type { ConnectionState, GatewayMessage, UseWebSocketReturn } from '../../src/client/types';
+import * as Y from 'yjs';
 import { useYjsDoc } from '../../src/client/useYjsDoc';
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,19 @@ afterEach(() => {
 });
 
 describe('useYjsDoc', () => {
+  it('offers pending bytes to host recovery before unmount destroys the document', () => {
+    const opts = makeOptions();
+    const recover = jest.fn<(bytes: Uint8Array) => void>();
+    const { result, unmount } = renderHook(() => useYjsDoc({ ...opts, onUnpersistedChanges: recover }));
+    act(() => { result.current.ydoc!.getText('content').insert(0, 'pending navigation edit'); });
+    expect(result.current.pendingUpdateCount).toBeGreaterThan(0);
+    unmount();
+    expect(recover).toHaveBeenCalledTimes(1);
+    const recovered = new Y.Doc();
+    Y.applyUpdate(recovered, recover.mock.calls[0]![0]);
+    expect(recovered.getText('content').toString()).toBe('pending navigation edit');
+    recovered.destroy();
+  });
   it('creates a Y.Doc and GatewayProvider on mount', () => {
     const opts = makeOptions();
     const { result } = renderHook(() =>
