@@ -28,7 +28,7 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { Node as PmProseMirrorNode, Slice } from '@tiptap/pm/model';
 import { parseDocument, serializeDocument } from 'distributed-core/applications/document';
-import { docModelToPm, pmToDocModel, type PmNode } from './pmModel';
+import { docModelToPm, pmToDocModel, type PmNode, type CanvasConversionSchema } from './pmModel';
 
 export const MARKDOWN_CLIPBOARD_KEY = new PluginKey('markdownClipboard');
 
@@ -43,12 +43,12 @@ export const MARKDOWN_CLIPBOARD_KEY = new PluginKey('markdownClipboard');
  * to act on.
  */
 export function looksLikeMarkdown(text: string): boolean {
-  return /^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~|\|.*\|)/m.test(text);
+  return /^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~|!\[|\|.*\|)/m.test(text);
 }
 
 /** ProseMirror JSON for a document fragment, as the adapter produces it. */
-function fragmentFromMarkdown(markdown: string): PmNode[] {
-  const { doc } = docModelToPm(parseDocument(markdown));
+function fragmentFromMarkdown(markdown: string, schema: CanvasConversionSchema): PmNode[] {
+  const { doc } = docModelToPm(parseDocument(markdown), schema);
   return doc.content ?? [];
 }
 
@@ -77,7 +77,7 @@ export const MarkdownClipboard = Extension.create({
 
             let content: PmNode[];
             try {
-              content = fragmentFromMarkdown(text);
+              content = fragmentFromMarkdown(text, editor.schema);
             } catch {
               // A parse failure must fall back to the normal plain-text paste
               // rather than dropping what the user pasted.

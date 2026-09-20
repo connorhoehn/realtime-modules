@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.69.4 — 2026-09-20
+
+- Canvas import and Markdown paste now use the live editor schema: GFM tables
+  become native TableKit nodes; images retain source URLs, alt text and titles,
+  including assessment `attachment:` references. Block-image schemas split
+  surrounding prose safely; inline-image schemas retain inline placement.
+- Export reconstructs Markdown tables and images instead of flattening cells or
+  dropping image nodes. Table alignment survives when CanvasTextAlign is present.
+- Schemas without the required extensions retain source Markdown visibly and
+  report unsupported content. Linked images also retain both URLs as Markdown:
+  the Yjs bridge currently drops marks on image atoms. Rich layout such as cell
+  spans/fonts remains in binary Yjs storage, not losslessly in GFM exports.
+- Added real-schema, binary-restore and actual-hook regressions. All 1,355 tests
+  pass; TypeScript build and all 29 export checks pass. Table/Image peers are
+  test-only dependencies; consumers continue to supply their own extensions.
+
 ## 0.69.3 — 2026-09-20
 
 - CRDT subscription admission now honors an explicit `false` from the supplied

@@ -33,6 +33,7 @@ import type {
   DocModel,
   Inline,
   ListItem,
+  TableBlock,
 } from 'distributed-core/applications/document';
 import { serializeDocument } from 'distributed-core/applications/document';
 import { MACRO_NODE_NAME } from './nodeNames';
@@ -74,6 +75,19 @@ export interface PmNode {
 export interface UnsupportedForm {
   kind: string;
   reason: string;
+}
+
+/** Structural schema input: use the live editor schema without importing PM. */
+export interface CanvasConversionSchema {
+  nodes: unknown;
+}
+
+interface CanvasNodes {
+  image?: { isInline?: boolean };
+  table?: unknown;
+  tableRow?: unknown;
+  tableHeader?: unknown;
+  tableCell?: unknown;
 }
 
 export interface ToPmResult {
@@ -141,11 +155,11 @@ function inlineToPm(nodes: Inline[], unsupported: UnsupportedForm[]): PmNode[] {
           out.push({ type: 'hardBreak' });
           break;
         case 'image':
-          unsupported.push({
-            kind: 'image',
-            reason: 'no Image node in the canvas schema; inline images are a Phase 5 import concern',
+          out.push({
+            type: 'image',
+            attrs: { src: node.url, alt: node.alt, title: node.title ?? null },
+            ...(marks.length ? { marks } : {}),
           });
-          out.push({ type: 'text', text: node.alt || node.url, ...(marks.length ? { marks } : {}) });
           break;
       }
     }
@@ -199,7 +213,7 @@ function degrade(block: Block, kind: string, reason: string, unsupported: Unsupp
   };
 }
 
-function blockToPm(block: Block, unsupported: UnsupportedForm[]): PmNode {
+function blockToPm(block: Block, unsupported: UnsupportedForm[], nodes: CanvasNodes): PmNode {
   switch (block.type) {
     case 'heading': {
       const attrs: Record<string, unknown> = { level: block.level };
@@ -240,12 +254,12 @@ function blockToPm(block: Block, unsupported: UnsupportedForm[]): PmNode {
         return {
           type: CALLOUT_NODE_NAME,
           attrs: { variant: normalizeCalloutVariant(marker.data.variant) },
-          content: blocksToPm(body, unsupported),
+          content: blocksToPm(body, unsupported, nodes),
         };
       }
       return {
         type: 'blockquote',
-        content: blocksToPm(block.content, unsupported),
+        content: blocksToPm(block.content, unsupported, nodes),
       };
     }
     case 'thematicBreak':
@@ -261,13 +275,29 @@ function blockToPm(block: Block, unsupported: UnsupportedForm[]): PmNode {
     case 'list':
       // Handled by `blocksToPm` so a multi-run list can emit several nodes.
       throw new Error('list must be expanded by blocksToPm');
-    case 'table':
-      return degrade(
-        block,
-        'table',
-        'no Table node in the canvas schema; preserved verbatim as a markdown code block',
-        unsupported,
-      );
+    case 'table': {
+      if (!nodes.table || !nodes.tableRow || !nodes.tableHeader || !nodes.tableCell) {
+        return degrade(block, 'table', 'target schema has no complete Table extension; preserved as markdown', unsupported);
+      }
+      if ((!nodes.image && [...block.header, ...block.rows.flat()].some(hasImage))
+        || [...block.header, ...block.rows.flat()].some(content => hasLinkedImage(content))) {
+        return degrade(block, 'image', 'target cannot preserve this image; table preserved as markdown', unsupported);
+      }
+      return {
+        type: 'table',
+        content: [block.header, ...block.rows].map((row, rowIndex) => ({
+          type: 'tableRow',
+          content: row.map((cell, column) => ({
+            type: rowIndex === 0 ? 'tableHeader' : 'tableCell',
+            attrs: { colspan: 1, rowspan: 1, colwidth: null },
+            content: textBlocksToPm({ type: 'paragraph', content: cell }, unsupported, nodes)
+              .map(child => child.type === 'paragraph' && block.align[column]
+                ? { ...child, attrs: { ...child.attrs, textAlign: block.align[column] } }
+                : child),
+          })),
+        })),
+      };
+    }
     case 'html':
       return degrade(
         block,
@@ -283,6 +313,7 @@ function listToPm(
   start: number,
   items: ListItem[],
   unsupported: UnsupportedForm[],
+  nodes: CanvasNodes,
 ): PmNode[] {
   return listRuns(items).map((run) => {
     if (run.task) {
@@ -291,7 +322,7 @@ function listToPm(
         content: run.items.map((item) => ({
           type: 'taskItem',
           attrs: { checked: item.checked === true },
-          content: blocksToPm(item.content, unsupported),
+          content: listItemBlocksToPm(item.content, unsupported, nodes),
         })),
       };
     }
@@ -300,30 +331,81 @@ function listToPm(
       ...(ordered ? { attrs: { start } } : {}),
       content: run.items.map((item) => ({
         type: 'listItem',
-        content: blocksToPm(item.content, unsupported),
+        content: listItemBlocksToPm(item.content, unsupported, nodes),
       })),
     };
   });
 }
 
-function blocksToPm(blocks: Block[], unsupported: UnsupportedForm[]): PmNode[] {
+function hasImage(content: Inline[]): boolean {
+  return content.some(node => node.type === 'image' || ('content' in node && hasImage(node.content)));
+}
+
+// y-tiptap's JSON bridge does not retain marks on image atoms. Preserve the
+// source for linked images rather than silently dropping the destination URL.
+function hasLinkedImage(content: Inline[], linked = false): boolean {
+  return content.some(node => node.type === 'image' ? linked
+    : 'content' in node && hasLinkedImage(node.content, linked || node.type === 'link'));
+}
+
+function textBlocksToPm(
+  block: Extract<Block, { type: 'paragraph' | 'heading' }>,
+  unsupported: UnsupportedForm[],
+  nodes: CanvasNodes,
+): PmNode[] {
+  if (hasLinkedImage(block.content)) {
+    return [degrade(block, 'image-link', 'linked image preserved as markdown because the collaboration bridge cannot retain image marks', unsupported)];
+  }
+  if (!nodes.image && hasImage(block.content)) {
+    return [degrade(block, 'image', 'target schema has no Image extension; URL and text preserved as markdown', unsupported)];
+  }
+  const converted = blockToPm(block, unsupported, nodes);
+  if (nodes.image?.isInline) return [converted];
+  // TipTap's default Image (including the example's AuthedImage) is a block.
+  // Split surrounding prose rather than placing a block inside a textblock,
+  // which ProseMirror otherwise drops when the editor normalizes the document.
+  const out: PmNode[] = [];
+  let run: PmNode[] = [];
+  const flush = () => {
+    if (!run.length) return;
+    const attrs = { ...converted.attrs };
+    if (out.length) delete attrs.anchorId;
+    out.push({ ...converted, ...(converted.attrs ? { attrs } : {}), content: run });
+    run = [];
+  };
+  for (const child of converted.content ?? []) {
+    if (child.type === 'image') { flush(); out.push(child); }
+    else run.push(child);
+  }
+  flush();
+  return out.length ? out : [converted];
+}
+
+function listItemBlocksToPm(blocks: Block[], unsupported: UnsupportedForm[], nodes: CanvasNodes): PmNode[] {
+  const content = blocksToPm(blocks, unsupported, nodes);
+  // The standard listItem schema requires a paragraph before other blocks.
+  return content[0]?.type === 'paragraph' ? content : [{ type: 'paragraph' }, ...content];
+}
+
+function blocksToPm(blocks: Block[], unsupported: UnsupportedForm[], nodes: CanvasNodes): PmNode[] {
   const out: PmNode[] = [];
   for (const block of blocks) {
     if (block.type === 'list') {
-      out.push(...listToPm(block.ordered, block.start, block.items, unsupported));
+      out.push(...listToPm(block.ordered, block.start, block.items, unsupported, nodes));
+    } else if (block.type === 'paragraph' || block.type === 'heading') {
+      out.push(...textBlocksToPm(block, unsupported, nodes));
     } else {
-      out.push(blockToPm(block, unsupported));
+      out.push(blockToPm(block, unsupported, nodes));
     }
   }
-  // ProseMirror's `doc` and every block container require at least one child in
-  // practice — an empty list item or an empty blockquote is not representable.
   return out.length ? out : [{ type: 'paragraph' }];
 }
 
-/** Materialises a chassis document as a ProseMirror `doc` node. */
-export function docModelToPm(model: DocModel): ToPmResult {
+/** Pass the live schema to enable its table/image nodes; absent peers retain source visibly. */
+export function docModelToPm(model: DocModel, schema?: CanvasConversionSchema): ToPmResult {
   const unsupported: UnsupportedForm[] = [];
-  return { doc: { type: 'doc', content: blocksToPm(model.content, unsupported) }, unsupported };
+  const nodes = (schema?.nodes ?? {}) as CanvasNodes;
+  return { doc: { type: 'doc', content: blocksToPm(model.content, unsupported, nodes) }, unsupported };
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +517,10 @@ function pmInlineToModel(nodes: PmNode[] | undefined): Inline[] {
       leaves.push({ marks: [], leaf: { type: 'break' } });
       continue;
     }
+    if (node.type === 'image') {
+      leaves.push({ marks: orderMarks(node.marks), leaf: imageToModel(node) });
+      continue;
+    }
     if (node.type !== 'text' || node.text === undefined) continue;
     leaves.push({ marks: orderMarks(node.marks), leaf: { type: 'text', value: node.text } });
   }
@@ -447,6 +533,37 @@ function pmListItems(node: PmNode): ListItem[] {
     checked: item.type === 'taskItem' ? item.attrs?.checked === true : null,
     content: pmBlocksToModel(item.content),
   }));
+}
+
+function imageToModel(node: PmNode): Extract<Inline, { type: 'image' }> {
+  const title = node.attrs?.title;
+  return {
+    type: 'image', url: String(node.attrs?.src ?? ''), alt: String(node.attrs?.alt ?? ''),
+    ...(typeof title === 'string' && title ? { title } : {}),
+  };
+}
+
+function tableToModel(node: PmNode): TableBlock {
+  const rows = node.content ?? [];
+  const cells = (row: PmNode): Inline[][] => (row.content ?? []).map(cell => {
+    const content: Inline[] = [];
+    for (const block of pmBlocksToModel(cell.content)) {
+      if (content.length) content.push({ type: 'break' });
+      if (block.type === 'paragraph' || block.type === 'heading') content.push(...block.content);
+      else content.push({ type: 'text', value: serializeDocument({ frontMatter: {}, content: [block] }).trimEnd() });
+    }
+    return content;
+  });
+  const headerRow = rows[0];
+  const hasHeader = headerRow?.content?.every(cell => cell.type === 'tableHeader');
+  const width = Math.max(0, ...rows.map(row => row.content?.length ?? 0));
+  const align = Array.from({ length: width }, (_, column): TableBlock['align'][number] => {
+    const value = headerRow?.content?.[column]?.content?.[0]?.attrs?.textAlign;
+    return value === 'left' || value === 'center' || value === 'right' ? value : null;
+  });
+  // A headerless editor table needs an empty Markdown header; retain row one as data.
+  return { type: 'table', align, header: hasHeader ? cells(headerRow) : Array.from({ length: width }, () => []),
+    rows: (hasHeader ? rows.slice(1) : rows).map(cells) };
 }
 
 function pmBlocksToModel(nodes: PmNode[] | undefined): Block[] {
@@ -465,6 +582,12 @@ function pmBlocksToModel(nodes: PmNode[] | undefined): Block[] {
         });
         break;
       }
+      case 'image':
+        out.push({ type: 'paragraph', content: [imageToModel(node)] });
+        break;
+      case 'table':
+        out.push(tableToModel(node));
+        break;
       case 'paragraph':
         out.push({ type: 'paragraph', content: pmInlineToModel(node.content) });
         break;

@@ -23,12 +23,16 @@ export interface UnsupportedForm {
     kind: string;
     reason: string;
 }
+/** Structural schema input: use the live editor schema without importing PM. */
+export interface CanvasConversionSchema {
+    nodes: unknown;
+}
 export interface ToPmResult {
     doc: PmNode;
     unsupported: UnsupportedForm[];
 }
-/** Materialises a chassis document as a ProseMirror `doc` node. */
-export declare function docModelToPm(model: DocModel): ToPmResult;
+/** Pass the live schema to enable its table/image nodes; absent peers retain source visibly. */
+export declare function docModelToPm(model: DocModel, schema?: CanvasConversionSchema): ToPmResult;
 /** Reads a ProseMirror `doc` node back into the chassis document model. */
 export declare function pmToDocModel(doc: PmNode, frontMatter?: DocModel['frontMatter']): DocModel;
 //# sourceMappingURL=pmModel.d.ts.map

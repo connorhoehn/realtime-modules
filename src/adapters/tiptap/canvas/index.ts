@@ -20,6 +20,7 @@ export {
   minimalEdit,
 } from './macroText';
 export type { TextRangeEdit } from './macroText';
+export type { CanvasConversionSchema } from './pmModel';
 export { docModelToPm, pmToDocModel } from './pmModel';
 export type { PmNode, PmMark, ToPmResult, UnsupportedForm } from './pmModel';
 

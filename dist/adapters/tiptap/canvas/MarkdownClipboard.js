@@ -43,11 +43,11 @@ exports.MARKDOWN_CLIPBOARD_KEY = new state_1.PluginKey('markdownClipboard');
  * to act on.
  */
 function looksLikeMarkdown(text) {
-    return /^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~|\|.*\|)/m.test(text);
+    return /^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~|!\[|\|.*\|)/m.test(text);
 }
 /** ProseMirror JSON for a document fragment, as the adapter produces it. */
-function fragmentFromMarkdown(markdown) {
-    const { doc } = (0, pmModel_1.docModelToPm)((0, document_1.parseDocument)(markdown));
+function fragmentFromMarkdown(markdown, schema) {
+    const { doc } = (0, pmModel_1.docModelToPm)((0, document_1.parseDocument)(markdown), schema);
     return doc.content ?? [];
 }
 exports.MarkdownClipboard = core_1.Extension.create({
@@ -73,7 +73,7 @@ exports.MarkdownClipboard = core_1.Extension.create({
                             return false;
                         let content;
                         try {
-                            content = fragmentFromMarkdown(text);
+                            content = fragmentFromMarkdown(text, editor.schema);
                         }
                         catch {
                             // A parse failure must fall back to the normal plain-text paste

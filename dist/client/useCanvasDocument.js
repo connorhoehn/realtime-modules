@@ -83,7 +83,7 @@ function writeModel(ydoc, schema, model) {
             unsupported: [],
         };
     }
-    const { doc, unsupported } = (0, pmModel_1.docModelToPm)(model);
+    const { doc, unsupported } = (0, pmModel_1.docModelToPm)(model, schema);
     ydoc.transact(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tiptapBridge().prosemirrorJSONToYXmlFragment(schema, doc, fragment);

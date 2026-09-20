@@ -27,6 +27,7 @@ function copy(content: unknown[]): string {
 describe('looksLikeMarkdown — what is safe to transform', () => {
   it.each([
     ['# Heading', 'atx heading'],
+    ['![diagram](attachment:diagram.png)', 'image'],
     ['- one\n- two', 'bullet list'],
     ['1. first', 'ordered list'],
     ['> quoted', 'blockquote'],

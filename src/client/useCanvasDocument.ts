@@ -162,7 +162,7 @@ function writeModel(
     };
   }
 
-  const { doc, unsupported } = docModelToPm(model);
+  const { doc, unsupported } = docModelToPm(model, schema);
 
   ydoc.transact(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
