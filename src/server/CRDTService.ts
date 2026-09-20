@@ -467,7 +467,9 @@ class CRDTService {
                         (cid: string, msg: any) => this.sendToClient(cid, msg),
                         (cid: string, msg: string) => this.sendError(cid, msg));
                 case 'saveVersion': {
-                    const saved = await this.snapshotManager.handleSaveVersion(data.channel, data.name, clientId);
+                    const context = (this.messageRouter.getClientData?.(clientId) as any)?.userContext;
+                    const author = typeof context?.userId === 'string' ? context.userId : undefined;
+                    const saved = await this.snapshotManager.handleSaveVersion(data.channel, data.name, author);
                     if (saved) {
                         this.sendToClient(clientId, { type: 'crdt', action: 'versionSaved', channel: data.channel, name: saved.name, timestamp: saved.timestamp });
                     } else {

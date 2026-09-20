@@ -436,7 +436,9 @@ class CRDTService {
                         return;
                     return await this.snapshotManager.handleClearDocument(clientId, data, this.channelStates, (cid, msg) => this.sendToClient(cid, msg), (cid, msg) => this.sendError(cid, msg));
                 case 'saveVersion': {
-                    const saved = await this.snapshotManager.handleSaveVersion(data.channel, data.name, clientId);
+                    const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+                    const author = typeof context?.userId === 'string' ? context.userId : undefined;
+                    const saved = await this.snapshotManager.handleSaveVersion(data.channel, data.name, author);
                     if (saved) {
                         this.sendToClient(clientId, { type: 'crdt', action: 'versionSaved', channel: data.channel, name: saved.name, timestamp: saved.timestamp });
                     }

@@ -23,6 +23,14 @@ function update() {
 }
 
 describe('CRDT channel policy at mutation time', () => {
+    it('attributes saved versions to the verified actor rather than the connection', async () => {
+        const { service } = setup(() => true);
+        const save = jest.spyOn(service.snapshotManager, 'handleSaveVersion').mockResolvedValue({ name: 'publish', author: 'actor', timestamp: 1 });
+        try {
+            await service.handleAction('connection', 'saveVersion', { channel, name: 'publish' });
+            expect(save).toHaveBeenCalledWith(channel, 'publish', 'actor');
+        } finally { await service.shutdown(); }
+    });
     it('denied subscription cannot be bypassed with a direct update frame', async () => {
         const policy = jest.fn(() => false);
         const { service } = setup(policy);
