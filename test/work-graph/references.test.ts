@@ -1,5 +1,5 @@
 import { nodeReferenceFixture, workGraphFixtureIds } from '../../src/work-graph/fixtures';
-import { decodeWorkReference, encodeWorkReference } from '../../src/work-graph/references';
+import { decodeAnyWorkReference, decodeWorkReference, encodeWorkReference, encodeWorkReferenceV2 } from '../../src/work-graph/references';
 
 describe('work references', () => {
   test('round-trips a node reference', () => {
@@ -29,5 +29,21 @@ describe('work references', () => {
     expect(token).not.toContain('Private');
     expect(token).not.toContain('http');
     expect(token).not.toContain('secret');
+  });
+});
+
+
+describe('upgraded work reference reader', () => {
+  test('round-trips an exact artifact revision and anchor while preserving v1 compatibility', () => {
+    const reference = { ...nodeReferenceFixture, version: 2 as const, target: { kind: 'node' as const, id: 'deck', revisionId: 'revision-2', anchor: { kind: 'slide' as const, id: 'slide-4' } } };
+    const encoded = encodeWorkReferenceV2(reference);
+    expect(decodeAnyWorkReference(encoded)).toEqual(reference);
+    expect(decodeAnyWorkReference(encodeWorkReference(nodeReferenceFixture))).toEqual(nodeReferenceFixture);
+    expect(() => decodeWorkReference(encoded)).toThrow(RangeError);
+    expect(() => decodeAnyWorkReference(encoded.replace('wg2.', 'wg1.'))).toThrow(RangeError);
+    expect(() => encodeWorkReferenceV2({ ...reference, label: 'Private' } as typeof reference)).toThrow(RangeError);
+  });
+  test.each(['wg2.***', 'wg2.e30', 'wg3.aaaa', `wg2.${'a'.repeat(3000)}`])('rejects malformed v2 token %s', (value) => {
+    expect(() => decodeAnyWorkReference(value)).toThrow(RangeError);
   });
 });
