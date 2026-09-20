@@ -7,6 +7,8 @@ export interface DocumentGrantClaims {
   iss: string; aud: string; sub: string; tenantId: string; documentId: string;
   operations: DocumentOperation[]; sessionId: string; sessionEpoch: number;
   iat: number; exp: number; jti: string;
+  /** Trusted source steward; valid only in a seed-only grant, never supplied in a WS payload. */
+  seedOwnerSub?: string;
 }
 export interface DocumentGrantVerifierOptions {
   issuer: string;
@@ -22,6 +24,7 @@ function valid(c: any, now: number): c is DocumentGrantClaims {
   return !!c && ['iss', 'aud', 'sub', 'tenantId', 'sessionId', 'jti'].every(k => typeof c[k] === 'string' && c[k].length > 0 && c[k].length <= 512)
     && typeof c.documentId === 'string' && UUID.test(c.documentId)
     && Array.isArray(c.operations) && c.operations.length > 0 && c.operations.every((op: any) => OPERATIONS.includes(op))
+    && (c.seedOwnerSub === undefined || (typeof c.seedOwnerSub === 'string' && c.seedOwnerSub.length > 0 && c.seedOwnerSub.length <= 512 && c.operations.length === 1 && c.operations[0] === 'seed'))
     && Number.isSafeInteger(c.sessionEpoch) && c.sessionEpoch >= 0
     && Number.isSafeInteger(c.iat) && Number.isSafeInteger(c.exp)
     && c.iat <= now && c.exp > now && c.exp > c.iat && c.exp - c.iat <= 300;
@@ -63,6 +66,7 @@ export function createDocumentGrantVerifierFromEnv(
   options?: Pick<DocumentGrantVerifierOptions, 'getSessionEpoch' | 'now'>,
 ): ((token: string) => Promise<DocumentGrantClaims>) | null {
   const issuer = env.DOCUMENT_GRANT_ISSUER, pem = env.DOCUMENT_GRANT_PUBLIC_KEY, keyId = env.DOCUMENT_GRANT_KEY_ID;
+  if (pem?.includes('PRIVATE KEY')) throw new Error('Document verifier must receive only a public key');
   if (!issuer && !pem && !keyId) return null;
   if (!issuer || !pem || !keyId) throw new Error('Incomplete document grant verifier configuration');
   const policy = options ?? { getSessionEpoch: createDocumentSessionEpochResolver({ url: env.DOCUMENT_SESSION_EPOCH_URL ?? '', secret: env.DOCUMENT_POLICY_SECRET ?? '' }) };

@@ -14,6 +14,8 @@ export interface DocumentGrantClaims {
     iat: number;
     exp: number;
     jti: string;
+    /** Trusted source steward; valid only in a seed-only grant, never supplied in a WS payload. */
+    seedOwnerSub?: string;
 }
 export interface DocumentGrantVerifierOptions {
     issuer: string;

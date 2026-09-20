@@ -13,6 +13,7 @@ function valid(c, now) {
     return !!c && ['iss', 'aud', 'sub', 'tenantId', 'sessionId', 'jti'].every(k => typeof c[k] === 'string' && c[k].length > 0 && c[k].length <= 512)
         && typeof c.documentId === 'string' && UUID.test(c.documentId)
         && Array.isArray(c.operations) && c.operations.length > 0 && c.operations.every((op) => OPERATIONS.includes(op))
+        && (c.seedOwnerSub === undefined || (typeof c.seedOwnerSub === 'string' && c.seedOwnerSub.length > 0 && c.seedOwnerSub.length <= 512 && c.operations.length === 1 && c.operations[0] === 'seed'))
         && Number.isSafeInteger(c.sessionEpoch) && c.sessionEpoch >= 0
         && Number.isSafeInteger(c.iat) && Number.isSafeInteger(c.exp)
         && c.iat <= now && c.exp > now && c.exp > c.iat && c.exp - c.iat <= 300;
@@ -57,6 +58,8 @@ function documentGrantAllows(claims, scope) {
 }
 function createDocumentGrantVerifierFromEnv(env, options) {
     const issuer = env.DOCUMENT_GRANT_ISSUER, pem = env.DOCUMENT_GRANT_PUBLIC_KEY, keyId = env.DOCUMENT_GRANT_KEY_ID;
+    if (pem?.includes('PRIVATE KEY'))
+        throw new Error('Document verifier must receive only a public key');
     if (!issuer && !pem && !keyId)
         return null;
     if (!issuer || !pem || !keyId)

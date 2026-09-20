@@ -31,3 +31,8 @@ it('epoch transport carries service authentication only to configured endpoint',
   request.mockResolvedValueOnce({ ok: true, json: async () => ({ epoch: '3' }) });
   await expect(resolve(claims)).rejects.toThrow();
 });
+it('only a seed-only signed grant can assign an explicit source steward', async () => {
+  expect(() => createDocumentGrant({ ...claims, seedOwnerSub: 'steward' }, { privateKey: keys.privateKey, keyId: 'one', now })).toThrow();
+  const seeded = createDocumentGrant({ ...claims, operations: ['seed'], seedOwnerSub: 'steward' }, { privateKey: keys.privateKey, keyId: 'one', now });
+  expect((await verifyDocumentGrant(seeded, options)).seedOwnerSub).toBe('steward');
+});

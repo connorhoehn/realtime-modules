@@ -61,7 +61,8 @@ it('seed obtains existing ownership admission and leaves metadata unchanged on r
     const input = { ...seed(), title: 'Source title', type: 'assessment' };
     await service.seedDocument('alice', input);
     const stored = await service.metadataService.metadataStore.getDocument(channel.slice(4));
-    expect(stored).toMatchObject({ title: 'Source title', ownerId: 'alice', docType: 'assessment' });
+    expect(stored).toMatchObject({ title: 'Source title', docType: 'assessment' });
+    expect(stored?.ownerId).toBeUndefined();
     await service.metadataService.metadataStore.putDocument({ ...stored!, title: 'Changed by owner' });
     await service.seedDocument('alice', input);
     expect((await service.metadataService.metadataStore.getDocument(channel.slice(4)))?.title).toBe('Changed by owner');

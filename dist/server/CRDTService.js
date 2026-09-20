@@ -335,9 +335,11 @@ class CRDTService {
                 if (channel.startsWith('doc:')) {
                     const documentId = channel.slice(4);
                     const store = this.metadataService.metadataStore;
-                    const ownerId = (this.messageRouter.getClientData?.(clientId)?.userContext?.userId);
-                    if (!ownerId)
+                    const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+                    if (!context?.userId)
                         throw new Error('Document seed requires a verified actor');
+                    // Source import is not ownership assignment to the first viewer. Only the host's verified seed identity may carry a steward.
+                    const ownerId = typeof context.seedOwnerSub === 'string' ? context.seedOwnerSub : undefined;
                     const now = Date.now();
                     const record = { documentId, title: typeof input.title === 'string' ? input.title.slice(0, 512) : 'Untitled', docType: typeof input.type === 'string' ? input.type.slice(0, 128) : 'custom', ownerId, status: 'draft', createdAt: now, updatedAt: now };
                     if (store.createDocumentIfAbsent)
