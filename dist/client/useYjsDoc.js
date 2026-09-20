@@ -58,6 +58,7 @@ function useYjsDoc(options) {
     const channel = `doc:${documentId}`;
     // ---- Setup / teardown --------------------------------------------------
     (0, react_1.useEffect)(() => {
+        const recoverOnCleanup = recoveryCallbackRef.current;
         setRecoverySnapshot(null);
         const ydoc = new Y.Doc({ gc: false });
         ydocRef.current = ydoc;
@@ -92,7 +93,7 @@ function useYjsDoc(options) {
             if (curProvider) {
                 if (curDoc && curProvider.pendingUpdateCount > 0) {
                     try {
-                        recoveryCallbackRef.current?.(Y.encodeStateAsUpdate(curDoc));
+                        recoverOnCleanup?.(Y.encodeStateAsUpdate(curDoc));
                     }
                     catch { /* Host recovery must not prevent cleanup. */ }
                 }

@@ -57,6 +57,16 @@ afterEach(() => {
 });
 
 describe('useYjsDoc', () => {
+  it('routes old pending bytes to the old document recovery callback when switching IDs', () => {
+    const opts = makeOptions();
+    const first = jest.fn<(bytes: Uint8Array) => void>();
+    const second = jest.fn<(bytes: Uint8Array) => void>();
+    const { result, rerender } = renderHook(({ id, recover }) => useYjsDoc({ ...opts, documentId: id, onUnpersistedChanges: recover }), { initialProps: { id: 'first', recover: first } });
+    act(() => { result.current.ydoc!.getText('content').insert(0, 'first pending'); });
+    rerender({ id: 'second', recover: second });
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+  });
   it('offers pending bytes to host recovery before unmount destroys the document', () => {
     const opts = makeOptions();
     const recover = jest.fn<(bytes: Uint8Array) => void>();

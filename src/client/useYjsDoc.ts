@@ -71,6 +71,7 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
 
   // ---- Setup / teardown --------------------------------------------------
   useEffect(() => {
+    const recoverOnCleanup = recoveryCallbackRef.current;
     setRecoverySnapshot(null);
     const ydoc = new Y.Doc({ gc: false });
     ydocRef.current = ydoc;
@@ -110,7 +111,7 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
       const curDoc = ydocRef.current;
       if (curProvider) {
         if (curDoc && curProvider.pendingUpdateCount > 0) {
-          try { recoveryCallbackRef.current?.(Y.encodeStateAsUpdate(curDoc)); } catch { /* Host recovery must not prevent cleanup. */ }
+          try { recoverOnCleanup?.(Y.encodeStateAsUpdate(curDoc)); } catch { /* Host recovery must not prevent cleanup. */ }
         }
         curProvider.off('synced', onSynced);
         curProvider.off('persistence', onPersistence);
