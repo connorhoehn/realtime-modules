@@ -208,6 +208,8 @@ export interface PinnedMessage {
 }
 
 export interface GatewayContextValue extends UseWebSocketHookReturn {
+  /** Trusted HTTP origin/base for gateway-owned upload routes. */
+  httpBase?: string | null;
   onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
   /** See GatewaySocketProviderProps.rest. Null when explicitly disabled. */
   rest?: GatewayRest | null;
@@ -477,9 +479,12 @@ export function GatewaySocketProvider({
   );
 
   const contextValue = useMemo<GatewayContextValue>(
-    () => ({ ...ws, onMessage: busOnMessage, rest: resolvedRest, ...(token ? { authToken: token } : {}) }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ws, busOnMessage, resolvedRest, token],
+    () => ({
+      ...ws, onMessage: busOnMessage, rest: resolvedRest,
+      httpBase: httpBase !== undefined ? httpBase : httpBaseFromSocketUrl(url),
+      ...(token ? { authToken: token } : {}),
+    }),
+    [ws, busOnMessage, resolvedRest, token, httpBase, url],
   );
 
   return (

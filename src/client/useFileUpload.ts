@@ -283,6 +283,8 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
   });
   // Read through a ref: a token refresh must not change `upload`'s identity,
   // because callers memoise on it and some hold it for the life of a composer.
+  const httpBaseRef = useRef(gateway?.httpBase);
+  httpBaseRef.current = gateway?.httpBase;
   const authTokenRef = useRef(authToken);
   authTokenRef.current = authToken;
   const [uploads, setUploads] = useState<FileUploadState[]>([]);
@@ -569,14 +571,20 @@ export function useFileUpload(channel: string, options: UseFileUploadOptions = {
       abortControllersRef.current.set(id, ctrl);
 
       try {
+        const base = typeof httpBaseRef.current === 'string' ? new URL(httpBaseRef.current || '/', window.location.href) : null;
+        const target = base ? new URL(uploadUrl, base) : new URL(uploadUrl);
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('Invalid upload URL');
+        const gatewayOwned = base !== null && target.origin === base.origin && target.pathname.startsWith('/api/uploads/');
+        // Relative URLs belong to the gateway's HTTP origin, not the embedding
+        // portal. External presigned storage receives no document bearer.
         await xhrPut(
-          uploadUrl,
+          target.toString(),
           file,
           (pct) => {
             patch(id, { progress: pct, status: 'uploading' });
           },
           ctrl.signal,
-          authTokenRef.current,
+          gatewayOwned ? authTokenRef.current : undefined,
         );
       } catch (err) {
         abortControllersRef.current.delete(id);

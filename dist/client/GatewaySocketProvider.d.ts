@@ -151,6 +151,8 @@ export interface PinnedMessage {
     sentAt?: string;
 }
 export interface GatewayContextValue extends UseWebSocketHookReturn {
+    /** Trusted HTTP origin/base for gateway-owned upload routes. */
+    httpBase?: string | null;
     onMessage: (handler: (msg: GatewayMessage) => void) => () => void;
     /** See GatewaySocketProviderProps.rest. Null when explicitly disabled. */
     rest?: GatewayRest | null;

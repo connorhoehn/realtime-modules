@@ -466,16 +466,26 @@ describe('useFileUpload', () => {
     // upload — so an unauthenticated PUT is not anonymous, it is rejected.
     const { ctx, sent, emit } = makeGatewayContext();
     const { result } = renderHook(() => useFileUpload('ch-1'), {
-      wrapper: makeWrapper({ ...ctx, authToken: 'viewer-token' }),
+      wrapper: makeWrapper({ ...ctx, authToken: 'viewer-token', httpBase: 'http://gateway.example:18081' }),
     });
 
     const id = await startUpload(result, sent, makeFile());
     act(() => {
-      emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload' });
+      emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: '/api/uploads/assessment%7Casset' });
     });
     await waitFor(() => expect(FakeXHR.instances.length).toBeGreaterThan(0));
 
+    expect(FakeXHR.instances[0]!.url).toBe('http://gateway.example:18081/api/uploads/assessment%7Casset');
     expect(FakeXHR.instances[0]!.headers['Authorization']).toBe('Bearer viewer-token');
+  });
+
+  it('never forwards a document bearer to external presigned storage', async () => {
+    const { ctx, sent, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useFileUpload('ch-1'), { wrapper: makeWrapper({ ...ctx, authToken: 'private-document-grant', httpBase: 'https://gateway.example' }) });
+    const id = await startUpload(result, sent, makeFile());
+    act(() => { emit({ type: 'fileupload:url', channel: 'ch-1', id, uploadUrl: 'https://s3.example.com/upload?signature=abc' }); });
+    await waitFor(() => expect(FakeXHR.instances.length).toBeGreaterThan(0));
+    expect(FakeXHR.instances[0]!.headers['Authorization']).toBeUndefined();
   });
 
   it('omits Authorization entirely when there is no token', async () => {
