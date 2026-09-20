@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.69.2 — 2026-09-20
+
+- Failed or corrupt durable snapshot reads now reject instead of producing an
+  empty editable document. `retrieveLatestSnapshot`, `hydrateYDoc` and
+  `handleListSnapshots` callers must handle rejection; only a missing snapshot
+  represents a new document or empty history.
+- Concurrent subscribers and direct updates share one pending hydration per
+  channel. Updates load existing durable content before accepting new edits.
+  Failed loads discard incomplete state, roll back the router subscription and
+  allow retry after storage recovers. Remote updates remain buffered while loading.
+- Corrupt hot-cache data falls back to durable storage. Yjs bytes are validated
+  on a temporary document before applying them to live state. Incomplete loads
+  cannot be checkpointed over the durable document.
+- Validation: five new regressions reproduced the previous behavior; all 1,341
+  tests passed and exited cleanly. After preserving the remote subscription
+  ordering, all 13 focused hydration/policy/commit tests pass; build and all 29
+  published export checks pass. Multi-writer fencing and full document policy
+  remain separate work.
+
 ## 0.69.1 — 2026-09-20
 
 - CRDT updates and awareness now consult the supplied channel policy on every

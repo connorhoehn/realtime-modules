@@ -93,6 +93,7 @@ declare class CRDTService {
     presenceService: DocumentPresenceService;
     evictionManager: IdleEvictionManager;
     _evictionCallback: (channel: string) => Promise<void>;
+    private hydration;
     private readonly _snapshotSweep;
     private _authz;
     private _onDocumentCreated;
@@ -106,6 +107,7 @@ declare class CRDTService {
      */
     _announceDocument(doc: any): void;
     handleAction(clientId: string, action: string, data: any): Promise<void>;
+    private ensureHydratedState;
     handleSubscribe(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;

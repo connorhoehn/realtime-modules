@@ -48,6 +48,8 @@ export interface SnapshotStore {
     }): Promise<void>;
     /**
      * Most-recent snapshot for `channelId`, or `null` if none exist.
+     * Reject storage errors: callers distinguish an unavailable store from a
+     * document that has never been saved.
      * Returned `bytes` are still gzipped — the caller (Cut 1 SnapshotManager)
      * decompresses.
      */

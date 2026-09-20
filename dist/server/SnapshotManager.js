@@ -126,6 +126,8 @@ class SnapshotManager {
         const state = this.getChannelState(channelId);
         if (!state?.ydoc)
             return;
+        if (state.hydrated === false)
+            throw new Error('Document hydration is incomplete');
         const ydoc = state.ydoc;
         const operations = state.operationsSinceSnapshot;
         try {
@@ -169,7 +171,7 @@ class SnapshotManager {
         }
         catch (error) {
             this.logger.error(`Failed to retrieve snapshot for ${channelId}:`, error.message);
-            return { data: null, timestamp: null };
+            throw error;
         }
     }
     /**
@@ -193,7 +195,7 @@ class SnapshotManager {
         }
         catch (error) {
             this.logger.error(`Failed to list snapshots for ${channel}:`, error.message);
-            return [];
+            throw error;
         }
     }
     /**
@@ -336,39 +338,35 @@ class SnapshotManager {
     // Y.Doc hydration (HotCache → SnapshotStore fallback)
     // ------------------------------------------------------------------
     async hydrateYDoc(channel, state) {
-        let base64 = null;
-        let source = 'none';
-        // Try hot-cache first
+        // Validate on a temporary document: malformed updates can throw after
+        // partial application, so they must never contaminate the live state.
+        const apply = (base64) => {
+            const candidate = new Y.Doc();
+            try {
+                Y.applyUpdate(candidate, new Uint8Array(Buffer.from(base64, 'base64')));
+                Y.applyUpdate(state.ydoc, Y.encodeStateAsUpdate(candidate));
+            }
+            finally {
+                candidate.destroy();
+            }
+        };
         try {
-            base64 = await this.getSnapshotFromRedis(channel);
-            if (base64)
-                source = 'cache';
+            const cached = await this.getSnapshotFromRedis(channel);
+            if (cached) {
+                apply(cached);
+                this.logger.info(`Y.Doc hydrated from cache for channel ${channel}`);
+                return;
+            }
         }
         catch (err) {
             this.logger.error(`Hot-cache hydration failed for ${channel}, falling back to durable store:`, err.message);
         }
-        // Fall back to durable store
-        if (!base64) {
-            try {
-                const dbResult = await this.retrieveLatestSnapshot(channel);
-                if (dbResult.data) {
-                    base64 = dbResult.data;
-                    source = 'store';
-                }
-            }
-            catch (err) {
-                this.logger.error(`Store hydration failed for ${channel}:`, err.message);
-            }
-        }
-        if (base64) {
-            try {
-                const update = new Uint8Array(Buffer.from(base64, 'base64'));
-                Y.applyUpdate(state.ydoc, update);
-                this.logger.info(`Y.Doc hydrated from ${source} for channel ${channel}`);
-            }
-            catch (err) {
-                this.logger.error(`Failed to apply hydration update for ${channel}:`, err.message);
-            }
+        // Only an explicit absence means new/empty. An unavailable or corrupt
+        // durable snapshot must fail the load, allowing a later retry.
+        const stored = await this.retrieveLatestSnapshot(channel);
+        if (stored.data) {
+            apply(stored.data);
+            this.logger.info(`Y.Doc hydrated from store for channel ${channel}`);
         }
         else {
             this.logger.info(`No existing snapshot for channel ${channel} — starting fresh`);

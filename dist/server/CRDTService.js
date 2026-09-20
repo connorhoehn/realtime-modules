@@ -87,6 +87,7 @@ class CRDTService {
     presenceService;
     evictionManager;
     _evictionCallback;
+    hydration = new Map();
     _snapshotSweep;
     _authz;
     _onDocumentCreated;
@@ -464,6 +465,40 @@ class CRDTService {
     // ===================================================================
     // handleSubscribe — channel state init, Y.Doc hydration, subscriber mgmt
     // ===================================================================
+    async ensureHydratedState(channel) {
+        const existing = this.channelStates.get(channel);
+        if (existing?.hydrated)
+            return existing;
+        const pending = this.hydration.get(channel);
+        if (pending)
+            return pending;
+        const state = existing ?? {
+            ydoc: new Y.Doc(), operationsSinceSnapshot: 0, subscriberCount: 0, hydrated: false,
+        };
+        this.channelStates.set(channel, state);
+        const load = (async () => {
+            try {
+                await this.snapshotManager.hydrateYDoc(channel, state);
+                state.hydrated = true;
+                this._drainPendingRemoteUpdates(channel, state);
+                return state;
+            }
+            catch (error) {
+                if (this.channelStates.get(channel) === state)
+                    this.channelStates.delete(channel);
+                state.ydoc.destroy();
+                throw error;
+            }
+        })();
+        this.hydration.set(channel, load);
+        try {
+            return await load;
+        }
+        finally {
+            if (this.hydration.get(channel) === load)
+                this.hydration.delete(channel);
+        }
+    }
     async handleSubscribe(clientId, { channel }) {
         if (!this._validateChannel(channel)) {
             this.sendError(clientId, 'Channel name must be a string between 1 and 50 characters');
@@ -474,21 +509,23 @@ class CRDTService {
             if (!this._authz(clientId, channel, this)) {
                 return;
             }
+            // Join before loading so remote edits arriving during hydration
+            // still enter the pending-update buffer.
             if (this.messageRouter.subscribeToChannel) {
                 await this.messageRouter.subscribeToChannel(clientId, channel);
             }
             this.evictionManager.cancelEviction(channel);
-            let state = this.channelStates.get(channel);
-            if (!state) {
-                state = { ydoc: new Y.Doc(), operationsSinceSnapshot: 0, subscriberCount: 0, hydrated: false };
-                this.channelStates.set(channel, state);
-                try {
-                    await this.snapshotManager.hydrateYDoc(channel, state);
+            let state;
+            try {
+                state = await this.ensureHydratedState(channel);
+                if (!this._authz(clientId, channel, this)) {
+                    await this.messageRouter.unsubscribeFromChannel?.(clientId, channel);
+                    return;
                 }
-                finally {
-                    state.hydrated = true;
-                    this._drainPendingRemoteUpdates(channel, state);
-                }
+            }
+            catch (error) {
+                await this.messageRouter.unsubscribeFromChannel?.(clientId, channel);
+                throw error;
             }
             state.subscriberCount++;
             this.sendToClient(clientId, {
@@ -537,12 +574,9 @@ class CRDTService {
             // clients can send updates directly, and policy may change later.
             if (!this._authz(clientId, channel, this))
                 return;
-            let state = this.channelStates.get(channel);
-            if (!state) {
-                state = { ydoc: new Y.Doc(), operationsSinceSnapshot: 0, subscriberCount: 0, hydrated: true };
-                this.channelStates.set(channel, state);
-                this._drainPendingRemoteUpdates(channel, state);
-            }
+            const state = await this.ensureHydratedState(channel);
+            if (!this._authz(clientId, channel, this))
+                return;
             const updateBytes = new Uint8Array(Buffer.from(update, 'base64'));
             Y.applyUpdate(state.ydoc, updateBytes);
             state.operationsSinceSnapshot++;

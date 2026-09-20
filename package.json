@@ -1,10 +1,10 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.69.1",
+  "version": "0.69.2",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
-  "description": "Realtime feature toolkit — UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
+  "description": "Realtime feature toolkit \u2014 UI + backend + manifest triples for chat, presence, CRDT, cursors, agent-streaming, and more.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -175,7 +175,7 @@
     "@connorhoehn/service-runtime": {
       "optional": true,
       "_note": "Required only when using GatewayProxyClient with serviceAuthSecret. The client includes an inlined compatible implementation; install this package when you need server-side verify/require-service-auth utilities.",
-      "_range": "Deliberately wide. This peer is not published to the registry — every consumer installs it from a git SHA, currently 0.3.4 — so a narrow range that the installed package does not satisfy sends npm to the registry to look for one, where it 404s and takes the WHOLE install down. That is what `^0.2.0` did to realtime-examples: no npm install could complete there at all, which in turn made it impossible to repin any sibling."
+      "_range": "Deliberately wide. This peer is not published to the registry \u2014 every consumer installs it from a git SHA, currently 0.3.4 \u2014 so a narrow range that the installed package does not satisfy sends npm to the registry to look for one, where it 404s and takes the WHOLE install down. That is what `^0.2.0` did to realtime-examples: no npm install could complete there at all, which in turn made it impossible to repin any sibling."
     },
     "@tiptap/extension-collaboration": {
       "optional": true,
@@ -218,7 +218,7 @@
       "_subpaths": [
         "./adapters/tiptap"
       ],
-      "_note": "Loaded lazily by ./client/useCanvasDocument (require-on-use), so importing ./client does NOT need it installed — only calling canvasToDocModel / materialize does. ./adapters/tiptap needs it outright."
+      "_note": "Loaded lazily by ./client/useCanvasDocument (require-on-use), so importing ./client does NOT need it installed \u2014 only calling canvasToDocModel / materialize does. ./adapters/tiptap needs it outright."
     },
     "express": {
       "optional": true,
@@ -235,7 +235,7 @@
         "./agent-streaming/client",
         "./client/pipelines"
       ],
-      "_note": "./client/ws re-exports GatewaySocketProvider, which is a React component — the subpath is Yjs-free, not React-free."
+      "_note": "./client/ws re-exports GatewaySocketProvider, which is a React component \u2014 the subpath is Yjs-free, not React-free."
     },
     "ws": {
       "optional": true,
