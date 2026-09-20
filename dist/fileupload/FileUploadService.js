@@ -225,7 +225,7 @@ class FileUploadService {
         // run the same `enforceChannelPermission` interceptor every other
         // service uses; on denial it has already emitted the error frame, so
         // we early-return with NO ack / NO broadcast.
-        if (!this.authz(this, clientId, channel)) {
+        if (!await this.authz(this, clientId, channel)) {
             return;
         }
         // --------------------------------------------------------------------

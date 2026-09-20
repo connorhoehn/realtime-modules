@@ -58,4 +58,5 @@ export type { DictationState, MicPermission, UseDictationOptions, UseDictationRe
 export { useCursor } from './useCursor';
 export type { UseCursorOpts, UseCursorReturn } from './useCursor';
 export type { CursorEntry } from './types';
+export type { DocumentPersistenceState } from "./GatewayProvider";
 //# sourceMappingURL=index.d.ts.map

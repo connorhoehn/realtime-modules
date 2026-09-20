@@ -2,17 +2,33 @@ import { Observable } from 'lib0/observable';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 export type SendMessage = (msg: Record<string, unknown>) => void;
+export type DocumentPersistenceState = 'idle' | 'pending' | 'saved' | 'error';
 export declare class GatewayProvider extends Observable<string> {
     readonly doc: Y.Doc;
     readonly channel: string;
     readonly awareness: Awareness;
     private readonly _sendMessage;
     private _synced;
+    private _persistenceState;
+    private _pendingUpdates;
+    private _sequence;
+    private _batch;
+    private _flushTimer;
     private _awarenessTimer;
     /** Departure has been announced; nothing else leaves on the wire. */
     private _departed;
     private readonly _updateHandler;
     constructor(doc: Y.Doc, channel: string, sendMessage: SendMessage);
+    get persistenceState(): DocumentPersistenceState;
+    get pendingUpdateCount(): number;
+    private setPersistenceState;
+    /** Flush an editing burst; IDs are echoed only after the snapshot store commits. */
+    flushUpdates(): void;
+    private sendPending;
+    /** Idempotent Yjs updates can be resent after reconnect or an explicit retry. */
+    retryPersistence(): void;
+    applyPersisted(updateId: string): void;
+    applyPersistenceError(updateId: string): void;
     /** Whether we have received at least one snapshot from the server. */
     get synced(): boolean;
     /**

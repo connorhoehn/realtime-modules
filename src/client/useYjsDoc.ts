@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import * as Y from 'yjs';
-import { GatewayProvider } from './GatewayProvider';
+import { GatewayProvider, type DocumentPersistenceState } from './GatewayProvider';
 import type { UseWebSocketReturn, GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
 import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
@@ -35,6 +35,9 @@ export interface UseYjsDocReturn {
   ydoc: Y.Doc | null;
   provider: GatewayProvider | null;
   synced: boolean;
+  persistenceState: DocumentPersistenceState;
+  pendingUpdateCount: number;
+  retryPersistence: () => void;
   /**
    * Bumped every time the underlying Y.Doc / provider is recreated
    * (initial mount counts as 0). Sibling hooks can depend on this
@@ -47,6 +50,9 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
   const { documentId, ws, onMessage, onDocReplaced } = options;
 
   const [synced, setSynced] = useState(false);
+  const [persistenceState, setPersistenceState] = useState<DocumentPersistenceState>('idle');
+  const [pendingUpdateCount, setPendingUpdateCount] = useState(0);
+  const onPersistence = (state: DocumentPersistenceState, count: number) => { setPersistenceState(state); setPendingUpdateCount(count); };
   const [docVersion, setDocVersion] = useState(0);
 
   const ydocRef = useRef<Y.Doc | null>(null);
@@ -82,6 +88,7 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
 
     const onSynced = () => setSynced(true);
     provider.on('synced', onSynced);
+    provider.on('persistence', onPersistence);
 
     return () => {
       clearTimeout(retryTimer);
@@ -96,6 +103,7 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
       const curDoc = ydocRef.current;
       if (curProvider) {
         curProvider.off('synced', onSynced);
+        curProvider.off('persistence', onPersistence);
         curProvider.destroy();
       }
 
@@ -111,6 +119,8 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
       ydocRef.current = null;
       providerRef.current = null;
       setSynced(false);
+      setPersistenceState('idle');
+      setPendingUpdateCount(0);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
@@ -134,6 +144,9 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
     const unregister = onMessage((msg: GatewayMessage) => {
       const provider = providerRef.current;
       if (!provider) return;
+
+      if (msg.channel === channel && msg.type === 'crdt:persisted' && typeof msg.updateId === 'string') { provider.applyPersisted(msg.updateId); return; }
+      if (msg.channel === channel && msg.type === 'crdt:persistence-error' && typeof msg.updateId === 'string') { provider.applyPersistenceError(msg.updateId); return; }
 
       // Server sends crdt:doc-replaced on version restore — destroy & rebuild
       // the Y.Doc so all observers pick up the fresh state cleanly.
@@ -161,6 +174,9 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
 
         newProvider.applySnapshot(snapshotB64);
         newProvider.on('synced', onSynced);
+        newProvider.on('persistence', onPersistence);
+        setPersistenceState('idle');
+        setPendingUpdateCount(0);
 
         // Notify observers (sibling hooks) to re-attach.
         onDocReplacedRef.current?.(newDoc, newProvider);
@@ -241,6 +257,9 @@ export function useYjsDoc(options: UseYjsDocOptions): UseYjsDocReturn {
     ydoc: ydocRef.current,
     provider: providerRef.current,
     synced,
+    persistenceState,
+    pendingUpdateCount,
+    retryPersistence: () => providerRef.current?.retryPersistence(),
     docVersion,
   };
 }

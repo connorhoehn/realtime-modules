@@ -30,6 +30,8 @@ import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frame
 
 export type SendMessage = (msg: Record<string, unknown>) => void;
 
+export type DocumentPersistenceState = 'idle' | 'pending' | 'saved' | 'error';
+
 export class GatewayProvider extends Observable<string> {
   readonly doc: Y.Doc;
   readonly channel: string;
@@ -37,6 +39,11 @@ export class GatewayProvider extends Observable<string> {
 
   private readonly _sendMessage: SendMessage;
   private _synced = false;
+  private _persistenceState: DocumentPersistenceState = 'idle';
+  private _pendingUpdates = new Map<string, string>();
+  private _sequence = 0;
+  private _batch: Uint8Array[] = [];
+  private _flushTimer: ReturnType<typeof setTimeout> | null = null;
   private _awarenessTimer: ReturnType<typeof setTimeout> | null = null;
   /** Departure has been announced; nothing else leaves on the wire. */
   private _departed = false;
@@ -54,13 +61,10 @@ export class GatewayProvider extends Observable<string> {
     // Use `origin === this` guard to avoid echoing back remote updates.
     this._updateHandler = (update: Uint8Array, origin: unknown) => {
       if (origin === this) return;
-      const b64 = toBase64(update);
-      this._sendMessage({
-        service: 'crdt',
-        action: 'update',
-        channel: this.channel,
-        update: b64,
-      } satisfies ClientFramePayload<'client.crdt.update'>);
+      this._batch.push(update);
+      this.setPersistenceState('pending');
+      if (this._flushTimer) clearTimeout(this._flushTimer);
+      this._flushTimer = setTimeout(() => this.flushUpdates(), 200);
     };
     this.doc.on('update', this._updateHandler);
 
@@ -108,6 +112,41 @@ export class GatewayProvider extends Observable<string> {
     });
   }
 
+  get persistenceState(): DocumentPersistenceState { return this._persistenceState; }
+  get pendingUpdateCount(): number { return this._pendingUpdates.size + (this._batch.length ? 1 : 0); }
+  private setPersistenceState(state: DocumentPersistenceState): void {
+    this._persistenceState = state;
+    this.emit('persistence', [state, this.pendingUpdateCount]);
+  }
+  /** Flush an editing burst; IDs are echoed only after the snapshot store commits. */
+  flushUpdates(): void {
+    if (this._flushTimer) clearTimeout(this._flushTimer);
+    this._flushTimer = null;
+    if (!this._batch.length) return;
+    const updateId = `${this.doc.clientID}:${++this._sequence}`;
+    const update = toBase64(Y.mergeUpdates(this._batch));
+    this._batch = [];
+    this._pendingUpdates.set(updateId, update);
+    this.sendPending(updateId, update);
+  }
+  private sendPending(updateId: string, update: string): void {
+    this.setPersistenceState('pending');
+    try { this._sendMessage({ service: 'crdt', action: 'update', channel: this.channel, update, updateId }); }
+    catch { this.setPersistenceState('error'); }
+  }
+  /** Idempotent Yjs updates can be resent after reconnect or an explicit retry. */
+  retryPersistence(): void {
+    this.flushUpdates();
+    for (const [id, update] of this._pendingUpdates) this.sendPending(id, update);
+  }
+  applyPersisted(updateId: string): void {
+    if (!this._pendingUpdates.delete(updateId)) return;
+    this.setPersistenceState(this.pendingUpdateCount ? 'pending' : 'saved');
+  }
+  applyPersistenceError(updateId: string): void {
+    if (this._pendingUpdates.has(updateId)) this.setPersistenceState('error');
+  }
+
   /** Whether we have received at least one snapshot from the server. */
   get synced(): boolean {
     return this._synced;
@@ -131,6 +170,7 @@ export class GatewayProvider extends Observable<string> {
     Y.applyUpdate(this.doc, bytes, this);
     this._synced = true;
     this.emit('synced', [true]);
+    if (this.pendingUpdateCount) this.retryPersistence();
   }
 
   /**
@@ -176,6 +216,7 @@ export class GatewayProvider extends Observable<string> {
   }
 
   override destroy(): void {
+    this.flushUpdates();
     this.doc.off('update', this._updateHandler);
     this.announceDeparture();
     this.awareness.destroy();

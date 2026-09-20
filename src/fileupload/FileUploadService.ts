@@ -135,7 +135,7 @@ export interface FileUploadServiceOptions {
      * skips this has a cross-tenant isolation hole, per the gateway's own
      * interceptor doc.
      */
-    authz?: (service: FileUploadService, clientId: string, channel: string) => boolean;
+    authz?: (service: FileUploadService, clientId: string, channel: string) => boolean | Promise<boolean>;
     /**
      * Public base URL the browser uses to reach this gateway's HTTP surface.
      * Defaults to '' so the issued uploadUrl/downloadUrl are root-relative
@@ -208,7 +208,7 @@ export class FileUploadService {
     metricsCollector?: { recordMetric?: (name: string, value: number) => void };
     readonly blobStore: FileBlobStore;
     readonly metadataRepo: FileUploadMetadataStore;
-    private readonly authz: (service: FileUploadService, clientId: string, channel: string) => boolean;
+    private readonly authz: (service: FileUploadService, clientId: string, channel: string) => boolean | Promise<boolean>;
     private publicBaseUrl: string;
     readonly maxBytes: number;
     private readonly mintUploadId: (clientId: string) => string;
@@ -367,7 +367,7 @@ export class FileUploadService {
         // run the same `enforceChannelPermission` interceptor every other
         // service uses; on denial it has already emitted the error frame, so
         // we early-return with NO ack / NO broadcast.
-        if (!this.authz(this, clientId, channel)) {
+        if (!await this.authz(this, clientId, channel)) {
             return;
         }
         // --------------------------------------------------------------------

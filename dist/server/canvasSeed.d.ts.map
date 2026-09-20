@@ -1,0 +1,1 @@
+{"version":3,"file":"canvasSeed.d.ts","sourceRoot":"","sources":["../../src/server/canvasSeed.ts"],"names":[],"mappings":"AAEA,OAAO,EAAgB,KAAK,sBAAsB,EAAE,KAAK,eAAe,EAAE,MAAM,mCAAmC,CAAC;AAEpH,iIAAiI;AACjI,wBAAgB,gBAAgB,CAAC,QAAQ,EAAE,MAAM,EAAE,OAAO,EAAE;IAAE,MAAM,EAAE,sBAAsB,CAAA;CAAE,GAAG;IAAE,QAAQ,EAAE,MAAM,CAAC;IAAC,WAAW,EAAE,eAAe,EAAE,CAAA;CAAE,CAiBpJ"}

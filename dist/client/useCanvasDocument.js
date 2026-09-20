@@ -46,7 +46,7 @@ exports.CANVAS_BODY_KEY = 'body';
  * scalar needing a typed FieldChange with compare-and-set" problem — on a
  * canvas an ordinary suggestion mark covers it.
  */
-const NON_FRONT_MATTER = new Set(['title', 'schemaVersion']);
+const NON_FRONT_MATTER = new Set(['title', 'schemaVersion', 'importSourceRevision', 'tenantId', 'documentId', 'createdBy']);
 function metaToFrontMatter(meta) {
     const out = {};
     for (const [key, value] of Object.entries(meta)) {

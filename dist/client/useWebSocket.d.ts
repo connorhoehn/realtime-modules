@@ -15,6 +15,8 @@ export interface UseWebSocketPersistConfig {
 export interface UseWebSocketOptions {
     url: string;
     authToken?: string;
+    /** Token purpose marker; document grants cannot be treated as general bearer identity. */
+    authProtocol?: 'bearer-token-v1' | 'document-grant-v1';
     /** Initial reconnect delay in ms. Default 1000. */
     reconnectMs?: number;
     /** Cap for exponential backoff in ms. Default 30000. */

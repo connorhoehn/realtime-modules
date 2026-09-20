@@ -73,6 +73,8 @@ export interface OrchestratorMessageRouter extends MessageRouterContract {
     sendToClient?(clientId: string, message: any): void;
 }
 
+export type CRDTDocumentAction = 'read' | 'update' | 'save' | 'restore' | 'metadata' | 'create' | 'delete' | 'seed' | 'awareness';
+
 export interface CRDTServiceOpts {
     messageRouter: OrchestratorMessageRouter;
     snapshotStore: SnapshotStore;
@@ -85,7 +87,7 @@ export interface CRDTServiceOpts {
      * the channel; false (after sending its own error message) otherwise.
      * Defaults to permissive.
      */
-    authz?: (clientId: string, channel: string, service: CRDTService) => boolean;
+    authz?: (clientId: string, channel: string, service: CRDTService, action: CRDTDocumentAction) => boolean | Promise<boolean>;
     /**
      * A document was created inside a conversation.
      *
@@ -125,7 +127,8 @@ class CRDTService {
     _evictionCallback: (channel: string) => Promise<void>;
     private hydration = new Map<string, Promise<ChannelState>>();
     private readonly _snapshotSweep: PeriodicSweep;
-    private _authz: (clientId: string, channel: string, service: CRDTService) => boolean;
+    private _authz: NonNullable<CRDTServiceOpts['authz']>;
+    private seedOperations = new Map<string, Promise<unknown>>();
     private _onDocumentCreated: CRDTServiceOpts['onDocumentCreated'] | null;
 
     constructor(opts: CRDTServiceOpts) {
@@ -338,10 +341,61 @@ class CRDTService {
         }
     }
 
+    private async authorize(clientId: string, channel: string, action: CRDTDocumentAction, report = true): Promise<boolean> {
+        const allowed = await this._authz(clientId, channel, this, action);
+        if (!allowed && report) this.sendError(clientId, 'Document operation denied');
+        return allowed === true;
+    }
+
+    /** Single-owner idempotent seed. Caller supplies a schema-validated binary Yjs document, never Markdown reconstruction. */
+    async seedDocument(clientId: string, input: { channel: string; snapshot: string; sourceRevision: string }): Promise<{ sourceRevision: string; alreadySeeded: boolean }> {
+        const { channel, snapshot, sourceRevision } = input;
+        if (!this._validateChannel(channel) || !sourceRevision || sourceRevision.length > 512 || typeof snapshot !== 'string' || snapshot.length > 8 * 1024 * 1024) throw new Error('Invalid document seed');
+        const previous = this.seedOperations.get(channel) ?? Promise.resolve();
+        const next = previous.catch(() => undefined).then(async () => {
+            if (!await this.authorize(clientId, channel, 'seed')) throw new Error('Document seed denied');
+            const state = await this.ensureHydratedState(channel);
+            if (!await this.authorize(clientId, channel, 'seed')) throw new Error('Document seed denied');
+            const meta = state.ydoc.getMap('meta');
+            const current = meta.get('importSourceRevision');
+            if (current !== undefined && current !== sourceRevision) throw new Error('Document already seeded from another source revision');
+            const alreadySeeded = current === sourceRevision;
+            if (!alreadySeeded) {
+                if (Y.encodeStateVector(state.ydoc).byteLength > 1) throw new Error('Cannot seed an existing document');
+                const candidate = new Y.Doc();
+                try {
+                    Y.applyUpdate(candidate, Buffer.from(snapshot, 'base64'));
+                    if (candidate.getMap('meta').get('schemaVersion') !== 2) throw new Error('Seed requires canvas schema version 2');
+                    candidate.getMap('meta').set('importSourceRevision', sourceRevision);
+                    Y.applyUpdate(state.ydoc, Y.encodeStateAsUpdate(candidate));
+                    state.operationsSinceSnapshot++;
+                } finally { candidate.destroy(); }
+            }
+            // Retrying after a failed first write must persist again before reporting success.
+            await this.snapshotManager.writeSnapshot(channel);
+            return { sourceRevision, alreadySeeded };
+        });
+        this.seedOperations.set(channel, next);
+        try { return await next; }
+        finally { if (this.seedOperations.get(channel) === next) this.seedOperations.delete(channel); }
+    }
+
     async handleAction(clientId: string, action: string, data: any): Promise<void> {
         const startTime = Date.now();
         try {
+            const actionPolicy: Record<string, CRDTDocumentAction> = {
+                listSnapshots: 'read', getSnapshotAtVersion: 'read', restoreSnapshot: 'restore',
+                clearDocument: 'restore', saveVersion: 'save', createDocument: 'create',
+                deleteDocument: 'delete', updateDocumentMeta: 'metadata', deduplicateSections: 'update', seedDocument: 'seed',
+            };
+            const policyAction = actionPolicy[action];
+            if (policyAction && !await this.authorize(clientId, data.documentId ? `doc:${data.documentId}` : (data.channel || ''), policyAction)) return;
             switch (action) {
+                case 'seedDocument': {
+                    const result = await this.seedDocument(clientId, data);
+                    this.sendToClient(clientId, { type: 'crdt:seeded', channel: data.channel, requestId: typeof data.requestId === 'string' ? data.requestId : undefined, ...result });
+                    return;
+                }
                 case 'subscribe':
                     return await this.handleSubscribe(clientId, data);
                 case 'update':
@@ -355,12 +409,13 @@ class CRDTService {
 
                 case 'listSnapshots': {
                     const snapshots = await this.snapshotManager.handleListSnapshots(data.channel, data.limit || 20);
+                    if (!await this.authorize(clientId, data.channel, 'read')) return;
                     this.sendToClient(clientId, { type: 'crdt', action: 'snapshotList', channel: data.channel, snapshots });
                     return;
                 }
                 case 'getSnapshotAtVersion': {
                     const result = await this.snapshotManager.handleGetSnapshotAtVersion(data.channel, data.timestamp);
-                    if (result) {
+                    if (result && await this.authorize(clientId, data.channel, 'read')) {
                         this.sendToClient(clientId, { type: 'crdt', action: 'snapshot', channel: data.channel, version: true, update: result.base64, timestamp: result.timestamp });
                     } else {
                         this.sendError(clientId, 'Snapshot not found');
@@ -410,7 +465,7 @@ class CRDTService {
                     const docs = await this.metadataService.handleListDocuments(
                         typeof data?.channel === 'string' && data.channel ? { channel: data.channel } : undefined,
                     );
-                    this.sendToClient(clientId, { type: 'crdt', action: 'documentList', documents: docs });
+                    this.sendToClient(clientId, { type: 'crdt', action: 'documentList', documents: (await Promise.all(docs.map(async doc => await this.authorize(clientId, `doc:${doc.id}`, 'read', false) ? doc : null))).filter(Boolean) });
                     return;
                 }
                 case 'createDocument': {
@@ -492,7 +547,7 @@ class CRDTService {
                     // about how many people were in the document.
                     const presence: Record<string, any[]> = {};
                     for (const [ch, users] of this.presenceService.getPresenceByUser()) {
-                        if (users.length > 0) presence[ch] = users;
+                        if (users.length > 0 && await this.authorize(clientId, ch, 'read', false)) presence[ch] = users;
                     }
                     this.sendToClient(clientId, { type: 'crdt', action: 'documentPresence', presence });
                     return;
@@ -551,7 +606,7 @@ class CRDTService {
 
         try {
             // Auth check via injectable authz hook
-            if (!this._authz(clientId, channel, this)) {
+            if (!await this.authorize(clientId, channel, 'read')) {
                 return;
             }
 
@@ -568,7 +623,7 @@ class CRDTService {
             let state: ChannelState;
             try {
                 state = await this.ensureHydratedState(channel);
-                if (!this._authz(clientId, channel, this)) {
+                if (!await this.authorize(clientId, channel, 'read')) {
                     await this.messageRouter.unsubscribeFromChannel?.(clientId, channel);
                     return;
                 }
@@ -613,7 +668,7 @@ class CRDTService {
     // handleUpdate — apply Y.js update, batch operations, broadcast
     // ===================================================================
 
-    async handleUpdate(clientId: string, { channel, update }: { channel: string; update: string }): Promise<void> {
+    async handleUpdate(clientId: string, { channel, update, updateId }: { channel: string; update: string; updateId?: string }): Promise<void> {
         if (!this._validateChannel(channel)) {
             this.sendError(clientId, 'Channel name must be a string between 1 and 50 characters');
             return;
@@ -623,22 +678,25 @@ class CRDTService {
             return;
         }
 
+        if (updateId !== undefined && (typeof updateId !== 'string' || !/^[a-zA-Z0-9:_-]{1,160}$/.test(updateId))) { this.sendError(clientId, 'Invalid update identifier'); return; }
         try {
             // A subscription is not an authorization grant for future writes:
             // clients can send updates directly, and policy may change later.
-            if (!this._authz(clientId, channel, this)) return;
+            if (!await this.authorize(clientId, channel, 'update')) { if (updateId) this.sendToClient(clientId, { type: 'crdt:persistence-error', channel, updateId }); return; }
             const state = await this.ensureHydratedState(channel);
-            if (!this._authz(clientId, channel, this)) return;
+            if (!await this.authorize(clientId, channel, 'update')) { if (updateId) this.sendToClient(clientId, { type: 'crdt:persistence-error', channel, updateId }); return; }
 
             const updateBytes = new Uint8Array(Buffer.from(update, 'base64'));
             Y.applyUpdate(state.ydoc, updateBytes);
             state.operationsSinceSnapshot++;
 
-            if (state.operationsSinceSnapshot >= config.OPERATIONS_BEFORE_SNAPSHOT) {
+            if (updateId || state.operationsSinceSnapshot >= config.OPERATIONS_BEFORE_SNAPSHOT) {
                 await this.snapshotManager.writeSnapshot(channel);
             } else {
                 this.snapshotManager.scheduleDebouncedSnapshot(channel);
             }
+
+            if (updateId) this.sendToClient(clientId, { type: 'crdt:persisted', channel, updateId });
 
             const latestState = Y.encodeStateAsUpdate(state.ydoc);
             if (latestState.byteLength > 0) {
@@ -651,6 +709,7 @@ class CRDTService {
             this.logger.debug(`CRDT update batched for channel ${channel} from client ${clientId}`);
         } catch (error) {
             this.logger.error(`Error handling CRDT update for channel ${channel}:`, error);
+            if (updateId) this.sendToClient(clientId, { type: 'crdt:persistence-error', channel, updateId });
             this.sendError(clientId, 'Failed to process CRDT update');
         }
     }
@@ -714,11 +773,12 @@ class CRDTService {
         }
 
         try {
-            if (!this._authz(clientId, channel, this)) {
+            if (!await this.authorize(clientId, channel, 'read')) {
                 return;
             }
 
             const snapshot = await this.snapshotManager.retrieveLatestSnapshot(channel);
+            if (!await this.authorize(clientId, channel, 'read')) return;
 
             this.sendToClient(clientId, {
                 type: 'crdt:snapshot',
@@ -752,7 +812,7 @@ class CRDTService {
         }
 
         try {
-            if (!this._authz(clientId, channel, this)) return;
+            if (!await this.authorize(clientId, channel, 'awareness')) return;
             if (channel.startsWith('doc:')) {
                 if (!this.presenceService.hasClient(clientId, channel)) {
                     this.logger.info(`[presence-backfill] Adding ${clientId} to presence for ${channel}`);

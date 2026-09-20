@@ -5,7 +5,7 @@ import DocumentPresenceService from './DocumentPresenceService';
 import AwarenessCoalescer from './AwarenessCoalescer';
 import IdleEvictionManager from './IdleEvictionManager';
 export { CRDTService, SnapshotManager, DocumentMetadataService, DocumentPresenceService, AwarenessCoalescer, IdleEvictionManager, };
-export type { CRDTServiceOpts, OrchestratorMessageRouter } from './CRDTService';
+export type { CRDTServiceOpts, CRDTDocumentAction, OrchestratorMessageRouter } from './CRDTService';
 export { AwarenessLedger } from './AwarenessLedger';
 export { SubscribeService, createSubscribeService } from './subscribeService';
 export type { SubscribeRouter } from './subscribeService';
@@ -20,4 +20,6 @@ export { attachRealtime, defineFeature, chat, presence, cursor, reactions, activ
 export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHandle, } from './attach';
 export { LocalRealtimeRouter, } from './router';
 export type { RealtimeRouter, RouterLogger, ChannelAuthorize, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
+export * from "./documentGrant";
+export { createCanvasSeed } from "./canvasSeed";
 //# sourceMappingURL=index.d.ts.map

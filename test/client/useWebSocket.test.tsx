@@ -146,6 +146,13 @@ describe('useWebSocket', () => {
         expect(sock.protocols).toEqual(['bearer-token-v1', 'tok-abc']);
     });
 
+    it('uses the explicit document grant marker and reconnects on grant refresh', () => {
+        const { rerender } = renderHook(({ token }: { token: string }) => useWebSocket({ url: 'ws://x/ws', authToken: token, authProtocol: 'document-grant-v1' }), { initialProps: { token: 'grant-one' } });
+        expect(FakeWebSocket.instances[0].protocols).toEqual(['document-grant-v1', 'grant-one']);
+        rerender({ token: 'grant-two' });
+        expect(FakeWebSocket.instances[1].protocols).toEqual(['document-grant-v1', 'grant-two']);
+    });
+
     it('captures sessionToken + clientId from the session handshake frame', () => {
         const { result } = renderHook(() =>
             useWebSocket({ url: 'ws://x/ws' }),

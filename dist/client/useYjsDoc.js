@@ -43,6 +43,9 @@ const GatewayProvider_1 = require("./GatewayProvider");
 function useYjsDoc(options) {
     const { documentId, ws, onMessage, onDocReplaced } = options;
     const [synced, setSynced] = (0, react_1.useState)(false);
+    const [persistenceState, setPersistenceState] = (0, react_1.useState)('idle');
+    const [pendingUpdateCount, setPendingUpdateCount] = (0, react_1.useState)(0);
+    const onPersistence = (state, count) => { setPersistenceState(state); setPendingUpdateCount(count); };
     const [docVersion, setDocVersion] = (0, react_1.useState)(0);
     const ydocRef = (0, react_1.useRef)(null);
     const providerRef = (0, react_1.useRef)(null);
@@ -71,6 +74,7 @@ function useYjsDoc(options) {
         const retryTimer2 = setTimeout(sendSubscribe, 1500);
         const onSynced = () => setSynced(true);
         provider.on('synced', onSynced);
+        provider.on('persistence', onPersistence);
         return () => {
             clearTimeout(retryTimer);
             clearTimeout(retryTimer2);
@@ -83,6 +87,7 @@ function useYjsDoc(options) {
             const curDoc = ydocRef.current;
             if (curProvider) {
                 curProvider.off('synced', onSynced);
+                curProvider.off('persistence', onPersistence);
                 curProvider.destroy();
             }
             ws.sendMessage({
@@ -96,6 +101,8 @@ function useYjsDoc(options) {
             ydocRef.current = null;
             providerRef.current = null;
             setSynced(false);
+            setPersistenceState('idle');
+            setPendingUpdateCount(0);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [documentId]);
@@ -118,6 +125,14 @@ function useYjsDoc(options) {
             const provider = providerRef.current;
             if (!provider)
                 return;
+            if (msg.channel === channel && msg.type === 'crdt:persisted' && typeof msg.updateId === 'string') {
+                provider.applyPersisted(msg.updateId);
+                return;
+            }
+            if (msg.channel === channel && msg.type === 'crdt:persistence-error' && typeof msg.updateId === 'string') {
+                provider.applyPersistenceError(msg.updateId);
+                return;
+            }
             // Server sends crdt:doc-replaced on version restore — destroy & rebuild
             // the Y.Doc so all observers pick up the fresh state cleanly.
             if (msg.type === 'crdt:doc-replaced') {
@@ -142,6 +157,9 @@ function useYjsDoc(options) {
                 providerRef.current = newProvider;
                 newProvider.applySnapshot(snapshotB64);
                 newProvider.on('synced', onSynced);
+                newProvider.on('persistence', onPersistence);
+                setPersistenceState('idle');
+                setPendingUpdateCount(0);
                 // Notify observers (sibling hooks) to re-attach.
                 onDocReplacedRef.current?.(newDoc, newProvider);
                 setSynced(true);
@@ -216,6 +234,9 @@ function useYjsDoc(options) {
         ydoc: ydocRef.current,
         provider: providerRef.current,
         synced,
+        persistenceState,
+        pendingUpdateCount,
+        retryPersistence: () => providerRef.current?.retryPersistence(),
         docVersion,
     };
 }

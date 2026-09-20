@@ -99,6 +99,7 @@ export interface GatewaySocketProviderProps {
    * Passed as the `bearer-token-v1` WS subprotocol header.
    */
   token?: string;
+  authProtocol?: 'bearer-token-v1' | 'document-grant-v1';
   /**
    * Optional channel name; forwarded as `defaultChannel` to useWebSocket.
    * Feature hooks (useChat, usePresence) read this from the ws context.
@@ -383,6 +384,7 @@ export function GatewaySocketProvider({
   children,
   features = [],
   token,
+  authProtocol,
   channel,
   rest,
   webSocketImpl,
@@ -402,6 +404,7 @@ export function GatewaySocketProvider({
   const ws = useWebSocket({
     url,
     authToken: token,
+    authProtocol,
     defaultChannel: channel,
     autoResubscribe: false,
     webSocketImpl,

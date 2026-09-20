@@ -55,7 +55,6 @@ const react_1 = require("react");
 // -----------------------------------------------------------------------
 const DEFAULT_RECONNECT_MS = 1000;
 const DEFAULT_MAX_RECONNECT_MS = 30_000;
-const AUTH_SUBPROTOCOL_PREFIX = 'bearer-token-v1';
 const DEFAULT_PERSIST_PREFIX = 'ws_';
 /** Fallback window for servers that never send a `{type:'session'}` frame. */
 const DEFAULT_SESSION_TIMEOUT_MS = 3000;
@@ -113,7 +112,7 @@ function safeStorageRemove(cfg, key) {
     }
 }
 function useWebSocket(opts) {
-    const { url, authToken, reconnectMs = DEFAULT_RECONNECT_MS, maxReconnectMs = DEFAULT_MAX_RECONNECT_MS, maxRetries = Infinity, defaultChannel = '', persist, autoResubscribe = false, sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS, webSocketImpl, onMessage, onConnect, onDisconnect, } = opts;
+    const { url, authToken, authProtocol = 'bearer-token-v1', reconnectMs = DEFAULT_RECONNECT_MS, maxReconnectMs = DEFAULT_MAX_RECONNECT_MS, maxRetries = Infinity, defaultChannel = '', persist, autoResubscribe = false, sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS, webSocketImpl, onMessage, onConnect, onDisconnect, } = opts;
     // Persisted session keys — recomputed if `persist` changes identity.
     const persistKeysRef = (0, react_1.useRef)(persist ? persistKeys(persist) : null);
     // Keep the persist config in a ref so callbacks (disconnect, message
@@ -374,7 +373,7 @@ function useWebSocket(opts) {
             let ws;
             try {
                 const protocols = authTokenRef.current
-                    ? [AUTH_SUBPROTOCOL_PREFIX, authTokenRef.current]
+                    ? [authProtocol, authTokenRef.current]
                     : undefined;
                 ws = protocols ? new Ctor(url, protocols) : new Ctor(url);
             }
@@ -569,7 +568,7 @@ function useWebSocket(opts) {
             }
         };
         // Reconnect when url or auth changes.
-    }, [url, authToken, reconnectMs, maxReconnectMs]);
+    }, [url, authToken, authProtocol, reconnectMs, maxReconnectMs]);
     const disconnect = (0, react_1.useCallback)(() => {
         disconnectFnRef.current();
     }, []);

@@ -46,6 +46,7 @@ export interface GatewaySocketProviderProps {
      * Passed as the `bearer-token-v1` WS subprotocol header.
      */
     token?: string;
+    authProtocol?: 'bearer-token-v1' | 'document-grant-v1';
     /**
      * Optional channel name; forwarded as `defaultChannel` to useWebSocket.
      * Feature hooks (useChat, usePresence) read this from the ws context.
@@ -214,7 +215,7 @@ export declare const GatewayContext: React.Context<GatewayContextValue | null>;
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-export declare function GatewaySocketProvider({ url, children, features, token, channel, rest, webSocketImpl, httpBase, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
+export declare function GatewaySocketProvider({ url, children, features, token, authProtocol, channel, rest, webSocketImpl, httpBase, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *

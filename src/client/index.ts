@@ -248,3 +248,5 @@ export type {
 export { useCursor } from './useCursor';
 export type { UseCursorOpts, UseCursorReturn } from './useCursor';
 export type { CursorEntry } from './types';
+
+export type { DocumentPersistenceState } from "./GatewayProvider";

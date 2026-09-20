@@ -55,6 +55,11 @@ class GatewayProvider extends observable_1.Observable {
     awareness;
     _sendMessage;
     _synced = false;
+    _persistenceState = 'idle';
+    _pendingUpdates = new Map();
+    _sequence = 0;
+    _batch = [];
+    _flushTimer = null;
     _awarenessTimer = null;
     /** Departure has been announced; nothing else leaves on the wire. */
     _departed = false;
@@ -70,13 +75,11 @@ class GatewayProvider extends observable_1.Observable {
         this._updateHandler = (update, origin) => {
             if (origin === this)
                 return;
-            const b64 = (0, buffer_1.toBase64)(update);
-            this._sendMessage({
-                service: 'crdt',
-                action: 'update',
-                channel: this.channel,
-                update: b64,
-            });
+            this._batch.push(update);
+            this.setPersistenceState('pending');
+            if (this._flushTimer)
+                clearTimeout(this._flushTimer);
+            this._flushTimer = setTimeout(() => this.flushUpdates(), 200);
         };
         this.doc.on('update', this._updateHandler);
         // Forward local awareness changes to the gateway (debounced to avoid flooding).
@@ -123,6 +126,49 @@ class GatewayProvider extends observable_1.Observable {
             }, 50); // 50ms debounce — max 20 awareness updates/second
         });
     }
+    get persistenceState() { return this._persistenceState; }
+    get pendingUpdateCount() { return this._pendingUpdates.size + (this._batch.length ? 1 : 0); }
+    setPersistenceState(state) {
+        this._persistenceState = state;
+        this.emit('persistence', [state, this.pendingUpdateCount]);
+    }
+    /** Flush an editing burst; IDs are echoed only after the snapshot store commits. */
+    flushUpdates() {
+        if (this._flushTimer)
+            clearTimeout(this._flushTimer);
+        this._flushTimer = null;
+        if (!this._batch.length)
+            return;
+        const updateId = `${this.doc.clientID}:${++this._sequence}`;
+        const update = (0, buffer_1.toBase64)(Y.mergeUpdates(this._batch));
+        this._batch = [];
+        this._pendingUpdates.set(updateId, update);
+        this.sendPending(updateId, update);
+    }
+    sendPending(updateId, update) {
+        this.setPersistenceState('pending');
+        try {
+            this._sendMessage({ service: 'crdt', action: 'update', channel: this.channel, update, updateId });
+        }
+        catch {
+            this.setPersistenceState('error');
+        }
+    }
+    /** Idempotent Yjs updates can be resent after reconnect or an explicit retry. */
+    retryPersistence() {
+        this.flushUpdates();
+        for (const [id, update] of this._pendingUpdates)
+            this.sendPending(id, update);
+    }
+    applyPersisted(updateId) {
+        if (!this._pendingUpdates.delete(updateId))
+            return;
+        this.setPersistenceState(this.pendingUpdateCount ? 'pending' : 'saved');
+    }
+    applyPersistenceError(updateId) {
+        if (this._pendingUpdates.has(updateId))
+            this.setPersistenceState('error');
+    }
     /** Whether we have received at least one snapshot from the server. */
     get synced() {
         return this._synced;
@@ -144,6 +190,8 @@ class GatewayProvider extends observable_1.Observable {
         Y.applyUpdate(this.doc, bytes, this);
         this._synced = true;
         this.emit('synced', [true]);
+        if (this.pendingUpdateCount)
+            this.retryPersistence();
     }
     /**
      * Apply a remote awareness update received from the gateway.
@@ -188,6 +236,7 @@ class GatewayProvider extends observable_1.Observable {
         });
     }
     destroy() {
+        this.flushUpdates();
         this.doc.off('update', this._updateHandler);
         this.announceDeparture();
         this.awareness.destroy();

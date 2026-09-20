@@ -100,3 +100,6 @@ export {
   isCanvasAnchor,
 } from './anchors';
 export type { CanvasAnchor, AnchorRange } from './anchors';
+
+export { createCanvasExtensions } from "./createCanvasExtensions";
+export type { CanvasExtensionParts } from "./createCanvasExtensions";

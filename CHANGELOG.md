@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased] — document integration contracts
+
+- Add short-lived Ed25519 document grants with tenant/document/operation binding and authoritative session-epoch verification across transports.
+- Await operation-aware CRDT authorization, filter document listings/presence, and add single-owner idempotent binary canvas seeding.
+- Acknowledge correlated updates only after durable snapshot commit; expose pending/error/retry state separately from initial sync and preserve pending updates across reconnect.
+- Share canvas extension assembly and headless schema-aware seed conversion, preserving front matter and image/table nodes.
+- Add an explicit document-grant WebSocket protocol and asynchronous upload authorization seam.
+
+
 ## 0.69.4 — 2026-09-20
 
 - Canvas import and Markdown paste now use the live editor schema: GFM tables

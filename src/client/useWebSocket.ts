@@ -78,6 +78,8 @@ export interface UseWebSocketPersistConfig {
 export interface UseWebSocketOptions {
   url: string;
   authToken?: string;
+  /** Token purpose marker; document grants cannot be treated as general bearer identity. */
+  authProtocol?: 'bearer-token-v1' | 'document-grant-v1';
   /** Initial reconnect delay in ms. Default 1000. */
   reconnectMs?: number;
   /** Cap for exponential backoff in ms. Default 30000. */
@@ -167,7 +169,6 @@ export interface UseWebSocketHookReturn extends UseWebSocketReturn {
 
 const DEFAULT_RECONNECT_MS = 1000;
 const DEFAULT_MAX_RECONNECT_MS = 30_000;
-const AUTH_SUBPROTOCOL_PREFIX = 'bearer-token-v1';
 const DEFAULT_PERSIST_PREFIX = 'ws_';
 /** Fallback window for servers that never send a `{type:'session'}` frame. */
 const DEFAULT_SESSION_TIMEOUT_MS = 3000;
@@ -242,6 +243,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   const {
     url,
     authToken,
+    authProtocol = 'bearer-token-v1',
     reconnectMs = DEFAULT_RECONNECT_MS,
     maxReconnectMs = DEFAULT_MAX_RECONNECT_MS,
     maxRetries = Infinity,
@@ -546,7 +548,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
       let ws: WebSocket;
       try {
         const protocols = authTokenRef.current
-          ? [AUTH_SUBPROTOCOL_PREFIX, authTokenRef.current]
+          ? [authProtocol, authTokenRef.current]
           : undefined;
         ws = protocols ? new Ctor(url, protocols) : new Ctor(url);
       } catch (err) {
@@ -744,7 +746,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
       }
     };
     // Reconnect when url or auth changes.
-  }, [url, authToken, reconnectMs, maxReconnectMs]);
+  }, [url, authToken, authProtocol, reconnectMs, maxReconnectMs]);
 
   const disconnect = useCallback(() => {
     disconnectFnRef.current();

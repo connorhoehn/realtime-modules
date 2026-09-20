@@ -45,6 +45,7 @@ export interface OrchestratorMessageRouter extends MessageRouterContract {
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     sendToClient?(clientId: string, message: any): void;
 }
+export type CRDTDocumentAction = 'read' | 'update' | 'save' | 'restore' | 'metadata' | 'create' | 'delete' | 'seed' | 'awareness';
 export interface CRDTServiceOpts {
     messageRouter: OrchestratorMessageRouter;
     snapshotStore: SnapshotStore;
@@ -57,7 +58,7 @@ export interface CRDTServiceOpts {
      * the channel; false (after sending its own error message) otherwise.
      * Defaults to permissive.
      */
-    authz?: (clientId: string, channel: string, service: CRDTService) => boolean;
+    authz?: (clientId: string, channel: string, service: CRDTService, action: CRDTDocumentAction) => boolean | Promise<boolean>;
     /**
      * A document was created inside a conversation.
      *
@@ -97,6 +98,7 @@ declare class CRDTService {
     private hydration;
     private readonly _snapshotSweep;
     private _authz;
+    private seedOperations;
     private _onDocumentCreated;
     constructor(opts: CRDTServiceOpts);
     _applyRemoteUpdate(channel: string, state: ChannelState, updateBytes: Uint8Array): void;
@@ -107,14 +109,25 @@ declare class CRDTService {
      * promises are .catch-ed, and neither reaches the creation path.
      */
     _announceDocument(doc: any): void;
+    private authorize;
+    /** Single-owner idempotent seed. Caller supplies a schema-validated binary Yjs document, never Markdown reconstruction. */
+    seedDocument(clientId: string, input: {
+        channel: string;
+        snapshot: string;
+        sourceRevision: string;
+    }): Promise<{
+        sourceRevision: string;
+        alreadySeeded: boolean;
+    }>;
     handleAction(clientId: string, action: string, data: any): Promise<void>;
     private ensureHydratedState;
     handleSubscribe(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
-    handleUpdate(clientId: string, { channel, update }: {
+    handleUpdate(clientId: string, { channel, update, updateId }: {
         channel: string;
         update: string;
+        updateId?: string;
     }): Promise<void>;
     handleUnsubscribe(clientId: string, { channel }: {
         channel: string;

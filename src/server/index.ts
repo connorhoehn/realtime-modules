@@ -23,7 +23,7 @@ export {
     IdleEvictionManager,
 };
 
-export type { CRDTServiceOpts, OrchestratorMessageRouter } from './CRDTService';
+export type { CRDTServiceOpts, CRDTDocumentAction, OrchestratorMessageRouter } from './CRDTService';
 // CRDTServiceOpts.awarenessLedger is an AwarenessLedger — named in an
 // exported signature while being importable from no published entry point.
 //
@@ -104,3 +104,7 @@ export type {
     ChannelAuthorize,
     FeaturePlugin as RealtimeFeaturePlugin,
 } from './router';
+
+export * from "./documentGrant";
+
+export { createCanvasSeed } from "./canvasSeed";

@@ -88,7 +88,7 @@ export interface FileUploadServiceOptions {
      * skips this has a cross-tenant isolation hole, per the gateway's own
      * interceptor doc.
      */
-    authz?: (service: FileUploadService, clientId: string, channel: string) => boolean;
+    authz?: (service: FileUploadService, clientId: string, channel: string) => boolean | Promise<boolean>;
     /**
      * Public base URL the browser uses to reach this gateway's HTTP surface.
      * Defaults to '' so the issued uploadUrl/downloadUrl are root-relative
