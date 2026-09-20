@@ -1,31 +1,23 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.projectWorkEvent = projectWorkEvent;
-function opaqueId(prefix, ...parts) {
-    let hash = 0x811c9dc5;
-    for (const character of parts.join('\u001f')) {
-        hash ^= character.charCodeAt(0);
-        hash = Math.imul(hash, 0x01000193) >>> 0;
-    }
-    return `wg_${prefix}_${hash.toString(16).padStart(8, '0')}`;
+const opaqueId_1 = require("./opaqueId");
+function nodeId(state, kind, ref) {
+    return (0, opaqueId_1.opaqueWorkId)('node', state.organizationId, state.actorId, kind, ref.source, ref.resourceId);
 }
-function nodeId(kind, ref) {
-    return opaqueId('node', kind, ref.source, ref.resourceId);
+function numericSequence(value) {
+    return value !== undefined && /^\d+$/.test(value) ? BigInt(value) : undefined;
 }
-function eventOrder(event) {
-    const source = event.sourceSequence;
-    const numeric = source !== undefined && /^\d+$/.test(source) ? Number(source) : Number.NaN;
-    return [Number.isSafeInteger(numeric) ? numeric : Date.parse(event.occurredAt), event.eventId];
-}
-function nodeOrder(node) {
-    const source = node.sourceSequence;
-    const numeric = source !== undefined && /^\d+$/.test(source) ? Number(source) : Number.NaN;
-    return [Number.isSafeInteger(numeric) ? numeric : Date.parse(node.updatedAt), node.sourceEventId];
-}
-function isNewer(event, node) {
-    const incoming = eventOrder(event);
-    const existing = nodeOrder(node);
-    return incoming[0] > existing[0] || (incoming[0] === existing[0] && incoming[1] > existing[1]);
+function isNewer(event, entity) {
+    const incomingSequence = numericSequence(event.sourceSequence);
+    const existingSequence = numericSequence(entity.sourceSequence);
+    // Compare like units only: an event without a source sequence must not have
+    // its epoch milliseconds compared with another event's sequence counter.
+    const incoming = incomingSequence !== undefined && existingSequence !== undefined
+        ? incomingSequence : Date.parse(event.occurredAt);
+    const existing = incomingSequence !== undefined && existingSequence !== undefined
+        ? existingSequence : Date.parse(entity.updatedAt);
+    return incoming > existing || (incoming === existing && event.eventId > entity.sourceEventId);
 }
 function statusFor(event) {
     switch (event.payload.kind) {
@@ -58,6 +50,8 @@ function inputsFor(event) {
     switch (event.payload.kind) {
         case 'cloud-compute': {
             const terminal = { kind: 'terminal', resourceId: event.payload.boxId, title: safe('Cloud terminal'), status };
+            if (event.payload.lifecycle === 'deleted')
+                return { nodes: [{ ...terminal, deleting: true }], edges: [] };
             const nodes = [terminal];
             const edges = [];
             if (event.payload.projectId) {
@@ -75,7 +69,7 @@ function inputsFor(event) {
                     edges.push({ from: agent, to: run, relation: 'operates-on' });
                 }
             }
-            return { nodes, edges, deleting: event.payload.lifecycle === 'deleted' };
+            return { nodes, edges };
         }
         case 'local-compute': {
             const terminal = { kind: 'terminal', resourceId: event.payload.machineId, title: safe('Local terminal'), status };
@@ -91,21 +85,35 @@ function inputsFor(event) {
                 nodes.push(run);
                 edges.push({ from: run, to: terminal, relation: 'runs-in' });
             }
-            return { nodes, edges, deleting: false };
+            return { nodes, edges };
         }
         case 'document': {
             const document = { kind: 'document', resourceId: event.payload.documentId, title: safe('Document'), status };
-            const change = { kind: 'change', resourceId: `${event.payload.documentId}:${event.payload.revisionId}`, title: 'Document change', status, episode: true };
-            return { nodes: [document, change], edges: [{ from: change, to: document, relation: 'edited' }], deleting: event.payload.lifecycle === 'deleted' };
+            if (event.payload.lifecycle === 'deleted')
+                return { nodes: [{ ...document, deleting: true }], edges: [] };
+            const change = { kind: 'change', resourceId: `${event.payload.documentId}:${event.payload.revisionId}`, title: 'Document change', status };
+            return { nodes: [document, change], edges: [{ from: change, to: document, relation: 'edited' }] };
         }
         case 'pipeline': {
-            return { nodes: [{ kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), status }], edges: [], deleting: false };
+            return { nodes: [{ kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), status }], edges: [] };
         }
         case 'conversation': {
-            return { nodes: [{ kind: 'conversation', resourceId: event.payload.conversationId, title: safe(event.payload.conversationKind === 'dm' ? 'Direct conversation' : 'Conversation'), status }], edges: [], deleting: event.payload.lifecycle === 'membership-removed' };
+            return { nodes: [{ kind: 'conversation', resourceId: event.payload.conversationId, title: safe(event.payload.conversationKind === 'dm' ? 'Direct conversation' : 'Conversation'), status, deleting: event.payload.lifecycle === 'membership-removed' }], edges: [] };
         }
         case 'meeting': {
             const meeting = { kind: 'meeting', resourceId: event.payload.meetingId, title: safe('Meeting'), status };
+            // Recording lifecycle does not delete the meeting itself. Recordings do
+            // not have a graph node; a transcript deletion targets only its node.
+            if (event.payload.lifecycle === 'recording-deleted')
+                return { nodes: [], edges: [] };
+            if (event.payload.lifecycle === 'transcript-deleted') {
+                return {
+                    nodes: event.payload.transcriptId
+                        ? [{ kind: 'transcript', resourceId: event.payload.transcriptId, title: 'Transcript', status, deleting: true }]
+                        : [],
+                    edges: [],
+                };
+            }
             const nodes = [meeting];
             const edges = [];
             if (event.payload.transcriptId) {
@@ -113,13 +121,13 @@ function inputsFor(event) {
                 nodes.push(transcript);
                 edges.push({ from: transcript, to: meeting, relation: 'derived-from' });
             }
-            return { nodes, edges, deleting: event.payload.lifecycle.endsWith('-deleted') };
+            return { nodes, edges };
         }
     }
 }
-function upsertNode(state, event, input, deleting) {
+function upsertNode(state, event, input) {
     const ref = sourceRef(event, input.resourceId);
-    const id = nodeId(input.kind, ref);
+    const id = nodeId(state, input.kind, ref);
     const existing = state.nodes[id];
     if (existing && !isNewer(event, existing))
         return existing;
@@ -134,7 +142,7 @@ function upsertNode(state, event, input, deleting) {
         status: input.status ?? statusFor(event),
         startedAt: existing?.startedAt ?? event.occurredAt,
         updatedAt: event.occurredAt,
-        ...(deleting ? { endedAt: event.occurredAt, deletedAt: event.occurredAt } : {}),
+        ...(input.deleting ? { endedAt: event.occurredAt, deletedAt: event.occurredAt } : {}),
         sourceEventId: event.eventId,
         ...(event.sourceSequence ? { sourceSequence: event.sourceSequence } : {}),
         revision: (existing?.revision ?? 0) + 1,
@@ -145,28 +153,40 @@ function projectWorkEvent(current, event) {
     if (current.organizationId !== event.actor.organizationId || current.actorId !== event.actor.actorId) {
         throw new RangeError('event actor is outside the projection scope');
     }
-    if (current.appliedEventIds.includes(event.eventId))
+    // IDs are unique within a source, matching the durable repository's event
+    // marker. Different producers may legitimately use the same event ID.
+    const eventKey = `${event.source}:${event.eventId}`;
+    if (current.appliedEventIds.includes(eventKey))
         return current;
+    const previousSequence = numericSequence(current.sourceCheckpoints[event.source]);
+    const incomingSequence = numericSequence(event.sourceSequence);
+    const advanceCheckpoint = event.sourceSequence !== undefined
+        && !(previousSequence !== undefined && incomingSequence !== undefined && incomingSequence < previousSequence);
     const next = {
         ...current,
         revision: current.revision + 1,
         nodes: { ...current.nodes },
         edges: { ...current.edges },
-        sourceCheckpoints: { ...current.sourceCheckpoints, ...(event.sourceSequence ? { [event.source]: event.sourceSequence } : {}) },
-        appliedEventIds: [...current.appliedEventIds, event.eventId],
+        sourceCheckpoints: { ...current.sourceCheckpoints, ...(advanceCheckpoint ? { [event.source]: event.sourceSequence } : {}) },
+        appliedEventIds: [...current.appliedEventIds, eventKey],
     };
     const inputs = inputsFor(event);
+    const deletedNodeIds = new Set();
     for (const input of inputs.nodes) {
-        const node = upsertNode(next, event, input, inputs.deleting && !input.episode);
+        const node = upsertNode(next, event, input);
         next.nodes[node.id] = node;
+        if (node.deletedAt && node.sourceEventId === event.eventId)
+            deletedNodeIds.add(node.id);
     }
     for (const input of inputs.edges) {
-        const fromId = nodeId(input.from.kind, sourceRef(event, input.from.resourceId));
-        const toId = nodeId(input.to.kind, sourceRef(event, input.to.resourceId));
-        if (!next.nodes[fromId] || !next.nodes[toId])
+        const fromId = nodeId(next, input.from.kind, sourceRef(event, input.from.resourceId));
+        const toId = nodeId(next, input.to.kind, sourceRef(event, input.to.resourceId));
+        if (!next.nodes[fromId] || !next.nodes[toId] || next.nodes[fromId].deletedAt || next.nodes[toId].deletedAt)
             continue;
-        const id = opaqueId('edge', fromId, toId, input.relation);
+        const id = (0, opaqueId_1.opaqueWorkId)('edge', fromId, toId, input.relation);
         const existing = next.edges[id];
+        if (existing && !isNewer(event, existing))
+            continue;
         const edge = {
             id,
             organizationId: event.actor.organizationId,
@@ -178,12 +198,24 @@ function projectWorkEvent(current, event) {
             status: statusFor(event),
             startedAt: existing?.startedAt ?? event.occurredAt,
             updatedAt: event.occurredAt,
-            ...(inputs.deleting ? { endedAt: event.occurredAt, deletedAt: event.occurredAt } : {}),
             sourceEventId: event.eventId,
+            ...(event.sourceSequence ? { sourceSequence: event.sourceSequence } : {}),
             provenance: 'source-event',
             revision: (existing?.revision ?? 0) + 1,
         };
         next.edges[id] = edge;
+    }
+    // Delete all incident relationships, including ones absent from the delete
+    // payload. Keep the other endpoints and their unrelated relationships.
+    for (const edge of Object.values(next.edges)) {
+        if ((!deletedNodeIds.has(edge.fromId) && !deletedNodeIds.has(edge.toId)) || !isNewer(event, edge))
+            continue;
+        next.edges[edge.id] = {
+            ...edge, status: 'stopped', updatedAt: event.occurredAt,
+            endedAt: event.occurredAt, deletedAt: event.occurredAt,
+            sourceEventId: event.eventId, sourceSequence: event.sourceSequence,
+            revision: edge.revision + 1,
+        };
     }
     return next;
 }

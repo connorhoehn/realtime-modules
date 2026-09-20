@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.filterForViewer = filterForViewer;
+const opaqueId_1 = require("./opaqueId");
 const capabilities = new Set([
     'message',
     'view-document',
@@ -125,20 +126,17 @@ function filterForViewer(state, policy) {
     }
     const visibleNodes = new Map();
     const publicIds = new Set();
-    let placeholderSequence = 0;
     for (const node of Object.values(state.nodes)) {
         if (node.deletedAt || node.organizationId !== state.organizationId || node.actorId !== state.actorId)
             continue;
         const decision = allowedDecision(policy.nodeDecisions, node.id, policy.scope.policyRevision);
         if (!decision)
             continue;
-        let existencePublicId = 'work_placeholder_unused';
-        if (decision.maximumDisclosure === 'existence') {
-            do {
-                placeholderSequence += 1;
-                existencePublicId = `work_placeholder_${placeholderSequence}`;
-            } while (publicIds.has(existencePublicId));
-        }
+        // Stable within this viewer/query/policy, even when neighboring nodes are
+        // removed or reordered. A new policy or viewer cannot reuse its identity.
+        const existencePublicId = decision.maximumDisclosure === 'existence'
+            ? (0, opaqueId_1.opaqueWorkId)('placeholder', policy.scope.organizationId, policy.scope.viewerId, policy.scope.personId, policy.scope.day, policy.scope.timezone, policy.scope.policyRevision, node.id)
+            : 'work_placeholder_unused';
         const projected = viewerNode(node, decision, existencePublicId);
         if (!projected || publicIds.has(projected.id))
             continue;

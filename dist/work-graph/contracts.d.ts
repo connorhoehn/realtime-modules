@@ -180,6 +180,7 @@ export interface InternalWorkEdge {
     updatedAt: IsoTimestamp;
     endedAt?: IsoTimestamp;
     sourceEventId: string;
+    sourceSequence?: string;
     provenance: 'source-event' | 'user-confirmed';
     deletedAt?: IsoTimestamp;
     revision: number;
