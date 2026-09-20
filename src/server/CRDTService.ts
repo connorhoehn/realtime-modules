@@ -593,6 +593,9 @@ class CRDTService {
         }
 
         try {
+            // A subscription is not an authorization grant for future writes:
+            // clients can send updates directly, and policy may change later.
+            if (!this._authz(clientId, channel, this)) return;
             let state = this.channelStates.get(channel);
             if (!state) {
                 state = { ydoc: new Y.Doc(), operationsSinceSnapshot: 0, subscriberCount: 0, hydrated: true };
@@ -642,7 +645,8 @@ class CRDTService {
                 if (state.subscriberCount <= 0) {
                     state.subscriberCount = 0;
                     if (state.operationsSinceSnapshot > 0) {
-                        await this.snapshotManager.writeSnapshot(channel);
+                        try { await this.snapshotManager.writeSnapshot(channel); }
+                        catch (error) { this.logger.error('Snapshot on unsubscribe failed; retaining dirty state', error); }
                     }
                     this.evictionManager.startEviction(channel, this._evictionCallback);
                 }
@@ -721,6 +725,7 @@ class CRDTService {
         }
 
         try {
+            if (!this._authz(clientId, channel, this)) return;
             if (channel.startsWith('doc:')) {
                 if (!this.presenceService.hasClient(clientId, channel)) {
                     this.logger.info(`[presence-backfill] Adding ${clientId} to presence for ${channel}`);
@@ -812,7 +817,8 @@ class CRDTService {
     async _writePeriodicSnapshots(): Promise<void> {
         for (const [channelId, state] of this.channelStates.entries()) {
             if (state.operationsSinceSnapshot > 0) {
-                await this.snapshotManager.writeSnapshot(channelId);
+                try { await this.snapshotManager.writeSnapshot(channelId); }
+                catch { /* SnapshotManager logs; other dirty channels must still be flushed. */ }
             }
         }
     }

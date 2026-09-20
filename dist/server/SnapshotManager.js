@@ -74,6 +74,8 @@ class SnapshotManager {
     getChannelState;
     snapshotDebounceTimers;
     SNAPSHOT_DEBOUNCE_MS;
+    writes = new Map();
+    lastTimestamp = 0;
     constructor({ snapshotStore, hotCache, logger, getChannelState }) {
         this.snapshotStore = snapshotStore;
         this.hotCache = hotCache || null;
@@ -104,34 +106,50 @@ class SnapshotManager {
      * @param meta.type      - 'auto' | 'manual' | 'pre-restore' | 'pre-clear'
      */
     async writeSnapshot(channelId, meta = {}) {
-        const state = this.getChannelState(channelId);
-        if (!state || !state.ydoc) {
-            return; // No snapshot to write
-        }
+        await this.persistSnapshot(channelId, meta);
+    }
+    // Serialize a channel's writes so a slower old snapshot cannot overwrite
+    // a newer hot-cache value or clear the newer update's dirty counter.
+    async persistSnapshot(channelId, meta) {
+        const previous = this.writes.get(channelId) ?? Promise.resolve(undefined);
+        const next = previous.catch(() => undefined).then(() => this.commitSnapshot(channelId, meta));
+        this.writes.set(channelId, next);
         try {
-            // Encode full state from Y.Doc and gzip compress
-            const stateUpdate = Y.encodeStateAsUpdate(state.ydoc);
-            if (stateUpdate.byteLength === 0) {
-                return; // Empty doc, nothing to persist
-            }
-            // Always update hot-cache with uncompressed bytes (base64-equivalent
-            // semantics; bytes-in, bytes-out at the contract level).
-            await this._saveSnapshotToHotCache(channelId, Buffer.from(stateUpdate));
+            return await next;
+        }
+        finally {
+            if (this.writes.get(channelId) === next)
+                this.writes.delete(channelId);
+        }
+    }
+    async commitSnapshot(channelId, meta) {
+        const state = this.getChannelState(channelId);
+        if (!state?.ydoc)
+            return;
+        const ydoc = state.ydoc;
+        const operations = state.operationsSinceSnapshot;
+        try {
+            const stateUpdate = Y.encodeStateAsUpdate(ydoc);
             const compressed = await gzip(Buffer.from(stateUpdate));
-            const versionName = meta.name || undefined;
-            const timestamp = Date.now();
+            const timestamp = Math.max(Date.now(), this.lastTimestamp + 1);
+            this.lastTimestamp = timestamp;
             await this.snapshotStore.putSnapshot(channelId, compressed, {
-                timestamp,
-                versionName,
+                timestamp, versionName: meta.name || undefined,
             });
-            state.operationsSinceSnapshot = 0;
-            const versionType = meta.type || 'auto';
-            const author = meta.author || 'auto';
-            this.logger.info(`Snapshot written via SnapshotStore for channel ${channelId} (type=${versionType}, author=${author})`);
+            // Updates can arrive while persistence is in flight. Only the
+            // operations represented by these bytes have been committed.
+            if (state.ydoc === ydoc) {
+                state.operationsSinceSnapshot = Math.max(0, state.operationsSinceSnapshot - operations);
+                if (state.operationsSinceSnapshot === 0) {
+                    await this._saveSnapshotToHotCache(channelId, Buffer.from(stateUpdate));
+                }
+            }
+            this.logger.info(`Snapshot written via SnapshotStore for channel ${channelId} (type=${meta.type || 'auto'}, author=${meta.author || 'auto'})`);
+            return timestamp;
         }
         catch (error) {
-            // Log-and-continue: persistence failure must not crash the gateway
             this.logger.error(`Failed to persist snapshot for ${channelId}:`, error.message);
+            throw error;
         }
     }
     /**
@@ -208,14 +226,13 @@ class SnapshotManager {
         try {
             const currentState = Y.encodeStateAsUpdate(state.ydoc);
             if (currentState.byteLength > 0) {
-                state.operationsSinceSnapshot = 1; // Ensure writeSnapshot actually writes
                 await this.writeSnapshot(channel, { type: 'pre-restore', author: 'system' });
                 this.logger.info(`Pre-restore checkpoint saved for channel ${channel}`);
             }
         }
         catch (checkpointErr) {
             this.logger.error(`Failed to save pre-restore checkpoint for ${channel}:`, checkpointErr.message);
-            // Continue with restore even if checkpoint fails
+            throw checkpointErr; // Do not replace a document without its recovery checkpoint.
         }
         // Create a fresh Y.Doc and apply the historical update
         const freshDoc = new Y.Doc();
@@ -239,14 +256,14 @@ class SnapshotManager {
             return null;
         }
         const author = userId || 'unknown';
-        // Force a snapshot write even if operationsSinceSnapshot is 0
-        state.operationsSinceSnapshot = 1;
-        await this.writeSnapshot(channel, {
+        // Manual versions write even when there are no unsaved operations.
+        const ts = await this.persistSnapshot(channel, {
             type: 'manual',
             author,
             name: name.trim(),
         });
-        const ts = Date.now();
+        if (ts === undefined)
+            return null;
         this.logger.info(`Named version "${name.trim()}" saved for channel ${channel} by ${author}`);
         return { name: name.trim(), author, timestamp: ts };
     }
@@ -256,7 +273,10 @@ class SnapshotManager {
     async writePeriodicSnapshots(channelStates) {
         for (const [channelId, state] of channelStates.entries()) {
             if (state.operationsSinceSnapshot > 0) {
-                await this.writeSnapshot(channelId);
+                try {
+                    await this.writeSnapshot(channelId);
+                }
+                catch { /* Logged by commitSnapshot; keep other channels progressing. */ }
             }
         }
     }
@@ -272,7 +292,10 @@ class SnapshotManager {
             this.snapshotDebounceTimers.delete(channelId);
             const state = this.getChannelState(channelId);
             if (state && state.operationsSinceSnapshot > 0) {
-                await this.writeSnapshot(channelId);
+                try {
+                    await this.writeSnapshot(channelId);
+                }
+                catch { /* Dirty state remains for the periodic retry. */ }
             }
         }, this.SNAPSHOT_DEBOUNCE_MS);
         // R2 bug #5: unref so a pending debounced snapshot does not hold
@@ -369,13 +392,14 @@ class SnapshotManager {
         try {
             const currentState = Y.encodeStateAsUpdate(state.ydoc);
             if (currentState.byteLength > 0) {
-                state.operationsSinceSnapshot = 1;
                 await this.writeSnapshot(channel, { type: 'pre-clear', author: clientId });
                 this.logger.info(`Pre-clear checkpoint saved for channel ${channel}`);
             }
         }
         catch (err) {
             this.logger.error(`Failed pre-clear checkpoint for ${channel}:`, err.message);
+            sendError(clientId, 'Failed to persist pre-clear checkpoint');
+            return;
         }
         // Replace with fresh Y.Doc
         state.ydoc.destroy();

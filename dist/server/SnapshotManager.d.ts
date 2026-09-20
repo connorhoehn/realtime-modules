@@ -63,6 +63,8 @@ declare class SnapshotManager {
     getChannelState: (channelId: string) => ChannelState | undefined;
     snapshotDebounceTimers: Map<string, NodeJS.Timeout>;
     SNAPSHOT_DEBOUNCE_MS: number;
+    private writes;
+    private lastTimestamp;
     constructor({ snapshotStore, hotCache, logger, getChannelState }: SnapshotManagerOpts);
     /**
      * No-op in the lifted module. Table provisioning is the SnapshotStore
@@ -80,6 +82,8 @@ declare class SnapshotManager {
      * @param meta.type      - 'auto' | 'manual' | 'pre-restore' | 'pre-clear'
      */
     writeSnapshot(channelId: string, meta?: VersionMeta): Promise<void>;
+    private persistSnapshot;
+    private commitSnapshot;
     /**
      * Retrieve the latest snapshot for a channel from the store.
      *

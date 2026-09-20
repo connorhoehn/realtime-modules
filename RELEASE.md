@@ -16,22 +16,16 @@ Manual release recipe. Keep it boring.
 2. **Build** — `npm run build` (must succeed; emits `dist/`)
 3. **Test** — `NODE_OPTIONS='--max-old-space-size=2048' npx jest --no-coverage --maxWorkers=1`
 4. **Bump version** — edit `package.json` `version` field; move CHANGELOG `[Unreleased]` content under a new `## [x.y.z] — YYYY-MM-DD` section
-5. **Commit** — `git add package.json CHANGELOG.md && git commit -m "release(realtime-modules): vX.Y.Z"`
+5. **Commit** — include the changed source/tests, `package.json`, `package-lock.json`, `CHANGELOG.md`, and rebuilt tracked `dist/` files in the release commit.
 6. **Tag + push** — `git tag realtime-modules-vX.Y.Z && git push && git push --tags`
 
-## `dist/` is gitignored — why this matters
+## `dist/` is tracked
 
-`dist/` is **not committed**. Consumers materialize it two ways:
-
-- **`file:` pins** (sibling repos): npm runs the `prepare` script on
-  install, which builds `dist/` locally. Works without operator action.
-- **`git tag` / `github:owner/repo#tag` pins**: npm clones the tag and
-  expects `dist/` to be present. If you tagged without building, the
-  install still runs `prepare` — but any tooling that reads `dist/`
-  before install (e.g. CI cache warmers, IDE type resolvers) breaks.
-- **npm publish** (future): `prepublishOnly` enforces build + test
-  before the tarball is uploaded. `dist/` is included via the `files`
-  allowlist in `package.json`.
+Consumers pinned to a Git SHA receive the committed build. `prepare` skips
+compilation when `dist/index.js` exists, so source-only fixes do not reach those
+consumers. Build before the release, inspect `git diff --stat`, and commit every
+changed generated file with the source. Verify an actual consumer install and
+its runtime exports after repinning. Never patch only `dist/`.
 
 ## Historical lesson — v0.2.0 gotcha
 

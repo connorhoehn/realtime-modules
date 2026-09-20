@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.69.1 — 2026-09-20
+
+- CRDT updates and awareness now consult the supplied channel policy on every
+  call, including direct handler calls and policy revocation after subscribing.
+  A denied subscription can no longer be followed by an unchecked update.
+- `SnapshotManager.writeSnapshot` now rejects durable-store failures. Callers
+  making explicit saves must handle rejection; background timers/sweeps catch
+  failures and retain dirty state for retry. Failed pre-clear/pre-restore
+  checkpoints stop those operations before replacing the current document.
+- Snapshot writes serialize per channel. Edits arriving during a write remain
+  dirty, and the cache is populated only after durable persistence succeeds.
+- Named saves return the actual stored timestamp. Same-process version keys
+  increase monotonically, preventing same-tick manual versions from colliding.
+- This is not complete document authorization or multi-writer fencing. The
+  hook still defaults to permissive; deployments own collection/history policy.
+  Snapshot author/type metadata and cold-store read-failure semantics remain
+  separate adoption gaps.
+- Validation: 1,336 tests passed; build and 29-subpath export verification passed.
+  The full Jest run retained handles after completion; the eight new regressions
+  exit cleanly with `--detectOpenHandles`.
+
+
 ## 0.69.0 — 2026-09-18
 
 - **`useActivity` gains `publish`** — the write half of a feed that could only
