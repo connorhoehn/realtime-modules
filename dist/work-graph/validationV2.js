@@ -45,7 +45,11 @@ function validateWorkGraphQueryV2(value) {
     return result(valid, value, 'v2 work graph query');
 }
 function detail(value) {
-    if (!exact(value, ['nodeId'], ['freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId))
+    if (!exact(value, ['nodeId'], ['summary', 'lines', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId))
+        return false;
+    if (value.summary !== undefined && !label(value.summary))
+        return false;
+    if (value.lines !== undefined && (!Array.isArray(value.lines) || value.lines.length > contractsV2_1.WORK_GRAPH_V2_LIMITS.detailLines || !value.lines.every(label)))
         return false;
     if (value.freshness !== undefined && !lease(value.freshness))
         return false;
@@ -97,7 +101,7 @@ function validateWorkGraphSnapshotV2(value) {
     let valid = snapshot.query.personId === snapshot.scope.personId && snapshot.query.day === snapshot.scope.day && snapshot.query.timezone === snapshot.scope.timezone && (snapshot.temporal.mode === 'recent' || snapshot.temporal.mode === snapshot.query.mode);
     const effortIds = new Set();
     for (const effort of efforts) {
-        if (!exact(effort, ['id', 'anchorNodeId', 'title', 'nodeIds', 'edgeIds', 'contextNodeIds']) || !id(effort.id) || effortIds.has(effort.id) || !id(effort.anchorNodeId) || !label(effort.title) || !ids(effort.nodeIds, contracts_1.WORK_GRAPH_LIMITS.snapshotNodes) || !ids(effort.edgeIds, contracts_1.WORK_GRAPH_LIMITS.snapshotEdges) || !ids(effort.contextNodeIds, contracts_1.WORK_GRAPH_LIMITS.snapshotNodes)) {
+        if (!exact(effort, ['id', 'anchorNodeId', 'title', 'nodeIds', 'edgeIds', 'contextNodeIds'], ['subtitle']) || !id(effort.id) || effortIds.has(effort.id) || !id(effort.anchorNodeId) || !label(effort.title) || (effort.subtitle !== undefined && !label(effort.subtitle)) || !ids(effort.nodeIds, contracts_1.WORK_GRAPH_LIMITS.snapshotNodes) || !ids(effort.edgeIds, contracts_1.WORK_GRAPH_LIMITS.snapshotEdges) || !ids(effort.contextNodeIds, contracts_1.WORK_GRAPH_LIMITS.snapshotNodes)) {
             valid = false;
             break;
         }

@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { WorkGraphSnapshot, WorkGraphStreamMessage } from '../../work-graph/contracts';
+import type { WorkGraphSnapshotV2 } from '../../work-graph/contractsV2';
 import { validateWorkGraphDeltaBatch, validateWorkGraphSnapshot } from '../../work-graph/validation';
+import { validateWorkGraphQueryV2, validateWorkGraphSnapshotV2 } from '../../work-graph/validationV2';
 import {
+  applyWorkGraphActivity,
   applyWorkGraphSnapshot,
+  applyWorkGraphSnapshotV2,
   createClientWorkGraphState,
   reduceWorkGraphStream,
+  type ClientWorkGraphActivity,
   type ClientWorkGraphScope,
   type ClientWorkGraphState,
 } from './reduceSnapshot';
@@ -19,15 +24,27 @@ export interface WorkGraphClientScope extends ClientWorkGraphScope {
   viewerId: string;
 }
 
+/** Additive request fields. A v1 caller sends exactly the same body as before. */
+export interface WorkGraphActivityRequest {
+  schemaVersion: 2;
+  windowStart: string;
+  windowEnd: string;
+  mode: 'live' | 'as-of';
+}
+
 export interface WorkGraphSnapshotRequest {
   scope: WorkGraphClientScope;
   signal: AbortSignal;
+  /** Present only when the caller opted into schemaVersion 2. */
+  activity?: WorkGraphActivityRequest;
 }
 
 export interface WorkGraphSocketRequest {
   scope: WorkGraphClientScope;
   cursor: string;
   subscriptionGeneration: string;
+  /** Present only when the caller opted into schemaVersion 2. */
+  activity?: WorkGraphActivityRequest;
   onMessage(message: unknown): void;
   onClose(): void;
   onError(): void;
@@ -50,6 +67,7 @@ export interface WorkGraphClientTransport {
 export type WorkGraphClientError =
   | 'snapshot-unavailable'
   | 'invalid-snapshot'
+  | 'invalid-query'
   | 'stream-unavailable';
 
 export interface UseWorkGraphOptions {
@@ -59,6 +77,13 @@ export interface UseWorkGraphOptions {
   reconnectDelayMs?: number;
   /** Intended for deterministic tests and hosts with their own ID generator. */
   createSubscriptionGeneration?: () => string;
+  /**
+   * Opt-in reader version. Omitted or 1 keeps the existing v1 request and
+   * response exactly; 2 requests the activity layer and validates it strictly.
+   */
+  schemaVersion?: 1 | 2;
+  /** Required with schemaVersion 2: the selected interval inside the local day. */
+  window?: { start: string; end: string; mode?: 'live' | 'as-of' };
 }
 
 export interface UseWorkGraphResult {
@@ -120,6 +145,31 @@ function parseStreamMessage(value: unknown): WorkGraphStreamMessage | null {
   return null;
 }
 
+/**
+ * Opt-in activity refresh. It is parsed only for a schemaVersion 2 caller, so
+ * a v1 client keeps rejecting every message kind it did not already accept.
+ */
+function parseActivityMessage(value: unknown): {
+  subscriptionGeneration: string;
+  policyRevision?: string;
+  activity: ClientWorkGraphActivity;
+} | null {
+  if (!exactRecord(value, ['kind', 'subscriptionGeneration', 'snapshot'])
+    && !exactRecord(value, ['kind', 'subscriptionGeneration', 'policyRevision', 'snapshot'])) return null;
+  if (value.kind !== 'activity'
+    || typeof value.subscriptionGeneration !== 'string'
+    || value.subscriptionGeneration.length === 0) return null;
+  if ('policyRevision' in value && typeof value.policyRevision !== 'string') return null;
+  const validated = validateWorkGraphSnapshotV2(value.snapshot);
+  if (!validated.ok) return null;
+  const { query, temporal, efforts, details, operations, eventBuckets } = validated.value;
+  return {
+    subscriptionGeneration: value.subscriptionGeneration,
+    ...(typeof value.policyRevision === 'string' ? { policyRevision: value.policyRevision } : {}),
+    activity: { query, temporal, efforts, details, operations, eventBuckets },
+  };
+}
+
 function defaultGeneration(sequence: number): string {
   const random = typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -138,6 +188,8 @@ export function useWorkGraph({
   enabled = true,
   reconnectDelayMs = 250,
   createSubscriptionGeneration,
+  schemaVersion = 1,
+  window,
 }: UseWorkGraphOptions): UseWorkGraphResult {
   const scopeKey = keyForScope(scope);
   const generationSequence = useRef(0);
@@ -168,6 +220,9 @@ export function useWorkGraph({
       ?? defaultGeneration(generationSequence.current);
     const currentScope = reducerScope(scope);
     const request = { scope: currentScope, subscriptionGeneration };
+    const activityRequest: WorkGraphActivityRequest | null = schemaVersion === 2 && window
+      ? { schemaVersion: 2, windowStart: window.start, windowEnd: window.end, mode: window.mode ?? 'live' }
+      : null;
     let graph = createClientWorkGraphState(currentScope, subscriptionGeneration);
     let disposed = false;
     let recoveryStarted = false;
@@ -200,23 +255,48 @@ export function useWorkGraph({
     };
 
     const bootstrap = async () => {
+      if (schemaVersion === 2) {
+        // Refuse to issue a v2 request the server would have to interpret.
+        // The window has to be a real interval inside this person's local day.
+        const query = activityRequest && validateWorkGraphQueryV2({
+          schemaVersion: 2,
+          personId: scope.personId,
+          day: scope.day,
+          timezone: scope.timezone,
+          windowStart: activityRequest.windowStart,
+          windowEnd: activityRequest.windowEnd,
+          mode: activityRequest.mode,
+        });
+        if (!query || !query.ok) {
+          publish(createClientWorkGraphState(currentScope, subscriptionGeneration), 'invalid-query');
+          return;
+        }
+      }
       let rawSnapshot: unknown;
       try {
-        rawSnapshot = await transport.fetchSnapshot({ scope: { ...scope }, signal: abortController.signal });
+        rawSnapshot = await transport.fetchSnapshot({
+          scope: { ...scope },
+          signal: abortController.signal,
+          ...(activityRequest ? { activity: activityRequest } : {}),
+        });
       } catch {
         if (!disposed && !abortController.signal.aborted) publish(graph, 'snapshot-unavailable');
         return;
       }
       if (disposed) return;
 
-      const validated = validateWorkGraphSnapshot(rawSnapshot);
+      const validated = schemaVersion === 2
+        ? validateWorkGraphSnapshotV2(rawSnapshot)
+        : validateWorkGraphSnapshot(rawSnapshot);
       if (!validated.ok) {
         publish(createClientWorkGraphState(currentScope, subscriptionGeneration), 'invalid-snapshot');
         return;
       }
 
-      const snapshot = validated.value as WorkGraphSnapshot;
-      const next = applyWorkGraphSnapshot(graph, snapshot, request);
+      const snapshot = validated.value as WorkGraphSnapshot | WorkGraphSnapshotV2;
+      const next = snapshot.schemaVersion === 2
+        ? applyWorkGraphSnapshotV2(graph, snapshot, request)
+        : applyWorkGraphSnapshot(graph, snapshot, request);
       if (next === graph || next.status === 'loading') {
         publish(createClientWorkGraphState(currentScope, subscriptionGeneration), 'invalid-snapshot');
         return;
@@ -225,6 +305,13 @@ export function useWorkGraph({
 
       const onMessage = (rawMessage: unknown) => {
         if (disposed || recoveryStarted) return;
+        if (schemaVersion === 2) {
+          const refresh = parseActivityMessage(rawMessage);
+          if (refresh) {
+            publish(applyWorkGraphActivity(graph, refresh.activity, refresh));
+            return;
+          }
+        }
         const message = parseStreamMessage(rawMessage);
         if (!message) {
           recover(reconnectDelayMs);
@@ -240,6 +327,7 @@ export function useWorkGraph({
           scope: { ...scope },
           cursor: snapshot.cursor,
           subscriptionGeneration,
+          ...(activityRequest ? { activity: activityRequest } : {}),
           onMessage,
           onClose: () => recover(reconnectDelayMs),
           onError: () => recover(reconnectDelayMs, 'stream-unavailable'),
@@ -262,6 +350,10 @@ export function useWorkGraph({
     enabled,
     reconnectDelayMs,
     restart,
+    schemaVersion,
+    window?.start,
+    window?.end,
+    window?.mode,
     scope.day,
     scope.personId,
     scope.timezone,

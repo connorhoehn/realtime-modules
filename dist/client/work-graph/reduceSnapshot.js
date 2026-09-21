@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createClientWorkGraphState = createClientWorkGraphState;
 exports.applyWorkGraphSnapshot = applyWorkGraphSnapshot;
+exports.applyWorkGraphSnapshotV2 = applyWorkGraphSnapshotV2;
+exports.applyWorkGraphActivity = applyWorkGraphActivity;
 exports.reduceWorkGraphStream = reduceWorkGraphStream;
 function createClientWorkGraphState(scope, subscriptionGeneration) {
     return {
@@ -33,6 +35,35 @@ function applyWorkGraphSnapshot(state, snapshot, request) {
         status: snapshot.partial ? 'partial' : 'ready',
         resetReason: undefined,
     };
+}
+/**
+ * Applies an opt-in v2 snapshot. The graph half reuses the v1 reducer so both
+ * versions converge on one node/edge state; only the activity layer is added.
+ */
+function applyWorkGraphSnapshotV2(state, snapshot, request) {
+    const { query, temporal, efforts, details, operations, eventBuckets, ...base } = snapshot;
+    const next = applyWorkGraphSnapshot(state, { ...base, schemaVersion: 1 }, request);
+    if (next === state)
+        return state;
+    return { ...next, activity: { query, temporal, efforts, details, operations, eventBuckets } };
+}
+/**
+ * Replaces the activity layer without touching authorized node/edge state.
+ * A refresh from another policy revision or generation is dropped, so a stale
+ * effort/detail set can never be shown beside newer authorization.
+ */
+function applyWorkGraphActivity(state, activity, request) {
+    if (request.subscriptionGeneration !== state.subscriptionGeneration)
+        return state;
+    if (state.activity === undefined)
+        return state;
+    if (request.policyRevision !== undefined && request.policyRevision !== state.policyRevision)
+        return state;
+    if (activity.query.personId !== state.scope.personId
+        || activity.query.day !== state.scope.day
+        || activity.query.timezone !== state.scope.timezone)
+        return state;
+    return { ...state, activity };
 }
 function requireRefetch(state, reason) {
     return { ...state, status: 'refetch-required', resetReason: reason };

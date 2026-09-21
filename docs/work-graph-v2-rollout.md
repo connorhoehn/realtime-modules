@@ -9,3 +9,52 @@ Validation rejects extra private fields, metadata on locked/existence-only entit
 Next: settle source/session/attempt/lineage events, negotiated HTTP/WS readers and writers, historical reconstruction, authorization of each detail/count/anchor, revision-aware action exchange, recipient reference resolution, and composite replay. Do not manufacture these fields from presence or current lifecycle status. The app's full design and acceptance roadmap is `realtime-examples/docs/design/active-now-vertical-plan.md`.
 
 Checkpoint checks: all 114 Jest suites / 1,392 tests passed; production build and 29-subpath export verification passed; typecheck passed. Focused work-graph suites: 9 / 85 tests. No consumer pin has been moved to this version as part of this checkpoint.
+
+## 0.71.0 — producers, shared server helpers and an opt-in client reader
+
+This release makes a v2 response producible and readable end to end. V1 stays
+byte-for-byte identical: the v1 snapshot request body, stream message set,
+reference encoding and `WorkGraphSnapshot` shape are unchanged, and the v1 hook
+test still asserts the exact `{ scope, signal }` request and six-key socket
+request.
+
+**Source-declared provenance.** `projectEvent` now creates the cross-source
+relationships the payloads already carried: a pipeline run's `inputs`
+(`run -derived-from-> input`), a document revision's `producedByRunId`
+(`run -produced-> document`), and a conversation's `explicitRelatedResource`
+(`conversation -discussed-> resource`). The counterpart must already be
+projected and must resolve to exactly one node; otherwise the relationship is
+dropped. Nothing is linked because two entities share an actor, a day, a
+project, or a machine. Two optional payload fields were added for this:
+`PipelinePayload.inputs` (explicit `WorkSourceRef[]`) and
+`CloudComputePayload.projectLabel`. Both are optional, so existing producers
+validate unchanged, and neither is accepted on a payload kind that never
+declared it.
+
+**Shared server helpers** (`work-graph/serverV2`, also re-exported from
+`work-graph/server`): `deriveWorkEfforts` walks source-declared edges out from
+anchor nodes (`project`, `task`, `meeting` by default) so each effort is real
+provenance; nodes reachable from no anchor stay ungrouped rather than being
+merged on a heuristic. `buildWorkGraphSnapshotV2` assembles and strictly
+validates. `bucketWorkEvents` buckets against the real IANA local day,
+`freshWorkOperations` drops expired leases, and `detailsForDisclosedNodes`
+keeps details to nodes at full `details` disclosure.
+
+**Client**: `useWorkGraph({ schemaVersion: 2, window: { start, end, mode } })`
+sends an additive `activity` field on the snapshot and socket requests,
+validates with `validateWorkGraphSnapshotV2`, and exposes
+`graph.activity` (`query`, `temporal`, `efforts`, `details`, `operations`,
+`eventBuckets`). An invalid window fails locally as `invalid-query` instead of
+being sent. A v2 caller also accepts one additive stream message,
+`{ kind: 'activity', subscriptionGeneration, policyRevision?, snapshot }`,
+which replaces only the activity layer and is ignored when the generation or
+policy revision does not match. V1 callers still reject that message.
+
+**Additive contract fields**: optional `subtitle` on `ViewerWorkEffort`, and
+optional `summary`/`lines` on `ViewerWorkActivityDetail` (max
+`WORK_GRAPH_V2_LIMITS.detailLines`). Validation rejects them on locked or
+existence-only entities exactly as before.
+
+Still not done: v2 reference writing stays opt-in and disabled, deltas remain
+v1 node/edge operations, and historical reconstruction is unchanged — an
+`as-of` answer the host cannot reconstruct must still be reported as `recent`.

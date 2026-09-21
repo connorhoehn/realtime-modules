@@ -34,7 +34,9 @@ export function validateWorkGraphQueryV2(value: unknown): ValidationResult<WorkG
 }
 
 function detail(value: unknown): value is ViewerWorkActivityDetail {
-  if (!exact(value, ['nodeId'], ['freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId)) return false;
+  if (!exact(value, ['nodeId'], ['summary', 'lines', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId)) return false;
+  if (value.summary !== undefined && !label(value.summary)) return false;
+  if (value.lines !== undefined && (!Array.isArray(value.lines) || value.lines.length > WORK_GRAPH_V2_LIMITS.detailLines || !value.lines.every(label))) return false;
   if (value.freshness !== undefined && !lease(value.freshness)) return false;
   if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.length > WORK_GRAPH_V2_LIMITS.tools || !value.tools.every(label) || new Set(value.tools).size !== value.tools.length)) return false;
   if (value.attention !== undefined) {
@@ -72,7 +74,7 @@ export function validateWorkGraphSnapshotV2(value: unknown): ValidationResult<Wo
   let valid = snapshot.query.personId === snapshot.scope.personId && snapshot.query.day === snapshot.scope.day && snapshot.query.timezone === snapshot.scope.timezone && (snapshot.temporal.mode === 'recent' || snapshot.temporal.mode === snapshot.query.mode);
   const effortIds = new Set<string>();
   for (const effort of efforts) {
-    if (!exact(effort, ['id', 'anchorNodeId', 'title', 'nodeIds', 'edgeIds', 'contextNodeIds']) || !id(effort.id) || effortIds.has(effort.id) || !id(effort.anchorNodeId) || !label(effort.title) || !ids(effort.nodeIds, WORK_GRAPH_LIMITS.snapshotNodes) || !ids(effort.edgeIds, WORK_GRAPH_LIMITS.snapshotEdges) || !ids(effort.contextNodeIds, WORK_GRAPH_LIMITS.snapshotNodes)) { valid = false; break; }
+    if (!exact(effort, ['id', 'anchorNodeId', 'title', 'nodeIds', 'edgeIds', 'contextNodeIds'], ['subtitle']) || !id(effort.id) || effortIds.has(effort.id) || !id(effort.anchorNodeId) || !label(effort.title) || (effort.subtitle !== undefined && !label(effort.subtitle)) || !ids(effort.nodeIds, WORK_GRAPH_LIMITS.snapshotNodes) || !ids(effort.edgeIds, WORK_GRAPH_LIMITS.snapshotEdges) || !ids(effort.contextNodeIds, WORK_GRAPH_LIMITS.snapshotNodes)) { valid = false; break; }
     effortIds.add(effort.id);
     const members = new Set(effort.nodeIds);
     if (!members.has(effort.anchorNodeId) || !nodeById.has(effort.anchorNodeId) || !effort.nodeIds.every((key) => nodeById.has(key)) || !effort.contextNodeIds.every((key) => members.has(key)) || !effort.edgeIds.every((key) => { const edge = edgeById.get(key); return edge && members.has(edge.fromId) && members.has(edge.toId); })) valid = false;

@@ -2,7 +2,7 @@ import type { WorkGraphQueryScope, WorkGraphSnapshot, WorkReference, WorkReferen
 
 /** Opt-in readers precede v2 producers. Existing v1 contracts remain exact. */
 export const WORK_GRAPH_SCHEMA_VERSION_V2 = 2 as const;
-export const WORK_GRAPH_V2_LIMITS = { efforts: 50, revisions: 100, anchors: 200, tools: 16, eventBuckets: 1500, snapshotBytes: 1024 * 1024 } as const;
+export const WORK_GRAPH_V2_LIMITS = { efforts: 50, revisions: 100, anchors: 200, tools: 16, eventBuckets: 1500, detailLines: 4, snapshotBytes: 1024 * 1024 } as const;
 
 export interface WorkGraphQueryV2 {
   schemaVersion: 2;
@@ -19,6 +19,8 @@ export interface ViewerWorkEffort {
   /** Authorized anchor, never a hidden source's title or identifier. */
   anchorNodeId: string;
   title: string;
+  /** Authorized state line. Derived from disclosed members, never a source label. */
+  subtitle?: string;
   nodeIds: string[];
   edgeIds: string[];
   contextNodeIds: string[];
@@ -40,6 +42,10 @@ export interface ViewerArtifactRevision {
 
 export interface ViewerWorkActivityDetail {
   nodeId: string;
+  /** One authorized state line for the node body. */
+  summary?: string;
+  /** Additional authorized body lines, already filtered for this viewer. */
+  lines?: string[];
   /** A source lease does not change the process lifecycle or human presence. */
   freshness?: { observedAt: string; expiresAt: string };
   tools?: string[];

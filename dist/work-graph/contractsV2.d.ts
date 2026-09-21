@@ -7,6 +7,7 @@ export declare const WORK_GRAPH_V2_LIMITS: {
     readonly anchors: 200;
     readonly tools: 16;
     readonly eventBuckets: 1500;
+    readonly detailLines: 4;
     readonly snapshotBytes: number;
 };
 export interface WorkGraphQueryV2 {
@@ -23,6 +24,8 @@ export interface ViewerWorkEffort {
     /** Authorized anchor, never a hidden source's title or identifier. */
     anchorNodeId: string;
     title: string;
+    /** Authorized state line. Derived from disclosed members, never a source label. */
+    subtitle?: string;
     nodeIds: string[];
     edgeIds: string[];
     contextNodeIds: string[];
@@ -43,6 +46,10 @@ export interface ViewerArtifactRevision {
 }
 export interface ViewerWorkActivityDetail {
     nodeId: string;
+    /** One authorized state line for the node body. */
+    summary?: string;
+    /** Additional authorized body lines, already filtered for this viewer. */
+    lines?: string[];
     /** A source lease does not change the process lifecycle or human presence. */
     freshness?: {
         observedAt: string;

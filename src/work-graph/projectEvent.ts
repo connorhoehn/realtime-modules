@@ -64,11 +64,24 @@ interface EdgeInput {
   relation: WorkRelation;
 }
 
+/**
+ * A relationship to an entity this event does not itself describe. The source
+ * has to name the other resource explicitly; the reducer never links two
+ * entities because they share an actor, a day, a project, or a machine. The
+ * edge is dropped when the named resource has not been projected yet, so a
+ * late or unauthorized counterpart can never conjure a node.
+ */
+interface CrossSourceEdgeInput {
+  from: NodeInput | { existing: WorkSourceRef; kinds?: WorkNodeKind[] };
+  to: NodeInput | { existing: WorkSourceRef; kinds?: WorkNodeKind[] };
+  relation: WorkRelation;
+}
+
 function sourceRef(event: AuthenticatedWorkEvent, resourceId: string): WorkSourceRef {
   return { source: event.source, resourceId };
 }
 
-function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: EdgeInput[] } {
+function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: EdgeInput[]; crossEdges?: CrossSourceEdgeInput[] } {
   const status = statusFor(event);
   const safe = (fallback: string) => event.payload.safeLabel?.trim() || fallback;
   switch (event.payload.kind) {
@@ -78,7 +91,7 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
       const nodes: NodeInput[] = [terminal];
       const edges: EdgeInput[] = [];
       if (event.payload.projectId) {
-        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: 'Project', status: 'idle' };
+        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: event.payload.projectLabel?.trim() || 'Project', status: 'idle' };
         nodes.push(project); edges.push({ from: terminal, to: project, relation: 'works-on' });
       }
       if (event.payload.jobId) {
@@ -108,13 +121,44 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
       const document: NodeInput = { kind: 'document', resourceId: event.payload.documentId, title: safe('Document'), status };
       if (event.payload.lifecycle === 'deleted') return { nodes: [{ ...document, deleting: true }], edges: [] };
       const change: NodeInput = { kind: 'change', resourceId: `${event.payload.documentId}:${event.payload.revisionId}`, title: 'Document change', status };
-      return { nodes: [document, change], edges: [{ from: change, to: document, relation: 'edited' }] };
+      const producedBy = event.payload.producedByRunId;
+      return {
+        nodes: [document, change],
+        edges: [{ from: change, to: document, relation: 'edited' }],
+        // The save record itself attributes the revision to a run. Only a run
+        // node already projected by its own source can be named here.
+        ...(producedBy
+          ? {
+            crossEdges: [{
+              from: { existing: { source: 'pipeline', resourceId: producedBy }, kinds: ['run'] },
+              to: document,
+              relation: 'produced' as WorkRelation,
+            }],
+          }
+          : {}),
+      };
     }
     case 'pipeline': {
-      return { nodes: [{ kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), status }], edges: [] };
+      const run: NodeInput = { kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), status };
+      const declared = event.payload.inputs ?? [];
+      return {
+        nodes: [run],
+        edges: [],
+        // `derived-from` points at the evidence the run consumed. Direction is
+        // run -> input, matching the transcript -> meeting convention above.
+        crossEdges: declared.map((ref) => ({ from: run, to: { existing: ref }, relation: 'derived-from' as WorkRelation })),
+      };
     }
     case 'conversation': {
-      return { nodes: [{ kind: 'conversation', resourceId: event.payload.conversationId, title: safe(event.payload.conversationKind === 'dm' ? 'Direct conversation' : 'Conversation'), status, deleting: event.payload.lifecycle === 'membership-removed' }], edges: [] };
+      const conversation: NodeInput = { kind: 'conversation', resourceId: event.payload.conversationId, title: safe(event.payload.conversationKind === 'dm' ? 'Direct conversation' : 'Conversation'), status, deleting: event.payload.lifecycle === 'membership-removed' };
+      const related = event.payload.explicitRelatedResource;
+      return {
+        nodes: [conversation],
+        edges: [],
+        ...(related && event.payload.lifecycle === 'contributed'
+          ? { crossEdges: [{ from: conversation, to: { existing: related }, relation: 'discussed' as WorkRelation }] }
+          : {}),
+      };
     }
     case 'meeting': {
       const meeting: NodeInput = { kind: 'meeting', resourceId: event.payload.meetingId, title: safe('Meeting'), status };
@@ -162,6 +206,26 @@ function upsertNode(state: WorkProjectionState, event: AuthenticatedWorkEvent, i
   };
 }
 
+/**
+ * Resolves a cross-source endpoint to an existing projected node. Lookup is by
+ * the resource the source named, never by actor or time proximity, and a
+ * deleted or absent counterpart simply drops the relationship.
+ */
+function resolveEndpoint(
+  state: WorkProjectionState,
+  event: AuthenticatedWorkEvent,
+  endpoint: CrossSourceEdgeInput['from'],
+): string | undefined {
+  if (!('existing' in endpoint)) return nodeId(state, endpoint.kind, sourceRef(event, endpoint.resourceId));
+  const { source, resourceId } = endpoint.existing;
+  const matches = Object.values(state.nodes).filter((node) => !node.deletedAt
+    && node.sourceRef.source === source
+    && node.sourceRef.resourceId === resourceId
+    && (!endpoint.kinds || endpoint.kinds.includes(node.kind)));
+  // A resource that resolves to more than one node is ambiguous provenance.
+  return matches.length === 1 ? matches[0].id : undefined;
+}
+
 /** Pure, idempotent projection over an already validated source event. */
 export function projectWorkEvent(current: WorkProjectionState, event: AuthenticatedWorkEvent): WorkProjectionState {
   if (current.organizationId !== event.actor.organizationId || current.actorId !== event.actor.actorId) {
@@ -192,21 +256,20 @@ export function projectWorkEvent(current: WorkProjectionState, event: Authentica
     next.nodes[node.id] = node;
     if (node.deletedAt && node.sourceEventId === event.eventId) deletedNodeIds.add(node.id);
   }
-  for (const input of inputs.edges) {
-    const fromId = nodeId(next, input.from.kind, sourceRef(event, input.from.resourceId));
-    const toId = nodeId(next, input.to.kind, sourceRef(event, input.to.resourceId));
-    if (!next.nodes[fromId] || !next.nodes[toId] || next.nodes[fromId].deletedAt || next.nodes[toId].deletedAt) continue;
-    const id = opaqueWorkId('edge', fromId, toId, input.relation);
+  const link = (fromId: string | undefined, toId: string | undefined, relation: WorkRelation): void => {
+    if (!fromId || !toId || fromId === toId) return;
+    if (!next.nodes[fromId] || !next.nodes[toId] || next.nodes[fromId].deletedAt || next.nodes[toId].deletedAt) return;
+    const id = opaqueWorkId('edge', fromId, toId, relation);
     const existing = next.edges[id];
-    if (existing && !isNewer(event, existing)) continue;
+    if (existing && !isNewer(event, existing)) return;
     const edge: InternalWorkEdge = {
       id,
       organizationId: event.actor.organizationId,
       actorId: event.actor.actorId,
       fromId,
       toId,
-      relation: input.relation,
-      policyRef: `${event.source}:relation:${input.relation}`,
+      relation,
+      policyRef: `${event.source}:relation:${relation}`,
       status: statusFor(event),
       startedAt: existing?.startedAt ?? event.occurredAt,
       updatedAt: event.occurredAt,
@@ -216,6 +279,17 @@ export function projectWorkEvent(current: WorkProjectionState, event: Authentica
       revision: (existing?.revision ?? 0) + 1,
     };
     next.edges[id] = edge;
+  };
+
+  for (const input of inputs.edges) {
+    link(
+      nodeId(next, input.from.kind, sourceRef(event, input.from.resourceId)),
+      nodeId(next, input.to.kind, sourceRef(event, input.to.resourceId)),
+      input.relation,
+    );
+  }
+  for (const input of inputs.crossEdges ?? []) {
+    link(resolveEndpoint(next, event, input.from), resolveEndpoint(next, event, input.to), input.relation);
   }
   // Delete all incident relationships, including ones absent from the delete
   // payload. Keep the other endpoints and their unrelated relationships.

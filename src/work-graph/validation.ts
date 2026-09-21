@@ -156,11 +156,12 @@ function isEventPayload(value: unknown, source: WorkSourceKind): boolean {
   const label = (record: JsonRecord) => record.safeLabel === undefined || stringWithin(record.safeLabel, WORK_GRAPH_LIMITS.labelLength);
   switch (source) {
     case 'cloud-compute':
-      return hasExactKeys(value, ['kind', 'lifecycle', 'boxId'], ['jobId', 'agentId', 'projectId', 'attempt', 'safeLabel'])
+      return hasExactKeys(value, ['kind', 'lifecycle', 'boxId'], ['jobId', 'agentId', 'projectId', 'attempt', 'safeLabel', 'projectLabel'])
         && ['created', 'started', 'waiting', 'completed', 'stopped', 'failed', 'deleted'].includes(value.lifecycle as string)
         && isId(value.boxId) && (value.jobId === undefined || isId(value.jobId))
         && (value.agentId === undefined || isId(value.agentId)) && (value.projectId === undefined || isId(value.projectId))
-        && (value.attempt === undefined || isNonNegativeInteger(value.attempt)) && label(value);
+        && (value.attempt === undefined || isNonNegativeInteger(value.attempt))
+        && (value.projectLabel === undefined || stringWithin(value.projectLabel, WORK_GRAPH_LIMITS.labelLength)) && label(value);
     case 'local-compute':
       return hasExactKeys(value, ['kind', 'lifecycle', 'machineId'], ['sessionId', 'jobId', 'projectId', 'heartbeatAt', 'safeLabel'])
         && ['session-started', 'session-ended', 'job-started', 'job-finished', 'heartbeat', 'disconnected'].includes(value.lifecycle as string)
@@ -174,10 +175,12 @@ function isEventPayload(value: unknown, source: WorkSourceKind): boolean {
         && (value.attributedActorId === undefined || isId(value.attributedActorId))
         && (value.producedByRunId === undefined || isId(value.producedByRunId)) && label(value);
     case 'pipeline':
-      return hasExactKeys(value, ['kind', 'lifecycle', 'pipelineId', 'runId', 'attempt'], ['artifactIds', 'safeLabel'])
+      return hasExactKeys(value, ['kind', 'lifecycle', 'pipelineId', 'runId', 'attempt'], ['artifactIds', 'safeLabel', 'inputs'])
         && ['started', 'waiting', 'completed', 'failed', 'cancelled'].includes(value.lifecycle as string)
         && isId(value.pipelineId) && isId(value.runId) && isNonNegativeInteger(value.attempt)
-        && (value.artifactIds === undefined || hasUniqueIds(value.artifactIds, WORK_GRAPH_LIMITS.snapshotNodes)) && label(value);
+        && (value.artifactIds === undefined || hasUniqueIds(value.artifactIds, WORK_GRAPH_LIMITS.snapshotNodes))
+        && (value.inputs === undefined || (Array.isArray(value.inputs) && value.inputs.length <= WORK_GRAPH_LIMITS.snapshotNodes && value.inputs.every((ref) => isSourceRef(ref))))
+        && label(value);
     case 'conversation':
       return hasExactKeys(value, ['kind', 'lifecycle', 'conversationId', 'conversationKind'], ['explicitRelatedResource', 'safeLabel'])
         && ['contributed', 'membership-added', 'membership-removed'].includes(value.lifecycle as string)

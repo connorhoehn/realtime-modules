@@ -1,6 +1,7 @@
 export * from './contracts';
 export * from './contractsV2';
 export * from './validationV2';
+export * from './serverV2';
 export * from './dayWindow';
 export * from './fixtures';
 export * from './eventDeclarations';

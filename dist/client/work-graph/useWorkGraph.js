@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.useWorkGraph = useWorkGraph;
 const react_1 = require("react");
 const validation_1 = require("../../work-graph/validation");
+const validationV2_1 = require("../../work-graph/validationV2");
 const reduceSnapshot_1 = require("./reduceSnapshot");
 const invalidationReasons = new Set([
     'policy-changed',
@@ -48,6 +49,30 @@ function parseStreamMessage(value) {
     }
     return null;
 }
+/**
+ * Opt-in activity refresh. It is parsed only for a schemaVersion 2 caller, so
+ * a v1 client keeps rejecting every message kind it did not already accept.
+ */
+function parseActivityMessage(value) {
+    if (!exactRecord(value, ['kind', 'subscriptionGeneration', 'snapshot'])
+        && !exactRecord(value, ['kind', 'subscriptionGeneration', 'policyRevision', 'snapshot']))
+        return null;
+    if (value.kind !== 'activity'
+        || typeof value.subscriptionGeneration !== 'string'
+        || value.subscriptionGeneration.length === 0)
+        return null;
+    if ('policyRevision' in value && typeof value.policyRevision !== 'string')
+        return null;
+    const validated = (0, validationV2_1.validateWorkGraphSnapshotV2)(value.snapshot);
+    if (!validated.ok)
+        return null;
+    const { query, temporal, efforts, details, operations, eventBuckets } = validated.value;
+    return {
+        subscriptionGeneration: value.subscriptionGeneration,
+        ...(typeof value.policyRevision === 'string' ? { policyRevision: value.policyRevision } : {}),
+        activity: { query, temporal, efforts, details, operations, eventBuckets },
+    };
+}
 function defaultGeneration(sequence) {
     const random = typeof globalThis.crypto?.randomUUID === 'function'
         ? globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -59,7 +84,7 @@ function defaultGeneration(sequence) {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, }) {
+function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, }) {
     const scopeKey = keyForScope(scope);
     const generationSequence = (0, react_1.useRef)(0);
     const generationFactory = (0, react_1.useRef)(createSubscriptionGeneration);
@@ -87,6 +112,9 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             ?? defaultGeneration(generationSequence.current);
         const currentScope = reducerScope(scope);
         const request = { scope: currentScope, subscriptionGeneration };
+        const activityRequest = schemaVersion === 2 && window
+            ? { schemaVersion: 2, windowStart: window.start, windowEnd: window.end, mode: window.mode ?? 'live' }
+            : null;
         let graph = (0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration);
         let disposed = false;
         let recoveryStarted = false;
@@ -120,9 +148,30 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                 recoveryTimer = setTimeout(restartNow, delayMs);
         };
         const bootstrap = async () => {
+            if (schemaVersion === 2) {
+                // Refuse to issue a v2 request the server would have to interpret.
+                // The window has to be a real interval inside this person's local day.
+                const query = activityRequest && (0, validationV2_1.validateWorkGraphQueryV2)({
+                    schemaVersion: 2,
+                    personId: scope.personId,
+                    day: scope.day,
+                    timezone: scope.timezone,
+                    windowStart: activityRequest.windowStart,
+                    windowEnd: activityRequest.windowEnd,
+                    mode: activityRequest.mode,
+                });
+                if (!query || !query.ok) {
+                    publish((0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration), 'invalid-query');
+                    return;
+                }
+            }
             let rawSnapshot;
             try {
-                rawSnapshot = await transport.fetchSnapshot({ scope: { ...scope }, signal: abortController.signal });
+                rawSnapshot = await transport.fetchSnapshot({
+                    scope: { ...scope },
+                    signal: abortController.signal,
+                    ...(activityRequest ? { activity: activityRequest } : {}),
+                });
             }
             catch {
                 if (!disposed && !abortController.signal.aborted)
@@ -131,13 +180,17 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             }
             if (disposed)
                 return;
-            const validated = (0, validation_1.validateWorkGraphSnapshot)(rawSnapshot);
+            const validated = schemaVersion === 2
+                ? (0, validationV2_1.validateWorkGraphSnapshotV2)(rawSnapshot)
+                : (0, validation_1.validateWorkGraphSnapshot)(rawSnapshot);
             if (!validated.ok) {
                 publish((0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration), 'invalid-snapshot');
                 return;
             }
             const snapshot = validated.value;
-            const next = (0, reduceSnapshot_1.applyWorkGraphSnapshot)(graph, snapshot, request);
+            const next = snapshot.schemaVersion === 2
+                ? (0, reduceSnapshot_1.applyWorkGraphSnapshotV2)(graph, snapshot, request)
+                : (0, reduceSnapshot_1.applyWorkGraphSnapshot)(graph, snapshot, request);
             if (next === graph || next.status === 'loading') {
                 publish((0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration), 'invalid-snapshot');
                 return;
@@ -146,6 +199,13 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             const onMessage = (rawMessage) => {
                 if (disposed || recoveryStarted)
                     return;
+                if (schemaVersion === 2) {
+                    const refresh = parseActivityMessage(rawMessage);
+                    if (refresh) {
+                        publish((0, reduceSnapshot_1.applyWorkGraphActivity)(graph, refresh.activity, refresh));
+                        return;
+                    }
+                }
                 const message = parseStreamMessage(rawMessage);
                 if (!message) {
                     recover(reconnectDelayMs);
@@ -161,6 +221,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                     scope: { ...scope },
                     cursor: snapshot.cursor,
                     subscriptionGeneration,
+                    ...(activityRequest ? { activity: activityRequest } : {}),
                     onMessage,
                     onClose: () => recover(reconnectDelayMs),
                     onError: () => recover(reconnectDelayMs, 'stream-unavailable'),
@@ -184,6 +245,10 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
         enabled,
         reconnectDelayMs,
         restart,
+        schemaVersion,
+        window?.start,
+        window?.end,
+        window?.mode,
         scope.day,
         scope.personId,
         scope.timezone,

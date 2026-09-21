@@ -7,14 +7,25 @@ import { type ClientWorkGraphScope, type ClientWorkGraphState } from './reduceSn
 export interface WorkGraphClientScope extends ClientWorkGraphScope {
     viewerId: string;
 }
+/** Additive request fields. A v1 caller sends exactly the same body as before. */
+export interface WorkGraphActivityRequest {
+    schemaVersion: 2;
+    windowStart: string;
+    windowEnd: string;
+    mode: 'live' | 'as-of';
+}
 export interface WorkGraphSnapshotRequest {
     scope: WorkGraphClientScope;
     signal: AbortSignal;
+    /** Present only when the caller opted into schemaVersion 2. */
+    activity?: WorkGraphActivityRequest;
 }
 export interface WorkGraphSocketRequest {
     scope: WorkGraphClientScope;
     cursor: string;
     subscriptionGeneration: string;
+    /** Present only when the caller opted into schemaVersion 2. */
+    activity?: WorkGraphActivityRequest;
     onMessage(message: unknown): void;
     onClose(): void;
     onError(): void;
@@ -31,7 +42,7 @@ export interface WorkGraphClientTransport {
     fetchSnapshot(request: WorkGraphSnapshotRequest): Promise<unknown>;
     openWebSocket(request: WorkGraphSocketRequest): WorkGraphSocket;
 }
-export type WorkGraphClientError = 'snapshot-unavailable' | 'invalid-snapshot' | 'stream-unavailable';
+export type WorkGraphClientError = 'snapshot-unavailable' | 'invalid-snapshot' | 'invalid-query' | 'stream-unavailable';
 export interface UseWorkGraphOptions {
     scope: WorkGraphClientScope;
     transport: WorkGraphClientTransport;
@@ -39,6 +50,17 @@ export interface UseWorkGraphOptions {
     reconnectDelayMs?: number;
     /** Intended for deterministic tests and hosts with their own ID generator. */
     createSubscriptionGeneration?: () => string;
+    /**
+     * Opt-in reader version. Omitted or 1 keeps the existing v1 request and
+     * response exactly; 2 requests the activity layer and validates it strictly.
+     */
+    schemaVersion?: 1 | 2;
+    /** Required with schemaVersion 2: the selected interval inside the local day. */
+    window?: {
+        start: string;
+        end: string;
+        mode?: 'live' | 'as-of';
+    };
 }
 export interface UseWorkGraphResult {
     graph: ClientWorkGraphState;
@@ -51,5 +73,5 @@ export interface UseWorkGraphResult {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, }: UseWorkGraphOptions): UseWorkGraphResult;
+export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, }: UseWorkGraphOptions): UseWorkGraphResult;
 //# sourceMappingURL=useWorkGraph.d.ts.map

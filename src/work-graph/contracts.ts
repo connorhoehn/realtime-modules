@@ -153,6 +153,8 @@ export interface CloudComputePayload {
   projectId?: string;
   attempt?: number;
   safeLabel?: string;
+  /** Source-supplied project label. Absent means the generic placeholder. */
+  projectLabel?: string;
 }
 
 export interface LocalComputePayload {
@@ -185,6 +187,8 @@ export interface PipelinePayload {
   attempt: number;
   artifactIds?: string[];
   safeLabel?: string;
+  /** Source-declared inputs this run consumed. Never inferred by the reducer. */
+  inputs?: WorkSourceRef[];
 }
 
 export interface ConversationPayload {

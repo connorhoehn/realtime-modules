@@ -6,6 +6,13 @@ import type {
   WorkGraphStreamMessage,
   WorkSourceStatus,
 } from '../../work-graph/contracts';
+import type { WorkGraphQueryV2, WorkGraphSnapshotV2 } from '../../work-graph/contractsV2';
+import type { WorkGraphActivityV2 } from '../../work-graph/serverV2';
+
+/** Present only for a schemaVersion 2 request. v1 state is byte-for-byte unchanged. */
+export interface ClientWorkGraphActivity extends WorkGraphActivityV2 {
+  query: WorkGraphQueryV2;
+}
 
 export interface ClientWorkGraphScope {
   personId: string;
@@ -24,6 +31,8 @@ export interface ClientWorkGraphState {
   sources: Record<string, WorkSourceStatus>;
   status: 'loading' | 'ready' | 'partial' | 'invalidated' | 'refetch-required';
   resetReason?: string;
+  /** Opt-in v2 activity layer. Absent for every v1 request. */
+  activity?: ClientWorkGraphActivity;
 }
 
 export function createClientWorkGraphState(
@@ -63,6 +72,40 @@ export function applyWorkGraphSnapshot(
     status: snapshot.partial ? 'partial' : 'ready',
     resetReason: undefined,
   };
+}
+
+/**
+ * Applies an opt-in v2 snapshot. The graph half reuses the v1 reducer so both
+ * versions converge on one node/edge state; only the activity layer is added.
+ */
+export function applyWorkGraphSnapshotV2(
+  state: ClientWorkGraphState,
+  snapshot: WorkGraphSnapshotV2,
+  request: { scope: ClientWorkGraphScope; subscriptionGeneration: string },
+): ClientWorkGraphState {
+  const { query, temporal, efforts, details, operations, eventBuckets, ...base } = snapshot;
+  const next = applyWorkGraphSnapshot(state, { ...base, schemaVersion: 1 }, request);
+  if (next === state) return state;
+  return { ...next, activity: { query, temporal, efforts, details, operations, eventBuckets } };
+}
+
+/**
+ * Replaces the activity layer without touching authorized node/edge state.
+ * A refresh from another policy revision or generation is dropped, so a stale
+ * effort/detail set can never be shown beside newer authorization.
+ */
+export function applyWorkGraphActivity(
+  state: ClientWorkGraphState,
+  activity: ClientWorkGraphActivity,
+  request: { subscriptionGeneration: string; policyRevision?: string },
+): ClientWorkGraphState {
+  if (request.subscriptionGeneration !== state.subscriptionGeneration) return state;
+  if (state.activity === undefined) return state;
+  if (request.policyRevision !== undefined && request.policyRevision !== state.policyRevision) return state;
+  if (activity.query.personId !== state.scope.personId
+    || activity.query.day !== state.scope.day
+    || activity.query.timezone !== state.scope.timezone) return state;
+  return { ...state, activity };
 }
 
 function requireRefetch(state: ClientWorkGraphState, reason: string): ClientWorkGraphState {
