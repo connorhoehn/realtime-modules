@@ -96,7 +96,15 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
   const generic = label ? undefined : true;
   switch (event.payload.kind) {
     case 'cloud-compute': {
-      const terminal: NodeInput = { kind: 'terminal', resourceId: event.payload.boxId, title: safe('Cloud terminal'), generic, status };
+      const sessionActivity = event.payload.sessionActivity?.trim();
+      const terminal: NodeInput = {
+        kind: 'terminal',
+        resourceId: event.payload.boxId,
+        title: safe('Cloud terminal'),
+        ...(sessionActivity ? { description: sessionActivity } : {}),
+        generic,
+        status,
+      };
       if (event.payload.lifecycle === 'deleted') return { nodes: [{ ...terminal, deleting: true }], edges: [] };
       const nodes: NodeInput[] = [terminal];
       const edges: EdgeInput[] = [];

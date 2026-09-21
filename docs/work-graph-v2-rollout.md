@@ -121,3 +121,10 @@ a host name a work stream from its anchor without the library guessing.
 context line, written by the source as `"<where> · <what>"`. It becomes the
 project node's description, and a source that stops sending it keeps the last
 one it sent — the same rule that protects a real label from a placeholder.
+
+## 0.76.0 — a session says what it is doing
+
+`CloudComputePayload.sessionActivity` is the box's own state line (for example
+`"Tests running"`), written by the source. It becomes the terminal node's
+description, so a card can show what the session is doing without the reader
+inventing a status word from its lifecycle.

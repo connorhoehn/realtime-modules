@@ -140,13 +140,14 @@ function isEventPayload(value, source) {
     const label = (record) => record.safeLabel === undefined || stringWithin(record.safeLabel, contracts_1.WORK_GRAPH_LIMITS.labelLength);
     switch (source) {
         case 'cloud-compute':
-            return hasExactKeys(value, ['kind', 'lifecycle', 'boxId'], ['jobId', 'agentId', 'projectId', 'attempt', 'safeLabel', 'projectLabel', 'projectContext'])
+            return hasExactKeys(value, ['kind', 'lifecycle', 'boxId'], ['jobId', 'agentId', 'projectId', 'attempt', 'safeLabel', 'projectLabel', 'projectContext', 'sessionActivity'])
                 && ['created', 'started', 'waiting', 'completed', 'stopped', 'failed', 'deleted'].includes(value.lifecycle)
                 && isId(value.boxId) && (value.jobId === undefined || isId(value.jobId))
                 && (value.agentId === undefined || isId(value.agentId)) && (value.projectId === undefined || isId(value.projectId))
                 && (value.attempt === undefined || isNonNegativeInteger(value.attempt))
                 && (value.projectLabel === undefined || stringWithin(value.projectLabel, contracts_1.WORK_GRAPH_LIMITS.labelLength))
-                && (value.projectContext === undefined || stringWithin(value.projectContext, contracts_1.WORK_GRAPH_LIMITS.labelLength)) && label(value);
+                && (value.projectContext === undefined || stringWithin(value.projectContext, contracts_1.WORK_GRAPH_LIMITS.labelLength))
+                && (value.sessionActivity === undefined || stringWithin(value.sessionActivity, contracts_1.WORK_GRAPH_LIMITS.labelLength)) && label(value);
         case 'local-compute':
             return hasExactKeys(value, ['kind', 'lifecycle', 'machineId'], ['sessionId', 'jobId', 'projectId', 'heartbeatAt', 'safeLabel'])
                 && ['session-started', 'session-ended', 'job-started', 'job-finished', 'heartbeat', 'disconnected'].includes(value.lifecycle)

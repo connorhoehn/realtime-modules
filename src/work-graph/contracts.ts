@@ -168,6 +168,12 @@ export interface CloudComputePayload {
    * label itself.
    */
   projectContext?: string;
+  /**
+   * What the source says this session is currently doing, for example
+   * `"Tests running"`. It is the box's own state line, not a status word
+   * derived from its lifecycle.
+   */
+  sessionActivity?: string;
 }
 
 export interface LocalComputePayload {

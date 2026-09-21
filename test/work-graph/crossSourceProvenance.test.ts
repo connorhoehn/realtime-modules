@@ -98,9 +98,13 @@ describe('source-declared cross-source provenance', () => {
   test('uses the source-supplied project label instead of the generic placeholder', () => {
     const labelled = projectWorkEvent(empty(), event('cloud-compute', {
       kind: 'cloud-compute', lifecycle: 'started', boxId: 'box-7',
-      projectId: 'work-144', projectLabel: 'WORK-144 · Coverage', safeLabel: 'Cloud terminal',
+      projectId: 'work-144', projectLabel: 'WORK-144', projectContext: 'Gateway · Coverage checks',
+      sessionActivity: 'Tests running', safeLabel: 'Cloud terminal',
     }, 'box-7'));
-    expect(Object.values(labelled.nodes).find((node) => node.kind === 'project')?.title).toBe('WORK-144 · Coverage');
+    const project = Object.values(labelled.nodes).find((node) => node.kind === 'project');
+    expect(project?.title).toBe('WORK-144');
+    expect(project?.description).toBe('Gateway · Coverage checks');
+    expect(Object.values(labelled.nodes).find((node) => node.kind === 'terminal')?.description).toBe('Tests running');
     const unlabelled = projectWorkEvent(empty(), event('cloud-compute', {
       kind: 'cloud-compute', lifecycle: 'started', boxId: 'box-8', projectId: 'work-145',
     }, 'box-8'));
