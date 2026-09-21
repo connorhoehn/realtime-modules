@@ -143,12 +143,19 @@ function isSchemaVersion(value: unknown): value is WorkGraphSchemaVersion {
   return value === WORK_GRAPH_SCHEMA_VERSION;
 }
 
+function isSourceAnchor(value: unknown): boolean {
+  return hasExactKeys(value, ['kind', 'id'])
+    && ['slide', 'page', 'block', 'transcript-segment'].includes(value.kind as string)
+    && isId(value.id);
+}
+
 function isSourceRef(value: unknown, expectedSource?: WorkSourceKind): boolean {
-  if (!hasExactKeys(value, ['source', 'resourceId'], ['resourceVersion'])) return false;
+  if (!hasExactKeys(value, ['source', 'resourceId'], ['resourceVersion', 'anchor'])) return false;
   return sourceKinds.has(value.source as WorkSourceKind)
     && (!expectedSource || value.source === expectedSource)
     && isId(value.resourceId)
-    && (value.resourceVersion === undefined || isId(value.resourceVersion));
+    && (value.resourceVersion === undefined || isId(value.resourceVersion))
+    && (value.anchor === undefined || isSourceAnchor(value.anchor));
 }
 
 function isEventPayload(value: unknown, source: WorkSourceKind): boolean {

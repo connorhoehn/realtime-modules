@@ -120,13 +120,19 @@ function withinSerializedLimit(value, maximum) {
 function isSchemaVersion(value) {
     return value === contracts_1.WORK_GRAPH_SCHEMA_VERSION;
 }
+function isSourceAnchor(value) {
+    return hasExactKeys(value, ['kind', 'id'])
+        && ['slide', 'page', 'block', 'transcript-segment'].includes(value.kind)
+        && isId(value.id);
+}
 function isSourceRef(value, expectedSource) {
-    if (!hasExactKeys(value, ['source', 'resourceId'], ['resourceVersion']))
+    if (!hasExactKeys(value, ['source', 'resourceId'], ['resourceVersion', 'anchor']))
         return false;
     return sourceKinds.has(value.source)
         && (!expectedSource || value.source === expectedSource)
         && isId(value.resourceId)
-        && (value.resourceVersion === undefined || isId(value.resourceVersion));
+        && (value.resourceVersion === undefined || isId(value.resourceVersion))
+        && (value.anchor === undefined || isSourceAnchor(value.anchor));
 }
 function isEventPayload(value, source) {
     if (!isRecord(value) || value.kind !== source)

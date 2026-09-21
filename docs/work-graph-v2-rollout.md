@@ -73,3 +73,19 @@ that is neither locked nor existence-only; a transcript with segments requires
 capability, segments must be ordered and cannot post-date an `as-of` cutoff.
 `detailsForDisclosedNodes` strips each of these for the viewer rather than
 substituting a placeholder or a count, so a withheld neighbour leaves no trace.
+
+## 0.73.0 — composite v2 cursors and source anchor precision
+
+`WorkGraphCursorCodec` gains `issueV2`/`verifyV2` for `WorkGraphCursorClaimsV2`.
+A v2 token uses the `wg2.` prefix and carries per-UTC-partition watermarks (a
+non-UTC local day spans two projection partitions, so a single composite
+revision is not a position in either delta log), the composite
+`observationWatermark`, and the complete authorized `WorkGraphQueryV2`. It is
+bound to that whole query, so it cannot be replayed against another person,
+day, policy revision or interval. The two versions reject each other's tokens.
+
+`WorkSourceRef` gains an optional `anchor` (`slide`/`page`/`block`/
+`transcript-segment` + id) so a source can name slide or block precision on a
+`discussed` relationship. Node resolution in the projection still matches on
+source and resource only — an anchor refines which part is meant, never which
+entity — and the field is optional, so existing producers validate unchanged.

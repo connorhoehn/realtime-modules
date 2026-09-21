@@ -114,6 +114,12 @@ export interface WorkSourceRef {
   /** Source-owner identifier. Never appears in a viewer DTO. */
   resourceId: string;
   resourceVersion?: string;
+  /**
+   * Optional precision inside the resource, named by the source itself. It
+   * refines which part is meant; it never selects a different entity, and the
+   * projection resolves nodes by source and resource alone.
+   */
+  anchor?: { kind: 'slide' | 'page' | 'block' | 'transcript-segment'; id: string };
 }
 
 export interface AuthenticatedWorkActor {
