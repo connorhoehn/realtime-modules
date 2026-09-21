@@ -54,6 +54,12 @@ interface NodeInput {
   kind: WorkNodeKind;
   resourceId: string;
   title: string;
+  /**
+   * The title is this reducer's placeholder, not a label the source supplied.
+   * A generic title never replaces one a source already gave, so a later
+   * lifecycle event that omits `safeLabel` cannot blank out a real name.
+   */
+  generic?: boolean;
   status?: WorkStatus;
   deleting?: boolean;
 }
@@ -83,44 +89,55 @@ function sourceRef(event: AuthenticatedWorkEvent, resourceId: string): WorkSourc
 
 function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: EdgeInput[]; crossEdges?: CrossSourceEdgeInput[] } {
   const status = statusFor(event);
-  const safe = (fallback: string) => event.payload.safeLabel?.trim() || fallback;
+  const label = event.payload.safeLabel?.trim();
+  const safe = (fallback: string) => label || fallback;
+  const generic = label ? undefined : true;
   switch (event.payload.kind) {
     case 'cloud-compute': {
-      const terminal: NodeInput = { kind: 'terminal', resourceId: event.payload.boxId, title: safe('Cloud terminal'), status };
+      const terminal: NodeInput = { kind: 'terminal', resourceId: event.payload.boxId, title: safe('Cloud terminal'), generic, status };
       if (event.payload.lifecycle === 'deleted') return { nodes: [{ ...terminal, deleting: true }], edges: [] };
       const nodes: NodeInput[] = [terminal];
       const edges: EdgeInput[] = [];
       if (event.payload.projectId) {
-        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: event.payload.projectLabel?.trim() || 'Project', status: 'idle' };
+        const projectLabel = event.payload.projectLabel?.trim();
+        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: projectLabel || 'Project', ...(projectLabel ? {} : { generic: true }), status: 'idle' };
         nodes.push(project); edges.push({ from: terminal, to: project, relation: 'works-on' });
       }
       if (event.payload.jobId) {
-        const run: NodeInput = { kind: 'run', resourceId: event.payload.jobId, title: safe('Agent run'), status };
+        const run: NodeInput = { kind: 'run', resourceId: event.payload.jobId, title: safe('Agent run'), generic, status };
         nodes.push(run); edges.push({ from: run, to: terminal, relation: 'runs-in' });
         if (event.payload.agentId) {
-          const agent: NodeInput = { kind: 'agent', resourceId: event.payload.agentId, title: 'Agent', status };
+          const agent: NodeInput = { kind: 'agent', resourceId: event.payload.agentId, title: 'Agent', generic: true, status };
           nodes.push(agent); edges.push({ from: agent, to: run, relation: 'operates-on' });
         }
       }
       return { nodes, edges };
     }
     case 'local-compute': {
-      const terminal: NodeInput = { kind: 'terminal', resourceId: event.payload.machineId, title: safe('Local terminal'), status };
+      const terminal: NodeInput = { kind: 'terminal', resourceId: event.payload.machineId, title: safe('Local terminal'), generic, status };
       const nodes: NodeInput[] = [terminal]; const edges: EdgeInput[] = [];
       if (event.payload.projectId) {
-        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: 'Project', status: 'idle' };
+        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: 'Project', generic: true, status: 'idle' };
         nodes.push(project); edges.push({ from: terminal, to: project, relation: 'works-on' });
       }
       if (event.payload.jobId) {
-        const run: NodeInput = { kind: 'run', resourceId: event.payload.jobId, title: safe('Agent run'), status };
+        const run: NodeInput = { kind: 'run', resourceId: event.payload.jobId, title: safe('Agent run'), generic, status };
         nodes.push(run); edges.push({ from: run, to: terminal, relation: 'runs-in' });
       }
       return { nodes, edges };
     }
     case 'document': {
-      const document: NodeInput = { kind: 'document', resourceId: event.payload.documentId, title: safe('Document'), status };
+      const document: NodeInput = { kind: 'document', resourceId: event.payload.documentId, title: safe('Document'), generic, status };
       if (event.payload.lifecycle === 'deleted') return { nodes: [{ ...document, deleting: true }], edges: [] };
-      const change: NodeInput = { kind: 'change', resourceId: `${event.payload.documentId}:${event.payload.revisionId}`, title: 'Document change', status };
+      // A revision reads as the document it changed, so the card is not a row
+      // of identical "Document change" entries once several revisions exist.
+      const change: NodeInput = {
+        kind: 'change',
+        resourceId: `${event.payload.documentId}:${event.payload.revisionId}`,
+        title: label ? `${label} · revision`.slice(0, 160) : 'Document change',
+        ...(label ? {} : { generic: true }),
+        status,
+      };
       const producedBy = event.payload.producedByRunId;
       return {
         nodes: [document, change],
@@ -139,7 +156,7 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
       };
     }
     case 'pipeline': {
-      const run: NodeInput = { kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), status };
+      const run: NodeInput = { kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), generic, status };
       const declared = event.payload.inputs ?? [];
       return {
         nodes: [run],
@@ -150,7 +167,7 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
       };
     }
     case 'conversation': {
-      const conversation: NodeInput = { kind: 'conversation', resourceId: event.payload.conversationId, title: safe(event.payload.conversationKind === 'dm' ? 'Direct conversation' : 'Conversation'), status, deleting: event.payload.lifecycle === 'membership-removed' };
+      const conversation: NodeInput = { kind: 'conversation', resourceId: event.payload.conversationId, title: safe(event.payload.conversationKind === 'dm' ? 'Direct conversation' : 'Conversation'), generic, status, deleting: event.payload.lifecycle === 'membership-removed' };
       const related = event.payload.explicitRelatedResource;
       return {
         nodes: [conversation],
@@ -161,21 +178,21 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
       };
     }
     case 'meeting': {
-      const meeting: NodeInput = { kind: 'meeting', resourceId: event.payload.meetingId, title: safe('Meeting'), status };
+      const meeting: NodeInput = { kind: 'meeting', resourceId: event.payload.meetingId, title: safe('Meeting'), generic, status };
       // Recording lifecycle does not delete the meeting itself. Recordings do
       // not have a graph node; a transcript deletion targets only its node.
       if (event.payload.lifecycle === 'recording-deleted') return { nodes: [], edges: [] };
       if (event.payload.lifecycle === 'transcript-deleted') {
         return {
           nodes: event.payload.transcriptId
-            ? [{ kind: 'transcript', resourceId: event.payload.transcriptId, title: 'Transcript', status, deleting: true }]
+            ? [{ kind: 'transcript', resourceId: event.payload.transcriptId, title: 'Transcript', generic: true, status, deleting: true }]
             : [],
           edges: [],
         };
       }
       const nodes: NodeInput[] = [meeting]; const edges: EdgeInput[] = [];
       if (event.payload.transcriptId) {
-        const transcript: NodeInput = { kind: 'transcript', resourceId: event.payload.transcriptId, title: 'Transcript', status };
+        const transcript: NodeInput = { kind: 'transcript', resourceId: event.payload.transcriptId, title: 'Transcript', generic: true, status };
         nodes.push(transcript); edges.push({ from: transcript, to: meeting, relation: 'derived-from' });
       }
       return { nodes, edges };
@@ -195,7 +212,10 @@ function upsertNode(state: WorkProjectionState, event: AuthenticatedWorkEvent, i
     kind: input.kind,
     sourceRef: ref,
     policyRef: `${event.source}:${input.kind}`,
-    title: input.title,
+    // A placeholder never overwrites a name a source already supplied. The
+    // platform's own republished lifecycle events omit `safeLabel`, and that
+    // used to reset a real title back to "Pipeline run".
+    title: input.generic && existing && !existing.deletedAt ? existing.title : input.title,
     status: input.status ?? statusFor(event),
     startedAt: existing?.startedAt ?? event.occurredAt,
     updatedAt: event.occurredAt,

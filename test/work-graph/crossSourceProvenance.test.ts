@@ -70,11 +70,11 @@ describe('source-declared cross-source provenance', () => {
   test('links a run to the inputs its source named and to the revision it produced', () => {
     const state = [meeting, releasePlan, run, deck].reduce(projectWorkEvent, empty());
     expect(relations(state)).toEqual([
-      'Document change -edited-> Release plan',
-      'Document change -edited-> Sprint review',
       'Generate presentation -derived-from-> Release plan',
       'Generate presentation -derived-from-> Transcript',
       'Generate presentation -produced-> Sprint review',
+      'Release plan · revision -edited-> Release plan',
+      'Sprint review · revision -edited-> Sprint review',
       'Transcript -derived-from-> Planning sync',
     ]);
   });
@@ -82,9 +82,9 @@ describe('source-declared cross-source provenance', () => {
   test('drops a declared relationship whose counterpart has not been projected', () => {
     // The run is ingested before the transcript and document it names.
     const state = [run, meeting, releasePlan].reduce(projectWorkEvent, empty());
-    expect(relations(state)).toEqual(['Document change -edited-> Release plan', 'Transcript -derived-from-> Planning sync']);
+    expect(relations(state)).toEqual(['Release plan · revision -edited-> Release plan', 'Transcript -derived-from-> Planning sync']);
     const orphanOutput = projectWorkEvent(empty(), deck);
-    expect(relations(orphanOutput)).toEqual(['Document change -edited-> Sprint review']);
+    expect(relations(orphanOutput)).toEqual(['Sprint review · revision -edited-> Sprint review']);
   });
 
   test('never links two entities that merely share an actor and a day', () => {
@@ -92,7 +92,7 @@ describe('source-declared cross-source provenance', () => {
       kind: 'document', lifecycle: 'revision-saved', documentId: 'doc-other', revisionId: 'rev-1', safeLabel: 'Other note',
     }, 'doc-other');
     const state = [meeting, unrelated].reduce(projectWorkEvent, empty());
-    expect(relations(state)).toEqual(['Document change -edited-> Other note', 'Transcript -derived-from-> Planning sync']);
+    expect(relations(state)).toEqual(['Other note · revision -edited-> Other note', 'Transcript -derived-from-> Planning sync']);
   });
 
   test('uses the source-supplied project label instead of the generic placeholder', () => {
@@ -105,6 +105,17 @@ describe('source-declared cross-source provenance', () => {
       kind: 'cloud-compute', lifecycle: 'started', boxId: 'box-8', projectId: 'work-145',
     }, 'box-8'));
     expect(Object.values(unlabelled.nodes).find((node) => node.kind === 'project')?.title).toBe('Project');
+  });
+
+  test('keeps a real source label when a later lifecycle event omits one', () => {
+    // The platform republishes its own run transitions without `safeLabel`.
+    const republished = event('pipeline', {
+      kind: 'pipeline', lifecycle: 'completed', pipelineId: 'deck-pipeline', runId: 'run-9', attempt: 3,
+    }, 'run-9');
+    const state = [run, republished].reduce(projectWorkEvent, empty());
+    const node = Object.values(state.nodes).find((item) => item.kind === 'run');
+    expect(node?.title).toBe('Generate presentation');
+    expect(node?.status).toBe('completed');
   });
 
   test('attaches a conversation only to the resource the contributor named', () => {

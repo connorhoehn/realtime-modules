@@ -89,3 +89,17 @@ day, policy revision or interval. The two versions reject each other's tokens.
 `discussed` relationship. Node resolution in the projection still matches on
 source and resource only — an anchor refines which part is meant, never which
 entity — and the field is optional, so existing producers validate unchanged.
+
+## 0.74.0 — a placeholder never overwrites a real source label
+
+`projectEvent` now marks every title it invents itself (`Pipeline run`,
+`Cloud terminal`, `Project`, `Agent`, `Document`, `Conversation`, `Meeting`)
+as generic, and `upsertNode` keeps the existing title when a generic one
+arrives for a node that already has a source-supplied name. The platform
+republishes its own pipeline run transitions without `safeLabel`, which used to
+reset a real name such as "Generate presentation" back to "Pipeline run" the
+moment the run completed.
+
+A document revision node is also named after the document it changed
+(`"Sprint review · revision"`) instead of a row of identical "Document change"
+entries; without a source label it keeps the old placeholder.
