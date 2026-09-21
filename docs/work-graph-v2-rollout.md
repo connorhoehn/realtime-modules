@@ -103,3 +103,21 @@ moment the run completed.
 A document revision node is also named after the document it changed
 (`"Sprint review · revision"`) instead of a row of identical "Document change"
 entries; without a source label it keeps the old placeholder.
+
+## 0.75.0 — card fields, participants, and host-named efforts
+
+`ViewerWorkActivityDetail` gains four optional card fields: `badge` (a short
+state pill), `excerpt` (a line quoted verbatim from the entity's own content),
+`footer` (`{ label, note? }`), and `participants`
+(`{ id, label, avatarUrl? }`, at most `WORK_GRAPH_V2_LIMITS.participants`).
+`avatarUrl` must be a relative same-origin path — an absolute URL is rejected
+so a card cannot be made to fetch from somewhere else.
+
+`deriveWorkEfforts` accepts a `titleFor(anchor, members)` hook, consulted
+before the outcome-or-anchor rule and ignored when it returns nothing. It lets
+a host name a work stream from its anchor without the library guessing.
+
+`CloudComputePayload.projectContext` is a new optional field: the project's own
+context line, written by the source as `"<where> · <what>"`. It becomes the
+project node's description, and a source that stops sending it keeps the last
+one it sent — the same rule that protects a real label from a placeholder.

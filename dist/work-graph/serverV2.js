@@ -66,7 +66,8 @@ function deriveWorkEfforts(input) {
             .map((id) => nodeById.get(id))
             .filter((node) => node.kind === 'document' && node.disclosure !== 'existence' && !node.locked)
             .sort((left, right) => instant(right.updatedAt) - instant(left.updatedAt) || left.id.localeCompare(right.id))[0];
-        const title = (outcome ?? anchor).title;
+        const memberNodes = members.map((id) => nodeById.get(id));
+        const title = input.titleFor?.(anchor, memberNodes)?.trim() || (outcome ?? anchor).title;
         const contextNodeIds = input.contextBefore === undefined
             ? []
             : members.filter((id) => id !== anchor.id

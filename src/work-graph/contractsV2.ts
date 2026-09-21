@@ -2,7 +2,7 @@ import type { WorkGraphQueryScope, WorkGraphSnapshot, WorkReference, WorkReferen
 
 /** Opt-in readers precede v2 producers. Existing v1 contracts remain exact. */
 export const WORK_GRAPH_SCHEMA_VERSION_V2 = 2 as const;
-export const WORK_GRAPH_V2_LIMITS = { efforts: 50, revisions: 100, anchors: 200, tools: 16, eventBuckets: 1500, detailLines: 4, links: 16, transcriptSegments: 500, snapshotBytes: 1024 * 1024 } as const;
+export const WORK_GRAPH_V2_LIMITS = { efforts: 50, revisions: 100, anchors: 200, tools: 16, eventBuckets: 1500, detailLines: 4, links: 16, participants: 12, transcriptSegments: 500, snapshotBytes: 1024 * 1024 } as const;
 
 export interface WorkGraphQueryV2 {
   schemaVersion: 2;
@@ -41,6 +41,13 @@ export interface ViewerWorkNodeLink {
   meta?: string;
 }
 
+/** A person the viewer is already allowed to see on this entity. */
+export interface ViewerWorkParticipant {
+  id: string;
+  label: string;
+  avatarUrl?: string;
+}
+
 /** Disclosed only at `details`; a summary-level transcript has no content. */
 export interface ViewerTranscriptSegment {
   id: string;
@@ -64,6 +71,14 @@ export interface ViewerWorkActivityDetail {
   summary?: string;
   /** Additional authorized body lines, already filtered for this viewer. */
   lines?: string[];
+  /** A short state pill, for example `Ready` or `Tests running`. */
+  badge?: string;
+  /** A quoted line taken verbatim from the entity's own content. */
+  excerpt?: string;
+  /** The card's bottom line, for example `First draft · 09:27` and `Shared`. */
+  footer?: { label: string; note?: string };
+  /** Attendees the viewer may already see. Never a count of hidden people. */
+  participants?: ViewerWorkParticipant[];
   /** Authorized upstream evidence a process consumed. */
   inputs?: ViewerWorkNodeLink[];
   /** Authorized provenance behind an artifact revision set. */

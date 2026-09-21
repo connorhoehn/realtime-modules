@@ -36,6 +36,12 @@ export interface DeriveWorkEffortsInput {
   anchorKinds?: readonly WorkNodeKind[];
   /** Members last updated before this instant are reported as folded context. */
   contextBefore?: string;
+  /**
+   * Names the effort from the host's own authorized view of its anchor. It is
+   * consulted before the default rule and ignored when it returns nothing, so
+   * a host that has no better name still gets the outcome-or-anchor title.
+   */
+  titleFor?: (anchor: ViewerWorkNode, members: readonly ViewerWorkNode[]) => string | undefined;
   /** Stable per-effort presentation line, computed by the host from its own authorized detail. */
   subtitleFor?: (effort: Omit<ViewerWorkEffort, 'subtitle'>) => string | undefined;
 }
@@ -98,7 +104,8 @@ export function deriveWorkEfforts(input: DeriveWorkEffortsInput): ViewerWorkEffo
       .map((id) => nodeById.get(id) as ViewerWorkNode)
       .filter((node) => node.kind === 'document' && node.disclosure !== 'existence' && !node.locked)
       .sort((left, right) => instant(right.updatedAt) - instant(left.updatedAt) || left.id.localeCompare(right.id))[0];
-    const title = (outcome ?? anchor).title;
+    const memberNodes = members.map((id) => nodeById.get(id) as ViewerWorkNode);
+    const title = input.titleFor?.(anchor, memberNodes)?.trim() || (outcome ?? anchor).title;
 
     const contextNodeIds = input.contextBefore === undefined
       ? []

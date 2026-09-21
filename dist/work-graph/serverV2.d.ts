@@ -15,6 +15,12 @@ export interface DeriveWorkEffortsInput {
     anchorKinds?: readonly WorkNodeKind[];
     /** Members last updated before this instant are reported as folded context. */
     contextBefore?: string;
+    /**
+     * Names the effort from the host's own authorized view of its anchor. It is
+     * consulted before the default rule and ignored when it returns nothing, so
+     * a host that has no better name still gets the outcome-or-anchor title.
+     */
+    titleFor?: (anchor: ViewerWorkNode, members: readonly ViewerWorkNode[]) => string | undefined;
     /** Stable per-effort presentation line, computed by the host from its own authorized detail. */
     subtitleFor?: (effort: Omit<ViewerWorkEffort, 'subtitle'>) => string | undefined;
 }

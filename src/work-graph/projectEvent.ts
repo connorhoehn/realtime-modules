@@ -54,6 +54,8 @@ interface NodeInput {
   kind: WorkNodeKind;
   resourceId: string;
   title: string;
+  /** Source-written context line. Never derived from another field. */
+  description?: string;
   /**
    * The title is this reducer's placeholder, not a label the source supplied.
    * A generic title never replaces one a source already gave, so a later
@@ -100,7 +102,15 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
       const edges: EdgeInput[] = [];
       if (event.payload.projectId) {
         const projectLabel = event.payload.projectLabel?.trim();
-        const project: NodeInput = { kind: 'project', resourceId: event.payload.projectId, title: projectLabel || 'Project', ...(projectLabel ? {} : { generic: true }), status: 'idle' };
+        const projectContext = event.payload.projectContext?.trim();
+        const project: NodeInput = {
+          kind: 'project',
+          resourceId: event.payload.projectId,
+          title: projectLabel || 'Project',
+          ...(projectContext ? { description: projectContext } : {}),
+          ...(projectLabel ? {} : { generic: true }),
+          status: 'idle',
+        };
         nodes.push(project); edges.push({ from: terminal, to: project, relation: 'works-on' });
       }
       if (event.payload.jobId) {
@@ -216,6 +226,9 @@ function upsertNode(state: WorkProjectionState, event: AuthenticatedWorkEvent, i
     // platform's own republished lifecycle events omit `safeLabel`, and that
     // used to reset a real title back to "Pipeline run".
     title: input.generic && existing && !existing.deletedAt ? existing.title : input.title,
+    // A source that stops sending its context keeps the last one it sent,
+    // for the same reason a placeholder never overwrites a real label.
+    ...(input.description ?? existing?.description ? { description: input.description ?? existing?.description } : {}),
     status: input.status ?? statusFor(event),
     startedAt: existing?.startedAt ?? event.occurredAt,
     updatedAt: event.occurredAt,

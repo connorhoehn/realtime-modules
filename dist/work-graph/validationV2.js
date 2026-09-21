@@ -32,6 +32,12 @@ function lease(value) { return exact(value, ['observedAt', 'expiresAt']) && time
 function anchor(value, withLabel = false) { return exact(value, ['kind', 'id', ...(withLabel ? ['label'] : [])], withLabel ? ['index'] : []) && ['slide', 'page', 'block', 'transcript-segment'].includes(String(value.kind)) && id(value.id) && (!withLabel || (label(value.label) && (value.index === undefined || integer(value.index)))); }
 function link(value) { return exact(value, ['nodeId', 'label'], ['meta']) && id(value.nodeId) && label(value.label) && (value.meta === undefined || label(value.meta)); }
 function links(value) { return Array.isArray(value) && value.length <= contractsV2_1.WORK_GRAPH_V2_LIMITS.links && value.every(link) && new Set(value.map((item) => item.nodeId)).size === value.length; }
+function participant(value) {
+    return exact(value, ['id', 'label'], ['avatarUrl'])
+        && id(value.id) && label(value.label)
+        // A relative, same-origin path only: no scheme, no host, no credential.
+        && (value.avatarUrl === undefined || (typeof value.avatarUrl === 'string' && value.avatarUrl.length <= 512 && /^\/[^/\\]/.test(value.avatarUrl)));
+}
 function segment(value) { return exact(value, ['id', 'at', 'speaker', 'text']) && id(value.id) && time(value.at) && label(value.speaker) && typeof value.text === 'string' && value.text.length > 0 && value.text.length <= contracts_1.WORK_GRAPH_LIMITS.descriptionLength; }
 function validateWorkGraphQueryV2(value) {
     let valid = exact(value, ['schemaVersion', 'personId', 'day', 'timezone', 'windowStart', 'windowEnd', 'mode']) && value.schemaVersion === 2 && id(value.personId) && typeof value.day === 'string' && typeof value.timezone === 'string' && value.timezone.length <= contracts_1.WORK_GRAPH_LIMITS.timezoneLength && time(value.windowStart) && time(value.windowEnd) && ['live', 'as-of'].includes(String(value.mode));
@@ -48,7 +54,15 @@ function validateWorkGraphQueryV2(value) {
     return result(valid, value, 'v2 work graph query');
 }
 function detail(value) {
-    if (!exact(value, ['nodeId'], ['summary', 'lines', 'inputs', 'sources', 'workItem', 'transcript', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId))
+    if (!exact(value, ['nodeId'], ['summary', 'lines', 'badge', 'excerpt', 'footer', 'participants', 'inputs', 'sources', 'workItem', 'transcript', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId))
+        return false;
+    if (value.badge !== undefined && !label(value.badge))
+        return false;
+    if (value.excerpt !== undefined && !label(value.excerpt))
+        return false;
+    if (value.footer !== undefined && (!exact(value.footer, ['label'], ['note']) || !label(value.footer.label) || (value.footer.note !== undefined && !label(value.footer.note))))
+        return false;
+    if (value.participants !== undefined && (!Array.isArray(value.participants) || value.participants.length > contractsV2_1.WORK_GRAPH_V2_LIMITS.participants || !value.participants.every(participant) || new Set(value.participants.map((item) => item.id)).size !== value.participants.length))
         return false;
     if (value.inputs !== undefined && !links(value.inputs))
         return false;

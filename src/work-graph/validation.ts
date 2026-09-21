@@ -163,12 +163,13 @@ function isEventPayload(value: unknown, source: WorkSourceKind): boolean {
   const label = (record: JsonRecord) => record.safeLabel === undefined || stringWithin(record.safeLabel, WORK_GRAPH_LIMITS.labelLength);
   switch (source) {
     case 'cloud-compute':
-      return hasExactKeys(value, ['kind', 'lifecycle', 'boxId'], ['jobId', 'agentId', 'projectId', 'attempt', 'safeLabel', 'projectLabel'])
+      return hasExactKeys(value, ['kind', 'lifecycle', 'boxId'], ['jobId', 'agentId', 'projectId', 'attempt', 'safeLabel', 'projectLabel', 'projectContext'])
         && ['created', 'started', 'waiting', 'completed', 'stopped', 'failed', 'deleted'].includes(value.lifecycle as string)
         && isId(value.boxId) && (value.jobId === undefined || isId(value.jobId))
         && (value.agentId === undefined || isId(value.agentId)) && (value.projectId === undefined || isId(value.projectId))
         && (value.attempt === undefined || isNonNegativeInteger(value.attempt))
-        && (value.projectLabel === undefined || stringWithin(value.projectLabel, WORK_GRAPH_LIMITS.labelLength)) && label(value);
+        && (value.projectLabel === undefined || stringWithin(value.projectLabel, WORK_GRAPH_LIMITS.labelLength))
+        && (value.projectContext === undefined || stringWithin(value.projectContext, WORK_GRAPH_LIMITS.labelLength)) && label(value);
     case 'local-compute':
       return hasExactKeys(value, ['kind', 'lifecycle', 'machineId'], ['sessionId', 'jobId', 'projectId', 'heartbeatAt', 'safeLabel'])
         && ['session-started', 'session-ended', 'job-started', 'job-finished', 'heartbeat', 'disconnected'].includes(value.lifecycle as string)

@@ -98,6 +98,13 @@ export interface CloudComputePayload {
     safeLabel?: string;
     /** Source-supplied project label. Absent means the generic placeholder. */
     projectLabel?: string;
+    /**
+     * The project's own context line, written by the source as
+     * `"<where> · <what>"` (for example `"Gateway · Coverage checks"`). It
+     * becomes the project node's description; nothing is parsed out of the
+     * label itself.
+     */
+    projectContext?: string;
 }
 export interface LocalComputePayload {
     kind: 'local-compute';

@@ -53,6 +53,16 @@ describe('shared v2 server helpers', () => {
     expect(efforts.flatMap((effort) => effort.nodeIds)).not.toContain('loose');
   });
 
+  it('lets a host name an effort from its anchor, and ignores an empty answer', () => {
+    const named = deriveWorkEfforts({
+      nodes, edges,
+      titleFor: (anchor) => (anchor.id === 'project' ? 'Coverage checks' : '  '),
+    });
+    expect(named.find((effort) => effort.anchorNodeId === 'project')?.title).toBe('Coverage checks');
+    // A blank answer falls back to the outcome-or-anchor rule, never to a blank.
+    expect(named.find((effort) => effort.anchorNodeId === 'meeting')?.title).toBe('Sprint review');
+  });
+
   it('never names an effort after a member the viewer cannot read', () => {
     const hidden = nodes.map((item) => item.id === 'deck'
       ? { ...item, disclosure: 'existence' as const, locked: true }
@@ -168,6 +178,35 @@ describe('shared v2 server helpers', () => {
       { nodeId: 'deck', sources: [{ nodeId: 'not-a-node', label: 'Hidden source' }] },
     ] as never } });
     expect(dangling.ok).toBe(false);
+  });
+
+  it('carries the additive card fields through validation and viewer filtering', () => {
+    const query: WorkGraphQueryV2 = {
+      schemaVersion: 2, personId: 'owner', day, timezone,
+      windowStart: at('13:20:00'), windowEnd: at('13:40:00'), mode: 'live',
+    };
+    const snapshot: WorkGraphSnapshot = {
+      schemaVersion: 1,
+      scope: { personId: 'owner', day, timezone, policyRevision: 'policy-1' },
+      revision: 4, watermark: 4, cursor: 'opaque', nodes, edges, sources: [], partial: false,
+    };
+    const details = [
+      { nodeId: 'transcript', badge: 'Ready', excerpt: 'Review release risks before noon', lines: ['Planning sync · 08:30–09:00', '2 speakers · 1 action item'] },
+      { nodeId: 'meeting', lines: ['08:30–09:00 · 30 min'], participants: [{ id: 'connor', label: 'Connor', avatarUrl: '/api/avatars/connor.png' }, { id: 'frank', label: 'Frank' }] },
+      { nodeId: 'terminal', badge: 'Tests running', footer: { label: 'Cloud session · 09:15', note: 'Shared' } },
+    ];
+    const activity = {
+      temporal: { mode: 'live' as const, observedAt: at('13:40:00'), coverage: { from: at('12:00:00'), through: at('13:40:00'), complete: true } },
+      efforts: deriveWorkEfforts({ nodes, edges }),
+      details, operations: [], eventBuckets: [],
+    };
+    expect(buildWorkGraphSnapshotV2({ snapshot, query, activity: activity as never }).ok).toBe(true);
+    // An absolute avatar URL would let a card fetch from somewhere else.
+    expect(buildWorkGraphSnapshotV2({
+      snapshot, query,
+      activity: { ...activity, details: [{ nodeId: 'meeting', participants: [{ id: 'connor', label: 'Connor', avatarUrl: 'https://elsewhere.example/c.png' }] }] } as never,
+    }).ok).toBe(false);
+    expect(detailsForDisclosedNodes(nodes, details as never)).toHaveLength(3);
   });
 
   it('drops expired operation leases and details for nodes below full disclosure', () => {

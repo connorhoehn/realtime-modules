@@ -58,7 +58,15 @@ function inputsFor(event) {
             const edges = [];
             if (event.payload.projectId) {
                 const projectLabel = event.payload.projectLabel?.trim();
-                const project = { kind: 'project', resourceId: event.payload.projectId, title: projectLabel || 'Project', ...(projectLabel ? {} : { generic: true }), status: 'idle' };
+                const projectContext = event.payload.projectContext?.trim();
+                const project = {
+                    kind: 'project',
+                    resourceId: event.payload.projectId,
+                    title: projectLabel || 'Project',
+                    ...(projectContext ? { description: projectContext } : {}),
+                    ...(projectLabel ? {} : { generic: true }),
+                    status: 'idle',
+                };
                 nodes.push(project);
                 edges.push({ from: terminal, to: project, relation: 'works-on' });
             }
@@ -184,6 +192,9 @@ function upsertNode(state, event, input) {
         // platform's own republished lifecycle events omit `safeLabel`, and that
         // used to reset a real title back to "Pipeline run".
         title: input.generic && existing && !existing.deletedAt ? existing.title : input.title,
+        // A source that stops sending its context keeps the last one it sent,
+        // for the same reason a placeholder never overwrites a real label.
+        ...(input.description ?? existing?.description ? { description: input.description ?? existing?.description } : {}),
         status: input.status ?? statusFor(event),
         startedAt: existing?.startedAt ?? event.occurredAt,
         updatedAt: event.occurredAt,

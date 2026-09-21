@@ -9,6 +9,7 @@ export declare const WORK_GRAPH_V2_LIMITS: {
     readonly eventBuckets: 1500;
     readonly detailLines: 4;
     readonly links: 16;
+    readonly participants: 12;
     readonly transcriptSegments: 500;
     readonly snapshotBytes: number;
 };
@@ -45,6 +46,12 @@ export interface ViewerWorkNodeLink {
     label: string;
     meta?: string;
 }
+/** A person the viewer is already allowed to see on this entity. */
+export interface ViewerWorkParticipant {
+    id: string;
+    label: string;
+    avatarUrl?: string;
+}
 /** Disclosed only at `details`; a summary-level transcript has no content. */
 export interface ViewerTranscriptSegment {
     id: string;
@@ -69,6 +76,17 @@ export interface ViewerWorkActivityDetail {
     summary?: string;
     /** Additional authorized body lines, already filtered for this viewer. */
     lines?: string[];
+    /** A short state pill, for example `Ready` or `Tests running`. */
+    badge?: string;
+    /** A quoted line taken verbatim from the entity's own content. */
+    excerpt?: string;
+    /** The card's bottom line, for example `First draft · 09:27` and `Shared`. */
+    footer?: {
+        label: string;
+        note?: string;
+    };
+    /** Attendees the viewer may already see. Never a count of hidden people. */
+    participants?: ViewerWorkParticipant[];
     /** Authorized upstream evidence a process consumed. */
     inputs?: ViewerWorkNodeLink[];
     /** Authorized provenance behind an artifact revision set. */
