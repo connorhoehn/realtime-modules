@@ -58,3 +58,18 @@ existence-only entities exactly as before.
 Still not done: v2 reference writing stays opt-in and disabled, deltas remain
 v1 node/edge operations, and historical reconstruction is unchanged — an
 `as-of` answer the host cannot reconstruct must still be reported as `recent`.
+
+## 0.72.0 — authorized per-node pane detail
+
+`ViewerWorkActivityDetail` gains optional pane data, all of it additive and all
+of it subject to the same disclosure rules as the node it describes:
+`inputs`, `sources` and `workItem` (`ViewerWorkNodeLink`: `nodeId`, `label`,
+optional `meta`), `transcript` (`segments[]` plus `askEnabled`),
+`artifact.pageCount`, `anchors[].index`, and `pending.message`.
+
+Validation enforces that a link names a node the same snapshot disclosed and
+that is neither locked nor existence-only; a transcript with segments requires
+`details` disclosure on its node, `askEnabled` requires the `view-transcript`
+capability, segments must be ordered and cannot post-date an `as-of` cutoff.
+`detailsForDisclosedNodes` strips each of these for the viewer rather than
+substituting a placeholder or a count, so a withheld neighbour leaves no trace.

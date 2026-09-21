@@ -19,7 +19,10 @@ const ids = (value: unknown, maximum: number): value is string[] => Array.isArra
 const result = <T>(valid: boolean, value: unknown, name: string): ValidationResult<T> => valid ? { ok: true, value: value as T } : { ok: false, errors: [`Invalid ${name}.`] };
 function bytes(value: unknown, maximum: number): boolean { try { return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maximum; } catch { return false; } }
 function lease(value: unknown): boolean { return exact(value, ['observedAt', 'expiresAt']) && time(value.observedAt) && time(value.expiresAt) && value.observedAt < value.expiresAt; }
-function anchor(value: unknown, withLabel = false): boolean { return exact(value, ['kind', 'id', ...(withLabel ? ['label'] : [])]) && ['slide', 'page', 'block', 'transcript-segment'].includes(String(value.kind)) && id(value.id) && (!withLabel || label(value.label)); }
+function anchor(value: unknown, withLabel = false): boolean { return exact(value, ['kind', 'id', ...(withLabel ? ['label'] : [])], withLabel ? ['index'] : []) && ['slide', 'page', 'block', 'transcript-segment'].includes(String(value.kind)) && id(value.id) && (!withLabel || (label(value.label) && (value.index === undefined || integer(value.index)))); }
+function link(value: unknown): boolean { return exact(value, ['nodeId', 'label'], ['meta']) && id(value.nodeId) && label(value.label) && (value.meta === undefined || label(value.meta)); }
+function links(value: unknown): boolean { return Array.isArray(value) && value.length <= WORK_GRAPH_V2_LIMITS.links && value.every(link) && new Set(value.map((item: RecordValue) => item.nodeId)).size === value.length; }
+function segment(value: unknown): boolean { return exact(value, ['id', 'at', 'speaker', 'text']) && id(value.id) && time(value.at) && label(value.speaker) && typeof value.text === 'string' && value.text.length > 0 && value.text.length <= WORK_GRAPH_LIMITS.descriptionLength; }
 
 export function validateWorkGraphQueryV2(value: unknown): ValidationResult<WorkGraphQueryV2> {
   let valid = exact(value, ['schemaVersion', 'personId', 'day', 'timezone', 'windowStart', 'windowEnd', 'mode']) && value.schemaVersion === 2 && id(value.personId) && typeof value.day === 'string' && typeof value.timezone === 'string' && value.timezone.length <= WORK_GRAPH_LIMITS.timezoneLength && time(value.windowStart) && time(value.windowEnd) && ['live', 'as-of'].includes(String(value.mode));
@@ -34,7 +37,21 @@ export function validateWorkGraphQueryV2(value: unknown): ValidationResult<WorkG
 }
 
 function detail(value: unknown): value is ViewerWorkActivityDetail {
-  if (!exact(value, ['nodeId'], ['summary', 'lines', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId)) return false;
+  if (!exact(value, ['nodeId'], ['summary', 'lines', 'inputs', 'sources', 'workItem', 'transcript', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId)) return false;
+  if (value.inputs !== undefined && !links(value.inputs)) return false;
+  if (value.sources !== undefined && !links(value.sources)) return false;
+  if (value.workItem !== undefined && !link(value.workItem)) return false;
+  if (value.transcript !== undefined) {
+    const transcript = value.transcript;
+    if (!exact(transcript, ['segments', 'askEnabled']) || typeof transcript.askEnabled !== 'boolean'
+      || !Array.isArray(transcript.segments) || transcript.segments.length > WORK_GRAPH_V2_LIMITS.transcriptSegments
+      || !transcript.segments.every(segment)
+      || new Set(transcript.segments.map((item: RecordValue) => item.id)).size !== transcript.segments.length) return false;
+    // A transcript may not be presented out of order; order carries meaning.
+    for (let index = 1; index < transcript.segments.length; index += 1) {
+      if (transcript.segments[index].at < transcript.segments[index - 1].at) return false;
+    }
+  }
   if (value.summary !== undefined && !label(value.summary)) return false;
   if (value.lines !== undefined && (!Array.isArray(value.lines) || value.lines.length > WORK_GRAPH_V2_LIMITS.detailLines || !value.lines.every(label))) return false;
   if (value.freshness !== undefined && !lease(value.freshness)) return false;
@@ -45,7 +62,8 @@ function detail(value: unknown): value is ViewerWorkActivityDetail {
   if (value.feedback !== undefined && (!exact(value.feedback, ['count', 'through']) || !integer(value.feedback.count) || !time(value.feedback.through))) return false;
   if (value.artifact !== undefined) {
     const artifact = value.artifact;
-    if (!exact(artifact, ['mediaKind', 'revisions'], ['pending']) || !['presentation', 'document', 'image'].includes(String(artifact.mediaKind)) || !Array.isArray(artifact.revisions) || artifact.revisions.length > WORK_GRAPH_V2_LIMITS.revisions) return false;
+    if (!exact(artifact, ['mediaKind', 'revisions'], ['pending', 'pageCount'])
+      || (artifact.pageCount !== undefined && (!integer(artifact.pageCount) || artifact.pageCount === 0)) || !['presentation', 'document', 'image'].includes(String(artifact.mediaKind)) || !Array.isArray(artifact.revisions) || artifact.revisions.length > WORK_GRAPH_V2_LIMITS.revisions) return false;
     let lastCreation = '';
     const revisionIds = new Set<string>();
     for (const revision of artifact.revisions) {
@@ -55,7 +73,8 @@ function detail(value: unknown): value is ViewerWorkActivityDetail {
     }
     if (artifact.pending !== undefined) {
       const pending = artifact.pending;
-      if (!exact(pending, ['revisionId', 'attemptId', 'label', 'status', 'startedAt', 'updatedAt']) || !id(pending.revisionId) || !id(pending.attemptId) || !label(pending.label) || !['generating', 'failed'].includes(String(pending.status)) || !time(pending.startedAt) || !time(pending.updatedAt) || pending.updatedAt < pending.startedAt || revisionIds.has(pending.revisionId)) return false;
+      if (!exact(pending, ['revisionId', 'attemptId', 'label', 'status', 'startedAt', 'updatedAt'], ['message'])
+        || (pending.message !== undefined && !label(pending.message)) || !id(pending.revisionId) || !id(pending.attemptId) || !label(pending.label) || !['generating', 'failed'].includes(String(pending.status)) || !time(pending.startedAt) || !time(pending.updatedAt) || pending.updatedAt < pending.startedAt || revisionIds.has(pending.revisionId)) return false;
     }
     if (value.attention && typeof value.attention === 'object' && 'revisionId' in value.attention && value.attention.revisionId !== undefined && !revisionIds.has(String(value.attention.revisionId))) return false;
   }
@@ -86,9 +105,22 @@ export function validateWorkGraphSnapshotV2(value: unknown): ValidationResult<Wo
   // instants, otherwise `...00Z` sorts after the equivalent `...00.000Z`.
   const cutoff = Date.parse(snapshot.query.windowEnd);
   if (snapshot.temporal.mode === 'as-of' && [...snapshot.nodes, ...snapshot.edges].some((entity) => [entity.updatedAt, entity.startedAt, entity.endedAt].some((at) => at !== undefined && Date.parse(at) > cutoff))) valid = false;
+  const readable = (candidate: string | undefined): boolean => {
+    const node = candidate === undefined ? undefined : nodeById.get(candidate);
+    return !!node && !node.locked && node.disclosure !== 'existence';
+  };
   for (const item of snapshot.details) {
     const node = nodeById.get(item.nodeId);
     if (!node || node.locked || node.disclosure === 'existence') valid = false;
+    // A link may only name a node this same snapshot already disclosed. A
+    // withheld neighbour is absent, never described by a label or a count.
+    if ([...(item.inputs ?? []), ...(item.sources ?? []), ...(item.workItem ? [item.workItem] : [])]
+      .some((entry) => entry.nodeId === item.nodeId || !readable(entry.nodeId))) valid = false;
+    // Transcript content and tool lists are full-disclosure evidence.
+    if (item.transcript && item.transcript.segments.length > 0 && node?.disclosure !== 'details') valid = false;
+    if (item.transcript?.askEnabled && !node?.capabilities.includes('view-transcript')) valid = false;
+    if (snapshot.temporal.mode === 'as-of'
+      && item.transcript?.segments.some((entry) => entry.at > snapshot.query.windowEnd)) valid = false;
     if (snapshot.temporal.mode === 'as-of') {
       const end = snapshot.query.windowEnd;
       if (item.artifact?.revisions.some((revision) => revision.createdAt > end) || (item.artifact?.pending && item.artifact.pending.updatedAt > end) || (item.feedback && item.feedback.through > end) || (item.attention && item.attention.observedAt > end) || (item.freshness && item.freshness.observedAt > end)) valid = false;

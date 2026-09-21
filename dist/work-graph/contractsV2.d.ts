@@ -8,6 +8,8 @@ export declare const WORK_GRAPH_V2_LIMITS: {
     readonly tools: 16;
     readonly eventBuckets: 1500;
     readonly detailLines: 4;
+    readonly links: 16;
+    readonly transcriptSegments: 500;
     readonly snapshotBytes: number;
 };
 export interface WorkGraphQueryV2 {
@@ -34,6 +36,22 @@ export interface WorkArtifactAnchor {
     kind: 'slide' | 'page' | 'block' | 'transcript-segment';
     id: string;
 }
+/**
+ * A pointer to another node in the same snapshot. It carries no source id and
+ * no URL: an unauthorized neighbour is removed rather than described.
+ */
+export interface ViewerWorkNodeLink {
+    nodeId: string;
+    label: string;
+    meta?: string;
+}
+/** Disclosed only at `details`; a summary-level transcript has no content. */
+export interface ViewerTranscriptSegment {
+    id: string;
+    at: string;
+    speaker: string;
+    text: string;
+}
 export interface ViewerArtifactRevision {
     id: string;
     label: string;
@@ -42,6 +60,7 @@ export interface ViewerArtifactRevision {
     previewHandle?: string;
     anchors?: Array<WorkArtifactAnchor & {
         label: string;
+        index?: number;
     }>;
 }
 export interface ViewerWorkActivityDetail {
@@ -50,6 +69,17 @@ export interface ViewerWorkActivityDetail {
     summary?: string;
     /** Additional authorized body lines, already filtered for this viewer. */
     lines?: string[];
+    /** Authorized upstream evidence a process consumed. */
+    inputs?: ViewerWorkNodeLink[];
+    /** Authorized provenance behind an artifact revision set. */
+    sources?: ViewerWorkNodeLink[];
+    /** The authorized work item a session or terminal is attached to. */
+    workItem?: ViewerWorkNodeLink;
+    /** `askEnabled` reflects a held capability, never a UI preference. */
+    transcript?: {
+        segments: ViewerTranscriptSegment[];
+        askEnabled: boolean;
+    };
     /** A source lease does not change the process lifecycle or human presence. */
     freshness?: {
         observedAt: string;
@@ -64,7 +94,10 @@ export interface ViewerWorkActivityDetail {
     };
     artifact?: {
         mediaKind: 'presentation' | 'document' | 'image';
+        /** Total addressable units in the newest available revision. */
+        pageCount?: number;
         revisions: ViewerArtifactRevision[];
+        /** `message` is a sanitized source failure summary, never a stack or path. */
         pending?: {
             revisionId: string;
             attemptId: string;
@@ -72,6 +105,7 @@ export interface ViewerWorkActivityDetail {
             status: 'generating' | 'failed';
             startedAt: string;
             updatedAt: string;
+            message?: string;
         };
     };
     /** Count only messages visible to this viewer at the query cutoff. */

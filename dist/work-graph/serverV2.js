@@ -145,17 +145,54 @@ function freshWorkOperations(operations, now) {
         throw new RangeError('now must be a valid ISO timestamp');
     return operations.filter((operation) => Date.parse(operation.expiresAt) > at);
 }
-/** Details may only describe nodes the viewer sees at full `details` disclosure. */
+/**
+ * Reduces details to what this viewer's own node disclosures already allow.
+ * An existence-only or locked node keeps no detail at all, and every link,
+ * transcript segment and tool list that names a withheld node is removed
+ * rather than replaced with a placeholder or a count.
+ */
 function detailsForDisclosedNodes(nodes, details) {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const readable = (id) => {
+        const node = byId.get(id);
+        return !!node && !node.locked && node.disclosure !== 'existence';
+    };
     const disclosed = new Set(nodes
         .filter((node) => node.disclosure === 'details' && !node.locked)
         .map((node) => node.id));
     const seen = new Set();
-    return details.filter((detail) => {
+    const filtered = [];
+    for (const detail of details) {
         if (!disclosed.has(detail.nodeId) || seen.has(detail.nodeId))
-            return false;
+            continue;
         seen.add(detail.nodeId);
-        return true;
-    });
+        const node = byId.get(detail.nodeId);
+        const keep = (link) => link.nodeId !== detail.nodeId && readable(link.nodeId);
+        const inputs = detail.inputs?.filter(keep);
+        const sources = detail.sources?.filter(keep);
+        const workItem = detail.workItem && keep(detail.workItem) ? detail.workItem : undefined;
+        const next = { ...detail };
+        if (inputs === undefined || inputs.length === 0)
+            delete next.inputs;
+        else
+            next.inputs = inputs;
+        if (sources === undefined || sources.length === 0)
+            delete next.sources;
+        else
+            next.sources = sources;
+        if (workItem)
+            next.workItem = workItem;
+        else
+            delete next.workItem;
+        if (detail.transcript) {
+            // `askEnabled` is only ever true when the source granted the capability.
+            next.transcript = {
+                segments: detail.transcript.segments,
+                askEnabled: detail.transcript.askEnabled && node.capabilities.includes('view-transcript'),
+            };
+        }
+        filtered.push(next);
+    }
+    return filtered;
 }
 //# sourceMappingURL=serverV2.js.map

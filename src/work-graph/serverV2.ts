@@ -7,6 +7,7 @@ import type {
 import type {
   ViewerWorkActivityDetail,
   ViewerWorkEffort,
+  ViewerWorkNodeLink,
   ViewerWorkOperation,
   WorkGraphQueryV2,
   WorkGraphSnapshotV2,
@@ -200,18 +201,47 @@ export function freshWorkOperations(
   return operations.filter((operation) => Date.parse(operation.expiresAt) > at);
 }
 
-/** Details may only describe nodes the viewer sees at full `details` disclosure. */
+/**
+ * Reduces details to what this viewer's own node disclosures already allow.
+ * An existence-only or locked node keeps no detail at all, and every link,
+ * transcript segment and tool list that names a withheld node is removed
+ * rather than replaced with a placeholder or a count.
+ */
 export function detailsForDisclosedNodes(
   nodes: readonly ViewerWorkNode[],
   details: readonly ViewerWorkActivityDetail[],
 ): ViewerWorkActivityDetail[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const readable = (id: string): boolean => {
+    const node = byId.get(id);
+    return !!node && !node.locked && node.disclosure !== 'existence';
+  };
   const disclosed = new Set(nodes
     .filter((node) => node.disclosure === 'details' && !node.locked)
     .map((node) => node.id));
+
   const seen = new Set<string>();
-  return details.filter((detail) => {
-    if (!disclosed.has(detail.nodeId) || seen.has(detail.nodeId)) return false;
+  const filtered: ViewerWorkActivityDetail[] = [];
+  for (const detail of details) {
+    if (!disclosed.has(detail.nodeId) || seen.has(detail.nodeId)) continue;
     seen.add(detail.nodeId);
-    return true;
-  });
+    const node = byId.get(detail.nodeId) as ViewerWorkNode;
+    const keep = (link: ViewerWorkNodeLink): boolean => link.nodeId !== detail.nodeId && readable(link.nodeId);
+    const inputs = detail.inputs?.filter(keep);
+    const sources = detail.sources?.filter(keep);
+    const workItem = detail.workItem && keep(detail.workItem) ? detail.workItem : undefined;
+    const next: ViewerWorkActivityDetail = { ...detail };
+    if (inputs === undefined || inputs.length === 0) delete next.inputs; else next.inputs = inputs;
+    if (sources === undefined || sources.length === 0) delete next.sources; else next.sources = sources;
+    if (workItem) next.workItem = workItem; else delete next.workItem;
+    if (detail.transcript) {
+      // `askEnabled` is only ever true when the source granted the capability.
+      next.transcript = {
+        segments: detail.transcript.segments,
+        askEnabled: detail.transcript.askEnabled && node.capabilities.includes('view-transcript'),
+      };
+    }
+    filtered.push(next);
+  }
+  return filtered;
 }

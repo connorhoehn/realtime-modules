@@ -59,6 +59,11 @@ export declare function bucketWorkEvents(query: Pick<WorkGraphQueryV2, 'day' | '
  * never outlives its own expiry.
  */
 export declare function freshWorkOperations(operations: readonly ViewerWorkOperation[], now: string): ViewerWorkOperation[];
-/** Details may only describe nodes the viewer sees at full `details` disclosure. */
+/**
+ * Reduces details to what this viewer's own node disclosures already allow.
+ * An existence-only or locked node keeps no detail at all, and every link,
+ * transcript segment and tool list that names a withheld node is removed
+ * rather than replaced with a placeholder or a count.
+ */
 export declare function detailsForDisclosedNodes(nodes: readonly ViewerWorkNode[], details: readonly ViewerWorkActivityDetail[]): ViewerWorkActivityDetail[];
 //# sourceMappingURL=serverV2.d.ts.map

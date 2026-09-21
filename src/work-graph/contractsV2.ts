@@ -2,7 +2,7 @@ import type { WorkGraphQueryScope, WorkGraphSnapshot, WorkReference, WorkReferen
 
 /** Opt-in readers precede v2 producers. Existing v1 contracts remain exact. */
 export const WORK_GRAPH_SCHEMA_VERSION_V2 = 2 as const;
-export const WORK_GRAPH_V2_LIMITS = { efforts: 50, revisions: 100, anchors: 200, tools: 16, eventBuckets: 1500, detailLines: 4, snapshotBytes: 1024 * 1024 } as const;
+export const WORK_GRAPH_V2_LIMITS = { efforts: 50, revisions: 100, anchors: 200, tools: 16, eventBuckets: 1500, detailLines: 4, links: 16, transcriptSegments: 500, snapshotBytes: 1024 * 1024 } as const;
 
 export interface WorkGraphQueryV2 {
   schemaVersion: 2;
@@ -31,13 +31,31 @@ export interface WorkArtifactAnchor {
   id: string;
 }
 
+/**
+ * A pointer to another node in the same snapshot. It carries no source id and
+ * no URL: an unauthorized neighbour is removed rather than described.
+ */
+export interface ViewerWorkNodeLink {
+  nodeId: string;
+  label: string;
+  meta?: string;
+}
+
+/** Disclosed only at `details`; a summary-level transcript has no content. */
+export interface ViewerTranscriptSegment {
+  id: string;
+  at: string;
+  speaker: string;
+  text: string;
+}
+
 export interface ViewerArtifactRevision {
   id: string;
   label: string;
   createdAt: string;
   /** Opaque action handle. No source URL, storage key, or bearer credential. */
   previewHandle?: string;
-  anchors?: Array<WorkArtifactAnchor & { label: string }>;
+  anchors?: Array<WorkArtifactAnchor & { label: string; index?: number }>;
 }
 
 export interface ViewerWorkActivityDetail {
@@ -46,14 +64,25 @@ export interface ViewerWorkActivityDetail {
   summary?: string;
   /** Additional authorized body lines, already filtered for this viewer. */
   lines?: string[];
+  /** Authorized upstream evidence a process consumed. */
+  inputs?: ViewerWorkNodeLink[];
+  /** Authorized provenance behind an artifact revision set. */
+  sources?: ViewerWorkNodeLink[];
+  /** The authorized work item a session or terminal is attached to. */
+  workItem?: ViewerWorkNodeLink;
+  /** `askEnabled` reflects a held capability, never a UI preference. */
+  transcript?: { segments: ViewerTranscriptSegment[]; askEnabled: boolean };
   /** A source lease does not change the process lifecycle or human presence. */
   freshness?: { observedAt: string; expiresAt: string };
   tools?: string[];
   attention?: { kind: 'reviewing'; observedAt: string; expiresAt: string; revisionId?: string };
   artifact?: {
     mediaKind: 'presentation' | 'document' | 'image';
+    /** Total addressable units in the newest available revision. */
+    pageCount?: number;
     revisions: ViewerArtifactRevision[];
-    pending?: { revisionId: string; attemptId: string; label: string; status: 'generating' | 'failed'; startedAt: string; updatedAt: string };
+    /** `message` is a sanitized source failure summary, never a stack or path. */
+    pending?: { revisionId: string; attemptId: string; label: string; status: 'generating' | 'failed'; startedAt: string; updatedAt: string; message?: string };
   };
   /** Count only messages visible to this viewer at the query cutoff. */
   feedback?: { count: number; through: string };

@@ -113,6 +113,63 @@ describe('shared v2 server helpers', () => {
     ]);
   });
 
+  it('keeps pane detail only where the viewer already sees the node it names', () => {
+    const withLinks = [
+      {
+        nodeId: 'run',
+        summary: 'Creating the next revision of Sprint review',
+        inputs: [{ nodeId: 'transcript', label: 'Planning sync transcript' }, { nodeId: 'project', label: 'Release plan', meta: 'rev 6' }],
+        tools: ['Slides', 'Charts', 'Files'],
+      },
+      { nodeId: 'terminal', workItem: { nodeId: 'project', label: 'WORK-144', meta: 'Gateway · Coverage checks' } },
+      { nodeId: 'transcript', transcript: { segments: [{ id: 's1', at: at('12:42:00'), speaker: 'Connor', text: 'Release risks before noon.' }], askEnabled: true } },
+    ];
+    // The transcript is disclosed, the project is only an existence placeholder.
+    const restricted = nodes.map((item) => {
+      if (item.id === 'project') return { ...item, disclosure: 'existence' as const, locked: true };
+      if (item.id === 'transcript') return { ...item, capabilities: ['view-transcript' as const] };
+      return item;
+    });
+    const filtered = detailsForDisclosedNodes(restricted, withLinks);
+    expect(filtered.find((item) => item.nodeId === 'run')?.inputs)
+      .toEqual([{ nodeId: 'transcript', label: 'Planning sync transcript' }]);
+    expect(filtered.find((item) => item.nodeId === 'terminal')?.workItem).toBeUndefined();
+    expect(filtered.find((item) => item.nodeId === 'transcript')?.transcript?.askEnabled).toBe(true);
+    // Without the source capability, Ask is reported as unavailable.
+    const noCapability = detailsForDisclosedNodes(nodes, withLinks);
+    expect(noCapability.find((item) => item.nodeId === 'transcript')?.transcript?.askEnabled).toBe(false);
+  });
+
+  it('rejects pane detail that names a node this snapshot did not disclose', () => {
+    const query: WorkGraphQueryV2 = {
+      schemaVersion: 2, personId: 'owner', day, timezone,
+      windowStart: at('13:20:00'), windowEnd: at('13:40:00'), mode: 'live',
+    };
+    const snapshot: WorkGraphSnapshot = {
+      schemaVersion: 1,
+      scope: { personId: 'owner', day, timezone, policyRevision: 'policy-1' },
+      revision: 4, watermark: 4, cursor: 'opaque',
+      nodes: nodes.map((item) => item.id === 'transcript' ? { ...item, capabilities: ['view-transcript' as const] } : item),
+      edges, sources: [], partial: false,
+    };
+    const activity = {
+      temporal: { mode: 'live' as const, observedAt: at('13:40:00'), coverage: { from: at('12:00:00'), through: at('13:40:00'), complete: true } },
+      efforts: deriveWorkEfforts({ nodes, edges }),
+      details: [] as never[],
+      operations: [],
+      eventBuckets: [],
+    };
+    const ok = buildWorkGraphSnapshotV2({ snapshot, query, activity: { ...activity, details: [
+      { nodeId: 'deck', artifact: { mediaKind: 'presentation', pageCount: 12, revisions: [{ id: 'v2', label: 'v2', createdAt: at('13:31:00'), anchors: [{ kind: 'slide', id: 'slide-4', label: 'Release readiness', index: 4 }] }], pending: { revisionId: 'v3', attemptId: 'attempt-3', label: 'v3', status: 'failed', startedAt: at('13:33:00'), updatedAt: at('13:34:00'), message: 'Slides tool timed out' } }, sources: [{ nodeId: 'transcript', label: 'Planning sync transcript', meta: 'Meeting · 08:30–09:00' }] },
+      { nodeId: 'transcript', transcript: { segments: [{ id: 's1', at: at('12:42:00'), speaker: 'Connor', text: 'Release risks before noon.' }], askEnabled: true } },
+    ] as never } });
+    expect(ok.ok).toBe(true);
+    const dangling = buildWorkGraphSnapshotV2({ snapshot, query, activity: { ...activity, details: [
+      { nodeId: 'deck', sources: [{ nodeId: 'not-a-node', label: 'Hidden source' }] },
+    ] as never } });
+    expect(dangling.ok).toBe(false);
+  });
+
   it('drops expired operation leases and details for nodes below full disclosure', () => {
     const operations = [
       { edgeId: 'e3', processNodeId: 'run', attemptId: 'a', observedAt: at('13:38:00'), expiresAt: at('13:41:00') },
