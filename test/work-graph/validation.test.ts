@@ -110,3 +110,40 @@ describe('work graph protocol validation', () => {
     }).ok).toBe(false);
   });
 });
+
+describe('pipeline payload relationships', () => {
+  const base = {
+    kind: 'pipeline', lifecycle: 'started', pipelineId: 'chat-agent-loop', runId: 'run-1', attempt: 1,
+  } as const;
+  const wrap = (payload: Record<string, unknown>) => validateAuthenticatedWorkEvent({
+    schemaVersion: 1,
+    eventId: 'e1', idempotencyKey: 'e1', source: 'pipeline', sourceSequence: '1',
+    occurredAt: '2026-09-21T18:00:00.000Z', receivedAt: '2026-09-21T18:00:01.000Z',
+    actor: { actorId: 'a', organizationId: 'o', sourceSubject: 's' },
+    producer: { serviceId: 'platform-api', organizationId: 'o', credentialId: 'c' },
+    resource: { source: 'pipeline', resourceId: 'run:run-1', resourceVersion: '1' },
+    payload,
+  });
+
+  test('accepts a declared workspace and produced resource', () => {
+    expect(wrap({
+      ...base,
+      workspace: { resourceId: 'session-1', safeLabel: 'Cloud workspace' },
+      produces: [{ source: 'document', resourceId: 'doc-1' }],
+    }).ok).toBe(true);
+  });
+
+  test('accepts a run that declares neither', () => {
+    expect(wrap({ ...base }).ok).toBe(true);
+  });
+
+  test('refuses a workspace with no resource, or with a field nobody declared', () => {
+    expect(wrap({ ...base, workspace: { safeLabel: 'x' } }).ok).toBe(false);
+    expect(wrap({ ...base, workspace: { resourceId: 's', shellUrl: 'https://x' } }).ok).toBe(false);
+  });
+
+  test('refuses a produced reference that is not a source reference', () => {
+    expect(wrap({ ...base, produces: [{ resourceId: 'doc-1' }] }).ok).toBe(false);
+    expect(wrap({ ...base, produces: 'doc-1' }).ok).toBe(false);
+  });
+});

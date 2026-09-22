@@ -50,3 +50,37 @@ describe('work graph event declarations', () => {
     expect(isWithinWorkGraphEventLimit(circular)).toBe(false);
   });
 });
+
+describe('the pipeline lifecycle schema accepts everything its own contract emits', () => {
+  const pipeline = workGraphLifecycleDeclarations
+    .find((entry) => entry.name === 'work-graph.pipeline.lifecycle.v1') as { schema: Record<string, unknown> };
+  const payloadProperties = ((pipeline.schema.properties as Record<string, { properties?: Record<string, unknown> }>)
+    .payload?.properties ?? {}) as Record<string, unknown>;
+
+  test('declares the relationship fields the reducer reads', () => {
+    // A field the reducer honours but the schema rejects is invisible: the
+    // event is refused at publish time, and the projection simply never sees
+    // the run. `inputs` did exactly that until it was declared here.
+    for (const field of ['inputs', 'produces', 'workspace', 'artifactIds', 'safeLabel']) {
+      expect(payloadProperties).toHaveProperty(field);
+    }
+  });
+
+  test('a relationship names a source and a resource, and nothing free-form', () => {
+    expect(payloadProperties.inputs).toMatchObject({
+      type: 'array',
+      items: { additionalProperties: false, required: ['source', 'resourceId'] },
+    });
+    expect(payloadProperties.workspace).toMatchObject({
+      type: 'object', additionalProperties: false, required: ['resourceId'],
+    });
+  });
+
+  test('every source a relationship may name is a real work source', () => {
+    const sources = ((payloadProperties.inputs as { items: { properties: { source: { enum: string[] } } } })
+      .items.properties.source.enum);
+    expect(sources.sort()).toEqual(
+      ['cloud-compute', 'conversation', 'document', 'local-compute', 'meeting', 'pipeline'],
+    );
+  });
+});

@@ -161,11 +161,16 @@ function isEventPayload(value, source) {
                 && (value.attributedActorId === undefined || isId(value.attributedActorId))
                 && (value.producedByRunId === undefined || isId(value.producedByRunId)) && label(value);
         case 'pipeline':
-            return hasExactKeys(value, ['kind', 'lifecycle', 'pipelineId', 'runId', 'attempt'], ['artifactIds', 'safeLabel', 'inputs'])
+            return hasExactKeys(value, ['kind', 'lifecycle', 'pipelineId', 'runId', 'attempt'], ['artifactIds', 'safeLabel', 'inputs', 'workspace', 'produces'])
                 && ['started', 'waiting', 'completed', 'failed', 'cancelled'].includes(value.lifecycle)
                 && isId(value.pipelineId) && isId(value.runId) && isNonNegativeInteger(value.attempt)
                 && (value.artifactIds === undefined || hasUniqueIds(value.artifactIds, contracts_1.WORK_GRAPH_LIMITS.snapshotNodes))
                 && (value.inputs === undefined || (Array.isArray(value.inputs) && value.inputs.length <= contracts_1.WORK_GRAPH_LIMITS.snapshotNodes && value.inputs.every((ref) => isSourceRef(ref))))
+                && (value.produces === undefined || (Array.isArray(value.produces) && value.produces.length <= contracts_1.WORK_GRAPH_LIMITS.snapshotNodes && value.produces.every((ref) => isSourceRef(ref))))
+                && (value.workspace === undefined || (isRecord(value.workspace)
+                    && hasExactKeys(value.workspace, ['resourceId'], ['safeLabel'])
+                    && isId(value.workspace.resourceId)
+                    && label(value.workspace)))
                 && label(value);
         case 'conversation':
             return hasExactKeys(value, ['kind', 'lifecycle', 'conversationId', 'conversationKind'], ['explicitRelatedResource', 'safeLabel'])

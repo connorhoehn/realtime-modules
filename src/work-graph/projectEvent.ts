@@ -176,12 +176,37 @@ function inputsFor(event: AuthenticatedWorkEvent): { nodes: NodeInput[]; edges: 
     case 'pipeline': {
       const run: NodeInput = { kind: 'run', resourceId: event.payload.runId, title: safe('Pipeline run'), generic, status };
       const declared = event.payload.inputs ?? [];
+      const nodes: NodeInput[] = [run];
+      const edges: EdgeInput[] = [];
+      const workspace = event.payload.workspace;
+      if (workspace) {
+        // The same shape the compute sources use for a session: the work is
+        // the run, the place is the terminal, and `runs-in` is the execution
+        // relationship a reader animates. Without it a running run has only a
+        // status word, which cannot expire and so cannot be a lease.
+        const workspaceLabel = workspace.safeLabel?.trim();
+        const terminal: NodeInput = {
+          kind: 'terminal',
+          resourceId: workspace.resourceId,
+          title: workspaceLabel || 'Cloud workspace',
+          ...(workspaceLabel ? {} : { generic: true }),
+          status,
+        };
+        nodes.push(terminal);
+        edges.push({ from: run, to: terminal, relation: 'runs-in' });
+      }
       return {
-        nodes: [run],
-        edges: [],
-        // `derived-from` points at the evidence the run consumed. Direction is
-        // run -> input, matching the transcript -> meeting convention above.
-        crossEdges: declared.map((ref) => ({ from: run, to: { existing: ref }, relation: 'derived-from' as WorkRelation })),
+        nodes,
+        edges,
+        crossEdges: [
+          // `derived-from` points at the evidence the run consumed. Direction is
+          // run -> input, matching the transcript -> meeting convention above.
+          ...declared.map((ref) => ({ from: run, to: { existing: ref }, relation: 'derived-from' as WorkRelation })),
+          // `produced` points at what the run is writing. The document's own
+          // save record writes the same relationship once a revision exists;
+          // this is the run saying so while it is still working.
+          ...(event.payload.produces ?? []).map((ref) => ({ from: run, to: { existing: ref }, relation: 'produced' as WorkRelation })),
+        ],
       };
     }
     case 'conversation': {

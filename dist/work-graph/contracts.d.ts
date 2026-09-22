@@ -142,6 +142,25 @@ export interface PipelinePayload {
     safeLabel?: string;
     /** Source-declared inputs this run consumed. Never inferred by the reducer. */
     inputs?: WorkSourceRef[];
+    /**
+     * The process this run is executing in — a cloud workspace, a session — as
+     * the source that opened it names it. It projects a `terminal` node and a
+     * `runs-in` relationship, which is what lets a running run be reported as a
+     * live operation rather than as a node carrying a status word. Several runs
+     * or steps sharing one workspace share its node, because they really are in
+     * the same place.
+     */
+    workspace?: {
+        resourceId: string;
+        safeLabel?: string;
+    };
+    /**
+     * What this run is producing, named by the source itself rather than
+     * discovered. Like `inputs`, the relationship is dropped unless the named
+     * resource has already been projected, so a run can never conjure the
+     * artifact it claims to be writing.
+     */
+    produces?: WorkSourceRef[];
 }
 export interface ConversationPayload {
     kind: 'conversation';

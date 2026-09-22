@@ -216,3 +216,88 @@ describe('projectWorkEvent', () => {
     expect(() => projectWorkEvent(empty(), event({ actor: { ...validCloudEventFixture.actor, actorId: 'other' } }))).toThrow(/scope/);
   });
 });
+
+describe('a pipeline run that names where it is executing', () => {
+  const pipelineEvent = (payload: Record<string, unknown>, over: Partial<AuthenticatedWorkEvent> = {}): AuthenticatedWorkEvent => event({
+    source: 'pipeline',
+    resource: { source: 'pipeline', resourceId: 'run:run-1', resourceVersion: '1' },
+    producer: { ...validCloudEventFixture.producer, serviceId: 'platform-api' },
+    payload: { kind: 'pipeline', lifecycle: 'started', pipelineId: 'chat-agent-loop', runId: 'run-1', attempt: 1, ...payload },
+    ...over,
+  } as Partial<AuthenticatedWorkEvent>);
+
+  test('projects the workspace as a terminal the run runs in', () => {
+    const state = projectWorkEvent(empty(), pipelineEvent({
+      safeLabel: 'Draft the agenda',
+      workspace: { resourceId: 'session-28a319a9', safeLabel: 'Cloud workspace · 28a319a9' },
+    }));
+    const kinds = Object.values(state.nodes).map((node) => `${node.kind}:${node.title}`).sort();
+    expect(kinds).toEqual(['run:Draft the agenda', 'terminal:Cloud workspace · 28a319a9']);
+    const [edge] = Object.values(state.edges);
+    expect(edge.relation).toBe('runs-in');
+    expect(state.nodes[edge.fromId].kind).toBe('run');
+    expect(state.nodes[edge.toId].kind).toBe('terminal');
+    // A running run in a workspace is the shape a reader animates as live.
+    expect(edge.status).toBe('running');
+  });
+
+  test('two steps in one workspace share its node, because they share the place', () => {
+    const first = projectWorkEvent(empty(), pipelineEvent({
+      runId: 'run-1#agent:s1', safeLabel: 'Draft', workspace: { resourceId: 'session-1' },
+    }));
+    const second = projectWorkEvent(first, pipelineEvent({
+      runId: 'run-1#agent:s2', safeLabel: 'Build', workspace: { resourceId: 'session-1' },
+    }, { eventId: 'second', sourceSequence: '2' }));
+    expect(Object.values(second.nodes).filter((node) => node.kind === 'terminal')).toHaveLength(2 - 1);
+    expect(Object.values(second.edges).filter((edge) => edge.relation === 'runs-in')).toHaveLength(2);
+  });
+
+  test('a workspace with no label is a placeholder that a later label replaces', () => {
+    const first = projectWorkEvent(empty(), pipelineEvent({ workspace: { resourceId: 'session-1' } }));
+    expect(Object.values(first.nodes).find((node) => node.kind === 'terminal')?.title).toBe('Cloud workspace');
+    const second = projectWorkEvent(first, pipelineEvent({
+      workspace: { resourceId: 'session-1', safeLabel: 'Frank\'s box' },
+    }, { eventId: 'second', sourceSequence: '2' }));
+    expect(Object.values(second.nodes).find((node) => node.kind === 'terminal')?.title).toBe('Frank\'s box');
+  });
+
+  test('a run with no workspace still projects exactly one node and no edge', () => {
+    const state = projectWorkEvent(empty(), pipelineEvent({}));
+    expect(Object.values(state.nodes).map((node) => node.kind)).toEqual(['run']);
+    expect(Object.values(state.edges)).toHaveLength(0);
+  });
+
+  test('`produces` reaches a document that was already projected, and nothing else', () => {
+    const withDocument = projectWorkEvent(empty(), event({
+      source: 'document',
+      eventId: 'document-1',
+      resource: { source: 'document', resourceId: 'doc-1', resourceVersion: 'v1' },
+      producer: { ...validCloudEventFixture.producer, serviceId: 'websocket-gateway' },
+      payload: { kind: 'document', lifecycle: 'revision-saved', documentId: 'doc-1', revisionId: 'v1', safeLabel: 'Deck' },
+    } as Partial<AuthenticatedWorkEvent>));
+    const projected = projectWorkEvent(withDocument, pipelineEvent({
+      produces: [{ source: 'document', resourceId: 'doc-1' }],
+    }));
+    const produced = Object.values(projected.edges).filter((edge) => edge.relation === 'produced');
+    expect(produced).toHaveLength(1);
+    expect(projected.nodes[produced[0].fromId].kind).toBe('run');
+    expect(projected.nodes[produced[0].toId].kind).toBe('document');
+  });
+
+  test('a `produces` claim for a document nobody projected conjures nothing', () => {
+    const state = projectWorkEvent(empty(), pipelineEvent({
+      produces: [{ source: 'document', resourceId: 'doc-never-seen' }],
+    }));
+    expect(Object.values(state.nodes).map((node) => node.kind)).toEqual(['run']);
+    expect(Object.values(state.edges)).toHaveLength(0);
+  });
+
+  test('the run-in relationship ends with the workspace when the run is deleted-equivalent', () => {
+    const started = projectWorkEvent(empty(), pipelineEvent({ workspace: { resourceId: 'session-1' } }));
+    const cancelled = projectWorkEvent(started, pipelineEvent({
+      lifecycle: 'cancelled', workspace: { resourceId: 'session-1' },
+    }, { eventId: 'second', sourceSequence: '2' }));
+    expect(Object.values(cancelled.edges)[0].status).toBe('stopped');
+    expect(Object.values(cancelled.nodes).every((node) => node.status === 'stopped')).toBe(true);
+  });
+});

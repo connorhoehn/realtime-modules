@@ -6,6 +6,20 @@ const contracts_1 = require("./contracts");
 const identifier = { type: 'string', minLength: 1, maxLength: contracts_1.WORK_GRAPH_LIMITS.idLength };
 const label = { type: 'string', minLength: 1, maxLength: contracts_1.WORK_GRAPH_LIMITS.labelLength };
 const timestamp = { type: 'string', format: 'date-time', maxLength: 40 };
+/**
+ * A resource another source owns, named explicitly. It is the wire shape of
+ * `WorkSourceRef`, and it is shared by every payload that declares a
+ * relationship rather than leaving one to be inferred.
+ */
+const sourceRef = {
+    type: 'object', additionalProperties: false, required: ['source', 'resourceId'],
+    properties: {
+        source: { enum: ['cloud-compute', 'local-compute', 'document', 'pipeline', 'conversation', 'meeting'] },
+        resourceId: identifier,
+        resourceVersion: identifier,
+    },
+};
+const sourceRefs = { type: 'array', maxItems: 100, items: sourceRef };
 const payloadSchemas = {
     'cloud-compute': {
         type: 'object', additionalProperties: false,
@@ -25,7 +39,7 @@ const payloadSchemas = {
     pipeline: {
         type: 'object', additionalProperties: false,
         required: ['kind', 'lifecycle', 'pipelineId', 'runId', 'attempt'],
-        properties: { kind: { const: 'pipeline' }, lifecycle: { enum: ['started', 'waiting', 'completed', 'failed', 'cancelled'] }, pipelineId: identifier, runId: identifier, attempt: { type: 'integer', minimum: 1, maximum: 10_000 }, artifactIds: { type: 'array', maxItems: 100, uniqueItems: true, items: identifier }, safeLabel: label },
+        properties: { kind: { const: 'pipeline' }, lifecycle: { enum: ['started', 'waiting', 'completed', 'failed', 'cancelled'] }, pipelineId: identifier, runId: identifier, attempt: { type: 'integer', minimum: 1, maximum: 10_000 }, artifactIds: { type: 'array', maxItems: 100, uniqueItems: true, items: identifier }, safeLabel: label, inputs: sourceRefs, produces: sourceRefs, workspace: { type: 'object', additionalProperties: false, required: ['resourceId'], properties: { resourceId: identifier, safeLabel: label } } },
     },
     conversation: {
         type: 'object', additionalProperties: false,
