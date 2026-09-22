@@ -1,5 +1,5 @@
 import { WORK_GRAPH_LIMITS } from '../../src/work-graph/contracts';
-import { isWithinWorkGraphEventLimit, workGraphEventDeclarations, workGraphHeartbeatDeclaration, workGraphLifecycleDeclarations, workGraphProjectionChangedDeclaration } from '../../src/work-graph/eventDeclarations';
+import { isWithinWorkGraphEventLimit, workGraphEventDeclarations, workGraphHeartbeatDeclaration, workGraphLifecycleDeclarations, workGraphProjectionChangedDeclaration, workGraphProducersFor } from '../../src/work-graph/eventDeclarations';
 
 describe('work graph event declarations', () => {
   test('declares one durable lifecycle producer per source and a distinct transient heartbeat', () => {
@@ -82,5 +82,32 @@ describe('the pipeline lifecycle schema accepts everything its own contract emit
     expect(sources.sort()).toEqual(
       ['cloud-compute', 'conversation', 'document', 'local-compute', 'meeting', 'pipeline'],
     );
+  });
+});
+
+describe('a document has two legitimate writers', () => {
+  const documentDeclaration = workGraphLifecycleDeclarations
+    .find((entry) => entry.name === 'work-graph.document.lifecycle.v1') as { producer: string; producers: readonly string[]; schema: Record<string, unknown> };
+
+  it('names the gateway first and admits the platform beside it', () => {
+    // A generated presentation is a document whose row platform-api writes;
+    // the gateway never sees one.
+    expect(documentDeclaration.producer).toBe('websocket-gateway');
+    expect([...documentDeclaration.producers].sort()).toEqual(['platform-api', 'websocket-gateway']);
+    expect(workGraphProducersFor('document')).toContain('platform-api');
+  });
+
+  it('lets the schema accept either service, and no third one', () => {
+    const schema = documentDeclaration.schema as unknown as {
+      properties: { producer: { properties: { serviceId: { enum: string[] } } } };
+    };
+    const producer = schema.properties.producer.properties.serviceId.enum;
+    expect([...producer].sort()).toEqual(['platform-api', 'websocket-gateway']);
+  });
+
+  it('leaves every other source with exactly one writer', () => {
+    for (const source of ['cloud-compute', 'local-compute', 'pipeline', 'conversation', 'meeting'] as const) {
+      expect(workGraphProducersFor(source)).toHaveLength(1);
+    }
   });
 });

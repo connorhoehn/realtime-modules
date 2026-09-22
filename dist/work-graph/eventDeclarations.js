@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.workGraphEventDeclarations = exports.workGraphProjectionChangedDeclaration = exports.workGraphHeartbeatDeclaration = exports.workGraphLifecycleDeclarations = void 0;
+exports.workGraphProducersFor = workGraphProducersFor;
 exports.isWithinWorkGraphEventLimit = isWithinWorkGraphEventLimit;
 const contracts_1 = require("./contracts");
 const identifier = { type: 'string', minLength: 1, maxLength: contracts_1.WORK_GRAPH_LIMITS.idLength };
@@ -60,6 +61,23 @@ const producerBySource = {
     conversation: 'websocket-gateway',
     meeting: 'platform-api',
 };
+/**
+ * Services other than the primary writer that may publish a source.
+ *
+ * A generated presentation is a document whose row platform-api writes, so it
+ * is the document's real producer; the gateway never sees one. Admitting it
+ * here keeps that node identical to the one the gateway would have projected,
+ * which is what an artifact card and "Open presentation" depend on. It is an
+ * allowlist of SERVICES, not a licence over content: a consumer still checks
+ * that the publisher owns the document it is describing.
+ */
+const alsoProducedBySource = {
+    document: ['platform-api'],
+};
+/** Every service allowed to publish a source's lifecycle event. */
+function workGraphProducersFor(source) {
+    return [producerBySource[source], ...(alsoProducedBySource[source] ?? [])];
+}
 function sourceEventSchema(source, heartbeatOnly = false) {
     const schema = payloadSchemas[source];
     const lifecycle = heartbeatOnly
@@ -78,7 +96,7 @@ function sourceEventSchema(source, heartbeatOnly = false) {
             schemaVersion: { const: 1 }, eventId: identifier, idempotencyKey: identifier,
             source: { const: source }, sourceSequence: identifier, occurredAt: timestamp, receivedAt: timestamp,
             actor: { type: 'object', additionalProperties: false, required: ['actorId', 'organizationId', 'sourceSubject'], properties: { actorId: identifier, organizationId: identifier, sourceSubject: identifier } },
-            producer: { type: 'object', additionalProperties: false, required: ['serviceId', 'organizationId', 'credentialId'], properties: { serviceId: { const: producerBySource[source] }, organizationId: identifier, credentialId: identifier } },
+            producer: { type: 'object', additionalProperties: false, required: ['serviceId', 'organizationId', 'credentialId'], properties: { serviceId: { enum: [...workGraphProducersFor(source)] }, organizationId: identifier, credentialId: identifier } },
             resource: { type: 'object', additionalProperties: false, required: ['source', 'resourceId'], properties: { source: { const: source }, resourceId: identifier, resourceVersion: identifier } },
             payload,
         },
@@ -87,13 +105,15 @@ function sourceEventSchema(source, heartbeatOnly = false) {
 const durableSources = ['cloud-compute', 'local-compute', 'document', 'pipeline', 'conversation', 'meeting'];
 exports.workGraphLifecycleDeclarations = durableSources.map((source) => ({
     name: `work-graph.${source}.lifecycle.v1`, namespace: 'work-graph', schema: sourceEventSchema(source),
-    transport: 'durable', producer: producerBySource[source], description: `Authenticated ${source} lifecycle input for the private work graph projection.`,
+    transport: 'durable', producer: producerBySource[source], producers: workGraphProducersFor(source),
+    description: `Authenticated ${source} lifecycle input for the private work graph projection.`,
     tags: ['privacy:private', 'schema:v1', `source:${source}`, `max-bytes:${contracts_1.WORK_GRAPH_LIMITS.sourceEventBytes}`],
     version: 1, compatibilityMode: 'backward', queue: 'work-graph-projection-v1', retention: contracts_1.WORK_GRAPH_LIMITS.eventRetentionDays * 24 * 60 * 60, dlqAfterAttempts: 5,
 }));
 exports.workGraphHeartbeatDeclaration = {
     name: 'work-graph.local-compute.heartbeat.v1', namespace: 'work-graph', schema: sourceEventSchema('local-compute', true),
-    transport: 'signal', producer: 'aws-agentcore', description: 'Transient authenticated machine freshness signal; never human presence.',
+    transport: 'signal', producer: 'aws-agentcore', producers: ['aws-agentcore'],
+    description: 'Transient authenticated machine freshness signal; never human presence.',
     tags: ['privacy:private', 'schema:v1', 'source:local-compute', 'transient', `max-bytes:${contracts_1.WORK_GRAPH_LIMITS.sourceEventBytes}`],
     version: 1, compatibilityMode: 'backward',
 };
@@ -102,6 +122,7 @@ exports.workGraphProjectionChangedDeclaration = {
     namespace: 'work-graph',
     transport: 'durable',
     producer: 'platform-api',
+    producers: ['platform-api'],
     description: 'A private work-graph projection revision is ready for authorized gateway replay.',
     tags: ['privacy:private', 'schema:v1', 'projection', `max-bytes:${contracts_1.WORK_GRAPH_LIMITS.sourceEventBytes}`],
     version: 1,

@@ -301,3 +301,52 @@ describe('a pipeline run that names where it is executing', () => {
     expect(Object.values(cancelled.nodes).every((node) => node.status === 'stopped')).toBe(true);
   });
 });
+
+describe('one document, whichever service observed it', () => {
+  const documentEvent = (serviceId: string, over: Partial<AuthenticatedWorkEvent> = {}): AuthenticatedWorkEvent => event({
+    source: 'document',
+    resource: { source: 'document', resourceId: 'deck-1', resourceVersion: 'v1' },
+    producer: { ...validCloudEventFixture.producer, serviceId },
+    payload: { kind: 'document', lifecycle: 'revision-saved', documentId: 'deck-1', revisionId: 'v1', safeLabel: 'Sprint review' },
+    ...over,
+  } as Partial<AuthenticatedWorkEvent>);
+
+  it('is the same node whether the gateway or the platform published it', () => {
+    // Identity is the source and the document id, never who observed it. A
+    // generated presentation is written by the platform and a CRDT page by the
+    // gateway; an artifact card and "Open presentation" both address the one
+    // node, so a second one would be a different document to every reader.
+    const fromGateway = projectWorkEvent(empty(), documentEvent('websocket-gateway'));
+    const fromPlatform = projectWorkEvent(empty(), documentEvent('platform-api', { eventId: 'platform-1', sourceSequence: '2' }));
+    const documentOf = (state: WorkProjectionState) => Object.values(state.nodes).find((node) => node.kind === 'document');
+    expect(documentOf(fromPlatform)?.id).toBe(documentOf(fromGateway)?.id);
+    expect(documentOf(fromPlatform)?.sourceRef).toEqual({ source: 'document', resourceId: 'deck-1' });
+  });
+
+  it('merges rather than duplicating when both publish for it', () => {
+    const both = projectWorkEvent(
+      projectWorkEvent(empty(), documentEvent('platform-api')),
+      documentEvent('websocket-gateway', { eventId: 'gateway-1', sourceSequence: '2' }),
+    );
+    expect(Object.values(both.nodes).filter((node) => node.kind === 'document')).toHaveLength(1);
+    // One revision each, so one `change` per revision id — not one per writer.
+    expect(Object.values(both.nodes).filter((node) => node.kind === 'change')).toHaveLength(1);
+  });
+
+  it('keeps a run\'s provenance when the platform is the one reporting it', () => {
+    const withRun = projectWorkEvent(empty(), event({
+      source: 'pipeline', eventId: 'run-1',
+      resource: { source: 'pipeline', resourceId: 'run:run-1', resourceVersion: '1' },
+      producer: { ...validCloudEventFixture.producer, serviceId: 'platform-api' },
+      payload: { kind: 'pipeline', lifecycle: 'started', pipelineId: 'chat-agent-loop', runId: 'run-1', attempt: 1 },
+    } as Partial<AuthenticatedWorkEvent>));
+    const projected = projectWorkEvent(withRun, documentEvent('platform-api', {
+      eventId: 'doc-1', sourceSequence: '2',
+      payload: { kind: 'document', lifecycle: 'revision-saved', documentId: 'deck-1', revisionId: 'v1', safeLabel: 'Sprint review', producedByRunId: 'run-1' },
+    } as Partial<AuthenticatedWorkEvent>));
+    const produced = Object.values(projected.edges).filter((edge) => edge.relation === 'produced');
+    expect(produced).toHaveLength(1);
+    expect(projected.nodes[produced[0].fromId].kind).toBe('run');
+    expect(projected.nodes[produced[0].toId].kind).toBe('document');
+  });
+});
