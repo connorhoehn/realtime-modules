@@ -238,6 +238,8 @@ export interface ConversationPayload {
 export interface MeetingPayload {
   kind: 'meeting';
   lifecycle:
+    /** The room exists and is expected; nobody has arrived yet. */
+    | 'meeting-scheduled'
     | 'attendance-started'
     | 'attendance-ended'
     | 'recording-started'

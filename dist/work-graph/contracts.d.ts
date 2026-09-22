@@ -172,7 +172,9 @@ export interface ConversationPayload {
 }
 export interface MeetingPayload {
     kind: 'meeting';
-    lifecycle: 'attendance-started' | 'attendance-ended' | 'recording-started' | 'recording-ready' | 'recording-failed' | 'recording-deleted' | 'transcript-ready' | 'transcript-failed' | 'transcript-deleted';
+    lifecycle: 
+    /** The room exists and is expected; nobody has arrived yet. */
+    'meeting-scheduled' | 'attendance-started' | 'attendance-ended' | 'recording-started' | 'recording-ready' | 'recording-failed' | 'recording-deleted' | 'transcript-ready' | 'transcript-failed' | 'transcript-deleted';
     meetingId: string;
     recordingId?: string;
     transcriptId?: string;

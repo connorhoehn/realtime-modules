@@ -350,3 +350,47 @@ describe('one document, whichever service observed it', () => {
     expect(projected.nodes[produced[0].toId].kind).toBe('document');
   });
 });
+
+describe('a room a loop scheduled', () => {
+  const meetingEvent = (lifecycle: string, over: Partial<AuthenticatedWorkEvent> = {}): AuthenticatedWorkEvent => event({
+    source: 'meeting',
+    resource: { source: 'meeting', resourceId: 'room-1', resourceVersion: '1' },
+    producer: { ...validCloudEventFixture.producer, serviceId: 'platform-api' },
+    payload: { kind: 'meeting', lifecycle, meetingId: 'room-1', safeLabel: 'Platform team sync' },
+    ...over,
+  } as Partial<AuthenticatedWorkEvent>);
+
+  it('is a meeting node that is neither running nor over', () => {
+    const state = projectWorkEvent(empty(), meetingEvent('meeting-scheduled'));
+    const meeting = Object.values(state.nodes).find((node) => node.kind === 'meeting');
+    expect(meeting?.title).toBe('Platform team sync');
+    // It exists and is waiting for the people it was made for.
+    expect(meeting?.status).toBe('idle');
+  });
+
+  it('is the SAME node once somebody actually arrives', () => {
+    // Identity is the meeting id: the platform schedules the room and the
+    // gateway reports attendance, and a second node would be a second meeting
+    // to every reader holding a node id.
+    const scheduled = projectWorkEvent(empty(), meetingEvent('meeting-scheduled'));
+    const attended = projectWorkEvent(scheduled, meetingEvent('attendance-started', {
+      eventId: 'attendance-1', sourceSequence: '2',
+    }));
+    const meetings = Object.values(attended.nodes).filter((node) => node.kind === 'meeting');
+    expect(meetings).toHaveLength(1);
+    expect(meetings[0].status).toBe('running');
+    // The name the scheduler gave it survives the transition.
+    expect(meetings[0].title).toBe('Platform team sync');
+  });
+
+  it('keeps the scheduled room when a later event says nothing about its name', () => {
+    const scheduled = projectWorkEvent(empty(), meetingEvent('meeting-scheduled'));
+    const ended = projectWorkEvent(scheduled, meetingEvent('attendance-ended', {
+      eventId: 'ended-1', sourceSequence: '3',
+      payload: { kind: 'meeting', lifecycle: 'attendance-ended', meetingId: 'room-1' },
+    } as Partial<AuthenticatedWorkEvent>));
+    const meeting = Object.values(ended.nodes).find((node) => node.kind === 'meeting');
+    expect(meeting?.title).toBe('Platform team sync');
+    expect(meeting?.status).toBe('stopped');
+  });
+});

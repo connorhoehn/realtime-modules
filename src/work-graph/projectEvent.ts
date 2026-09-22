@@ -43,6 +43,9 @@ function statusFor(event: AuthenticatedWorkEvent): WorkStatus {
     case 'conversation':
       return event.payload.lifecycle === 'membership-removed' ? 'stopped' : 'completed';
     case 'meeting':
+      // Scheduled is not running and not finished: the room exists and is
+      // waiting for the people it was made for.
+      if (event.payload.lifecycle === 'meeting-scheduled') return 'idle';
       if (event.payload.lifecycle.endsWith('-failed')) return 'error';
       if (event.payload.lifecycle.endsWith('-deleted') || event.payload.lifecycle === 'attendance-ended') return 'stopped';
       if (event.payload.lifecycle.endsWith('-started')) return 'running';

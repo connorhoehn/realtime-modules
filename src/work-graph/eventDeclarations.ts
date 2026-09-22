@@ -72,7 +72,7 @@ const payloadSchemas: Record<WorkSourceKind, Record<string, unknown>> = {
   meeting: {
     type: 'object', additionalProperties: false,
     required: ['kind', 'lifecycle', 'meetingId'],
-    properties: { kind: { const: 'meeting' }, lifecycle: { enum: ['attendance-started', 'attendance-ended', 'recording-started', 'recording-ready', 'recording-failed', 'recording-deleted', 'transcript-ready', 'transcript-failed', 'transcript-deleted'] }, meetingId: identifier, recordingId: identifier, transcriptId: identifier, recordingOwnerId: identifier, safeLabel: label },
+    properties: { kind: { const: 'meeting' }, lifecycle: { enum: ['meeting-scheduled', 'attendance-started', 'attendance-ended', 'recording-started', 'recording-ready', 'recording-failed', 'recording-deleted', 'transcript-ready', 'transcript-failed', 'transcript-deleted'] }, meetingId: identifier, recordingId: identifier, transcriptId: identifier, recordingOwnerId: identifier, safeLabel: label },
   },
 };
 

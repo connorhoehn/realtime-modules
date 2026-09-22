@@ -179,7 +179,7 @@ function isEventPayload(value, source) {
                 && (value.explicitRelatedResource === undefined || isSourceRef(value.explicitRelatedResource)) && label(value);
         case 'meeting':
             return hasExactKeys(value, ['kind', 'lifecycle', 'meetingId'], ['recordingId', 'transcriptId', 'recordingOwnerId', 'safeLabel'])
-                && ['attendance-started', 'attendance-ended', 'recording-started', 'recording-ready', 'recording-failed', 'recording-deleted', 'transcript-ready', 'transcript-failed', 'transcript-deleted'].includes(value.lifecycle)
+                && ['meeting-scheduled', 'attendance-started', 'attendance-ended', 'recording-started', 'recording-ready', 'recording-failed', 'recording-deleted', 'transcript-ready', 'transcript-failed', 'transcript-deleted'].includes(value.lifecycle)
                 && isId(value.meetingId) && (value.recordingId === undefined || isId(value.recordingId))
                 && (value.transcriptId === undefined || isId(value.transcriptId))
                 && (value.recordingOwnerId === undefined || isId(value.recordingOwnerId)) && label(value);
