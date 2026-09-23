@@ -8,6 +8,11 @@
 //   setStatus     — send a presence:set frame with the given status
 //   updateMetadata — merge metadata into the current presence entry
 //
+// usePresence(channel, { join: true }) — also BE present in the channel while
+// mounted (0.82.0). The socket has one gateway entry; every frame this hook
+// sends goes through presenceEntry.ts so it keeps the socket's other channels
+// and metadata instead of replacing them.
+//
 // WIRE CONTRACT (gateway-real, verified against the gateway's installed
 // PresenceService.handleAction — hub#1497): the presence verbs are
 // set | get | subscribe | unsubscribe | heartbeat. `subscribe` REQUIRES a
@@ -38,7 +43,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.usePresence = usePresence;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
-function usePresence(channel) {
+const presenceEntry_1 = require("./presenceEntry");
+function usePresence(channel, options = {}) {
+    const join = options.join === true;
     const { send, onMessage, sessionEpoch } = (0, GatewaySocketProvider_1.useGateway)();
     // Internal roster kept in a Map for O(1) updates; exposed as sorted array.
     const rosterMapRef = (0, react_1.useRef)(new Map());
@@ -91,6 +98,13 @@ function usePresence(channel) {
                         // 'update' is the channel broadcast. Neither carries a top-level
                         // channel — filter via the entry's pinned channels list.
                         const entry = asPresenceEntry(raw.presence);
+                        // A peer leaving this channel (see presenceEntry "Leaving a channel").
+                        const left = entry?.metadata?.[presenceEntry_1.PRESENCE_LEFT_KEY];
+                        if (entry && Array.isArray(left) && left.includes(channelRef.current)) {
+                            if (rosterMapRef.current.delete(entry.clientId))
+                                flush();
+                            break;
+                        }
                         if (entry && entry.channels.includes(channelRef.current)) {
                             rosterMapRef.current.set(entry.clientId, entry);
                             flush();
@@ -168,33 +182,39 @@ function usePresence(channel) {
         // would never fire again, and the hook would sit silently unsubscribed
         // while connectionState reads 'connected'.
     }, [channel, send, sessionEpoch]);
-    // The gateway REPLACES the whole presence entry on every set, so carry
-    // the last-known status + metadata across setStatus / updateMetadata
-    // calls (status defaults to 'online' until the first setStatus).
-    const lastStatusRef = (0, react_1.useRef)('online');
-    const lastMetadataRef = (0, react_1.useRef)({});
+    // The gateway REPLACES the whole presence entry on every set, so status and
+    // metadata live in the socket's shared entry (presenceEntry.ts), not here:
+    // a frame from this hook keeps what other presence users on the socket set.
+    // Join: present in `channel` while mounted, announced again on each new
+    // session (a reconnect is a new server-side client with no entry).
+    (0, react_1.useEffect)(() => {
+        if (!join)
+            return undefined;
+        const release = (0, presenceEntry_1.joinPresenceChannel)(channel);
+        return () => {
+            if (release())
+                for (const frame of (0, presenceEntry_1.presenceLeaveFrames)(channel))
+                    send(frame);
+        };
+    }, [join, channel, send]);
+    (0, react_1.useEffect)(() => {
+        if (join)
+            send((0, presenceEntry_1.presenceSetFrame)());
+    }, [join, channel, send, sessionEpoch]);
     const setStatus = (0, react_1.useCallback)((status) => {
-        lastStatusRef.current = status;
-        send({
-            service: 'presence',
-            action: 'set',
+        send((0, presenceEntry_1.presenceSetFrame)({
             status,
-            metadata: lastMetadataRef.current,
-            channels: [channelRef.current],
-        });
-    }, [send]);
+            ...(join ? {} : { alsoChannels: [channelRef.current] }),
+        }));
+    }, [send, join]);
     const updateMetadata = (0, react_1.useCallback)((meta) => {
-        lastMetadataRef.current = { ...lastMetadataRef.current, ...meta };
-        send({
-            service: 'presence',
-            action: 'set',
-            // status is REQUIRED by the gateway ("Status is required") — carry
-            // the last-known value so metadata-only updates don't error.
-            status: lastStatusRef.current,
-            metadata: lastMetadataRef.current,
-            channels: [channelRef.current],
-        });
-    }, [send]);
+        send((0, presenceEntry_1.presenceSetFrame)({
+            metadata: meta,
+            // A joined hook's channel is already listed; after it left, it must
+            // not be re-added by a late update (an unmount cleanup, say).
+            ...(join ? {} : { alsoChannels: [channelRef.current] }),
+        }));
+    }, [send, join]);
     return { roster, setStatus, updateMetadata };
 }
 // ---------------------------------------------------------------------------

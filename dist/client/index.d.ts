@@ -29,7 +29,9 @@ export type { UseChatMembersReturn, ChatMemberEntry, ChatHistoryChoice as ChatMe
 export { useChatReadReceipts } from './useChatReadReceipts';
 export type { UseChatReadReceiptsReturn, UseChatReadReceiptsOpts, ChatReadReceiptEntry, ChatReceiptsDisabledReason, ReadPosition as ChatReadPosition, } from './useChatReadReceipts';
 export { usePresence } from './usePresence';
-export type { UsePresenceReturn } from './usePresence';
+export type { UsePresenceReturn, UsePresenceOptions } from './usePresence';
+export { PRESENCE_LEFT_KEY, joinPresenceChannel, joinedPresenceChannels, presenceLeaveFrames, presenceSetFrame, resetPresenceEntry, } from './presenceEntry';
+export type { PresencePatch, PresenceSetFrame } from './presenceEntry';
 export { useReactions } from './useReactions';
 export type { UseReactionsReturn } from './useReactions';
 export { useActivity } from './useActivity';

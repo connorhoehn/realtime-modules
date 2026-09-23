@@ -117,7 +117,16 @@ export type {
 } from './useChatReadReceipts';
 
 export { usePresence } from './usePresence';
-export type { UsePresenceReturn } from './usePresence';
+export type { UsePresenceReturn, UsePresenceOptions } from './usePresence';
+export {
+  PRESENCE_LEFT_KEY,
+  joinPresenceChannel,
+  joinedPresenceChannels,
+  presenceLeaveFrames,
+  presenceSetFrame,
+  resetPresenceEntry,
+} from './presenceEntry';
+export type { PresencePatch, PresenceSetFrame } from './presenceEntry';
 
 export { useReactions } from './useReactions';
 export type { UseReactionsReturn } from './useReactions';

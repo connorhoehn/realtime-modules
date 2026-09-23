@@ -26,6 +26,10 @@ import { GatewayContext } from '../../src/client/GatewaySocketProvider';
 import type { GatewayContextValue } from '../../src/client/GatewaySocketProvider';
 import type { GatewayMessage } from '../../src/client/types';
 import { usePresence } from '../../src/client/usePresence';
+import { presenceSetFrame, resetPresenceEntry } from '../../src/client/presenceEntry';
+
+// The socket's presence entry is module state (one per tab): start each test clean.
+beforeEach(() => { resetPresenceEntry(); });
 
 // ---------------------------------------------------------------------------
 // Fake GatewayContext
@@ -353,5 +357,90 @@ describe('usePresence — legacy flat-shape fallback', () => {
     });
 
     expect(result.current.roster.map((e) => e.clientId)).toEqual(['c-b']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// join: one entry per socket, shared by every presence user (0.82.0)
+// ---------------------------------------------------------------------------
+
+describe('usePresence — join keeps the socket\'s other channels', () => {
+  const sets = (sent: Record<string, unknown>[]) => sent.filter((f) => f.action === 'set');
+
+  it('announces on mount with every joined channel and the shared metadata', () => {
+    const { ctx, sent } = makeGatewayContext();
+    const wrapper = makeWrapper(ctx);
+    const chat = renderHook(() => usePresence('general', { join: true }), { wrapper });
+    act(() => { chat.result.current.updateMetadata({ displayName: 'Connor' }); });
+    renderHook(() => usePresence('doc:deck-1', { join: true }), { wrapper });
+    const last = sets(sent).at(-1)!;
+    expect(last.channels).toEqual(['general', 'doc:deck-1']);
+    expect(last.metadata).toEqual({ displayName: 'Connor' });
+  });
+
+  it('a document hook\'s metadata update does not drop the chat channel or its metadata', () => {
+    const { ctx, sent } = makeGatewayContext();
+    const wrapper = makeWrapper(ctx);
+    const chat = renderHook(() => usePresence('general', { join: true }), { wrapper });
+    act(() => { chat.result.current.updateMetadata({ displayName: 'Connor' }); });
+    const deck = renderHook(() => usePresence('doc:deck-1', { join: true }), { wrapper });
+    act(() => { deck.result.current.updateMetadata({ deckSlide: { documentId: 'deck-1', slideId: 's2' } }); });
+    act(() => { chat.result.current.setStatus('away'); });
+    expect(sets(sent).at(-1)).toEqual({
+      service: 'presence', action: 'set', status: 'away',
+      metadata: { displayName: 'Connor', deckSlide: { documentId: 'deck-1', slideId: 's2' } },
+      channels: ['general', 'doc:deck-1'],
+    });
+  });
+
+  it('leaving tells the left channel (_left) and then drops it; a null key is removed', () => {
+    const { ctx, sent } = makeGatewayContext();
+    const wrapper = makeWrapper(ctx);
+    renderHook(() => usePresence('general', { join: true }), { wrapper });
+    const deck = renderHook(() => usePresence('doc:deck-1', { join: true }), { wrapper });
+    act(() => { deck.result.current.updateMetadata({ deckSlide: 's2' }); });
+    const before = sent.length;
+    deck.unmount();
+    const leave = sets(sent.slice(before));
+    expect(leave[0]!.channels).toEqual(['general', 'doc:deck-1']);
+    expect((leave[0]!.metadata as Record<string, unknown>)._left).toEqual(['doc:deck-1']);
+    expect(leave[1]!.channels).toEqual(['general']);
+    expect(presenceSetFrame({ metadata: { deckSlide: null } }).metadata).toEqual({});
+  });
+
+  it('two hooks on one channel: the channel stays until the last one leaves', () => {
+    const { ctx, sent } = makeGatewayContext();
+    const wrapper = makeWrapper(ctx);
+    const a = renderHook(() => usePresence('doc:deck-1', { join: true }), { wrapper });
+    renderHook(() => usePresence('doc:deck-1', { join: true }), { wrapper });
+    const before = sent.length;
+    a.unmount();
+    expect(sets(sent.slice(before))).toHaveLength(0);
+    expect(presenceSetFrame().channels).toEqual(['doc:deck-1']);
+  });
+
+  it('re-announces after a reconnect (new sessionEpoch)', () => {
+    const { ctx, sent } = makeGatewayContext();
+    let epoch = 1;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <GatewayContext.Provider value={{ ...ctx, sessionEpoch: epoch } as GatewayContextValue}>{children}</GatewayContext.Provider>
+    );
+    const view = renderHook(() => usePresence('doc:deck-1', { join: true }), { wrapper });
+    const count = sets(sent).length;
+    epoch = 2;
+    view.rerender();
+    expect(sets(sent).length).toBe(count + 1);
+    expect(sets(sent).at(-1)!.channels).toEqual(['doc:deck-1']);
+  });
+
+  it('a peer\'s _left update removes them from this channel\'s roster', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => usePresence('doc:deck-1'), { wrapper: makeWrapper(ctx) });
+    act(() => { emit({ type: 'presence', action: 'update', presence: entry('c-frank', { channels: ['doc:deck-1'] }) } as GatewayMessage); });
+    expect(result.current.roster.map((e) => e.clientId)).toEqual(['c-frank']);
+    act(() => {
+      emit({ type: 'presence', action: 'update', presence: entry('c-frank', { channels: ['general', 'doc:deck-1'], metadata: { _left: ['doc:deck-1'] } }) } as GatewayMessage);
+    });
+    expect(result.current.roster).toEqual([]);
   });
 });

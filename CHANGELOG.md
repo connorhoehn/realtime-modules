@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.82.0 — 2026-09-23
+
+- Presence: one entry per socket, shared by every presence user (`presenceEntry.ts`). The
+  gateway keeps ONE presence entry per client and every `set` replaces it whole, so the
+  app-wide chat presence and a document's presence clobbered each other's channels and
+  metadata. `usePresence(channel, { join: true })` now joins the channel (refcounted),
+  announces on mount and after each reconnect, and leaves on unmount; every frame carries the
+  union of joined channels and the merged metadata (`null` removes a key). Leaving sends a
+  `set` still listing the channel with `metadata._left: [channel]` (peers drop you) and then
+  one without it. Exported helpers for raw senders: `joinPresenceChannel`,
+  `presenceSetFrame`, `presenceLeaveFrames`, `joinedPresenceChannels`, `resetPresenceEntry`,
+  `PRESENCE_LEFT_KEY`. Without `join` the hook behaves as before, except its frames keep the
+  socket's joined channels and metadata instead of replacing them.
+
 ## 0.81.0 — 2026-09-22
 
 - `useDeckReviseStatus` follows composer edits that run as pipelines

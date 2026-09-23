@@ -7,6 +7,11 @@
 //   setStatus     — send a presence:set frame with the given status
 //   updateMetadata — merge metadata into the current presence entry
 //
+// usePresence(channel, { join: true }) — also BE present in the channel while
+// mounted (0.82.0). The socket has one gateway entry; every frame this hook
+// sends goes through presenceEntry.ts so it keeps the socket's other channels
+// and metadata instead of replacing them.
+//
 // WIRE CONTRACT (gateway-real, verified against the gateway's installed
 // PresenceService.handleAction — hub#1497): the presence verbs are
 // set | get | subscribe | unsubscribe | heartbeat. `subscribe` REQUIRES a
@@ -37,6 +42,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGateway } from './GatewaySocketProvider';
 import type { PresenceEntry, PresenceStatus } from './types';
+import {
+  PRESENCE_LEFT_KEY,
+  joinPresenceChannel,
+  presenceLeaveFrames,
+  presenceSetFrame,
+} from './presenceEntry';
 import type { GatewayMessage } from './types';
 // Type-only import — erased at build; the EC package stays a devDependency.
 import type { ClientFramePayload } from '@connorhoehn/event-catalog/client-frames';
@@ -47,7 +58,19 @@ export interface UsePresenceReturn {
   updateMetadata: (meta: Record<string, unknown>) => void;
 }
 
-export function usePresence(channel: string): UsePresenceReturn {
+export interface UsePresenceOptions {
+  /**
+   * Be present in `channel` while mounted: announce on mount and after every
+   * reconnect, and leave (peers are told) on unmount or channel change. The
+   * socket's other channels are kept — see `presenceEntry.ts`. Without it the
+   * hook only subscribes, and is present only after `setStatus`/`updateMetadata`.
+   * Since 0.82.0.
+   */
+  join?: boolean;
+}
+
+export function usePresence(channel: string, options: UsePresenceOptions = {}): UsePresenceReturn {
+  const join = options.join === true;
   const { send, onMessage, sessionEpoch } = useGateway();
 
   // Internal roster kept in a Map for O(1) updates; exposed as sorted array.
@@ -108,6 +131,12 @@ export function usePresence(channel: string): UsePresenceReturn {
             // 'update' is the channel broadcast. Neither carries a top-level
             // channel — filter via the entry's pinned channels list.
             const entry = asPresenceEntry(raw.presence);
+            // A peer leaving this channel (see presenceEntry "Leaving a channel").
+            const left = entry?.metadata?.[PRESENCE_LEFT_KEY];
+            if (entry && Array.isArray(left) && left.includes(channelRef.current)) {
+              if (rosterMapRef.current.delete(entry.clientId)) flush();
+              break;
+            }
             if (entry && entry.channels.includes(channelRef.current)) {
               rosterMapRef.current.set(entry.clientId, entry);
               flush();
@@ -190,40 +219,42 @@ export function usePresence(channel: string): UsePresenceReturn {
     // while connectionState reads 'connected'.
   }, [channel, send, sessionEpoch]);
 
-  // The gateway REPLACES the whole presence entry on every set, so carry
-  // the last-known status + metadata across setStatus / updateMetadata
-  // calls (status defaults to 'online' until the first setStatus).
-  const lastStatusRef = useRef<PresenceStatus>('online');
-  const lastMetadataRef = useRef<Record<string, unknown>>({});
+  // The gateway REPLACES the whole presence entry on every set, so status and
+  // metadata live in the socket's shared entry (presenceEntry.ts), not here:
+  // a frame from this hook keeps what other presence users on the socket set.
+  // Join: present in `channel` while mounted, announced again on each new
+  // session (a reconnect is a new server-side client with no entry).
+  useEffect(() => {
+    if (!join) return undefined;
+    const release = joinPresenceChannel(channel);
+    return () => {
+      if (release()) for (const frame of presenceLeaveFrames(channel)) send(frame);
+    };
+  }, [join, channel, send]);
+  useEffect(() => {
+    if (join) send(presenceSetFrame());
+  }, [join, channel, send, sessionEpoch]);
 
   const setStatus = useCallback(
     (status: PresenceStatus) => {
-      lastStatusRef.current = status;
-      send({
-        service: 'presence',
-        action: 'set',
+      send(presenceSetFrame({
         status,
-        metadata: lastMetadataRef.current,
-        channels: [channelRef.current],
-      } satisfies ClientFramePayload<'client.presence.set'>);
+        ...(join ? {} : { alsoChannels: [channelRef.current] }),
+      }) satisfies ClientFramePayload<'client.presence.set'>);
     },
-    [send],
+    [send, join],
   );
 
   const updateMetadata = useCallback(
     (meta: Record<string, unknown>) => {
-      lastMetadataRef.current = { ...lastMetadataRef.current, ...meta };
-      send({
-        service: 'presence',
-        action: 'set',
-        // status is REQUIRED by the gateway ("Status is required") — carry
-        // the last-known value so metadata-only updates don't error.
-        status: lastStatusRef.current,
-        metadata: lastMetadataRef.current,
-        channels: [channelRef.current],
-      } satisfies ClientFramePayload<'client.presence.set'>);
+      send(presenceSetFrame({
+        metadata: meta,
+        // A joined hook's channel is already listed; after it left, it must
+        // not be re-added by a late update (an unmount cleanup, say).
+        ...(join ? {} : { alsoChannels: [channelRef.current] }),
+      }) satisfies ClientFramePayload<'client.presence.set'>);
     },
-    [send],
+    [send, join],
   );
 
   return { roster, setStatus, updateMetadata };
