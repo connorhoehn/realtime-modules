@@ -250,3 +250,51 @@ export type { UseCursorOpts, UseCursorReturn } from './useCursor';
 export type { CursorEntry } from './types';
 
 export type { DocumentPersistenceState } from "./GatewayProvider";
+
+// v0.80.0 — useAgentLoopRun: one agent loop for a task card / task strip —
+// phase, steps done of total, the step in hand, and Stop. Reads platform-api's
+// /api/agent-loops/:runId and re-reads on the run's `pipeline:event` frames.
+// Pause is not offered (the platform answers 501 and says why in
+// `controls.pauseUnsupportedReason`); `canPause` is `false` so a UI renders
+// no dead button.
+export {
+  useAgentLoopRun,
+  agentLoopPhase,
+  agentLoopProgress,
+  isAgentLoopOver,
+  DEFAULT_AGENT_LOOP_POLL_MS,
+  PAUSE_UNSUPPORTED_FALLBACK,
+} from './useAgentLoopRun';
+export type {
+  AgentLoopRunPhase,
+  AgentLoopRunStep,
+  AgentLoopRunControls,
+  AgentLoopRunView,
+  AgentLoopStopResult,
+  UseAgentLoopRunOptions,
+  UseAgentLoopRunResult,
+} from './useAgentLoopRun';
+
+// v0.80.0 — useDeckReviseStatus: which slides of a presentation an agent is
+// revising right now, from anyone's tab. Listens on
+// `pipeline:run:deck-revise:<documentId>` for platform-api's
+// `pipeline.deck.revise.{started,phase,completed,failed}` frames (sent when
+// POST /api/deck/revise carries a documentId). `generatingSlideIds` drives the
+// filmstrip's "Generating…"; `active[].label` the task strip's phase line.
+export {
+  useDeckReviseStatus,
+  deckReviseChannel,
+  deckRevisePhaseLabel,
+  reduceDeckReviseFrame,
+  markStaleDeckRevises,
+  isDeckReviseSettled,
+  DEFAULT_DECK_REVISE_STALE_MS,
+  DECK_REVISE_EVENT_PREFIX,
+} from './useDeckReviseStatus';
+export type {
+  DeckRevisePhase,
+  DeckReviseTargetRef,
+  DeckReviseActivity,
+  UseDeckReviseStatusOptions,
+  UseDeckReviseStatusResult,
+} from './useDeckReviseStatus';

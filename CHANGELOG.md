@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.80.0 — 2026-09-22
+
+- `useAgentLoopRun(runId, { apiBaseUrl, idToken, transport?, pollMs? })`: one agent loop
+  for a task card or strip — `phase` (planning/running/completed/failed/cancelled/budget),
+  `steps`, `currentStep`, `stepsDone`/`stepsTotal`/`percent` (a count of steps, not a time
+  estimate), `startedAt`, `canStop` + `stop()`. Reads platform-api `GET /api/agent-loops/:runId`,
+  re-reads (debounced) on the run's `pipeline:event` frames on `pipeline:run:<executorRunId>`,
+  and polls every 5 s only while the loop is live. `canPause` is `false` with the platform's
+  `pauseUnsupportedReason`: the platform answers pause/resume with 501.
+- `useDeckReviseStatus(documentId, { transport? })`: in-flight `POST /api/deck/revise` edits on
+  a presentation from any tab — `active`, `recent`, `latest`, `generatingSlideIds`,
+  `isGenerating`, `get(requestId)`. Listens on `pipeline:run:deck-revise:<documentId>` for
+  `pipeline.deck.revise.{started,phase,completed,failed}`; phases `started → reading-sources →
+  asking-model → checking → completed|failed`, each with a label; an edit with no terminal
+  event for 60 s goes `stale`. Pure helpers `reduceDeckReviseFrame`, `markStaleDeckRevises`,
+  `deckReviseChannel` exported for hosts that own their own socket.
+
 ## 0.79.2 — 2026-09-22
 
 - `useReactions`: an empty channel (a host whose channel has not resolved) sends no

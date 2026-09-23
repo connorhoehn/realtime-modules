@@ -20,7 +20,8 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.useCursor = exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.DEFAULT_DECK_REVISE_STALE_MS = exports.isDeckReviseSettled = exports.markStaleDeckRevises = exports.reduceDeckReviseFrame = exports.deckRevisePhaseLabel = exports.deckReviseChannel = exports.useDeckReviseStatus = exports.PAUSE_UNSUPPORTED_FALLBACK = exports.DEFAULT_AGENT_LOOP_POLL_MS = exports.isAgentLoopOver = exports.agentLoopProgress = exports.agentLoopPhase = exports.useAgentLoopRun = exports.useCursor = exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
+exports.DECK_REVISE_EVENT_PREFIX = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -161,4 +162,32 @@ Object.defineProperty(exports, "useDictation", { enumerable: true, get: function
 // with a trailing send so the resting position is not lost.
 var useCursor_1 = require("./useCursor");
 Object.defineProperty(exports, "useCursor", { enumerable: true, get: function () { return useCursor_1.useCursor; } });
+// v0.80.0 — useAgentLoopRun: one agent loop for a task card / task strip —
+// phase, steps done of total, the step in hand, and Stop. Reads platform-api's
+// /api/agent-loops/:runId and re-reads on the run's `pipeline:event` frames.
+// Pause is not offered (the platform answers 501 and says why in
+// `controls.pauseUnsupportedReason`); `canPause` is `false` so a UI renders
+// no dead button.
+var useAgentLoopRun_1 = require("./useAgentLoopRun");
+Object.defineProperty(exports, "useAgentLoopRun", { enumerable: true, get: function () { return useAgentLoopRun_1.useAgentLoopRun; } });
+Object.defineProperty(exports, "agentLoopPhase", { enumerable: true, get: function () { return useAgentLoopRun_1.agentLoopPhase; } });
+Object.defineProperty(exports, "agentLoopProgress", { enumerable: true, get: function () { return useAgentLoopRun_1.agentLoopProgress; } });
+Object.defineProperty(exports, "isAgentLoopOver", { enumerable: true, get: function () { return useAgentLoopRun_1.isAgentLoopOver; } });
+Object.defineProperty(exports, "DEFAULT_AGENT_LOOP_POLL_MS", { enumerable: true, get: function () { return useAgentLoopRun_1.DEFAULT_AGENT_LOOP_POLL_MS; } });
+Object.defineProperty(exports, "PAUSE_UNSUPPORTED_FALLBACK", { enumerable: true, get: function () { return useAgentLoopRun_1.PAUSE_UNSUPPORTED_FALLBACK; } });
+// v0.80.0 — useDeckReviseStatus: which slides of a presentation an agent is
+// revising right now, from anyone's tab. Listens on
+// `pipeline:run:deck-revise:<documentId>` for platform-api's
+// `pipeline.deck.revise.{started,phase,completed,failed}` frames (sent when
+// POST /api/deck/revise carries a documentId). `generatingSlideIds` drives the
+// filmstrip's "Generating…"; `active[].label` the task strip's phase line.
+var useDeckReviseStatus_1 = require("./useDeckReviseStatus");
+Object.defineProperty(exports, "useDeckReviseStatus", { enumerable: true, get: function () { return useDeckReviseStatus_1.useDeckReviseStatus; } });
+Object.defineProperty(exports, "deckReviseChannel", { enumerable: true, get: function () { return useDeckReviseStatus_1.deckReviseChannel; } });
+Object.defineProperty(exports, "deckRevisePhaseLabel", { enumerable: true, get: function () { return useDeckReviseStatus_1.deckRevisePhaseLabel; } });
+Object.defineProperty(exports, "reduceDeckReviseFrame", { enumerable: true, get: function () { return useDeckReviseStatus_1.reduceDeckReviseFrame; } });
+Object.defineProperty(exports, "markStaleDeckRevises", { enumerable: true, get: function () { return useDeckReviseStatus_1.markStaleDeckRevises; } });
+Object.defineProperty(exports, "isDeckReviseSettled", { enumerable: true, get: function () { return useDeckReviseStatus_1.isDeckReviseSettled; } });
+Object.defineProperty(exports, "DEFAULT_DECK_REVISE_STALE_MS", { enumerable: true, get: function () { return useDeckReviseStatus_1.DEFAULT_DECK_REVISE_STALE_MS; } });
+Object.defineProperty(exports, "DECK_REVISE_EVENT_PREFIX", { enumerable: true, get: function () { return useDeckReviseStatus_1.DECK_REVISE_EVENT_PREFIX; } });
 //# sourceMappingURL=index.js.map

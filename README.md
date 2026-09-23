@@ -288,6 +288,8 @@ knowing about, and its row says so.
 
 | Hook | Returns | Channel-scoped? |
 |---|---|---|
+| `useAgentLoopRun(runId, { apiBaseUrl, idToken, transport?, pollMs? })` | `{ loop, phase, steps, currentStep, stepsDone, stepsTotal, percent?, startedAt, canStop, stopping, stop, canPause: false, pauseUnsupportedReason, loading, notFound, error, refresh }` — platform-api `/api/agent-loops/:runId`, re-read on the run's `pipeline:event` frames. No pause: the platform answers 501 | Via the run (`pipeline:run:<executorRunId>`) |
+| `useDeckReviseStatus(documentId, { transport? })` | `{ active, recent, latest, generatingSlideIds, isGenerating, get }` — in-flight `POST /api/deck/revise` edits on one presentation, from `pipeline.deck.revise.*` frames | Via the document (`pipeline:run:deck-revise:<documentId>`) |
 | `useNotifications(opts?)` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }`. Read-state persists to `opts.storage` (default `localStorage`; `null` for memory only) | No (user-scoped) |
 | `useCapability(name, channel?)` | `{ capability, enabled, isLoading, error }` | No (CRD-scoped) |
 | `useCapabilities(names, channel?)` | `{ capabilities, enabled, isLoading, error }` — the set form; React forbids the singular hook in a loop | No (CRD-scoped) |

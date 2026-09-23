@@ -59,4 +59,8 @@ export { useCursor } from './useCursor';
 export type { UseCursorOpts, UseCursorReturn } from './useCursor';
 export type { CursorEntry } from './types';
 export type { DocumentPersistenceState } from "./GatewayProvider";
+export { useAgentLoopRun, agentLoopPhase, agentLoopProgress, isAgentLoopOver, DEFAULT_AGENT_LOOP_POLL_MS, PAUSE_UNSUPPORTED_FALLBACK, } from './useAgentLoopRun';
+export type { AgentLoopRunPhase, AgentLoopRunStep, AgentLoopRunControls, AgentLoopRunView, AgentLoopStopResult, UseAgentLoopRunOptions, UseAgentLoopRunResult, } from './useAgentLoopRun';
+export { useDeckReviseStatus, deckReviseChannel, deckRevisePhaseLabel, reduceDeckReviseFrame, markStaleDeckRevises, isDeckReviseSettled, DEFAULT_DECK_REVISE_STALE_MS, DECK_REVISE_EVENT_PREFIX, } from './useDeckReviseStatus';
+export type { DeckRevisePhase, DeckReviseTargetRef, DeckReviseActivity, UseDeckReviseStatusOptions, UseDeckReviseStatusResult, } from './useDeckReviseStatus';
 //# sourceMappingURL=index.d.ts.map
