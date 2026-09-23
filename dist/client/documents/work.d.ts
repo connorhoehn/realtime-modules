@@ -273,6 +273,14 @@ export declare const DOC_WORK_CHANNEL_PREFIX = "doc-work:";
 export declare const DOC_WORK_SCOPE_CHANNEL_PREFIX = "doc-work-scope:";
 export declare const docWorkChannel: (documentId: string) => string;
 export declare const docWorkScopeChannel: (scopeId: string) => string;
+/**
+ * Is `channel` the channel a subscription to `scopeId` delivers on? A parent
+ * scope is `doc-work-scope:<parentId>`. A `type:<type>` scope is published
+ * org-qualified — `doc-work-scope:<orgId>:type:<type>` — and the gateway picks
+ * the org from the connection's verified token, so the client never knows it:
+ * any single org segment matches. (The unqualified legacy name is accepted too.)
+ */
+export declare function docWorkScopeChannelMatches(channel: string, scopeId: string): boolean;
 /** The gateway's `doc-work` service frames (realtime-examples `src/realtime-fanout/doc-work-service.ts`). */
 export declare function docWorkSubscribeFrame(action: 'subscribe' | 'unsubscribe', target: {
     documentId: string;

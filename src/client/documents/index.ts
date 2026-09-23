@@ -33,6 +33,7 @@ export {
   DOC_WORK_SCOPE_CHANNEL_PREFIX,
   docWorkChannel,
   docWorkScopeChannel,
+  docWorkScopeChannelMatches,
   docWorkSubscribeFrame,
   docWorkSignalFromFrame,
   acquireChannelSubscription,

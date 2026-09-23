@@ -37,6 +37,7 @@ exports.putRunDraft = putRunDraft;
 exports.dispatchRunDraft = dispatchRunDraft;
 exports.cancelDraftRun = cancelDraftRun;
 exports.fetchRunEstimate = fetchRunEstimate;
+exports.docWorkScopeChannelMatches = docWorkScopeChannelMatches;
 exports.docWorkSubscribeFrame = docWorkSubscribeFrame;
 exports.docWorkSignalFromFrame = docWorkSignalFromFrame;
 exports.acquireChannelSubscription = acquireChannelSubscription;
@@ -399,6 +400,23 @@ const docWorkChannel = (documentId) => `${exports.DOC_WORK_CHANNEL_PREFIX}${docu
 exports.docWorkChannel = docWorkChannel;
 const docWorkScopeChannel = (scopeId) => `${exports.DOC_WORK_SCOPE_CHANNEL_PREFIX}${scopeId}`;
 exports.docWorkScopeChannel = docWorkScopeChannel;
+/**
+ * Is `channel` the channel a subscription to `scopeId` delivers on? A parent
+ * scope is `doc-work-scope:<parentId>`. A `type:<type>` scope is published
+ * org-qualified — `doc-work-scope:<orgId>:type:<type>` — and the gateway picks
+ * the org from the connection's verified token, so the client never knows it:
+ * any single org segment matches. (The unqualified legacy name is accepted too.)
+ */
+function docWorkScopeChannelMatches(channel, scopeId) {
+    const exact = (0, exports.docWorkScopeChannel)(scopeId);
+    if (channel === exact)
+        return true;
+    if (!scopeId.startsWith('type:') || !channel.startsWith(exports.DOC_WORK_SCOPE_CHANNEL_PREFIX))
+        return false;
+    const rest = channel.slice(exports.DOC_WORK_SCOPE_CHANNEL_PREFIX.length);
+    const sep = rest.indexOf(':');
+    return sep > 0 && rest.slice(sep + 1) === scopeId;
+}
 /** The gateway's `doc-work` service frames (realtime-examples `src/realtime-fanout/doc-work-service.ts`). */
 function docWorkSubscribeFrame(action, target, documentGrant) {
     return { service: 'doc-work', action, ...target, ...(action === 'subscribe' && documentGrant ? { documentGrant } : {}) };

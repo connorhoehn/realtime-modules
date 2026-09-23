@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   acquireChannelSubscription,
   docWorkScopeChannel,
+  docWorkScopeChannelMatches,
   docWorkSignalFromFrame,
   docWorkSubscribeFrame,
   fetchDocumentWork,
@@ -119,15 +120,16 @@ export function useWorkList(scope: string | null | undefined, opts: UseWorkListO
       docWorkSubscribeFrame('unsubscribe', { scopeId: scope }),
       epoch,
     );
-    const channel = docWorkScopeChannel(scope);
     const unregister = onMessage((frame: unknown) => {
       const signal = docWorkSignalFromFrame(frame);
       if (!signal || signal.type !== 'doc:work_updated') return;
-      if (signal.channel && signal.channel !== channel) return;
+      // A type scope arrives org-qualified (`doc-work-scope:<org>:type:<t>`).
+      const onScope = !!signal.channel && docWorkScopeChannelMatches(signal.channel, scope);
+      if (signal.channel && !onScope) return;
       // A row we do not hold joins only on a frame that names this scope's
       // channel; an unlabelled frame (another hook's `doc-work:<id>`) never adds one.
       const known = rowsRef.current.some((r) => r.documentId === signal.documentId);
-      if (!known && signal.channel !== channel) return;
+      if (!known && !onScope) return;
       setRows((prev) => {
         const i = prev.findIndex((r) => r.documentId === signal.documentId);
         if (i < 0) return prev;

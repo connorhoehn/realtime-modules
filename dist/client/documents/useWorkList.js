@@ -94,17 +94,18 @@ function useWorkList(scope, opts) {
         if (!enabled || !scope || !send || !onMessage)
             return;
         const release = (0, work_1.acquireChannelSubscription)(send, (0, work_1.docWorkScopeChannel)(scope), (0, work_1.docWorkSubscribeFrame)('subscribe', { scopeId: scope }, documentGrant), (0, work_1.docWorkSubscribeFrame)('unsubscribe', { scopeId: scope }), epoch);
-        const channel = (0, work_1.docWorkScopeChannel)(scope);
         const unregister = onMessage((frame) => {
             const signal = (0, work_1.docWorkSignalFromFrame)(frame);
             if (!signal || signal.type !== 'doc:work_updated')
                 return;
-            if (signal.channel && signal.channel !== channel)
+            // A type scope arrives org-qualified (`doc-work-scope:<org>:type:<t>`).
+            const onScope = !!signal.channel && (0, work_1.docWorkScopeChannelMatches)(signal.channel, scope);
+            if (signal.channel && !onScope)
                 return;
             // A row we do not hold joins only on a frame that names this scope's
             // channel; an unlabelled frame (another hook's `doc-work:<id>`) never adds one.
             const known = rowsRef.current.some((r) => r.documentId === signal.documentId);
-            if (!known && signal.channel !== channel)
+            if (!known && !onScope)
                 return;
             setRows((prev) => {
                 const i = prev.findIndex((r) => r.documentId === signal.documentId);

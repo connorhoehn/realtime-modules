@@ -15,6 +15,7 @@ import {
   acquireChannelSubscription,
   applyWorkUpdate,
   docWorkSignalFromFrame,
+  docWorkScopeChannelMatches,
   groupWorkRows,
   invalidateRunEstimates,
   normalizeRunEstimate,
@@ -236,6 +237,26 @@ describe('useWorkList', () => {
     d1 = { ...d1, scopeId: 'p2', revision: 4 };
     emit({ type: 'doc:work_updated', channel: 'doc-work-scope:p1', payload: { documentId: 'd1', revision: 4 } });
     await waitFor(() => expect(result.current.rows.map((r) => r.documentId)).not.toContain('d1'));
+  });
+
+  it('a type scope follows the org-qualified channel the gateway subscribes (doc-work-scope:<org>:type:<t>)', async () => {
+    expect(docWorkScopeChannelMatches('doc-work-scope:dev-org:type:page', 'type:page')).toBe(true);
+    expect(docWorkScopeChannelMatches('doc-work-scope:type:page', 'type:page')).toBe(true);
+    expect(docWorkScopeChannelMatches('doc-work-scope:dev-org:type:deck', 'type:page')).toBe(false);
+    expect(docWorkScopeChannelMatches('doc-work-scope:a:b:type:page', 'type:page')).toBe(false);
+    expect(docWorkScopeChannelMatches('doc-work-scope:dev-org:p1', 'p1')).toBe(false);
+    route('GET', /\/api\/document-work\?scope=type%3Apage$/, () => response({ scope: 'type:page', rows: [{ ...WORK, documentId: 'd1', status: 'next', revision: 1, scopeId: 'type:page' }], rollup: {} }));
+    route('GET', /\/api\/documents\/d5\/work$/, () => response({ ...WORK, documentId: 'd5', status: 'next', revision: 1, scopeId: 'type:page' }));
+    const { transport, send, emit } = makeTransport();
+    const { result } = renderHook(() => useWorkList('type:page', { apiBaseUrl: API, idToken: 't', transport }));
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+    expect(send).toHaveBeenCalledWith({ service: 'doc-work', action: 'subscribe', scopeId: 'type:page' });
+    emit({ type: 'doc:work_updated', channel: 'doc-work-scope:dev-org:type:page', payload: { documentId: 'd1', revision: 2, status: 'in_progress' } });
+    expect(result.current.rows[0].status).toBe('in_progress');
+    emit({ type: 'doc:work_updated', channel: 'doc-work-scope:dev-org:type:page', payload: { documentId: 'd5', revision: 1, status: 'next' } });
+    await waitFor(() => expect(result.current.rows).toHaveLength(2));
+    emit({ type: 'doc:work_updated', channel: 'doc-work-scope:dev-org:type:deck', payload: { documentId: 'd1', revision: 3, status: 'done' } });
+    expect(result.current.rows.find((r) => r.documentId === 'd1')?.status).toBe('in_progress');
   });
 
   it('follows a row’s run on pipeline:all, sharing one subscription with the catalog', async () => {
