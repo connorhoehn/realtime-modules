@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.86.1 — 2026-09-23
+
+- **fileupload:** an aborted `FileBlobStore.putStream` (over the cap, or the
+  source erroring mid-upload) no longer leaves an empty blob behind. The
+  cleanup unlinked the target as soon as it destroyed the write stream, but
+  the stream opens its file asynchronously, so a late open re-created the file
+  after the unlink — 3 of 20 aborts in a plain loop, and the cause of
+  realtime-examples' two flaky upload-route tests (NFR #91). The unlink now
+  waits for the stream's `close`; the rejection follows it.
+
 ## 0.86.0 — 2026-09-23
 
 - **work-graph:** a stream's first frame can be a patch against the snapshot

@@ -105,8 +105,15 @@ export class FileBlobStore {
                 let aborted = false;
                 const out = fs.createWriteStream(target);
 
+                // Unlink only once the write stream has CLOSED. createWriteStream
+                // opens the file asynchronously; destroying it before the open
+                // lands and unlinking at once let the pending open re-create an
+                // empty file after the unlink (3 of 20 aborted uploads left a
+                // blob behind; realtime-examples NFR #91).
                 const cleanup = (cb: () => void) => {
-                    fs.unlink(target, () => cb());
+                    const unlink = () => fs.unlink(target, () => cb());
+                    if (out.closed) unlink();
+                    else out.once('close', unlink);
                 };
 
                 const fail = (err: NodeJS.ErrnoException) => {
