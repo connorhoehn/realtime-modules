@@ -22,7 +22,8 @@
 // `staleMs` — 60 s, past the server's 45 s model timeout — and stops counting
 // as generating. Nothing is invented to fill the gap.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DECK_REVISE_EVENT_PREFIX = exports.DEFAULT_DECK_REVISE_STALE_MS = void 0;
+exports.DECK_REVISE_EVENT_PREFIX = exports.DEFAULT_DECK_REVISE_STALE_MS = exports.DECK_REVISION_WRITTEN_EVENT = void 0;
+exports.deckRevisionWrittenOf = deckRevisionWrittenOf;
 exports.deckReviseChannel = deckReviseChannel;
 exports.deckRevisePhaseLabel = deckRevisePhaseLabel;
 exports.isDeckReviseSettled = isDeckReviseSettled;
@@ -31,6 +32,33 @@ exports.markStaleDeckRevises = markStaleDeckRevises;
 exports.useDeckReviseStatus = useDeckReviseStatus;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("./GatewaySocketProvider");
+/** The event that says a revision was written, whoever wrote it. */
+exports.DECK_REVISION_WRITTEN_EVENT = 'pipeline.deck.revise.revision-written';
+/**
+ * The revision a frame says was written to `documentId`, or null. Reads
+ * `revision-written`, and a `completed` revise that carries a revisionId.
+ */
+function deckRevisionWrittenOf(frame, documentId, now) {
+    const msg = frame;
+    if (!msg || msg.type !== 'pipeline:event')
+        return null;
+    const eventType = typeof msg.eventType === 'string' ? msg.eventType.replace(/:/g, '.') : '';
+    if (eventType !== exports.DECK_REVISION_WRITTEN_EVENT && eventType !== `${exports.DECK_REVISE_EVENT_PREFIX}completed`)
+        return null;
+    const p = msg.payload ?? {};
+    if (p.documentId !== documentId)
+        return null;
+    const revisionId = str(p.revisionId);
+    if (!revisionId)
+        return null;
+    return {
+        revisionId,
+        documentId,
+        ...(typeof p.slideCount === 'number' ? { slideCount: p.slideCount } : {}),
+        ...(str(p.createdBy) ? { createdBy: str(p.createdBy) } : {}),
+        receivedAt: now,
+    };
+}
 exports.DEFAULT_DECK_REVISE_STALE_MS = 60_000;
 exports.DECK_REVISE_EVENT_PREFIX = 'pipeline.deck.revise.';
 /** The gateway channel a document's revise events arrive on. */
@@ -132,8 +160,9 @@ function useDeckReviseStatus(documentId, opts = {}) {
     // A reconnect is a new server session with no subscriptions; re-send.
     const epoch = transport === undefined ? gateway?.sessionEpoch : undefined;
     const [byId, setById] = (0, react_1.useState)({});
+    const [lastWritten, setLastWritten] = (0, react_1.useState)(undefined);
     // A different document is a different set of revises.
-    (0, react_1.useEffect)(() => { setById({}); }, [documentId]);
+    (0, react_1.useEffect)(() => { setById({}); setLastWritten(undefined); }, [documentId]);
     (0, react_1.useEffect)(() => {
         if (!documentId || !send || !onMessage)
             return;
@@ -141,6 +170,11 @@ function useDeckReviseStatus(documentId, opts = {}) {
         send({ service: 'pipeline', action: 'subscribe', channel });
         const unregister = onMessage((frame) => {
             setById((prev) => reduceDeckReviseFrame(prev, frame, documentId, nowRef.current()));
+            const written = deckRevisionWrittenOf(frame, documentId, nowRef.current());
+            // One revision can be named twice (its revise's `completed` and its own
+            // `revision-written`): keep the first, so a host reloads once.
+            if (written)
+                setLastWritten((prev) => (prev?.revisionId === written.revisionId ? prev : written));
         });
         return () => {
             unregister();
@@ -165,7 +199,7 @@ function useDeckReviseStatus(documentId, opts = {}) {
         return { active, recent, latest, generatingSlideIds, isGenerating: active.length > 0 };
     }, [byId, keepRecent]);
     const get = (0, react_1.useCallback)((requestId) => byId[requestId], [byId]);
-    return { ...derived, get };
+    return { ...derived, get, ...(lastWritten ? { lastWritten } : {}) };
 }
 exports.default = useDeckReviseStatus;
 //# sourceMappingURL=useDeckReviseStatus.js.map

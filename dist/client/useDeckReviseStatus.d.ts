@@ -63,7 +63,30 @@ export interface UseDeckReviseStatusResult {
     isGenerating: boolean;
     /** One revise by its requestId (the id the HTTP response also carries). */
     get: (requestId: string) => DeckReviseActivity | undefined;
+    /**
+     * The newest revision anyone wrote to this document while it was open — a
+     * `/deck` generation, a revise run, a save or an Undo (0.94.0). From
+     * `pipeline.deck.revise.revision-written`, or a revise's `completed` that
+     * names one. A host reloads its revision list when this names one it lacks.
+     */
+    lastWritten?: DeckRevisionWritten;
 }
+/** A revision written to the document, as its channel announced it. */
+export interface DeckRevisionWritten {
+    revisionId: string;
+    documentId: string;
+    slideCount?: number;
+    createdBy?: string;
+    /** When the frame arrived (ms). */
+    receivedAt: number;
+}
+/** The event that says a revision was written, whoever wrote it. */
+export declare const DECK_REVISION_WRITTEN_EVENT = "pipeline.deck.revise.revision-written";
+/**
+ * The revision a frame says was written to `documentId`, or null. Reads
+ * `revision-written`, and a `completed` revise that carries a revisionId.
+ */
+export declare function deckRevisionWrittenOf(frame: unknown, documentId: string, now: number): DeckRevisionWritten | null;
 export declare const DEFAULT_DECK_REVISE_STALE_MS = 60000;
 export declare const DECK_REVISE_EVENT_PREFIX = "pipeline.deck.revise.";
 /** The gateway channel a document's revise events arrive on. */

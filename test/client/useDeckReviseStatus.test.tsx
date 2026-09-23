@@ -134,3 +134,22 @@ describe('reducers', () => {
     expect(markStaleDeckRevises(fresh, 100 + 60_000, 60_000).r?.stale).toBe(true);
   });
 });
+
+describe('useDeckReviseStatus lastWritten (NFR #15)', () => {
+  it('names a revision written by anyone — a /deck run or a revise — once per revision', () => {
+    const { transport, emit } = makeTransport();
+    const { result } = renderHook(() => useDeckReviseStatus(DOC, { transport, now: () => 5000 }));
+    expect(result.current.lastWritten).toBeUndefined();
+    emit('revision-written', { revisionId: 'rev-2', slideCount: 7, createdBy: 'agent:deck' });
+    expect(result.current.lastWritten).toEqual({ revisionId: 'rev-2', documentId: DOC, slideCount: 7, createdBy: 'agent:deck', receivedAt: 5000 });
+    // Not a phase: no revise appears in flight.
+    expect(result.current.active).toEqual([]);
+    const first = result.current.lastWritten;
+    emit('completed', { requestId: 'q1', phase: 'completed', revisionId: 'rev-2' });
+    expect(result.current.lastWritten).toBe(first);
+    emit('completed', { requestId: 'q2', phase: 'completed', revisionId: 'rev-3' });
+    expect(result.current.lastWritten?.revisionId).toBe('rev-3');
+    emit('revision-written', { documentId: 'other', revisionId: 'rev-9' });
+    expect(result.current.lastWritten?.revisionId).toBe('rev-3');
+  });
+});

@@ -299,6 +299,9 @@ export {
   isDeckReviseSettled,
   DEFAULT_DECK_REVISE_STALE_MS,
   DECK_REVISE_EVENT_PREFIX,
+  // 0.94.0 — a revision written to the document while it is open (NFR #15).
+  deckRevisionWrittenOf,
+  DECK_REVISION_WRITTEN_EVENT,
 } from './useDeckReviseStatus';
 export type {
   DeckRevisePhase,
@@ -306,6 +309,7 @@ export type {
   DeckReviseActivity,
   UseDeckReviseStatusOptions,
   UseDeckReviseStatusResult,
+  DeckRevisionWritten,
 } from './useDeckReviseStatus';
 
 // v0.88.0 — the pipelines directory (also under ./client/pipelines): the

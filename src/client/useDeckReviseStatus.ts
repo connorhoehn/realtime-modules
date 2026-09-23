@@ -94,6 +94,48 @@ export interface UseDeckReviseStatusResult {
   isGenerating: boolean;
   /** One revise by its requestId (the id the HTTP response also carries). */
   get: (requestId: string) => DeckReviseActivity | undefined;
+  /**
+   * The newest revision anyone wrote to this document while it was open — a
+   * `/deck` generation, a revise run, a save or an Undo (0.94.0). From
+   * `pipeline.deck.revise.revision-written`, or a revise's `completed` that
+   * names one. A host reloads its revision list when this names one it lacks.
+   */
+  lastWritten?: DeckRevisionWritten;
+}
+
+/** A revision written to the document, as its channel announced it. */
+export interface DeckRevisionWritten {
+  revisionId: string;
+  documentId: string;
+  slideCount?: number;
+  createdBy?: string;
+  /** When the frame arrived (ms). */
+  receivedAt: number;
+}
+
+/** The event that says a revision was written, whoever wrote it. */
+export const DECK_REVISION_WRITTEN_EVENT = 'pipeline.deck.revise.revision-written';
+
+/**
+ * The revision a frame says was written to `documentId`, or null. Reads
+ * `revision-written`, and a `completed` revise that carries a revisionId.
+ */
+export function deckRevisionWrittenOf(frame: unknown, documentId: string, now: number): DeckRevisionWritten | null {
+  const msg = frame as (GatewayMessage & { eventType?: unknown; payload?: Record<string, unknown> }) | null;
+  if (!msg || msg.type !== 'pipeline:event') return null;
+  const eventType = typeof msg.eventType === 'string' ? msg.eventType.replace(/:/g, '.') : '';
+  if (eventType !== DECK_REVISION_WRITTEN_EVENT && eventType !== `${DECK_REVISE_EVENT_PREFIX}completed`) return null;
+  const p = msg.payload ?? {};
+  if (p.documentId !== documentId) return null;
+  const revisionId = str(p.revisionId);
+  if (!revisionId) return null;
+  return {
+    revisionId,
+    documentId,
+    ...(typeof p.slideCount === 'number' ? { slideCount: p.slideCount } : {}),
+    ...(str(p.createdBy) ? { createdBy: str(p.createdBy) } : {}),
+    receivedAt: now,
+  };
 }
 
 export const DEFAULT_DECK_REVISE_STALE_MS = 60_000;
@@ -217,8 +259,10 @@ export function useDeckReviseStatus(
 
   const [byId, setById] = useState<Readonly<Record<string, DeckReviseActivity>>>({});
 
+  const [lastWritten, setLastWritten] = useState<DeckRevisionWritten | undefined>(undefined);
+
   // A different document is a different set of revises.
-  useEffect(() => { setById({}); }, [documentId]);
+  useEffect(() => { setById({}); setLastWritten(undefined); }, [documentId]);
 
   useEffect(() => {
     if (!documentId || !send || !onMessage) return;
@@ -226,6 +270,10 @@ export function useDeckReviseStatus(
     send({ service: 'pipeline', action: 'subscribe', channel });
     const unregister = onMessage((frame: unknown) => {
       setById((prev) => reduceDeckReviseFrame(prev, frame, documentId, nowRef.current()));
+      const written = deckRevisionWrittenOf(frame, documentId, nowRef.current());
+      // One revision can be named twice (its revise's `completed` and its own
+      // `revision-written`): keep the first, so a host reloads once.
+      if (written) setLastWritten((prev) => (prev?.revisionId === written.revisionId ? prev : written));
     });
     return () => {
       unregister();
@@ -252,7 +300,7 @@ export function useDeckReviseStatus(
   }, [byId, keepRecent]);
 
   const get = useCallback((requestId: string) => byId[requestId], [byId]);
-  return { ...derived, get };
+  return { ...derived, get, ...(lastWritten ? { lastWritten } : {}) };
 }
 
 export default useDeckReviseStatus;
