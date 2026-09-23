@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.83.1 — 2026-09-23
+
+- View patch wire format, measured live: `order` is a list of indices into the list
+  upsert/remove produced, not ids (an edited detail moving to the top sent 60 ids, 4.7 KB of a
+  9.3 KB frame), and `eventBuckets` is a keyed list patch by `at` instead of the whole array
+  (1.7 KB). 0.83.0 patches are not read by 0.83.1 and vice versa; only the gateway at
+  realtime-examples e29039f5 ever sent them.
+
 ## 0.83.0 — 2026-09-23
 
 - Work-graph view patches (NFR #66). New shared `diffWorkGraphViewV2` /

@@ -9,8 +9,13 @@ export type WorkGraphStreamViewV2 = Pick<WorkGraphSnapshotV2, 'query' | 'tempora
 export interface WorkGraphListPatch<T> {
     upsert: T[];
     remove: string[];
-    /** Present only when applying upsert/remove would leave the entries in a different order. */
-    order?: string[];
+    /**
+     * Present only when applying upsert/remove would leave the entries in a
+     * different order: position i of the result is entry `order[i]` of the list
+     * upsert/remove produced. Indices, not ids — an edited detail moving to the
+     * top reorders ~60 entries, and 60 ids are ~4.5 KB where 60 indices are ~0.2 KB.
+     */
+    order?: number[];
 }
 /**
  * NFR #66. A delta frame used to carry the whole view (~70 KB on a busy day)
@@ -20,15 +25,16 @@ export interface WorkGraphListPatch<T> {
  *
  * `baseWatermark` is the watermark of the stream frame whose view this patch
  * applies to. A reader holding any other view must resync from a snapshot,
- * never guess. The small fields (query, temporal window, leases, buckets)
- * travel whole.
+ * never guess. The small fields (query, temporal window, leases) travel
+ * whole.
  */
 export interface WorkGraphViewPatchV2 {
     baseWatermark: number;
     query: WorkGraphStreamViewV2['query'];
     temporal: WorkGraphStreamViewV2['temporal'];
     operations: WorkGraphStreamViewV2['operations'];
-    eventBuckets: WorkGraphStreamViewV2['eventBuckets'];
+    /** Keyed by `at`: an ordinary change bumps one bucket's count. */
+    eventBuckets?: WorkGraphListPatch<WorkGraphStreamViewV2['eventBuckets'][number]>;
     efforts?: WorkGraphListPatch<WorkGraphStreamViewV2['efforts'][number]>;
     details?: WorkGraphListPatch<WorkGraphStreamViewV2['details'][number]>;
 }

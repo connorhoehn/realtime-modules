@@ -220,7 +220,7 @@ describe('useWorkGraph schemaVersion 2 opt-in', () => {
     // The patch rewrites one detail and removes another; untouched entries survive.
     act(() => test.sockets[0].request.onMessage(frame(11, {
       viewPatch: {
-        baseWatermark: 11, query, temporal, operations, eventBuckets,
+        baseWatermark: 11, query, temporal, operations,
         details: { upsert: [{ nodeId: 'change', summary: 'Edited twice', lines: [] }], remove: ['deck'] },
       },
     })));
@@ -231,7 +231,7 @@ describe('useWorkGraph schemaVersion 2 opt-in', () => {
 
     // A patch for a view this reader does not hold resyncs quietly, graph kept.
     act(() => test.sockets[0].request.onMessage(frame(12, {
-      viewPatch: { baseWatermark: 7, query, temporal, operations, eventBuckets },
+      viewPatch: { baseWatermark: 7, query, temporal, operations },
     })));
     expect(result.current.error).toBeNull();
     expect(result.current.graph.nodes.change).toBeDefined();
@@ -248,7 +248,7 @@ describe('useWorkGraph schemaVersion 2 opt-in', () => {
       batch: {
         schemaVersion: 2, subscriptionGeneration: 'gen_1', previousWatermark: 10, watermark: 11,
         cursor: 'cursor_11', policyRevision: 'policy_1', operations: [],
-        viewPatch: { baseWatermark: 10, query, temporal, operations, eventBuckets },
+        viewPatch: { baseWatermark: 10, query, temporal, operations },
       },
     }));
     await waitFor(() => expect(test.fetchSnapshot).toHaveBeenCalledTimes(2));

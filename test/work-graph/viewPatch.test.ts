@@ -36,8 +36,24 @@ describe('work-graph view patch (NFR #66)', () => {
     next.details[1] = { ...next.details[1]!, lines: ['changed'] };
     const patch = diffWorkGraphViewV2(base, next, 5);
     expect(patch.details?.remove).toEqual(['b']);
-    expect(patch.details?.order).toEqual(['new', 'c', 'a', 'd']);
+    // Indices into the list upsert/remove produced: [a, c, d, new] -> [new, c, a, d].
+    expect(patch.details?.order).toEqual([3, 1, 0, 2]);
     expect(patch.efforts?.remove).toEqual(['e2']);
+    expect(applyWorkGraphViewPatchV2(base, patch)).toEqual(next);
+  });
+
+  test('an edited entry moving to the top costs one entry plus indices, and buckets travel as a change', () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `wg_node_${String(i).padStart(64, '0')}`);
+    const base = view(ids);
+    base.eventBuckets = Array.from({ length: 40 }, (_, i) => ({ at: new Date(Date.parse(at) - (40 - i) * 60_000).toISOString(), count: i }));
+    const next = structuredClone(base);
+    const [moved] = next.details.splice(30, 1);
+    next.details.unshift({ ...moved!, lines: ['rev 66'] });
+    next.eventBuckets[39] = { ...next.eventBuckets[39]!, count: 99 };
+    const patch = diffWorkGraphViewV2(base, next, 1);
+    expect(patch.details?.upsert).toHaveLength(1);
+    expect(patch.eventBuckets).toEqual({ upsert: [next.eventBuckets[39]], remove: [] });
+    expect(JSON.stringify(patch.details?.order).length).toBeLessThan(300);
     expect(applyWorkGraphViewPatchV2(base, patch)).toEqual(next);
   });
 
@@ -54,5 +70,6 @@ describe('work-graph view patch (NFR #66)', () => {
     const patch = diffWorkGraphViewV2(base, view(['b', 'a']), 1);
     expect(applyWorkGraphViewPatchV2(view(['a', 'b', 'x']), patch)).toBeNull();
     expect(applyWorkGraphViewPatchV2(base, { ...patch, details: { upsert: 'x', remove: [] } as never })).toBeNull();
+    expect(applyWorkGraphViewPatchV2(base, { ...patch, details: { upsert: [], remove: [], order: [0, 0] } })).toBeNull();
   });
 });

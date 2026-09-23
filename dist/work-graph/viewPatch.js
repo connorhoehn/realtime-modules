@@ -4,6 +4,7 @@ exports.diffWorkGraphViewV2 = diffWorkGraphViewV2;
 exports.applyWorkGraphViewPatchV2 = applyWorkGraphViewPatchV2;
 const effortKey = (entry) => entry.id;
 const detailKey = (entry) => entry.nodeId;
+const bucketKey = (entry) => entry.at;
 function applyList(base, patch, key) {
     if (!patch)
         return [...base];
@@ -31,14 +32,13 @@ function applyList(base, patch, key) {
         return result;
     if (!Array.isArray(patch.order) || patch.order.length !== result.length)
         return null;
-    const byId = new Map(result.map((entry) => [key(entry), entry]));
+    const used = new Set();
     const ordered = [];
-    for (const id of patch.order) {
-        const entry = byId.get(id);
-        if (!entry)
+    for (const position of patch.order) {
+        if (!Number.isInteger(position) || position < 0 || position >= result.length || used.has(position))
             return null;
-        byId.delete(id);
-        ordered.push(entry);
+        used.add(position);
+        ordered.push(result[position]);
     }
     return ordered;
 }
@@ -53,7 +53,8 @@ function diffList(base, next, key) {
     const patch = { upsert, remove };
     const applied = applyList(base, patch, key) ?? [];
     if (applied.length !== next.length || applied.some((entry, i) => key(entry) !== key(next[i]))) {
-        patch.order = next.map(key);
+        const position = new Map(applied.map((entry, i) => [key(entry), i]));
+        patch.order = next.map((entry) => position.get(key(entry)));
     }
     return patch;
 }
@@ -61,12 +62,13 @@ function diffList(base, next, key) {
 function diffWorkGraphViewV2(base, next, baseWatermark) {
     const efforts = diffList(base.efforts, next.efforts, effortKey);
     const details = diffList(base.details, next.details, detailKey);
+    const eventBuckets = diffList(base.eventBuckets, next.eventBuckets, bucketKey);
     return {
         baseWatermark,
         query: next.query,
         temporal: next.temporal,
         operations: next.operations,
-        eventBuckets: next.eventBuckets,
+        ...(eventBuckets ? { eventBuckets } : {}),
         ...(efforts ? { efforts } : {}),
         ...(details ? { details } : {}),
     };
@@ -82,7 +84,8 @@ function applyWorkGraphViewPatchV2(base, patch) {
         return null;
     const efforts = applyList(base.efforts, patch.efforts, effortKey);
     const details = applyList(base.details, patch.details, detailKey);
-    if (!efforts || !details)
+    const eventBuckets = applyList(base.eventBuckets, patch.eventBuckets, bucketKey);
+    if (!efforts || !details || !eventBuckets)
         return null;
     return {
         query: patch.query,
@@ -90,7 +93,7 @@ function applyWorkGraphViewPatchV2(base, patch) {
         efforts,
         details,
         operations: patch.operations,
-        eventBuckets: patch.eventBuckets,
+        eventBuckets,
     };
 }
 //# sourceMappingURL=viewPatch.js.map

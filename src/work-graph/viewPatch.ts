@@ -14,8 +14,13 @@ export type WorkGraphStreamViewV2 = Pick<
 export interface WorkGraphListPatch<T> {
   upsert: T[];
   remove: string[];
-  /** Present only when applying upsert/remove would leave the entries in a different order. */
-  order?: string[];
+  /**
+   * Present only when applying upsert/remove would leave the entries in a
+   * different order: position i of the result is entry `order[i]` of the list
+   * upsert/remove produced. Indices, not ids — an edited detail moving to the
+   * top reorders ~60 entries, and 60 ids are ~4.5 KB where 60 indices are ~0.2 KB.
+   */
+  order?: number[];
 }
 
 /**
@@ -26,21 +31,23 @@ export interface WorkGraphListPatch<T> {
  *
  * `baseWatermark` is the watermark of the stream frame whose view this patch
  * applies to. A reader holding any other view must resync from a snapshot,
- * never guess. The small fields (query, temporal window, leases, buckets)
- * travel whole.
+ * never guess. The small fields (query, temporal window, leases) travel
+ * whole.
  */
 export interface WorkGraphViewPatchV2 {
   baseWatermark: number;
   query: WorkGraphStreamViewV2['query'];
   temporal: WorkGraphStreamViewV2['temporal'];
   operations: WorkGraphStreamViewV2['operations'];
-  eventBuckets: WorkGraphStreamViewV2['eventBuckets'];
+  /** Keyed by `at`: an ordinary change bumps one bucket's count. */
+  eventBuckets?: WorkGraphListPatch<WorkGraphStreamViewV2['eventBuckets'][number]>;
   efforts?: WorkGraphListPatch<WorkGraphStreamViewV2['efforts'][number]>;
   details?: WorkGraphListPatch<WorkGraphStreamViewV2['details'][number]>;
 }
 
 const effortKey = (entry: { id: string }) => entry.id;
 const detailKey = (entry: { nodeId: string }) => entry.nodeId;
+const bucketKey = (entry: { at: string }) => entry.at;
 
 function applyList<T>(base: readonly T[], patch: WorkGraphListPatch<T> | undefined, key: (entry: T) => string): T[] | null {
   if (!patch) return [...base];
@@ -62,13 +69,12 @@ function applyList<T>(base: readonly T[], patch: WorkGraphListPatch<T> | undefin
   }
   if (patch.order === undefined) return result;
   if (!Array.isArray(patch.order) || patch.order.length !== result.length) return null;
-  const byId = new Map(result.map((entry) => [key(entry), entry]));
+  const used = new Set<number>();
   const ordered: T[] = [];
-  for (const id of patch.order) {
-    const entry = byId.get(id);
-    if (!entry) return null;
-    byId.delete(id);
-    ordered.push(entry);
+  for (const position of patch.order) {
+    if (!Number.isInteger(position) || position < 0 || position >= result.length || used.has(position)) return null;
+    used.add(position);
+    ordered.push(result[position]!);
   }
   return ordered;
 }
@@ -84,7 +90,8 @@ function diffList<T>(base: readonly T[], next: readonly T[], key: (entry: T) => 
   const patch: WorkGraphListPatch<T> = { upsert, remove };
   const applied = applyList(base, patch, key) ?? [];
   if (applied.length !== next.length || applied.some((entry, i) => key(entry) !== key(next[i]!))) {
-    patch.order = next.map(key);
+    const position = new Map(applied.map((entry, i) => [key(entry), i]));
+    patch.order = next.map((entry) => position.get(key(entry))!);
   }
   return patch;
 }
@@ -97,12 +104,13 @@ export function diffWorkGraphViewV2(
 ): WorkGraphViewPatchV2 {
   const efforts = diffList(base.efforts, next.efforts, effortKey);
   const details = diffList(base.details, next.details, detailKey);
+  const eventBuckets = diffList(base.eventBuckets, next.eventBuckets, bucketKey);
   return {
     baseWatermark,
     query: next.query,
     temporal: next.temporal,
     operations: next.operations,
-    eventBuckets: next.eventBuckets,
+    ...(eventBuckets ? { eventBuckets } : {}),
     ...(efforts ? { efforts } : {}),
     ...(details ? { details } : {}),
   };
@@ -121,13 +129,14 @@ export function applyWorkGraphViewPatchV2(
   if (patch === null || typeof patch !== 'object') return null;
   const efforts = applyList(base.efforts, patch.efforts, effortKey);
   const details = applyList(base.details, patch.details, detailKey);
-  if (!efforts || !details) return null;
+  const eventBuckets = applyList(base.eventBuckets, patch.eventBuckets, bucketKey);
+  if (!efforts || !details || !eventBuckets) return null;
   return {
     query: patch.query,
     temporal: patch.temporal,
     efforts,
     details,
     operations: patch.operations,
-    eventBuckets: patch.eventBuckets,
+    eventBuckets,
   };
 }
