@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.81.0 — 2026-09-22
+
+- `useDeckReviseStatus` follows composer edits that run as pipelines
+  (`POST /api/deck/revise-run`, REVIEW.md "Composer edits run as pipelines"): new phase
+  `saving` ("Saving the new revision"); each activity carries `pipelineRunId` (kept from the
+  first event that names it), and on `completed` the `revisionId` the pipeline wrote (`null`
+  when nothing changed) and `rebasedOnto`; on `failed` a `code` (`revision-conflict`).
+  Additive — frames from the older `/api/deck/revise` read exactly as before.
+
 ## 0.80.0 — 2026-09-22
 
 - `useAgentLoopRun(runId, { apiBaseUrl, idToken, transport?, pollMs? })`: one agent loop

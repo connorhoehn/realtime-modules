@@ -1,5 +1,5 @@
 import type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
-export type DeckRevisePhase = 'started' | 'reading-sources' | 'asking-model' | 'checking' | 'completed' | 'failed';
+export type DeckRevisePhase = 'started' | 'reading-sources' | 'asking-model' | 'checking' | 'saving' | 'completed' | 'failed';
 /** The part of a slide a revise was pointed at (platform `DeckReviseTarget`). */
 export interface DeckReviseTargetRef {
     field: 'title' | 'eyebrow' | 'subtitle' | 'bullets' | 'columns' | 'chart' | 'quote' | 'image' | 'notes';
@@ -26,6 +26,17 @@ export interface DeckReviseActivity {
     status?: number;
     /** On `failed`: the plain sentence the request answered with. */
     reason?: string;
+    /** On `failed`: a machine code — `revision-conflict` when the base moved and the edit could not rebase. */
+    code?: string;
+    /**
+     * The pipeline run doing the edit (`POST /api/deck/revise-run`, 0.81.0).
+     * Absent for the older request/response `/api/deck/revise`.
+     */
+    pipelineRunId?: string;
+    /** On `completed` of a run: the revision the pipeline wrote. `null` when the edit changed nothing. */
+    revisionId?: string | null;
+    /** On `completed`: the edit was re-applied on top of this newer revision (slide/field scope only). */
+    rebasedOnto?: string;
     /** No terminal event arrived within `staleMs`: no longer counted as in flight. */
     stale?: boolean;
 }

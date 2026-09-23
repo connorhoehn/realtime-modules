@@ -42,6 +42,7 @@ const PHASE_LABELS = {
     'reading-sources': 'Reading sources',
     'asking-model': 'Writing the edit',
     checking: 'Checking the edit',
+    saving: 'Saving the new revision',
     completed: 'Done',
     failed: 'Failed',
 };
@@ -85,6 +86,7 @@ function reduceDeckReviseFrame(state, frame, documentId, now) {
         ? p.target
         : prev?.target;
     const slideId = str(p.slideId) ?? prev?.slideId;
+    const pipelineRunId = str(p.pipelineRunId) ?? prev?.pipelineRunId;
     const next = {
         requestId,
         documentId,
@@ -98,6 +100,10 @@ function reduceDeckReviseFrame(state, frame, documentId, now) {
         updatedAt: when,
         ...(Array.isArray(p.changedSlideIds) ? { changedSlideIds: p.changedSlideIds.filter((id) => typeof id === 'string') } : {}),
         ...(typeof p.status === 'number' ? { status: p.status } : {}),
+        ...(str(p.code) ? { code: str(p.code) } : {}),
+        ...(pipelineRunId ? { pipelineRunId } : {}),
+        ...(p.revisionId === null ? { revisionId: null } : str(p.revisionId) ? { revisionId: str(p.revisionId) } : {}),
+        ...(str(p.rebasedOnto) ? { rebasedOnto: str(p.rebasedOnto) } : {}),
         ...(str(p.reason) ? { reason: str(p.reason) } : {}),
     };
     return { ...state, [requestId]: next };

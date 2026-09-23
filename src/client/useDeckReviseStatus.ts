@@ -26,7 +26,7 @@ import { useGatewayOptional } from './GatewaySocketProvider';
 import type { GatewayMessage } from './types';
 import type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
 
-export type DeckRevisePhase = 'started' | 'reading-sources' | 'asking-model' | 'checking' | 'completed' | 'failed';
+export type DeckRevisePhase = 'started' | 'reading-sources' | 'asking-model' | 'checking' | 'saving' | 'completed' | 'failed';
 
 /** The part of a slide a revise was pointed at (platform `DeckReviseTarget`). */
 export interface DeckReviseTargetRef {
@@ -55,6 +55,17 @@ export interface DeckReviseActivity {
   status?: number;
   /** On `failed`: the plain sentence the request answered with. */
   reason?: string;
+  /** On `failed`: a machine code — `revision-conflict` when the base moved and the edit could not rebase. */
+  code?: string;
+  /**
+   * The pipeline run doing the edit (`POST /api/deck/revise-run`, 0.81.0).
+   * Absent for the older request/response `/api/deck/revise`.
+   */
+  pipelineRunId?: string;
+  /** On `completed` of a run: the revision the pipeline wrote. `null` when the edit changed nothing. */
+  revisionId?: string | null;
+  /** On `completed`: the edit was re-applied on top of this newer revision (slide/field scope only). */
+  rebasedOnto?: string;
   /** No terminal event arrived within `staleMs`: no longer counted as in flight. */
   stale?: boolean;
 }
@@ -98,6 +109,7 @@ const PHASE_LABELS: Record<DeckRevisePhase, string> = {
   'reading-sources': 'Reading sources',
   'asking-model': 'Writing the edit',
   checking: 'Checking the edit',
+  saving: 'Saving the new revision',
   completed: 'Done',
   failed: 'Failed',
 };
@@ -148,6 +160,7 @@ export function reduceDeckReviseFrame(
     ? p.target as DeckReviseTargetRef
     : prev?.target;
   const slideId = str(p.slideId) ?? prev?.slideId;
+  const pipelineRunId = str(p.pipelineRunId) ?? prev?.pipelineRunId;
   const next: DeckReviseActivity = {
     requestId,
     documentId,
@@ -161,6 +174,10 @@ export function reduceDeckReviseFrame(
     updatedAt: when,
     ...(Array.isArray(p.changedSlideIds) ? { changedSlideIds: p.changedSlideIds.filter((id): id is string => typeof id === 'string') } : {}),
     ...(typeof p.status === 'number' ? { status: p.status } : {}),
+    ...(str(p.code) ? { code: str(p.code) } : {}),
+    ...(pipelineRunId ? { pipelineRunId } : {}),
+    ...(p.revisionId === null ? { revisionId: null } : str(p.revisionId) ? { revisionId: str(p.revisionId) } : {}),
+    ...(str(p.rebasedOnto) ? { rebasedOnto: str(p.rebasedOnto) } : {}),
     ...(str(p.reason) ? { reason: str(p.reason) } : {}),
   };
   return { ...state, [requestId]: next };

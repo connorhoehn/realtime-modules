@@ -98,6 +98,20 @@ describe('useDeckReviseStatus', () => {
     expect(result.current.recent[0]).toMatchObject({ requestId: 'r4', stale: true, phase: 'started' });
   });
 
+  it('follows a revise-run: saving phase, pipelineRunId kept, revisionId and rebase on completion, conflict code on failure', () => {
+    const { transport, emit } = makeTransport();
+    const { result } = renderHook(() => useDeckReviseStatus(DOC, { transport }));
+    emit('started', { requestId: 'r1', scope: 'slide', slideId: 's2', phase: 'started', pipelineRunId: 'run-9', occurredAt: at(1000) });
+    emit('phase', { requestId: 'r1', scope: 'slide', slideId: 's2', phase: 'saving', occurredAt: at(2000) });
+    expect(result.current.get('r1')).toMatchObject({ phase: 'saving', label: 'Saving the new revision', pipelineRunId: 'run-9' });
+    emit('completed', { requestId: 'r1', scope: 'slide', slideId: 's2', phase: 'completed', changedSlideIds: ['s2'], revisionId: 'v6', rebasedOnto: 'v5', occurredAt: at(3000) });
+    expect(result.current.get('r1')).toMatchObject({ phase: 'completed', revisionId: 'v6', rebasedOnto: 'v5', pipelineRunId: 'run-9' });
+    emit('completed', { requestId: 'r2', scope: 'deck', phase: 'completed', changedSlideIds: [], revisionId: null, occurredAt: at(3000) });
+    expect(result.current.get('r2')?.revisionId).toBeNull();
+    emit('failed', { requestId: 'r3', scope: 'deck', phase: 'failed', status: 409, code: 'revision-conflict', reason: 'v7 landed first', occurredAt: at(4000) });
+    expect(result.current.get('r3')).toMatchObject({ status: 409, code: 'revision-conflict', reason: 'v7 landed first' });
+  });
+
   it('sends nothing with no document or a null transport', () => {
     const { transport, send } = makeTransport();
     renderHook(() => useDeckReviseStatus(null, { transport }));
