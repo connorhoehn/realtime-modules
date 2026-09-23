@@ -382,6 +382,7 @@ export {
   generatePipelineDraft,
   newPipelineDraftRequestId,
   PIPELINE_ALL_CHANNEL,
+  pipelineAllSubscribeFrames,
 } from './pipelines/usePipelineCatalog';
 export type {
   PipelineCatalogRequestError,
@@ -393,3 +394,10 @@ export type {
   UsePipelineCatalogResult,
 } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
+
+// v0.90.0 — the Documents four-pane redesign (also under ./client/documents):
+// work fields on a document, the Work column grouped by work status, run drafts
+// with request-id idempotency, and run estimates — REST helpers plus
+// `useDocumentWork`, `useWorkList`, `useRunDraft`, `useRunEstimate`, kept live
+// from the gateway's id-only `doc-work:*` signals.
+export * from './documents';

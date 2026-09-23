@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.90.0 — 2026-09-23
+
+- **client/documents (new subpath, also re-exported from `./client`):** the
+  Documents four-pane Work / detail / Run draft view's data (realtime-examples
+  `docs/design/documents-detail/PLAN.md` §2), field names exactly as the plan
+  fixes them: `DocumentWork` (status · points · ownerId · priority · rank ·
+  outcome · criteria · links · fieldRevisions · revision), `RunDraft`,
+  `RunEstimate`, the list row / rollup, criterion and link ops.
+- Pure REST helpers for scripts: `fetchDocumentWork`, `patchDocumentWork`,
+  `fetchWorkList`, `fetchRunDrafts`, `fetchRunDraft`, `putRunDraft`,
+  `dispatchRunDraft`, `cancelDraftRun`, `fetchRunEstimate`; plus
+  `applyWorkUpdate`, `groupWorkRows` ("Not planned" for no status),
+  `pointsRollup`, `runDraftPhase` (dispatching > 60 s = unconfirmed),
+  `normalizeRunEstimate` (`null` = "No prior runs").
+- Hooks: `useDocumentWork(documentId, opts)` — optimistic PATCH queue with
+  rollback, 409 → `conflict` + re-read; `useWorkList(scope, opts)` — grouped
+  rows, header rollup, live `activeRun` from `pipeline:all`;
+  `useRunDraft(documentId, opts)` — the draft id is the request id, minted once
+  per draft, concurrent dispatches share one request, `stop` cancels the run;
+  `useRunEstimate(pipelineId, model, opts)` — cached per page until a run of
+  that pipeline completes.
+- Live: the gateway's id-only `doc-work:<id>` / `doc-work-scope:<scope>`
+  signals (`doc:work_updated`, `doc:run_draft_updated`) make a hook re-read the
+  ONE record; every hook re-reads once per reconnect epoch; no polling.
+  Subscribed through the gateway's `doc-work` service (realtime-examples
+  `src/realtime-fanout/doc-work-service.ts`), which checks document read access.
+- `acquireChannelSubscription`: refcounted subscribe per transport, re-sent on
+  a new session epoch. `usePipelineCatalog` now uses it for `pipeline:all`, so
+  the catalog, the Work list and the estimate share one subscription (and
+  `pipelineAllSubscribeFrames` is exported).
+
 ## 0.88.0 — 2026-09-23
 
 - **client/pipelines:** the pipelines directory has one home for its vocabulary

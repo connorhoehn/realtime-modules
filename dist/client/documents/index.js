@@ -1,0 +1,50 @@
+"use strict";
+// realtime-modules/src/client/documents — the Documents four-pane redesign's
+// work fields, run drafts and estimates (realtime-examples
+// `docs/design/documents-detail/PLAN.md` §2), read through hooks.
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.invalidateRunEstimates = exports.useRunEstimate = exports.useRunDraft = exports.useWorkList = exports.useDocumentWork = exports.acquireChannelSubscription = exports.docWorkSignalFromFrame = exports.docWorkSubscribeFrame = exports.docWorkScopeChannel = exports.docWorkChannel = exports.DOC_WORK_SCOPE_CHANNEL_PREFIX = exports.DOC_WORK_CHANNEL_PREFIX = exports.fetchRunEstimate = exports.cancelDraftRun = exports.dispatchRunDraft = exports.putRunDraft = exports.fetchRunDraft = exports.fetchRunDrafts = exports.fetchWorkList = exports.patchDocumentWork = exports.fetchDocumentWork = exports.normalizeRunEstimate = exports.currentRunDraft = exports.normalizeRunDraft = exports.runDraftPhase = exports.RUN_DRAFT_DISPATCH_STALE_MS = exports.mergeWorkIntoRow = exports.normalizeWorkList = exports.pointsRollup = exports.groupWorkRows = exports.workGroupOf = exports.WORK_GROUP_ORDER = exports.WORK_STATUS_LABEL = exports.rankAfter = exports.newWorkItemId = exports.normalizeDocumentWork = exports.orderedCriteria = exports.applyWorkUpdate = void 0;
+var work_1 = require("./work");
+Object.defineProperty(exports, "applyWorkUpdate", { enumerable: true, get: function () { return work_1.applyWorkUpdate; } });
+Object.defineProperty(exports, "orderedCriteria", { enumerable: true, get: function () { return work_1.orderedCriteria; } });
+Object.defineProperty(exports, "normalizeDocumentWork", { enumerable: true, get: function () { return work_1.normalizeDocumentWork; } });
+Object.defineProperty(exports, "newWorkItemId", { enumerable: true, get: function () { return work_1.newWorkItemId; } });
+Object.defineProperty(exports, "rankAfter", { enumerable: true, get: function () { return work_1.rankAfter; } });
+Object.defineProperty(exports, "WORK_STATUS_LABEL", { enumerable: true, get: function () { return work_1.WORK_STATUS_LABEL; } });
+Object.defineProperty(exports, "WORK_GROUP_ORDER", { enumerable: true, get: function () { return work_1.WORK_GROUP_ORDER; } });
+Object.defineProperty(exports, "workGroupOf", { enumerable: true, get: function () { return work_1.workGroupOf; } });
+Object.defineProperty(exports, "groupWorkRows", { enumerable: true, get: function () { return work_1.groupWorkRows; } });
+Object.defineProperty(exports, "pointsRollup", { enumerable: true, get: function () { return work_1.pointsRollup; } });
+Object.defineProperty(exports, "normalizeWorkList", { enumerable: true, get: function () { return work_1.normalizeWorkList; } });
+Object.defineProperty(exports, "mergeWorkIntoRow", { enumerable: true, get: function () { return work_1.mergeWorkIntoRow; } });
+Object.defineProperty(exports, "RUN_DRAFT_DISPATCH_STALE_MS", { enumerable: true, get: function () { return work_1.RUN_DRAFT_DISPATCH_STALE_MS; } });
+Object.defineProperty(exports, "runDraftPhase", { enumerable: true, get: function () { return work_1.runDraftPhase; } });
+Object.defineProperty(exports, "normalizeRunDraft", { enumerable: true, get: function () { return work_1.normalizeRunDraft; } });
+Object.defineProperty(exports, "currentRunDraft", { enumerable: true, get: function () { return work_1.currentRunDraft; } });
+Object.defineProperty(exports, "normalizeRunEstimate", { enumerable: true, get: function () { return work_1.normalizeRunEstimate; } });
+Object.defineProperty(exports, "fetchDocumentWork", { enumerable: true, get: function () { return work_1.fetchDocumentWork; } });
+Object.defineProperty(exports, "patchDocumentWork", { enumerable: true, get: function () { return work_1.patchDocumentWork; } });
+Object.defineProperty(exports, "fetchWorkList", { enumerable: true, get: function () { return work_1.fetchWorkList; } });
+Object.defineProperty(exports, "fetchRunDrafts", { enumerable: true, get: function () { return work_1.fetchRunDrafts; } });
+Object.defineProperty(exports, "fetchRunDraft", { enumerable: true, get: function () { return work_1.fetchRunDraft; } });
+Object.defineProperty(exports, "putRunDraft", { enumerable: true, get: function () { return work_1.putRunDraft; } });
+Object.defineProperty(exports, "dispatchRunDraft", { enumerable: true, get: function () { return work_1.dispatchRunDraft; } });
+Object.defineProperty(exports, "cancelDraftRun", { enumerable: true, get: function () { return work_1.cancelDraftRun; } });
+Object.defineProperty(exports, "fetchRunEstimate", { enumerable: true, get: function () { return work_1.fetchRunEstimate; } });
+Object.defineProperty(exports, "DOC_WORK_CHANNEL_PREFIX", { enumerable: true, get: function () { return work_1.DOC_WORK_CHANNEL_PREFIX; } });
+Object.defineProperty(exports, "DOC_WORK_SCOPE_CHANNEL_PREFIX", { enumerable: true, get: function () { return work_1.DOC_WORK_SCOPE_CHANNEL_PREFIX; } });
+Object.defineProperty(exports, "docWorkChannel", { enumerable: true, get: function () { return work_1.docWorkChannel; } });
+Object.defineProperty(exports, "docWorkScopeChannel", { enumerable: true, get: function () { return work_1.docWorkScopeChannel; } });
+Object.defineProperty(exports, "docWorkSubscribeFrame", { enumerable: true, get: function () { return work_1.docWorkSubscribeFrame; } });
+Object.defineProperty(exports, "docWorkSignalFromFrame", { enumerable: true, get: function () { return work_1.docWorkSignalFromFrame; } });
+Object.defineProperty(exports, "acquireChannelSubscription", { enumerable: true, get: function () { return work_1.acquireChannelSubscription; } });
+var useDocumentWork_1 = require("./useDocumentWork");
+Object.defineProperty(exports, "useDocumentWork", { enumerable: true, get: function () { return useDocumentWork_1.useDocumentWork; } });
+var useWorkList_1 = require("./useWorkList");
+Object.defineProperty(exports, "useWorkList", { enumerable: true, get: function () { return useWorkList_1.useWorkList; } });
+var useRunDraft_1 = require("./useRunDraft");
+Object.defineProperty(exports, "useRunDraft", { enumerable: true, get: function () { return useRunDraft_1.useRunDraft; } });
+var useRunEstimate_1 = require("./useRunEstimate");
+Object.defineProperty(exports, "useRunEstimate", { enumerable: true, get: function () { return useRunEstimate_1.useRunEstimate; } });
+Object.defineProperty(exports, "invalidateRunEstimates", { enumerable: true, get: function () { return useRunEstimate_1.invalidateRunEstimates; } });
+//# sourceMappingURL=index.js.map

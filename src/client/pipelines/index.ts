@@ -132,6 +132,7 @@ export {
   generatePipelineDraft,
   newPipelineDraftRequestId,
   PIPELINE_ALL_CHANNEL,
+  pipelineAllSubscribeFrames,
 } from './usePipelineCatalog';
 export type {
   PipelineCatalogRequestError,

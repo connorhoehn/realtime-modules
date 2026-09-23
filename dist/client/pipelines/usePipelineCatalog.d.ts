@@ -92,5 +92,10 @@ export interface UsePipelineCatalogResult {
 }
 /** Subscribe / unsubscribe frames for the firehose, as the gateway's pipeline service expects them. */
 export declare const PIPELINE_ALL_CHANNEL = "pipeline:all";
+/** The firehose's subscribe / unsubscribe frames. */
+export declare function pipelineAllSubscribeFrames(): {
+    subscribe: Record<string, unknown>;
+    unsubscribe: Record<string, unknown>;
+};
 export declare function usePipelineCatalog(opts: UsePipelineCatalogOptions): UsePipelineCatalogResult;
 //# sourceMappingURL=usePipelineCatalog.d.ts.map

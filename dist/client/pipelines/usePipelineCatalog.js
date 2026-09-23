@@ -23,9 +23,11 @@ exports.normalizeCatalogEntry = normalizeCatalogEntry;
 exports.fetchPipelineCatalog = fetchPipelineCatalog;
 exports.newPipelineDraftRequestId = newPipelineDraftRequestId;
 exports.generatePipelineDraft = generatePipelineDraft;
+exports.pipelineAllSubscribeFrames = pipelineAllSubscribeFrames;
 exports.usePipelineCatalog = usePipelineCatalog;
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("../GatewaySocketProvider");
+const work_1 = require("../documents/work");
 const catalog_1 = require("./catalog");
 async function errorFrom(res, fallback) {
     const body = (await res.json().catch(() => ({})));
@@ -84,6 +86,13 @@ async function generatePipelineDraft(apiBaseUrl, idToken, input) {
 }
 /** Subscribe / unsubscribe frames for the firehose, as the gateway's pipeline service expects them. */
 exports.PIPELINE_ALL_CHANNEL = 'pipeline:all';
+/** The firehose's subscribe / unsubscribe frames. */
+function pipelineAllSubscribeFrames() {
+    return {
+        subscribe: { service: 'pipeline', action: 'subscribe', channel: exports.PIPELINE_ALL_CHANNEL },
+        unsubscribe: { service: 'pipeline', action: 'unsubscribe', channel: exports.PIPELINE_ALL_CHANNEL },
+    };
+}
 function usePipelineCatalog(opts) {
     const { apiBaseUrl, idToken, transport } = opts;
     const enabled = opts.enabled !== false;
@@ -140,7 +149,11 @@ function usePipelineCatalog(opts) {
     (0, react_1.useEffect)(() => {
         if (!enabled || !send || !onMessage)
             return;
-        send({ service: 'pipeline', action: 'subscribe', channel: exports.PIPELINE_ALL_CHANNEL });
+        // Refcounted: the Work list (`useWorkList`) and the estimate hook listen to
+        // the same firehose on the same socket, and the first to unmount must not
+        // unsubscribe the others.
+        const frames = pipelineAllSubscribeFrames();
+        const release = (0, work_1.acquireChannelSubscription)(send, exports.PIPELINE_ALL_CHANNEL, frames.subscribe, frames.unsubscribe, epoch);
         const unregister = onMessage((frame) => {
             const event = (0, catalog_1.runEventFromFrame)(frame);
             if (!event)
@@ -149,7 +162,7 @@ function usePipelineCatalog(opts) {
         });
         return () => {
             unregister();
-            send({ service: 'pipeline', action: 'unsubscribe', channel: exports.PIPELINE_ALL_CHANNEL });
+            release();
         };
     }, [enabled, send, onMessage, epoch]);
     // A reconnect may have dropped frames: one refresh per new epoch after the first.

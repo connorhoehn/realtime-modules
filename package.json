@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.89.0",
+  "version": "0.90.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -49,6 +49,10 @@
     "./client/pipelines": {
       "types": "./dist/client/pipelines/index.d.ts",
       "default": "./dist/client/pipelines/index.js"
+    },
+    "./client/documents": {
+      "types": "./dist/client/documents/index.d.ts",
+      "default": "./dist/client/documents/index.js"
     },
     "./adapters/tiptap": {
       "types": "./dist/adapters/tiptap/index.d.ts",
@@ -233,7 +237,8 @@
         "./client/ws",
         "./adapters/tiptap",
         "./agent-streaming/client",
-        "./client/pipelines"
+        "./client/pipelines",
+        "./client/documents"
       ],
       "_note": "./client/ws re-exports GatewaySocketProvider, which is a React component — the subpath is Yjs-free, not React-free."
     },

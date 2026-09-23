@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { PipelineRunTransport } from './usePipelineRunStatus';
+import { acquireChannelSubscription } from '../documents/work';
 import {
   groupCatalog,
   mergeRunEvent,
@@ -185,6 +186,14 @@ export interface UsePipelineCatalogResult {
 /** Subscribe / unsubscribe frames for the firehose, as the gateway's pipeline service expects them. */
 export const PIPELINE_ALL_CHANNEL = 'pipeline:all';
 
+/** The firehose's subscribe / unsubscribe frames. */
+export function pipelineAllSubscribeFrames(): { subscribe: Record<string, unknown>; unsubscribe: Record<string, unknown> } {
+  return {
+    subscribe: { service: 'pipeline', action: 'subscribe', channel: PIPELINE_ALL_CHANNEL },
+    unsubscribe: { service: 'pipeline', action: 'unsubscribe', channel: PIPELINE_ALL_CHANNEL },
+  };
+}
+
 export function usePipelineCatalog(opts: UsePipelineCatalogOptions): UsePipelineCatalogResult {
   const { apiBaseUrl, idToken, transport } = opts;
   const enabled = opts.enabled !== false;
@@ -235,7 +244,11 @@ export function usePipelineCatalog(opts: UsePipelineCatalogOptions): UsePipeline
   // new connection that has subscribed to nothing.
   useEffect(() => {
     if (!enabled || !send || !onMessage) return;
-    send({ service: 'pipeline', action: 'subscribe', channel: PIPELINE_ALL_CHANNEL });
+    // Refcounted: the Work list (`useWorkList`) and the estimate hook listen to
+    // the same firehose on the same socket, and the first to unmount must not
+    // unsubscribe the others.
+    const frames = pipelineAllSubscribeFrames();
+    const release = acquireChannelSubscription(send, PIPELINE_ALL_CHANNEL, frames.subscribe, frames.unsubscribe, epoch);
     const unregister = onMessage((frame: unknown) => {
       const event = runEventFromFrame(frame);
       if (!event) return;
@@ -243,7 +256,7 @@ export function usePipelineCatalog(opts: UsePipelineCatalogOptions): UsePipeline
     });
     return () => {
       unregister();
-      send({ service: 'pipeline', action: 'unsubscribe', channel: PIPELINE_ALL_CHANNEL });
+      release();
     };
   }, [enabled, send, onMessage, epoch]);
 
