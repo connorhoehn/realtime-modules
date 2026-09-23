@@ -251,4 +251,8 @@ Object.defineProperty(exports, "pipelineAllSubscribeFrames", { enumerable: true,
 // `useDocumentWork`, `useWorkList`, `useRunDraft`, `useRunEstimate`, kept live
 // from the gateway's id-only `doc-work:*` signals.
 __exportStar(require("./documents"), exports);
+// Documents folders (realtime-examples documents-folders R1): folder records,
+// nested live counts and conditional, request-id-idempotent moves over the
+// gateway's `document-folders` service and its `doc-folders:<org>` hub.
+__exportStar(require("./documents/folders"), exports);
 //# sourceMappingURL=index.js.map

@@ -71,4 +71,5 @@ export { usePipelineCatalog, fetchPipelineCatalog, normalizeCatalogEntry, genera
 export type { PipelineCatalogRequestError, PipelineCatalogResponse, GeneratePipelineMode, GeneratePipelineDraftInput, GeneratePipelineDraftResponse, UsePipelineCatalogOptions, UsePipelineCatalogResult, } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
 export * from './documents';
+export * from './documents/folders';
 //# sourceMappingURL=index.d.ts.map

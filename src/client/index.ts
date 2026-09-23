@@ -401,3 +401,8 @@ export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
 // `useDocumentWork`, `useWorkList`, `useRunDraft`, `useRunEstimate`, kept live
 // from the gateway's id-only `doc-work:*` signals.
 export * from './documents';
+
+// Documents folders (realtime-examples documents-folders R1): folder records,
+// nested live counts and conditional, request-id-idempotent moves over the
+// gateway's `document-folders` service and its `doc-folders:<org>` hub.
+export * from './documents/folders';
