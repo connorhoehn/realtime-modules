@@ -81,7 +81,7 @@ describe('useWorkGraph schemaVersion 2 opt-in', () => {
 
     await waitFor(() => expect(result.current.status).toBe('ready'));
     expect(test.fetchSnapshot.mock.calls[0][0].activity).toEqual({
-      schemaVersion: 2, windowStart, windowEnd, mode: 'live',
+      schemaVersion: 2, windowStart, windowEnd, mode: 'live', viewBase: 1,
     });
     expect(test.sockets[0].request.activity?.schemaVersion).toBe(2);
     // The v1 graph state is populated exactly as before alongside the new layer.
@@ -236,6 +236,40 @@ describe('useWorkGraph schemaVersion 2 opt-in', () => {
     expect(result.current.error).toBeNull();
     expect(result.current.graph.nodes.change).toBeDefined();
     await waitFor(() => expect(test.fetchSnapshot).toHaveBeenCalledTimes(2));
+  });
+
+  test('patches the first frame against the snapshot view the platform named, and says so on subscribe (NFR #85)', async () => {
+    const viewHash = 'A'.repeat(43);
+    const test = harness([{ ...snapshotV2(), viewHash }]);
+    const { result } = renderHook(() => useWorkGraph({ ...v2Options, transport: test.transport }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(test.fetchSnapshot.mock.calls[0]![0].activity?.viewBase).toBe(1);
+    expect(test.sockets[0].request.baseViewHash).toBe(viewHash);
+    const at = windowEnd;
+    const change = { id: 'change', kind: 'change', title: 'Document change', status: 'completed', disclosure: 'details', updatedAt: at, capabilities: [] };
+    const { query, temporal, operations } = snapshotV2();
+    act(() => test.sockets[0].request.onMessage({
+      kind: 'delta',
+      batch: {
+        schemaVersion: 2, subscriptionGeneration: 'gen_1', previousWatermark: 10, watermark: 11,
+        cursor: 'cursor_11', policyRevision: 'policy_1', operations: [{ kind: 'upsert-node', node: change }],
+        viewPatch: {
+          baseWatermark: 10, query, temporal, operations,
+          details: { upsert: [{ nodeId: 'change', summary: 'Edited', lines: [] }], remove: [] },
+        },
+      },
+    }));
+    expect(result.current.graph.watermark).toBe(11);
+    expect(result.current.graph.activity?.details.map((d) => d.nodeId)).toEqual(['deck', 'change']);
+    expect(result.current.graph.activity?.efforts[0].title).toBe('Sprint review');
+    expect(test.fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects a snapshot whose viewHash is not an opaque hash', async () => {
+    const test = harness([{ ...snapshotV2(), viewHash: 'not a hash' }]);
+    const { result } = renderHook(() => useWorkGraph({ ...v2Options, transport: test.transport }));
+    await waitFor(() => expect(result.current.error).toBe('invalid-snapshot'));
+    expect(test.sockets).toHaveLength(0);
   });
 
   test('a viewPatch before any streamed view resyncs instead of patching the snapshot view', async () => {

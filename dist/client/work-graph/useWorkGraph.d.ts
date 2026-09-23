@@ -13,6 +13,13 @@ export interface WorkGraphActivityRequest {
     windowStart: string;
     windowEnd: string;
     mode: 'live' | 'as-of';
+    /**
+     * NFR #85 (0.86): ask the platform to name the snapshot's view (`viewHash`)
+     * so the stream's first frame can be a patch against it. A transport
+     * forwards it as `viewBase=1`; a platform that does not know it answers as
+     * before and the first frame stays whole.
+     */
+    viewBase?: 1;
 }
 export interface WorkGraphSnapshotRequest {
     scope: WorkGraphClientScope;
@@ -32,6 +39,12 @@ export interface WorkGraphSocketRequest {
      * never sees it keeps sending the whole view.
      */
     viewPatch?: 1;
+    /**
+     * The `viewHash` of the snapshot this stream starts from (NFR #85). The
+     * transport forwards it on the subscribe frame; a gateway that can prove
+     * that view patches the first frame against it, anything else sends it whole.
+     */
+    baseViewHash?: string;
     onMessage(message: unknown): void;
     onClose(): void;
     onError(): void;

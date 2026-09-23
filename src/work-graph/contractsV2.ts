@@ -124,6 +124,13 @@ export interface WorkGraphSnapshotV2 extends Omit<WorkGraphSnapshot, 'schemaVers
   details: ViewerWorkActivityDetail[];
   operations: ViewerWorkOperation[];
   eventBuckets: Array<{ at: string; count: number }>;
+  /**
+   * NFR #85: present only when the request asked `viewBase=1`. Names this
+   * snapshot's view (query, temporal, efforts, details, operations,
+   * eventBuckets) for the gateway, which patches the stream's first frame
+   * against it once it has proven it. Opaque to the reader.
+   */
+  viewHash?: string;
 }
 
 /** Server-private claims, signed and bound to the complete authorized query. */

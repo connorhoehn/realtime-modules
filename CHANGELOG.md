@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.86.0 — 2026-09-23
+
+- **work-graph:** a stream's first frame can be a patch against the snapshot
+  the reader already holds (realtime-examples NFR #85). `useWorkGraph` asks
+  the snapshot with `activity.viewBase: 1`; a platform that answers with
+  `viewHash` has published that view for the gateway, and the hook seeds its
+  patch base from the snapshot and forwards `baseViewHash` on the socket
+  request. Without `viewHash` nothing changes (first frame whole).
+- **work-graph:** `WorkGraphSnapshotV2.viewHash?` (43-char base64url);
+  `validateWorkGraphSnapshotV2` accepts it and rejects anything else in it.
+
 ## 0.85.0 — 2026-09-23
 
 - **server:** a document's owner display name is persisted on the row

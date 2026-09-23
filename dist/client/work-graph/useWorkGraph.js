@@ -160,6 +160,11 @@ function deltaActivity(state, batch, view) {
         eventBuckets: value.eventBuckets,
     };
 }
+/** The fields of a snapshot a stream frame's view carries: the base the platform hashed (NFR #85). */
+function snapshotStreamView(snapshot) {
+    const { query, temporal, efforts, details, operations, eventBuckets } = snapshot;
+    return { query, temporal, efforts, details, operations, eventBuckets };
+}
 function defaultGeneration(sequence) {
     const random = typeof globalThis.crypto?.randomUUID === 'function'
         ? globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -209,7 +214,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
         const currentScope = reducerScope(scope);
         const request = { scope: currentScope, subscriptionGeneration };
         const activityRequest = schemaVersion === 2 && window
-            ? { schemaVersion: 2, windowStart: window.start, windowEnd: window.end, mode: window.mode ?? 'live' }
+            ? { schemaVersion: 2, windowStart: window.start, windowEnd: window.end, mode: window.mode ?? 'live', viewBase: 1 }
             : null;
         let graph = (0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration);
         let disposed = false;
@@ -349,10 +354,15 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             publish(next);
             failures.current = 0;
             outageStartedAt.current = null;
-            // The last whole view this stream sent, and the frame it came with: the
-            // only base a `viewPatch` may apply to. The snapshot's view is never
-            // one — the gateway has not seen it.
-            let streamView = null;
+            // The view a `viewPatch` may apply to, and the watermark of the frame
+            // it came with. It starts as the snapshot's own view when the platform
+            // named it (NFR #85): the gateway patches the first frame against that
+            // exact view only after proving it by hash, so a patch naming this
+            // watermark can only mean this view. Otherwise the first frame is whole.
+            const viewHash = snapshot.schemaVersion === 2 ? snapshot.viewHash : undefined;
+            let streamView = viewHash
+                ? { watermark: snapshot.watermark, view: snapshotStreamView(snapshot) }
+                : null;
             const onMessage = (rawMessage) => {
                 if (disposed || recoveryStarted)
                     return;
@@ -418,6 +428,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                     cursor: snapshot.cursor,
                     subscriptionGeneration,
                     ...(activityRequest ? { activity: activityRequest, viewPatch: 1 } : {}),
+                    ...(viewHash ? { baseViewHash: viewHash } : {}),
                     onMessage,
                     onClose: () => recoverTransient('stream-unavailable'),
                     onError: () => recoverTransient('stream-unavailable'),

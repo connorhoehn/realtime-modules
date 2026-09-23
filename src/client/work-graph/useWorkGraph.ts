@@ -35,6 +35,13 @@ export interface WorkGraphActivityRequest {
   windowStart: string;
   windowEnd: string;
   mode: 'live' | 'as-of';
+  /**
+   * NFR #85 (0.86): ask the platform to name the snapshot's view (`viewHash`)
+   * so the stream's first frame can be a patch against it. A transport
+   * forwards it as `viewBase=1`; a platform that does not know it answers as
+   * before and the first frame stays whole.
+   */
+  viewBase?: 1;
 }
 
 export interface WorkGraphSnapshotRequest {
@@ -56,6 +63,12 @@ export interface WorkGraphSocketRequest {
    * never sees it keeps sending the whole view.
    */
   viewPatch?: 1;
+  /**
+   * The `viewHash` of the snapshot this stream starts from (NFR #85). The
+   * transport forwards it on the subscribe frame; a gateway that can prove
+   * that view patches the first frame against it, anything else sends it whole.
+   */
+  baseViewHash?: string;
   onMessage(message: unknown): void;
   onClose(): void;
   onError(): void;
@@ -282,6 +295,12 @@ function deltaActivity(
   };
 }
 
+/** The fields of a snapshot a stream frame's view carries: the base the platform hashed (NFR #85). */
+function snapshotStreamView(snapshot: WorkGraphSnapshotV2): WorkGraphStreamViewV2 {
+  const { query, temporal, efforts, details, operations, eventBuckets } = snapshot;
+  return { query, temporal, efforts, details, operations, eventBuckets };
+}
+
 function defaultGeneration(sequence: number): string {
   const random = typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -346,7 +365,7 @@ export function useWorkGraph({
     const currentScope = reducerScope(scope);
     const request = { scope: currentScope, subscriptionGeneration };
     const activityRequest: WorkGraphActivityRequest | null = schemaVersion === 2 && window
-      ? { schemaVersion: 2, windowStart: window.start, windowEnd: window.end, mode: window.mode ?? 'live' }
+      ? { schemaVersion: 2, windowStart: window.start, windowEnd: window.end, mode: window.mode ?? 'live', viewBase: 1 }
       : null;
     let graph = createClientWorkGraphState(currentScope, subscriptionGeneration);
     let disposed = false;
@@ -482,10 +501,15 @@ export function useWorkGraph({
       failures.current = 0;
       outageStartedAt.current = null;
 
-      // The last whole view this stream sent, and the frame it came with: the
-      // only base a `viewPatch` may apply to. The snapshot's view is never
-      // one — the gateway has not seen it.
-      let streamView: { watermark: number; view: WorkGraphStreamViewV2 } | null = null;
+      // The view a `viewPatch` may apply to, and the watermark of the frame
+      // it came with. It starts as the snapshot's own view when the platform
+      // named it (NFR #85): the gateway patches the first frame against that
+      // exact view only after proving it by hash, so a patch naming this
+      // watermark can only mean this view. Otherwise the first frame is whole.
+      const viewHash = snapshot.schemaVersion === 2 ? (snapshot as WorkGraphSnapshotV2).viewHash : undefined;
+      let streamView: { watermark: number; view: WorkGraphStreamViewV2 } | null = viewHash
+        ? { watermark: snapshot.watermark, view: snapshotStreamView(snapshot as WorkGraphSnapshotV2) }
+        : null;
 
       const onMessage = (rawMessage: unknown) => {
         if (disposed || recoveryStarted) return;
@@ -550,6 +574,7 @@ export function useWorkGraph({
           cursor: snapshot.cursor,
           subscriptionGeneration,
           ...(activityRequest ? { activity: activityRequest, viewPatch: 1 as const } : {}),
+          ...(viewHash ? { baseViewHash: viewHash } : {}),
           onMessage,
           onClose: () => recoverTransient('stream-unavailable'),
           onError: () => recoverTransient('stream-unavailable'),

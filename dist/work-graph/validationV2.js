@@ -126,9 +126,9 @@ function detail(value) {
     return true;
 }
 function validateWorkGraphSnapshotV2(value) {
-    if (!exact(value, ['schemaVersion', 'scope', 'revision', 'watermark', 'cursor', 'nodes', 'edges', 'sources', 'partial', 'query', 'temporal', 'efforts', 'details', 'operations', 'eventBuckets'], ['nextPageCursor']) || value.schemaVersion !== 2 || !bytes(value, contractsV2_1.WORK_GRAPH_V2_LIMITS.snapshotBytes))
+    if (!exact(value, ['schemaVersion', 'scope', 'revision', 'watermark', 'cursor', 'nodes', 'edges', 'sources', 'partial', 'query', 'temporal', 'efforts', 'details', 'operations', 'eventBuckets'], ['nextPageCursor', 'viewHash']) || value.schemaVersion !== 2 || (value.viewHash !== undefined && (typeof value.viewHash !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.viewHash))) || !bytes(value, contractsV2_1.WORK_GRAPH_V2_LIMITS.snapshotBytes))
         return result(false, value, 'v2 work graph snapshot');
-    const { query, temporal, efforts, details, operations, eventBuckets, ...base } = value;
+    const { query, temporal, efforts, details, operations, eventBuckets, viewHash: _viewHash, ...base } = value;
     if (!(0, validation_1.validateWorkGraphSnapshot)({ ...base, schemaVersion: 1 }).ok || !validateWorkGraphQueryV2(query).ok || !exact(temporal, ['mode', 'observedAt', 'coverage']) || !['live', 'as-of', 'recent'].includes(String(temporal.mode)) || !time(temporal.observedAt) || !exact(temporal.coverage, ['from', 'through', 'complete']) || !time(temporal.coverage.from) || !time(temporal.coverage.through) || temporal.coverage.from > temporal.coverage.through || typeof temporal.coverage.complete !== 'boolean')
         return result(false, value, 'v2 work graph snapshot');
     if (!Array.isArray(efforts) || efforts.length > contractsV2_1.WORK_GRAPH_V2_LIMITS.efforts || !Array.isArray(details) || details.length > contracts_1.WORK_GRAPH_LIMITS.snapshotNodes || !details.every(detail) || !Array.isArray(operations) || operations.length > contracts_1.WORK_GRAPH_LIMITS.snapshotEdges || !Array.isArray(eventBuckets) || eventBuckets.length > contractsV2_1.WORK_GRAPH_V2_LIMITS.eventBuckets)
