@@ -116,6 +116,24 @@ export declare function deriveDocumentFolders(state: State, currentUserId?: stri
     unfiled: string[];
 };
 export declare function useDocumentFolders(options?: UseDocumentFoldersOptions): UseDocumentFoldersResult;
+/**
+ * What an id-only hub signal needs re-read, or null when the signal is merged
+ * directly (a delete, a legacy full event) or names nothing newer than this
+ * picture holds. The folder ids include the local parent chain, so a folder
+ * this viewer no longer has a reason to see comes back as hidden. Exported for
+ * tests.
+ */
+export declare function documentFolderSignalReads(prev: State, event: Record<string, any>): {
+    folderIds: string[];
+    documentIds: string[];
+} | null;
+/**
+ * Merge a `document-folders:read` answer: visible folders replace what is held
+ * (and are shown), hidden ones leave with everything under them, and the named
+ * documents' placements update unless something newer is already held.
+ * Exported for tests.
+ */
+export declare function mergeDocumentFolderRead(prev: State, frame: Record<string, any>): State;
 /** Merge one hub event into the picture; stale versions are ignored. Exported for tests. */
 export declare function mergeDocumentFolderEvent(prev: State, event: Record<string, any>): State;
 export {};

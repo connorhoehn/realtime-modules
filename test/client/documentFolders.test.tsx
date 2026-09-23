@@ -9,7 +9,7 @@
 
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { deriveDocumentFolders, mergeDocumentFolderEvent, positionBetween, useDocumentFolders } from '../../src/client/documents/folders';
+import { deriveDocumentFolders, documentFolderSignalReads, mergeDocumentFolderEvent, mergeDocumentFolderRead, positionBetween, useDocumentFolders } from '../../src/client/documents/folders';
 import type { PipelineRunTransport } from '../../src/client/pipelines';
 
 function makeTransport() {
@@ -75,6 +75,41 @@ describe('useDocumentFolders', () => {
     t.emit({ type: 'document-folders:event', kind: 'documentsMoved', moves: [{ documentId: 'd1', folderId: 'mt', position: 1, version: 1 }, { documentId: 'hidden', folderId: 'mt', position: 1, version: 3 }] });
     expect(result.current.folderOf('d1')).toBe('ra');
     expect(result.current.placements.hidden).toBeUndefined();
+  });
+
+  it('id-only signals: re-reads the named ids (coalesced), shows only what the per-viewer answer shows', async () => {
+    const t = makeTransport();
+    const { result } = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));
+    t.emit(LIST);
+    // A folder this viewer has not seen, and a move of d1 — no names on the wire.
+    t.emit({ type: 'document-folders:event', kind: 'folderUpserted', folderId: 'nf', version: 1 });
+    t.emit({ type: 'document-folders:event', kind: 'documentsMoved', documentIds: ['d1', 'hidden'], versions: [2, 1] });
+    await waitFor(() => expect(sentOf(t.send, 'read')).toHaveLength(1));
+    const [read] = sentOf(t.send, 'read');
+    expect(read.documentIds.sort()).toEqual(['d1', 'hidden']);
+    expect(read.folderIds.sort()).toEqual(['mt', 'nf', 'sp']);
+    expect(result.current.folderOf('d1')).toBe('mt'); // nothing merged from the signal itself
+    // The gateway answers for this viewer: nf is visible (d1 is in it), Meetings still is; `hidden` is not theirs.
+    t.emit({ type: 'document-folders:read', requestId: read.requestId, hiddenFolderIds: [], folders: [folder('nf', 'New folder', 'sp'), folder('sp', 'Sprint planning', null), folder('mt', 'Meetings', 'sp')], documents: [{ documentId: 'd1', folderId: 'nf', position: 1, version: 2 }] });
+    expect(result.current.folderOf('d1')).toBe('nf');
+    expect(result.current.folders.find((f) => f.id === 'nf')).toMatchObject({ name: 'New folder', count: 1 });
+    expect(result.current.placements.hidden).toBeUndefined();
+    // A folder the answer calls hidden leaves, with its subtree; a signal for something already held is not re-read.
+    t.emit({ type: 'document-folders:event', kind: 'folderUpserted', folderId: 'sp', version: 1 });
+    t.emit({ type: 'document-folders:read', hiddenFolderIds: ['ra'], folders: [], documents: [] });
+    expect(result.current.folders.map((f) => f.id).sort()).toEqual(['mt', 'nf', 'sp']);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(sentOf(t.send, 'read')).toHaveLength(1);
+  });
+
+  it('a signal about a folder the viewer cannot see brings no name: the answer names it hidden and nothing appears', async () => {
+    const t = makeTransport();
+    const { result } = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));
+    t.emit(LIST);
+    t.emit({ type: 'document-folders:event', kind: 'folderUpserted', folderId: 'priv', version: 3 });
+    await waitFor(() => expect(sentOf(t.send, 'read')).toHaveLength(1));
+    t.emit({ type: 'document-folders:read', requestId: sentOf(t.send, 'read')[0].requestId, hiddenFolderIds: ['priv'], folders: [], documents: [] });
+    expect(result.current.folders.map((f) => f.id).sort()).toEqual(['mt', 'ra', 'sp']);
   });
 
   it('folder events add, rename and remove folders; a new document starts Unfiled', async () => {
@@ -157,5 +192,16 @@ describe('useDocumentFolders', () => {
     const state = { folders: { a: { ...folder('a', 'A', null), listed: true } }, placements: { x: { documentId: 'x', folderId: 'a', position: 1, version: 1 } } };
     expect(deriveDocumentFolders(state).folders[0]).toMatchObject({ count: 1, directCount: 1 });
     expect(mergeDocumentFolderEvent(state, { kind: 'documentsMoved', moves: [{ documentId: 'x', folderId: null, position: 0, version: 1 }] })).toBe(state);
+  });
+
+  it('pure helpers for id-only signals', () => {
+    const state = { folders: { a: { ...folder('a', 'A', null), listed: true }, b: { ...folder('b', 'B', 'a'), listed: true } }, placements: { x: { documentId: 'x', folderId: 'b', position: 1, version: 2 } } };
+    expect(documentFolderSignalReads(state, { kind: 'folderDeleted', folderId: 'a' })).toBeNull();
+    expect(documentFolderSignalReads(state, { kind: 'documentsMoved', documentIds: ['x'], versions: [2] })).toEqual({ folderIds: [], documentIds: [] });
+    expect(documentFolderSignalReads(state, { kind: 'documentsMoved', documentIds: ['x'], versions: [3] })).toEqual({ folderIds: ['b', 'a'], documentIds: ['x'] });
+    expect(documentFolderSignalReads(state, { kind: 'folderUpserted', folderId: 'b', version: 2 })).toEqual({ folderIds: ['b', 'a'], documentIds: [] });
+    const next = mergeDocumentFolderRead(state, { hiddenFolderIds: ['a'], folders: [], documents: [] });
+    expect(Object.keys(next.folders)).toEqual([]);
+    expect(mergeDocumentFolderRead(state, { folders: [], documents: [{ documentId: 'x', folderId: null, position: 0, version: 1 }] })).toBe(state);
   });
 });

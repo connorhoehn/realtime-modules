@@ -12,9 +12,17 @@
 // viewer (only documents they may read; folders they can see through one of
 // those documents or because they made it) and joins the org hub channel
 // `doc-folders:<orgId>`. Every change anyone makes, on any gateway replica, is
-// published there as a `document-folders:event` and merged here — there is no
-// polling. A reconnect (new session epoch) re-subscribes and replaces the
-// picture, which heals anything missed while offline.
+// signalled there as a `document-folders:event` — ids and versions only
+// (`folderUpserted {folderId, version}`, `folderDeleted {folderId}`,
+// `documentsMoved {documentIds, versions}`), never a folder name, because every
+// org member hears it. This hook answers a signal about something newer than it
+// holds by re-reading just those ids (`read {folderIds, documentIds}`); the
+// gateway answers per viewer (`document-folders:read`: the folders this viewer
+// may see, with names; the named ones it may not, as bare `hiddenFolderIds`;
+// the placements of the named documents it can read). Signals arriving
+// together are coalesced into one read. There is no polling. A reconnect (new
+// session epoch) re-subscribes and replaces the picture, which heals anything
+// missed while offline.
 //
 // ## Counts
 //
@@ -36,6 +44,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.positionBetween = positionBetween;
 exports.deriveDocumentFolders = deriveDocumentFolders;
 exports.useDocumentFolders = useDocumentFolders;
+exports.documentFolderSignalReads = documentFolderSignalReads;
+exports.mergeDocumentFolderRead = mergeDocumentFolderRead;
 exports.mergeDocumentFolderEvent = mergeDocumentFolderEvent;
 const react_1 = require("react");
 const transport_1 = require("./transport");
@@ -127,6 +137,24 @@ function useDocumentFolders(options = {}) {
     stateRef.current = state;
     const sendRef = (0, react_1.useRef)(send);
     sendRef.current = send;
+    // Signals waiting to be re-read, coalesced into one `read` per tick.
+    const rereadRef = (0, react_1.useRef)({ folderIds: new Set(), documentIds: new Set(), timer: null });
+    const flushReread = (0, react_1.useCallback)(() => {
+        const q = rereadRef.current;
+        q.timer = null;
+        const folderIds = [...q.folderIds];
+        const documentIds = [...q.documentIds];
+        q.folderIds.clear();
+        q.documentIds.clear();
+        if (!folderIds.length && !documentIds.length)
+            return;
+        try {
+            sendRef.current?.({ service: SERVICE, action: 'read', requestId: newRequestId(), folderIds, documentIds });
+        }
+        catch { /* socket gone; the next subscribe heals */ }
+    }, []);
+    (0, react_1.useEffect)(() => () => { const q = rereadRef.current; if (q.timer)
+        clearTimeout(q.timer); q.timer = null; }, []);
     // Inbound frames: the list, mutation answers, hub events, and the CRDT
     // service's own create/delete broadcasts (a new document starts Unfiled).
     (0, react_1.useEffect)(() => {
@@ -168,7 +196,21 @@ function useDocumentFolders(options = {}) {
                 return;
             }
             if (frame.type === 'document-folders:event') {
+                const ask = documentFolderSignalReads(stateRef.current, frame);
+                if (ask) {
+                    for (const id of ask.folderIds)
+                        rereadRef.current.folderIds.add(id);
+                    for (const id of ask.documentIds)
+                        rereadRef.current.documentIds.add(id);
+                    if (!rereadRef.current.timer)
+                        rereadRef.current.timer = setTimeout(flushReread, 0);
+                    return;
+                }
                 setState((prev) => mergeEvent(prev, frame));
+                return;
+            }
+            if (frame.type === 'document-folders:read') {
+                setState((prev) => mergeDocumentFolderRead(prev, frame));
                 return;
             }
             if (frame.type === 'crdt' && frame.action === 'documentCreated' && frame.document?.id) {
@@ -186,7 +228,7 @@ function useDocumentFolders(options = {}) {
                 });
             }
         });
-    }, [active, onMessage]);
+    }, [active, onMessage, flushReread]);
     // Subscribe once per session (a reconnect is a new epoch → a fresh picture).
     (0, react_1.useEffect)(() => {
         if (!active || !send)
@@ -304,6 +346,96 @@ function useDocumentFolders(options = {}) {
         moveDocument,
         refresh,
     };
+}
+/**
+ * What an id-only hub signal needs re-read, or null when the signal is merged
+ * directly (a delete, a legacy full event) or names nothing newer than this
+ * picture holds. The folder ids include the local parent chain, so a folder
+ * this viewer no longer has a reason to see comes back as hidden. Exported for
+ * tests.
+ */
+function documentFolderSignalReads(prev, event) {
+    const folderIds = new Set();
+    const documentIds = new Set();
+    if (event.kind === 'folderUpserted' && !event.folder && typeof event.folderId === 'string') {
+        const cur = prev.folders[event.folderId];
+        if (cur && typeof event.version === 'number' && cur.version >= event.version)
+            return { folderIds: [], documentIds: [] };
+        folderIds.add(event.folderId);
+        for (const id of ancestry(prev.folders, cur?.parentFolderId))
+            folderIds.add(id);
+    }
+    else if (event.kind === 'documentsMoved' && !Array.isArray(event.moves) && Array.isArray(event.documentIds)) {
+        const versions = Array.isArray(event.versions) ? event.versions : [];
+        event.documentIds.forEach((raw, i) => {
+            if (typeof raw !== 'string')
+                return;
+            const cur = prev.placements[raw];
+            const v = versions[i];
+            if (cur && !cur.pending && typeof v === 'number' && cur.version >= v)
+                return;
+            documentIds.add(raw);
+            // Where it was: that folder may now be empty for this viewer.
+            for (const id of ancestry(prev.folders, cur?.folderId))
+                folderIds.add(id);
+        });
+    }
+    else {
+        return null;
+    }
+    return { folderIds: [...folderIds], documentIds: [...documentIds] };
+}
+/**
+ * Merge a `document-folders:read` answer: visible folders replace what is held
+ * (and are shown), hidden ones leave with everything under them, and the named
+ * documents' placements update unless something newer is already held.
+ * Exported for tests.
+ */
+function mergeDocumentFolderRead(prev, frame) {
+    let folders = null;
+    const hidden = Array.isArray(frame.hiddenFolderIds) ? frame.hiddenFolderIds.filter((x) => typeof x === 'string') : [];
+    if (hidden.length) {
+        const gone = new Set(hidden);
+        const all = Object.values(prev.folders);
+        // A hidden folder hides its subtree (a visible folder's ancestors are always visible).
+        for (let grew = true; grew;) {
+            grew = false;
+            for (const f of all)
+                if (!gone.has(f.id) && f.parentFolderId && gone.has(f.parentFolderId)) {
+                    gone.add(f.id);
+                    grew = true;
+                }
+        }
+        for (const id of gone) {
+            if (!prev.folders[id])
+                continue;
+            folders ??= { ...prev.folders };
+            delete folders[id];
+        }
+    }
+    for (const f of (Array.isArray(frame.folders) ? frame.folders : [])) {
+        if (!f?.id)
+            continue;
+        const cur = (folders ?? prev.folders)[f.id];
+        if (cur && cur.version > f.version)
+            continue;
+        const { count: _c, directCount: _d, ...rec } = f;
+        folders ??= { ...prev.folders };
+        folders[f.id] = { ...rec, listed: true };
+    }
+    let placements = null;
+    for (const p of (Array.isArray(frame.documents) ? frame.documents : [])) {
+        if (!p?.documentId)
+            continue;
+        const cur = prev.placements[p.documentId];
+        if (cur && !cur.pending && cur.version >= p.version)
+            continue;
+        placements ??= { ...prev.placements };
+        placements[p.documentId] = { documentId: p.documentId, folderId: p.folderId ?? null, position: p.position, version: p.version };
+    }
+    if (!folders && !placements)
+        return prev;
+    return { folders: folders ?? prev.folders, placements: placements ?? prev.placements };
 }
 /** Merge one hub event into the picture; stale versions are ignored. Exported for tests. */
 function mergeDocumentFolderEvent(prev, event) {
