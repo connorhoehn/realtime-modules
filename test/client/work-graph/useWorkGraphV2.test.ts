@@ -149,4 +149,48 @@ describe('useWorkGraph schemaVersion 2 opt-in', () => {
     act(() => test.sockets[0].request.onMessage({ kind: 'activity', subscriptionGeneration: 'gen_1', snapshot: snapshotV2() }));
     await waitFor(() => expect(test.sockets.length).toBe(2));
   });
+
+  test('applies a schemaVersion 2 delta (graph ops + view) without refetching (NFR #22)', async () => {
+    const test = harness([snapshotV2(), snapshotV2()]);
+    const { result } = renderHook(() => useWorkGraph({ ...v2Options, transport: test.transport }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    const at = windowEnd;
+    const change = { id: 'change', kind: 'change', title: 'Document change', status: 'completed', disclosure: 'details', updatedAt: at, capabilities: [] };
+    const { query, temporal, operations, eventBuckets } = snapshotV2();
+    const view = {
+      query, temporal, operations, eventBuckets,
+      efforts: [{ id: 'effort.meeting', anchorNodeId: 'meeting', title: 'Sprint review', subtitle: 'v3 ready', nodeIds: ['meeting', 'deck', 'change'], edgeIds: ['produced'], contextNodeIds: [] }],
+      details: [{ nodeId: 'change', summary: 'Edited', lines: [] }],
+    };
+    const batch = {
+      schemaVersion: 2, subscriptionGeneration: 'gen_1', previousWatermark: 10, watermark: 11,
+      cursor: 'cursor_11', policyRevision: 'policy_1', operations: [{ kind: 'upsert-node', node: change }], view,
+    };
+    act(() => test.sockets[0].request.onMessage({ kind: 'delta', batch }));
+    expect(result.current.graph.nodes.change?.title).toBe('Document change');
+    expect(result.current.graph.watermark).toBe(11);
+    expect(result.current.graph.activity?.efforts[0].subtitle).toBe('v3 ready');
+    expect(result.current.graph.activity?.details.map((d) => d.nodeId)).toEqual(['change']);
+    expect(test.fetchSnapshot).toHaveBeenCalledTimes(1);
+    expect(test.sockets).toHaveLength(1);
+
+    // A replayed (already applied) batch is a no-op, not a recovery.
+    act(() => test.sockets[0].request.onMessage({ kind: 'delta', batch }));
+    expect(test.fetchSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  test('a v2 delta whose view points at a node the viewer does not hold recovers with a fresh snapshot', async () => {
+    const test = harness([snapshotV2(), snapshotV2()]);
+    const { result } = renderHook(() => useWorkGraph({ ...v2Options, transport: test.transport }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    const { query, temporal, operations, eventBuckets, efforts } = snapshotV2();
+    const batch = {
+      schemaVersion: 2, subscriptionGeneration: 'gen_1', previousWatermark: 10, watermark: 11,
+      cursor: 'cursor_11', policyRevision: 'policy_1', operations: [],
+      view: { query, temporal, operations, eventBuckets, efforts, details: [{ nodeId: 'hidden', summary: 'x', lines: [] }] },
+    };
+    act(() => test.sockets[0].request.onMessage({ kind: 'delta', batch }));
+    await waitFor(() => expect(test.fetchSnapshot).toHaveBeenCalledTimes(2));
+  });
 });
+

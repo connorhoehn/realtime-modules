@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { WorkGraphSnapshot, WorkGraphStreamMessage } from '../../work-graph/contracts';
+import type { WorkGraphDeltaBatch, WorkGraphSnapshot, WorkGraphStreamMessage } from '../../work-graph/contracts';
 import type { WorkGraphSnapshotV2 } from '../../work-graph/contractsV2';
 import { validateWorkGraphDeltaBatch, validateWorkGraphSnapshot } from '../../work-graph/validation';
 import { validateWorkGraphQueryV2, validateWorkGraphSnapshotV2 } from '../../work-graph/validationV2';
@@ -178,6 +178,63 @@ function parseActivityMessage(value: unknown): {
   };
 }
 
+/**
+ * A schemaVersion 2 delta: the v1 batch plus the refreshed activity view the
+ * gateway attaches to every batch. Until this parser, the v1 validator saw the
+ * extra `view` key, rejected the frame and the hook refetched the whole
+ * snapshot on every change — no v2 panel ever applied a delta.
+ */
+function parseDeltaV2(value: unknown): { batch: WorkGraphDeltaBatch; view: Record<string, unknown> } | null {
+  if (!exactRecord(value, ['kind', 'batch']) || value.kind !== 'delta') return null;
+  const raw = value.batch;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { view, schemaVersion, ...rest } = raw as Record<string, unknown>;
+  if (schemaVersion !== 2 || view === null || typeof view !== 'object' || Array.isArray(view)) return null;
+  const batch = validateWorkGraphDeltaBatch({ ...rest, schemaVersion: 1 });
+  return batch.ok ? { batch: batch.value, view: view as Record<string, unknown> } : null;
+}
+
+/**
+ * The view is checked against the graph the delta just produced, with the same
+ * validator a v2 snapshot passes: every effort member, detail and lease must
+ * point at a node or edge this viewer actually holds.
+ */
+function deltaActivity(
+  state: ClientWorkGraphState,
+  batch: WorkGraphDeltaBatch,
+  view: Record<string, unknown>,
+): ClientWorkGraphActivity | null {
+  const { query, temporal, efforts, details, operations, eventBuckets } = view;
+  if (Object.keys(view).length !== 6) return null;
+  const validated = validateWorkGraphSnapshotV2({
+    schemaVersion: 2,
+    scope: {
+      personId: state.scope.personId,
+      day: state.scope.day,
+      timezone: state.scope.timezone,
+      policyRevision: batch.policyRevision,
+    },
+    revision: batch.watermark,
+    watermark: batch.watermark,
+    cursor: batch.cursor,
+    nodes: Object.values(state.nodes),
+    edges: Object.values(state.edges),
+    sources: Object.values(state.sources),
+    partial: state.status === 'partial',
+    query, temporal, efforts, details, operations, eventBuckets,
+  });
+  if (!validated.ok) return null;
+  const value = validated.value;
+  return {
+    query: value.query,
+    temporal: value.temporal,
+    efforts: value.efforts,
+    details: value.details,
+    operations: value.operations,
+    eventBuckets: value.eventBuckets,
+  };
+}
+
 function defaultGeneration(sequence: number): string {
   const random = typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -329,6 +386,24 @@ export function useWorkGraph({
           const refresh = parseActivityMessage(rawMessage);
           if (refresh) {
             publish(applyWorkGraphActivity(graph, refresh.activity, refresh));
+            return;
+          }
+          const deltaV2 = parseDeltaV2(rawMessage);
+          if (deltaV2) {
+            const reduced = reduceWorkGraphStream(graph, { kind: 'delta', batch: deltaV2.batch });
+            if (reduced.status === 'refetch-required' || reduced.status === 'invalidated') {
+              publish(reduced);
+              recover(0);
+              return;
+            }
+            // A batch at or below the current watermark changes nothing.
+            if (reduced === graph) return;
+            const activity = deltaActivity(reduced, deltaV2.batch, deltaV2.view);
+            if (!activity) {
+              recover(reconnectDelayMs);
+              return;
+            }
+            publish(applyWorkGraphActivity(reduced, activity, deltaV2.batch));
             return;
           }
         }

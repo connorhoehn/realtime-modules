@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.82.1 — 2026-09-23
+
+- `useWorkGraph` (schemaVersion 2) applies the gateway's v2 delta frames. Every v2 batch
+  carries the refreshed activity `view` beside the v1 operations, and the hook ran it through
+  the v1 validator, whose exact-key check rejected the `view` key — so the hook recovered
+  with a full snapshot refetch on EVERY change, and no v2 panel ever applied a delta. The
+  graph half now goes through the v1 reducer and the view is validated against the graph the
+  delta produced, with the v2 snapshot validator (every effort member, detail and lease must
+  be a node/edge the viewer holds); an invalid view still recovers.
+
 ## 0.82.0 — 2026-09-23
 
 - Presence: one entry per socket, shared by every presence user (`presenceEntry.ts`). The

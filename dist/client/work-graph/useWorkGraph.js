@@ -81,6 +81,62 @@ function parseActivityMessage(value) {
         activity: { query, temporal, efforts, details, operations, eventBuckets },
     };
 }
+/**
+ * A schemaVersion 2 delta: the v1 batch plus the refreshed activity view the
+ * gateway attaches to every batch. Until this parser, the v1 validator saw the
+ * extra `view` key, rejected the frame and the hook refetched the whole
+ * snapshot on every change — no v2 panel ever applied a delta.
+ */
+function parseDeltaV2(value) {
+    if (!exactRecord(value, ['kind', 'batch']) || value.kind !== 'delta')
+        return null;
+    const raw = value.batch;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
+        return null;
+    const { view, schemaVersion, ...rest } = raw;
+    if (schemaVersion !== 2 || view === null || typeof view !== 'object' || Array.isArray(view))
+        return null;
+    const batch = (0, validation_1.validateWorkGraphDeltaBatch)({ ...rest, schemaVersion: 1 });
+    return batch.ok ? { batch: batch.value, view: view } : null;
+}
+/**
+ * The view is checked against the graph the delta just produced, with the same
+ * validator a v2 snapshot passes: every effort member, detail and lease must
+ * point at a node or edge this viewer actually holds.
+ */
+function deltaActivity(state, batch, view) {
+    const { query, temporal, efforts, details, operations, eventBuckets } = view;
+    if (Object.keys(view).length !== 6)
+        return null;
+    const validated = (0, validationV2_1.validateWorkGraphSnapshotV2)({
+        schemaVersion: 2,
+        scope: {
+            personId: state.scope.personId,
+            day: state.scope.day,
+            timezone: state.scope.timezone,
+            policyRevision: batch.policyRevision,
+        },
+        revision: batch.watermark,
+        watermark: batch.watermark,
+        cursor: batch.cursor,
+        nodes: Object.values(state.nodes),
+        edges: Object.values(state.edges),
+        sources: Object.values(state.sources),
+        partial: state.status === 'partial',
+        query, temporal, efforts, details, operations, eventBuckets,
+    });
+    if (!validated.ok)
+        return null;
+    const value = validated.value;
+    return {
+        query: value.query,
+        temporal: value.temporal,
+        efforts: value.efforts,
+        details: value.details,
+        operations: value.operations,
+        eventBuckets: value.eventBuckets,
+    };
+}
 function defaultGeneration(sequence) {
     const random = typeof globalThis.crypto?.randomUUID === 'function'
         ? globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -222,6 +278,25 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                     const refresh = parseActivityMessage(rawMessage);
                     if (refresh) {
                         publish((0, reduceSnapshot_1.applyWorkGraphActivity)(graph, refresh.activity, refresh));
+                        return;
+                    }
+                    const deltaV2 = parseDeltaV2(rawMessage);
+                    if (deltaV2) {
+                        const reduced = (0, reduceSnapshot_1.reduceWorkGraphStream)(graph, { kind: 'delta', batch: deltaV2.batch });
+                        if (reduced.status === 'refetch-required' || reduced.status === 'invalidated') {
+                            publish(reduced);
+                            recover(0);
+                            return;
+                        }
+                        // A batch at or below the current watermark changes nothing.
+                        if (reduced === graph)
+                            return;
+                        const activity = deltaActivity(reduced, deltaV2.batch, deltaV2.view);
+                        if (!activity) {
+                            recover(reconnectDelayMs);
+                            return;
+                        }
+                        publish((0, reduceSnapshot_1.applyWorkGraphActivity)(reduced, activity, deltaV2.batch));
                         return;
                     }
                 }
