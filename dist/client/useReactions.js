@@ -172,6 +172,11 @@ function useReactions(channel, opts) {
     // delivers reaction broadcasts to subscribed clients.
     (0, react_1.useEffect)(() => {
         setAllReactions([]);
+        // A host whose channel has not resolved yet passes '' (hooks cannot be
+        // called conditionally). The gateway answers an empty channel with
+        // SERVICE_INTERNAL_ERROR "Channel name is required", once per mount.
+        if (!channel)
+            return undefined;
         send({
             service: 'reaction',
             action: 'subscribe',
@@ -190,6 +195,8 @@ function useReactions(channel, opts) {
         // while connectionState reads 'connected'.
     }, [channel, send, sessionEpoch]);
     const react = (0, react_1.useCallback)((emoji, reactOpts) => {
+        if (!channelRef.current)
+            return;
         const resolvedTargetId = reactOpts?.targetId ?? targetIdRef.current;
         const frame = {
             service: 'reaction',
@@ -204,6 +211,8 @@ function useReactions(channel, opts) {
         send(frame);
     }, [send]);
     const unreact = (0, react_1.useCallback)((emoji, unreactOpts) => {
+        if (!channelRef.current)
+            return;
         const resolvedTargetId = unreactOpts?.targetId ?? targetIdRef.current;
         send({
             service: 'reaction',

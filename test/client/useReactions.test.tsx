@@ -313,6 +313,19 @@ describe('useReactions — gateway-real protocol', () => {
     ]);
   });
 
+  it('sends nothing for an unresolved (empty) channel, then subscribes once it resolves', () => {
+    // The gateway answers channel '' with "Channel name is required".
+    const { ctx, sent } = makeGatewayContext();
+    let channel = '';
+    const { result, rerender } = renderHook(() => useReactions(channel), { wrapper: makeWrapper(ctx) });
+    act(() => { result.current.react('\u{1F525}'); result.current.unreact('\u{1F525}'); });
+    expect(sent).toEqual([]);
+
+    channel = 'ch-1';
+    rerender();
+    expect(sent).toEqual([expect.objectContaining({ action: 'subscribe', channel: 'ch-1' })]);
+  });
+
   it('reaction_received envelope adds an entry (Reaction nested under data)', () => {
     const { ctx, emit } = makeGatewayContext();
     const { result } = renderHook(() => useReactions('ch-1'), { wrapper: makeWrapper(ctx) });

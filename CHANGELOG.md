@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.79.2 — 2026-09-22
+
+- `useReactions`: an empty channel (a host whose channel has not resolved) sends no
+  subscribe/unsubscribe/send/remove frame; the gateway answered each with
+  `SERVICE_INTERNAL_ERROR` "Channel name is required".
+
 ## 0.79.1 — 2026-09-22
 
 - `useWorkGraph`: a server `reset-required` for `gap`/`replay-unavailable` keeps the last

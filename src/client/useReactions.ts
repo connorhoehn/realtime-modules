@@ -245,6 +245,10 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
   // delivers reaction broadcasts to subscribed clients.
   useEffect(() => {
     setAllReactions([]);
+    // A host whose channel has not resolved yet passes '' (hooks cannot be
+    // called conditionally). The gateway answers an empty channel with
+    // SERVICE_INTERNAL_ERROR "Channel name is required", once per mount.
+    if (!channel) return undefined;
     send({
       service: 'reaction',
       action: 'subscribe',
@@ -265,6 +269,7 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
 
   const react = useCallback(
     (emoji: string, reactOpts?: ReactOpts) => {
+      if (!channelRef.current) return;
       const resolvedTargetId = reactOpts?.targetId ?? targetIdRef.current;
       const frame: ClientFramePayload<'client.reaction.send'> = {
         service: 'reaction',
@@ -281,6 +286,7 @@ export function useReactions(channel: string, opts?: UseReactionsOpts): UseReact
 
   const unreact = useCallback(
     (emoji: string, unreactOpts?: UnreactOpts) => {
+      if (!channelRef.current) return;
       const resolvedTargetId = unreactOpts?.targetId ?? targetIdRef.current;
       send({
         service: 'reaction',
