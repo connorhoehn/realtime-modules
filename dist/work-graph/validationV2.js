@@ -99,7 +99,8 @@ function detail(value) {
         return false;
     if (value.artifact !== undefined) {
         const artifact = value.artifact;
-        if (!exact(artifact, ['mediaKind', 'revisions'], ['pending', 'pageCount'])
+        if (!exact(artifact, ['mediaKind', 'revisions'], ['pending', 'pageCount', 'heading'])
+            || (artifact.heading !== undefined && !label(artifact.heading))
             || (artifact.pageCount !== undefined && (!integer(artifact.pageCount) || artifact.pageCount === 0)) || !['presentation', 'document', 'image'].includes(String(artifact.mediaKind)) || !Array.isArray(artifact.revisions) || artifact.revisions.length > contractsV2_1.WORK_GRAPH_V2_LIMITS.revisions)
             return false;
         let lastCreation = '';

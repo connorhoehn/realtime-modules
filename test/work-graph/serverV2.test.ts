@@ -174,6 +174,12 @@ describe('shared v2 server helpers', () => {
       { nodeId: 'transcript', transcript: { segments: [{ id: 's1', at: at('12:42:00'), speaker: 'Connor', text: 'Release risks before noon.' }], askEnabled: true } },
     ] as never } });
     expect(ok.ok).toBe(true);
+    const deckDetail = (heading: unknown) => ({ nodeId: 'deck', artifact: { mediaKind: 'presentation', heading, revisions: [{ id: 'v2', label: 'v2', createdAt: at('13:31:00') }] } });
+    const titled = buildWorkGraphSnapshotV2({ snapshot, query, activity: { ...activity, details: [deckDetail('Audit E2E')] as never } });
+    expect(titled.ok).toBe(true);
+    for (const bad of ['', 'x'.repeat(161), 42]) {
+      expect(buildWorkGraphSnapshotV2({ snapshot, query, activity: { ...activity, details: [deckDetail(bad)] as never } }).ok).toBe(false);
+    }
     const dangling = buildWorkGraphSnapshotV2({ snapshot, query, activity: { ...activity, details: [
       { nodeId: 'deck', sources: [{ nodeId: 'not-a-node', label: 'Hidden source' }] },
     ] as never } });

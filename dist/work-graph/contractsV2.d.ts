@@ -114,6 +114,12 @@ export interface ViewerWorkActivityDetail {
         mediaKind: 'presentation' | 'document' | 'image';
         /** Total addressable units in the newest available revision. */
         pageCount?: number;
+        /**
+         * The newest revision's own heading (a deck's title slide), sent only
+         * when it differs from the node's title — "Titled “Audit E2E”" under a
+         * document named `audit-e2e-1790150600`. Plain text, ≤ labelLength.
+         */
+        heading?: string;
         revisions: ViewerArtifactRevision[];
         /** `message` is a sanitized source failure summary, never a stack or path. */
         pending?: {

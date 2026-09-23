@@ -72,7 +72,8 @@ function detail(value: unknown): value is ViewerWorkActivityDetail {
   if (value.feedback !== undefined && (!exact(value.feedback, ['count', 'through']) || !integer(value.feedback.count) || !time(value.feedback.through))) return false;
   if (value.artifact !== undefined) {
     const artifact = value.artifact;
-    if (!exact(artifact, ['mediaKind', 'revisions'], ['pending', 'pageCount'])
+    if (!exact(artifact, ['mediaKind', 'revisions'], ['pending', 'pageCount', 'heading'])
+      || (artifact.heading !== undefined && !label(artifact.heading))
       || (artifact.pageCount !== undefined && (!integer(artifact.pageCount) || artifact.pageCount === 0)) || !['presentation', 'document', 'image'].includes(String(artifact.mediaKind)) || !Array.isArray(artifact.revisions) || artifact.revisions.length > WORK_GRAPH_V2_LIMITS.revisions) return false;
     let lastCreation = '';
     const revisionIds = new Set<string>();
