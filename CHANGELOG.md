@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.93.0 — 2026-09-23
+
+- **client/documents:** `useRunDraft` returns `startNew()` and `history`.
+  `startNew()` clears the shown draft (`phase: 'none'`) and mints a fresh
+  requestId, so the Run draft pane can start a second draft after one was
+  dispatched. The draft that was showing moves to `history` (newest first); its
+  `doc:run_draft_updated` signals keep that entry current, and list re-reads
+  (reconnect, other drafts' signals) never bring it — or anything older — back
+  as the current draft. Refused while a dispatch is in flight. Additive.
+
 ## 0.92.0 — 2026-09-23
 
 - **work-graph (NFR #126):** `ViewerWorkActivityDetail.pause?: WorkRunPause`

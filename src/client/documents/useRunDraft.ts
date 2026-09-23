@@ -56,6 +56,17 @@ export interface UseRunDraftResult {
   /** Set by a 409 on save (the draft changed elsewhere) or dispatch (refused / in progress). */
   conflict: string | null;
   refresh: () => void;
+  /**
+   * Start a fresh draft: `draft` becomes `null` (phase `none`) and `draftId` a
+   * newly minted requestId, so the next `save` creates a second draft instead
+   * of hitting the dispatched one. The draft that was showing moves to
+   * `history` and stays readable there (its signals keep it current); list
+   * re-reads never bring it — or anything older — back as the current draft.
+   * Refused while a dispatch is in flight. Returns the new `draftId`.
+   */
+  startNew: () => string;
+  /** Drafts set aside by `startNew`, newest first, kept up to date. Empty until then. */
+  history: RunDraft[];
 }
 
 export function useRunDraft(documentId: string | null | undefined, opts: UseRunDraftOptions): UseRunDraftResult {
@@ -69,6 +80,11 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
   const [busy, setBusy] = useState<UseRunDraftResult['busy']>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [history, setHistory] = useState<RunDraft[]>([]);
+  // Drafts `startNew` set aside, and the newest server `updatedAt` among them:
+  // a list read only offers drafts newer than that as the current one.
+  const retired = useRef<Map<string, RunDraft>>(new Map());
+  const retiredUntil = useRef<string>('');
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const draftRef = useRef<RunDraft | null>(null);
@@ -78,19 +94,35 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
   const dispatching = useRef<Promise<RunDraft> | null>(null);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
+  const publishHistory = useCallback(() => {
+    setHistory([...retired.current.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0)));
+  }, []);
+
+  /** A newer copy of a set-aside draft updates `history`; true when `d` was one. */
+  const acceptRetired = useCallback((d: RunDraft): boolean => {
+    const prev = retired.current.get(d.draftId);
+    if (!prev) return false;
+    if (d.revision >= prev.revision) { retired.current.set(d.draftId, d); publishHistory(); }
+    return true;
+  }, [publishHistory]);
+
   const accept = useCallback((d: RunDraft | null) => {
     if (d && d.documentId !== docRef.current) return;
+    if (d && acceptRetired(d)) return;
     const cur = draftRef.current;
     if (d && cur && cur.draftId === d.draftId && d.revision < cur.revision) return;
     // A replaced draft means the minted id was used: mint the next one.
     if (d && d.draftId === nextIdRef.current) nextIdRef.current = newWorkItemId();
     draftRef.current = d;
     setDraft(d);
-  }, []);
+  }, [acceptRetired]);
 
   useEffect(() => {
     draftRef.current = null;
     setDraft(null);
+    retired.current = new Map();
+    retiredUntil.current = '';
+    setHistory([]);
     setConflict(null);
     setError(undefined);
     nextIdRef.current = newWorkItemId();
@@ -104,7 +136,10 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
     fetchRunDrafts(apiBaseUrl, idToken, documentId, { signal: controller.signal })
       .then((drafts) => {
         if (!alive.current || controller.signal.aborted) return;
-        const cur = currentRunDraft(drafts);
+        // Set-aside drafts refresh `history`; the current one is chosen from
+        // what came after them (startNew).
+        const fresh = drafts.filter((d) => !acceptRetired(d) && (!retiredUntil.current || d.updatedAt > retiredUntil.current));
+        const cur = currentRunDraft(fresh);
         draftRef.current = null; // the list read is authoritative
         accept(cur);
         setError(undefined);
@@ -115,7 +150,7 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
       })
       .finally(() => { if (alive.current && !controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [enabled, apiBaseUrl, idToken, documentId, tick, accept]);
+  }, [enabled, apiBaseUrl, idToken, documentId, tick, accept, acceptRetired]);
 
   useEffect(() => {
     if (!enabled || !documentId || !send || !onMessage || !idToken) return;
@@ -131,8 +166,12 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
       if (!signal || signal.type !== 'doc:run_draft_updated' || signal.documentId !== documentId) return;
       const cur = draftRef.current;
       if (cur && cur.draftId === signal.draftId && signal.revision > 0 && signal.revision <= cur.revision) return;
-      // A draft other than the one shown: the list decides which is current.
-      if (cur && cur.draftId !== signal.draftId) { refresh(); return; }
+      const old = retired.current.get(signal.draftId);
+      if (old && signal.revision > 0 && signal.revision <= old.revision) return;
+      // A draft other than the one shown (and not one set aside): the list
+      // decides which is current. `startNew` leaves nothing shown, so any
+      // other draft goes through the list too.
+      if (!old && (cur ? cur.draftId !== signal.draftId : retired.current.size > 0)) { refresh(); return; }
       fetchRunDraft(apiBaseUrl, idToken, documentId, signal.draftId)
         .then((d) => { if (alive.current) accept(d); })
         .catch(() => { /* the next signal or reconnect re-reads it */ });
@@ -210,6 +249,21 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
     }
   }, [apiBaseUrl, idToken]);
 
+  const startNew = useCallback((): string => {
+    if (dispatching.current) throw new Error('A dispatch is in flight; wait for it before starting a new draft');
+    const cur = draftRef.current;
+    if (cur) {
+      retired.current.set(cur.draftId, cur);
+      if (cur.updatedAt > retiredUntil.current) retiredUntil.current = cur.updatedAt;
+      publishHistory();
+    }
+    if (!cur || cur.draftId === nextIdRef.current) nextIdRef.current = newWorkItemId();
+    draftRef.current = null;
+    setDraft(null);
+    setConflict(null);
+    return nextIdRef.current;
+  }, [publishHistory]);
+
   return {
     draft,
     phase: runDraftPhase(draft),
@@ -222,5 +276,7 @@ export function useRunDraft(documentId: string | null | undefined, opts: UseRunD
     busy,
     conflict,
     refresh,
+    startNew,
+    history,
   };
 }

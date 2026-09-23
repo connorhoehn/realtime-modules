@@ -23,6 +23,17 @@ export interface UseRunDraftResult {
     /** Set by a 409 on save (the draft changed elsewhere) or dispatch (refused / in progress). */
     conflict: string | null;
     refresh: () => void;
+    /**
+     * Start a fresh draft: `draft` becomes `null` (phase `none`) and `draftId` a
+     * newly minted requestId, so the next `save` creates a second draft instead
+     * of hitting the dispatched one. The draft that was showing moves to
+     * `history` and stays readable there (its signals keep it current); list
+     * re-reads never bring it — or anything older — back as the current draft.
+     * Refused while a dispatch is in flight. Returns the new `draftId`.
+     */
+    startNew: () => string;
+    /** Drafts set aside by `startNew`, newest first, kept up to date. Empty until then. */
+    history: RunDraft[];
 }
 export declare function useRunDraft(documentId: string | null | undefined, opts: UseRunDraftOptions): UseRunDraftResult;
 //# sourceMappingURL=useRunDraft.d.ts.map

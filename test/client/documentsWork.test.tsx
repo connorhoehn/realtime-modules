@@ -333,6 +333,63 @@ describe('useRunDraft', () => {
     emit({ type: 'doc:run_draft_updated', channel: 'doc-work:d1', payload: { documentId: 'd1', draftId: 'dr1', status: 'dispatched', revision: 4, runId: 'run1' } });
     await waitFor(() => expect(result.current.draft?.revision).toBe(4));
   });
+
+  it('startNew: a fresh draft after a dispatched one; the dispatched draft stays readable in history and never comes back as current', async () => {
+    const DISPATCHED: RunDraft = { ...DRAFT, status: 'dispatched', runId: 'run1', revision: 3, updatedAt: '2026-09-23T10:05:00.000Z' };
+    let listed: RunDraft[] = [DISPATCHED];
+    route('GET', /\/run-drafts$/, () => response({ drafts: listed }));
+    route('GET', /\/run-drafts\/dr1$/, () => response({ ...DISPATCHED, revision: 5, runStatus: 'cancelled' }));
+    const puts: string[] = [];
+    route('PUT', /\/run-drafts\/[^/]+$/, (url, init) => {
+      const draftId = url.split('/').pop()!;
+      puts.push(draftId);
+      return response({ ...DRAFT, ...JSON.parse(String(init?.body)), draftId, revision: 1, updatedAt: '2026-09-23T10:10:00.000Z' });
+    });
+    const { transport, emit } = makeTransport();
+    const { result } = renderHook(() => useRunDraft('d1', { apiBaseUrl: API, idToken: 't', transport }));
+    await waitFor(() => expect(result.current.phase).toBe('dispatched'));
+    expect(result.current.draftId).not.toBe('dr1');
+    expect(result.current.history).toEqual([]);
+
+    let fresh = '';
+    act(() => { fresh = result.current.startNew(); });
+    expect(result.current.draft).toBeNull();
+    expect(result.current.phase).toBe('none');
+    expect(result.current.draftId).toBe(fresh);
+    expect(fresh).not.toBe('dr1');
+    expect(result.current.history.map((d) => d.draftId)).toEqual(['dr1']);
+
+    // A reconnect / list re-read does not bring the dispatched draft back.
+    act(() => { result.current.refresh(); });
+    await waitFor(() => expect(calls('GET', /\/run-drafts$/).length).toBeGreaterThanOrEqual(2));
+    expect(result.current.draft).toBeNull();
+
+    // Its signal keeps the history entry current (Stop pressed elsewhere).
+    emit({ type: 'doc:run_draft_updated', channel: 'doc-work:d1', payload: { documentId: 'd1', draftId: 'dr1', status: 'dispatched', revision: 5, runId: 'run1' } });
+    await waitFor(() => expect(result.current.history[0].revision).toBe(5));
+    expect(result.current.draft).toBeNull();
+
+    // The next save creates the second draft under the fresh id.
+    await act(async () => { await result.current.save({ pipelineId: 'p-x', instruction: 'Again' }); });
+    expect(puts).toEqual([fresh]);
+    expect(result.current.draft).toMatchObject({ draftId: fresh, status: 'draft', instruction: 'Again' });
+    listed = [DISPATCHED, { ...DRAFT, draftId: fresh, instruction: 'Again', updatedAt: '2026-09-23T10:10:00.000Z' }];
+    act(() => { result.current.refresh(); });
+    await waitFor(() => expect(calls('GET', /\/run-drafts$/).length).toBeGreaterThanOrEqual(3));
+    expect(result.current.draft?.draftId).toBe(fresh);
+    expect(result.current.history.map((d) => d.draftId)).toEqual(['dr1']);
+  });
+
+  it('startNew is refused while a dispatch is in flight', async () => {
+    route('GET', /\/run-drafts$/, () => response({ drafts: [DRAFT] }));
+    route('POST', /\/dispatch$/, () => new Promise(() => { /* never answers */ }));
+    const { transport } = makeTransport();
+    const { result } = renderHook(() => useRunDraft('d1', { apiBaseUrl: API, idToken: 't', transport }));
+    await waitFor(() => expect(result.current.draft?.draftId).toBe('dr1'));
+    act(() => { void result.current.dispatch().catch(() => undefined); });
+    expect(() => result.current.startNew()).toThrow(/dispatch is in flight/);
+    expect(result.current.draft?.draftId).toBe('dr1');
+  });
 });
 
 describe('useRunEstimate', () => {
