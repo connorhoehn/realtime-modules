@@ -29,8 +29,18 @@ export interface WorkGraphSnapshotRequest {
 }
 export interface WorkGraphSocketRequest {
     scope: WorkGraphClientScope;
-    cursor: string;
+    /** Absent only with `awaitAccess: 1`: there is no snapshot to continue from. */
+    cursor?: string;
     subscriptionGeneration: string;
+    /**
+     * The snapshot was refused (NFR #109). The transport forwards this on the
+     * subscribe frame without a cursor; the gateway keeps a content-free
+     * placeholder for this socket and answers `reset-required` /
+     * `access-restored` once the platform's access signal re-authorizes the
+     * viewer. Nothing is polled, and no data rides this socket: the hook
+     * fetches a fresh snapshot on the hint.
+     */
+    awaitAccess?: 1;
     /** Present only when the caller opted into schemaVersion 2. */
     activity?: WorkGraphActivityRequest;
     /**

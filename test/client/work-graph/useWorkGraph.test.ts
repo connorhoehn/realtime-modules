@@ -298,6 +298,54 @@ describe('useWorkGraph', () => {
     expect(result.current.graph.nodes).toEqual({});
   });
 
+  test('a paused grant: the refused refetch waits on the gateway and refetches once access is restored (NFR #109)', async () => {
+    const testHarness = harness([snapshot()]);
+    testHarness.fetchSnapshot
+      .mockResolvedValueOnce(snapshot())
+      .mockRejectedValueOnce(Object.assign(new Error('sharing paused'), { status: 403 }))
+      .mockResolvedValueOnce(snapshot());
+    const { result } = renderHook(() => useWorkGraph({
+      scope: baseScope,
+      transport: testHarness.transport,
+      reconnectDelayMs: 0,
+      createSubscriptionGeneration: generations('gen_1', 'gen_2', 'gen_3'),
+    }));
+    await waitFor(() => expect(result.current.graph.nodes.node_a).toBeDefined());
+
+    // The owner pauses: the gateway invalidates, the refetch is refused.
+    act(() => testHarness.sockets[0].request.onMessage({
+      kind: 'invalidate', subscriptionGeneration: 'gen_1', reason: 'sharing-paused',
+    }));
+    await waitFor(() => expect(result.current.error).toBe('snapshot-unavailable'));
+    expect(result.current.graph.nodes).toEqual({});
+    expect(testHarness.sockets[0].close).toHaveBeenCalled();
+
+    // The hook now holds a cursor-less, content-free wait on the gateway.
+    await waitFor(() => expect(testHarness.sockets).toHaveLength(2));
+    const waiting = testHarness.sockets[1].request;
+    expect(waiting.awaitAccess).toBe(1);
+    expect(waiting.cursor).toBeUndefined();
+    expect(waiting.subscriptionGeneration).toBe('gen_2');
+    expect(Object.keys(waiting).sort()).toEqual(['awaitAccess', 'onClose', 'onError', 'onMessage', 'scope', 'subscriptionGeneration']);
+
+    // Data on the wait is ignored, as is another generation's hint: no poll, no leak.
+    act(() => waiting.onMessage(delta('gen_2')));
+    act(() => waiting.onMessage({ kind: 'reset-required', subscriptionGeneration: 'gen_9', reason: 'access-restored' }));
+    expect(testHarness.fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBe('snapshot-unavailable');
+
+    // The owner resumes: the gateway's signal-driven re-check sends the hint.
+    act(() => waiting.onMessage({ kind: 'reset-required', subscriptionGeneration: 'gen_2', reason: 'access-restored' }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.error).toBeNull();
+    expect(result.current.graph.nodes.node_a).toBeDefined();
+    expect(testHarness.fetchSnapshot).toHaveBeenCalledTimes(3);
+    expect(testHarness.sockets[1].close).toHaveBeenCalled();
+    expect(testHarness.sockets).toHaveLength(3);
+    expect(testHarness.sockets[2].request.cursor).toBe('cursor_10');
+    expect(testHarness.sockets[2].request.awaitAccess).toBeUndefined();
+  });
+
   test('a scope-changed reset does not carry the old graph', async () => {
     const retrySnapshot = deferred<WorkGraphSnapshot>();
     const testHarness = harness([snapshot(), retrySnapshot.promise]);

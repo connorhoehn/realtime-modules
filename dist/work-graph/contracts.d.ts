@@ -378,11 +378,17 @@ export type WorkGraphStreamMessage = {
  * from the platform (5xx, timeout, refused, not ready). It says nothing about
  * access, so a reader keeps its graph and refetches with backoff. Only a
  * proven access change is an `invalidate`.
+ *
+ * `access-restored` (0.89.0): the reader's snapshot was refused and it asked
+ * the gateway to wait (`awaitAccess: 1` on the subscribe frame, no cursor);
+ * the platform's access signal has since re-authorized the viewer. The frame
+ * carries nothing but the generation: the reader fetches a fresh snapshot,
+ * which is where the data is authorized.
  */
  | {
     kind: 'reset-required';
     subscriptionGeneration: string;
-    reason: 'gap' | 'replay-unavailable' | 'scope-changed' | 'source-unavailable';
+    reason: 'gap' | 'replay-unavailable' | 'scope-changed' | 'source-unavailable' | 'access-restored';
 };
 export type WorkReferenceTarget = {
     kind: 'node';

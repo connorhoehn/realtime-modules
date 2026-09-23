@@ -53,8 +53,18 @@ export interface WorkGraphSnapshotRequest {
 
 export interface WorkGraphSocketRequest {
   scope: WorkGraphClientScope;
-  cursor: string;
+  /** Absent only with `awaitAccess: 1`: there is no snapshot to continue from. */
+  cursor?: string;
   subscriptionGeneration: string;
+  /**
+   * The snapshot was refused (NFR #109). The transport forwards this on the
+   * subscribe frame without a cursor; the gateway keeps a content-free
+   * placeholder for this socket and answers `reset-required` /
+   * `access-restored` once the platform's access signal re-authorizes the
+   * viewer. Nothing is polled, and no data rides this socket: the hook
+   * fetches a fresh snapshot on the hint.
+   */
+  awaitAccess?: 1;
   /** Present only when the caller opted into schemaVersion 2. */
   activity?: WorkGraphActivityRequest;
   /**
@@ -154,7 +164,7 @@ const invalidationReasons = new Set([
   'cursor-expired',
   'source-authorization-unavailable',
 ]);
-const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed', 'source-unavailable']);
+const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed', 'source-unavailable', 'access-restored']);
 /**
  * Server-announced resets that say nothing about access: the stream could not
  * express a change as deltas (every change on a non-UTC day), so a fresh
@@ -428,6 +438,41 @@ export function useWorkGraph({
       recover(delay, sustained ? error : null, !sustained);
     };
 
+    /**
+     * The platform refused the snapshot (NFR #109: a paused grant, or none
+     * yet). The error stays on screen with its "Try again", but the hook
+     * also asks the gateway to hold a content-free placeholder for this
+     * generation and listens for the one hint it can send: `access-restored`,
+     * the platform's access signal re-authorized this viewer. On it the hook
+     * refetches, which is where the data is authorized — nothing arrives on
+     * this socket, and nothing is polled. A gateway that predates the hint
+     * answers nothing; the reader still has "Try again".
+     */
+    const awaitAccess = () => {
+      if (disposed || recoveryStarted) return;
+      try {
+        socket = transport.openWebSocket({
+          scope: { ...scope },
+          subscriptionGeneration,
+          awaitAccess: 1,
+          onMessage: (rawMessage) => {
+            const message = parseStreamMessage(rawMessage);
+            if (!message || message.kind !== 'reset-required' || message.reason !== 'access-restored'
+              || message.subscriptionGeneration !== subscriptionGeneration) return;
+            failures.current = 0;
+            outageStartedAt.current = null;
+            recover(0);
+          },
+          // The gateway socket went away (a pod swap): the placeholder went
+          // with it, so the wait is re-established through a fresh snapshot.
+          onClose: () => recoverTransient('stream-unavailable'),
+          onError: () => recoverTransient('stream-unavailable'),
+        });
+      } catch {
+        recoverTransient('stream-unavailable');
+      }
+    };
+
     const bootstrap = async () => {
       if (schemaVersion === 2) {
         // Refuse to issue a v2 request the server would have to interpret.
@@ -472,8 +517,12 @@ export function useWorkGraph({
         ]);
       } catch (error) {
         if (disposed || (abortController.signal.aborted && !timedOut)) return;
-        if (!timedOut && isRefusal(error)) publish(graph, 'snapshot-unavailable');
-        else recoverTransient('snapshot-unavailable');
+        if (!timedOut && isRefusal(error)) {
+          publish(graph, 'snapshot-unavailable');
+          awaitAccess();
+        } else {
+          recoverTransient('snapshot-unavailable');
+        }
         return;
       } finally {
         if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
