@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.79.1 — 2026-09-22
+
+- `useWorkGraph`: a server `reset-required` for `gap`/`replay-unavailable` keeps the last
+  authorized graph on screen until the refetched snapshot lands (a failed refetch still
+  clears it). Invalidations, `scope-changed`, malformed frames and socket closes still
+  start from an empty graph.
+
 ## [Unreleased] — document integration contracts
 
 - Add short-lived Ed25519 document grants with tenant/document/operation binding and authoritative session-epoch verification across transports.

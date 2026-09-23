@@ -200,6 +200,82 @@ describe('useWorkGraph', () => {
     await waitFor(() => expect(result.current.graph.nodes.node_still_authorized).toBeDefined());
   });
 
+  test('keeps the last graph on screen through a server-requested refetch', async () => {
+    // What the gateway sends for every change on a non-UTC day. Access has not
+    // moved, so the canvas must not blank (and re-fit) while the snapshot loads.
+    const retrySnapshot = deferred<WorkGraphSnapshot>();
+    const testHarness = harness([snapshot(), retrySnapshot.promise]);
+    const { result } = renderHook(() => useWorkGraph({
+      scope: baseScope,
+      transport: testHarness.transport,
+      reconnectDelayMs: 0,
+      createSubscriptionGeneration: generations('gen_1', 'gen_2'),
+    }));
+    await waitFor(() => expect(result.current.graph.nodes.node_a).toBeDefined());
+
+    act(() => testHarness.sockets[0].request.onMessage({
+      kind: 'reset-required',
+      subscriptionGeneration: 'gen_1',
+      reason: 'replay-unavailable',
+    }));
+
+    await waitFor(() => expect(testHarness.fetchSnapshot).toHaveBeenCalledTimes(2));
+    expect(testHarness.sockets[0].close).toHaveBeenCalledTimes(1);
+    expect(result.current.graph.nodes.node_a).toBeDefined();
+    expect(result.current.status).not.toBe('loading');
+
+    await act(async () => retrySnapshot.resolve(snapshot(baseScope, [node('node_updated')], 20)));
+    await waitFor(() => expect(result.current.graph.nodes.node_updated).toBeDefined());
+    expect(result.current.graph.nodes.node_a).toBeUndefined();
+    expect(result.current.status).toBe('ready');
+  });
+
+  test('a kept graph is still cleared when the refetch it waits on fails', async () => {
+    const testHarness = harness([snapshot()]);
+    testHarness.fetchSnapshot
+      .mockResolvedValueOnce(snapshot())
+      .mockRejectedValueOnce(new Error('platform down'));
+    const { result } = renderHook(() => useWorkGraph({
+      scope: baseScope,
+      transport: testHarness.transport,
+      reconnectDelayMs: 0,
+      createSubscriptionGeneration: generations('gen_1', 'gen_2'),
+    }));
+    await waitFor(() => expect(result.current.graph.nodes.node_a).toBeDefined());
+
+    act(() => testHarness.sockets[0].request.onMessage({
+      kind: 'reset-required',
+      subscriptionGeneration: 'gen_1',
+      reason: 'gap',
+    }));
+
+    await waitFor(() => expect(result.current.error).toBe('snapshot-unavailable'));
+    expect(result.current.graph.nodes).toEqual({});
+  });
+
+  test('a scope-changed reset does not carry the old graph', async () => {
+    const retrySnapshot = deferred<WorkGraphSnapshot>();
+    const testHarness = harness([snapshot(), retrySnapshot.promise]);
+    const { result } = renderHook(() => useWorkGraph({
+      scope: baseScope,
+      transport: testHarness.transport,
+      reconnectDelayMs: 0,
+      createSubscriptionGeneration: generations('gen_1', 'gen_2'),
+    }));
+    await waitFor(() => expect(result.current.graph.nodes.node_a).toBeDefined());
+
+    act(() => testHarness.sockets[0].request.onMessage({
+      kind: 'reset-required',
+      subscriptionGeneration: 'gen_1',
+      reason: 'scope-changed',
+    }));
+
+    await waitFor(() => expect(testHarness.fetchSnapshot).toHaveBeenCalledTimes(2));
+    expect(result.current.graph.nodes).toEqual({});
+    await act(async () => retrySnapshot.resolve(snapshot(baseScope, [node('node_b')], 20)));
+    await waitFor(() => expect(result.current.graph.nodes.node_b).toBeDefined());
+  });
+
   test('scope changes abort and unsubscribe, and late results cannot mix viewers', async () => {
     const oldSnapshot = deferred<WorkGraphSnapshot>();
     const newScope = { ...baseScope, viewerId: 'viewer_2', personId: 'person_other', day: '2026-09-18' };

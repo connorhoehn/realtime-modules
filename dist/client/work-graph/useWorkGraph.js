@@ -14,6 +14,14 @@ const invalidationReasons = new Set([
     'source-authorization-unavailable',
 ]);
 const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed']);
+/**
+ * Server-announced resets that say nothing about access: the stream could not
+ * express a change as deltas (every change on a non-UTC day), so a fresh
+ * snapshot is needed. The last authorized graph stays on screen until that
+ * snapshot lands, instead of flashing an empty canvas on every update.
+ * `scope-changed` is excluded: the old graph belongs to another scope.
+ */
+const keepVisibleResetReasons = new Set(['gap', 'replay-unavailable']);
 function keyForScope(scope) {
     // JSON encoding avoids delimiter ambiguity; this value never leaves memory.
     return JSON.stringify([scope.viewerId, scope.personId, scope.day, scope.timezone]);
@@ -88,6 +96,8 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
     const scopeKey = keyForScope(scope);
     const generationSequence = (0, react_1.useRef)(0);
     const generationFactory = (0, react_1.useRef)(createSubscriptionGeneration);
+    /** Set by a keep-visible reset; consumed by the very next handshake only. */
+    const carryVisible = (0, react_1.useRef)(null);
     const [restart, setRestart] = (0, react_1.useState)(0);
     const [internal, setInternal] = (0, react_1.useState)(() => ({
         scopeKey,
@@ -127,9 +137,15 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                 setInternal({ scopeKey, graph: next, error });
         };
         // Start with an empty graph. In particular, retries never carry data that
-        // may have been revoked while this client was disconnected.
-        publish(graph);
-        const recover = (delayMs, error = null) => {
+        // may have been revoked while this client was disconnected. The one
+        // exception is a refetch the server itself asked for while access stood
+        // (see keepVisibleResetReasons): that graph stays until the new snapshot
+        // replaces it, and any failure below still publishes the empty graph.
+        const carried = carryVisible.current === scopeKey;
+        carryVisible.current = null;
+        if (!carried)
+            publish(graph);
+        const recover = (delayMs, error = null, keepVisible = false) => {
             if (disposed || recoveryStarted)
                 return;
             recoveryStarted = true;
@@ -137,7 +153,10 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             const activeSocket = socket;
             socket = null;
             activeSocket?.close();
-            publish((0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration), error);
+            if (keepVisible)
+                carryVisible.current = scopeKey;
+            else
+                publish((0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration), error);
             const restartNow = () => {
                 if (!disposed)
                     setRestart((value) => value + 1);
@@ -213,8 +232,11 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                 }
                 const reduced = (0, reduceSnapshot_1.reduceWorkGraphStream)(graph, message);
                 publish(reduced);
-                if (reduced.status === 'refetch-required' || reduced.status === 'invalidated')
-                    recover(0);
+                if (reduced.status === 'refetch-required' || reduced.status === 'invalidated') {
+                    recover(0, null, message.kind === 'reset-required'
+                        && reduced.status === 'refetch-required'
+                        && keepVisibleResetReasons.has(message.reason));
+                }
             };
             try {
                 socket = transport.openWebSocket({

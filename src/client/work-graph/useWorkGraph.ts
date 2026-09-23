@@ -108,6 +108,14 @@ const invalidationReasons = new Set([
   'source-authorization-unavailable',
 ]);
 const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed']);
+/**
+ * Server-announced resets that say nothing about access: the stream could not
+ * express a change as deltas (every change on a non-UTC day), so a fresh
+ * snapshot is needed. The last authorized graph stays on screen until that
+ * snapshot lands, instead of flashing an empty canvas on every update.
+ * `scope-changed` is excluded: the old graph belongs to another scope.
+ */
+const keepVisibleResetReasons = new Set(['gap', 'replay-unavailable']);
 
 function keyForScope(scope: WorkGraphClientScope): string {
   // JSON encoding avoids delimiter ambiguity; this value never leaves memory.
@@ -194,6 +202,8 @@ export function useWorkGraph({
   const scopeKey = keyForScope(scope);
   const generationSequence = useRef(0);
   const generationFactory = useRef(createSubscriptionGeneration);
+  /** Set by a keep-visible reset; consumed by the very next handshake only. */
+  const carryVisible = useRef<string | null>(null);
   const [restart, setRestart] = useState(0);
   const [internal, setInternal] = useState<InternalState>(() => ({
     scopeKey,
@@ -236,17 +246,27 @@ export function useWorkGraph({
     };
 
     // Start with an empty graph. In particular, retries never carry data that
-    // may have been revoked while this client was disconnected.
-    publish(graph);
+    // may have been revoked while this client was disconnected. The one
+    // exception is a refetch the server itself asked for while access stood
+    // (see keepVisibleResetReasons): that graph stays until the new snapshot
+    // replaces it, and any failure below still publishes the empty graph.
+    const carried = carryVisible.current === scopeKey;
+    carryVisible.current = null;
+    if (!carried) publish(graph);
 
-    const recover = (delayMs: number, error: WorkGraphClientError | null = null) => {
+    const recover = (
+      delayMs: number,
+      error: WorkGraphClientError | null = null,
+      keepVisible = false,
+    ) => {
       if (disposed || recoveryStarted) return;
       recoveryStarted = true;
       abortController.abort();
       const activeSocket = socket;
       socket = null;
       activeSocket?.close();
-      publish(createClientWorkGraphState(currentScope, subscriptionGeneration), error);
+      if (keepVisible) carryVisible.current = scopeKey;
+      else publish(createClientWorkGraphState(currentScope, subscriptionGeneration), error);
       const restartNow = () => {
         if (!disposed) setRestart((value) => value + 1);
       };
@@ -319,7 +339,11 @@ export function useWorkGraph({
         }
         const reduced = reduceWorkGraphStream(graph, message);
         publish(reduced);
-        if (reduced.status === 'refetch-required' || reduced.status === 'invalidated') recover(0);
+        if (reduced.status === 'refetch-required' || reduced.status === 'invalidated') {
+          recover(0, null, message.kind === 'reset-required'
+            && reduced.status === 'refetch-required'
+            && keepVisibleResetReasons.has(message.reason));
+        }
       };
 
       try {
