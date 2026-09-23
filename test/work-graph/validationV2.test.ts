@@ -88,3 +88,24 @@ describe('opt-in work graph v2 boundary', () => {
     expect(validateWorkReferenceV2({ ...reference, title: 'Private title' }).ok).toBe(false);
   });
 });
+
+describe('NFR #126 — the reason a run is waiting', () => {
+  const paused = (pause: unknown, status = 'waiting', kind = 'run') => {
+    const value = snapshot();
+    return { ...value, nodes: value.nodes.map((node) => node.id === 'run' ? { ...node, status, kind } : node), details: [...value.details, { nodeId: 'run', pause }] };
+  };
+  it('accepts a breakpoint with its step and an approval gate with or without one', () => {
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'paused_at_breakpoint', step: 'write' })).ok).toBe(true);
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'awaiting_approval', step: 'Approve the deck' })).ok).toBe(true);
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'awaiting_approval' })).ok).toBe(true);
+  });
+  it('rejects an unknown reason, an extra key or an empty step', () => {
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'sleeping' })).ok).toBe(false);
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'awaiting_approval', approver: 'frank' })).ok).toBe(false);
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'paused_at_breakpoint', step: '' })).ok).toBe(false);
+  });
+  it('rejects a pause on a run that is not waiting, or on a node that is not a process', () => {
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'paused_at_breakpoint', step: 'write' }, 'running')).ok).toBe(false);
+    expect(validateWorkGraphSnapshotV2(paused({ reason: 'paused_at_breakpoint', step: 'write' }, 'waiting', 'document')).ok).toBe(false);
+  });
+});

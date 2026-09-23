@@ -107,6 +107,21 @@ export interface ViewerWorkActivityDetail {
   };
   /** Count only messages visible to this viewer at the query cutoff. */
   feedback?: { count: number; through: string };
+  /**
+   * Why a `waiting` run is waiting (NFR #126): an approval gate or a
+   * breakpoint. `step` is the step's display label (the breakpoint's step, or
+   * the approval step), never an internal key the viewer could not read
+   * elsewhere. Only on a run/agent node whose status is `waiting`; a run that
+   * resumed carries none.
+   */
+  pause?: WorkRunPause;
+}
+
+export type WorkRunPauseReason = 'awaiting_approval' | 'paused_at_breakpoint';
+
+export interface WorkRunPause {
+  reason: WorkRunPauseReason;
+  step?: string;
 }
 
 export interface ViewerWorkOperation {

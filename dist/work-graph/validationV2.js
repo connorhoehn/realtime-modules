@@ -54,7 +54,7 @@ function validateWorkGraphQueryV2(value) {
     return result(valid, value, 'v2 work graph query');
 }
 function detail(value) {
-    if (!exact(value, ['nodeId'], ['summary', 'lines', 'badge', 'excerpt', 'footer', 'participants', 'inputs', 'sources', 'workItem', 'transcript', 'freshness', 'tools', 'attention', 'artifact', 'feedback']) || !id(value.nodeId))
+    if (!exact(value, ['nodeId'], ['summary', 'lines', 'badge', 'excerpt', 'footer', 'participants', 'inputs', 'sources', 'workItem', 'transcript', 'freshness', 'tools', 'attention', 'artifact', 'feedback', 'pause']) || !id(value.nodeId))
         return false;
     if (value.badge !== undefined && !label(value.badge))
         return false;
@@ -95,6 +95,8 @@ function detail(value) {
         if (!exact(value.attention, ['kind', 'observedAt', 'expiresAt'], ['revisionId']) || value.attention.kind !== 'reviewing' || !lease({ observedAt: value.attention.observedAt, expiresAt: value.attention.expiresAt }) || (value.attention.revisionId !== undefined && !id(value.attention.revisionId)))
             return false;
     }
+    if (value.pause !== undefined && (!exact(value.pause, ['reason'], ['step']) || !['awaiting_approval', 'paused_at_breakpoint'].includes(String(value.pause.reason)) || (value.pause.step !== undefined && !label(value.pause.step))))
+        return false;
     if (value.feedback !== undefined && (!exact(value.feedback, ['count', 'through']) || !integer(value.feedback.count) || !time(value.feedback.through)))
         return false;
     if (value.artifact !== undefined) {
@@ -177,6 +179,10 @@ function validateWorkGraphSnapshotV2(value) {
         if (item.transcript && item.transcript.segments.length > 0 && node?.disclosure !== 'details')
             valid = false;
         if (item.transcript?.askEnabled && !node?.capabilities.includes('view-transcript'))
+            valid = false;
+        // A pause reason explains a waiting run; on anything else it would claim
+        // a state the node's own status contradicts.
+        if (item.pause && (!node || !['run', 'agent'].includes(node.kind) || node.status !== 'waiting'))
             valid = false;
         if (snapshot.temporal.mode === 'as-of'
             && item.transcript?.segments.some((entry) => entry.at > snapshot.query.windowEnd))

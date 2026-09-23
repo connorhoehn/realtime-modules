@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.92.0 — 2026-09-23
+
+- **work-graph (NFR #126):** `ViewerWorkActivityDetail.pause?: WorkRunPause`
+  (`{ reason: 'awaiting_approval' | 'paused_at_breakpoint'; step?: string }`)
+  — why a `waiting` run is waiting, so a card can say "Needs approval" or
+  "Paused at write" instead of a bare "Waiting". Optional and additive;
+  `validateWorkGraphSnapshotV2` accepts it only on a run/agent node whose
+  status is `waiting` (a resumed run carries none), with a label-length step.
+
 ## 0.90.0 — 2026-09-23
 
 - **client/documents (new subpath, also re-exported from `./client`):** the
