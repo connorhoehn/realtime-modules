@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.95.0 — 2026-09-23
+
+- **client/pipelines:** `usePipelineRunStatus` stops polling what its frames
+  already carry. With a live transport a running run is re-read every
+  `livePollMs` (new, default 30 s; never faster than `pollMs`) instead of every
+  1.5 s; with none, `pollMs` as before. Nothing is re-read while the tab is
+  hidden (one read on coming back), and a settled run never is. A snapshot's
+  new `executorRunId` (an /agent loop's accept-time row pointing at the run
+  that executes it) subscribes that run's `pipeline:run:<id>` channel too and
+  lands its frames on the card that asked. realtime-examples NFR #136: an idle
+  chat with six old loops made 104 reads in 20 s.
+
 ## 0.93.0 — 2026-09-23
 
 - **client/documents:** `useRunDraft` returns `startNew()` and `history`.

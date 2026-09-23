@@ -10,8 +10,16 @@
 //     is subscribed as well as each run's own channel, because a per-run
 //     subscription lands AFTER the run has started and misses its first frames.
 //   - Durable: `GET {apiBaseUrl}/api/pipelines/:pipelineId/runs/:runId`, once
-//     on mount and then every `pollMs` while the run is not terminal. Frames
-//     can be missed (a reconnect drops one); the run store is the truth.
+//     on mount and then, while the run is not terminal, every `pollMs` with no
+//     live transport or every `livePollMs` (30 s) with one — the frames carry a
+//     live run, the read is a safety net for a missed frame. Not at all while
+//     the tab is hidden; once on becoming visible. A settled run is never
+//     re-read (realtime-examples NFR #136: an idle chat with six old /agent
+//     loops made 104 reads in 20 s at 1.5 s each).
+//
+// An /agent loop's card names the loop id, but its run is the executor's: the
+// snapshot says so in `executorRunId`, and that run's own channel is
+// subscribed too, its frames landing on the card that asked.
 //
 // The transport is injectable so an app that owns its own socket can hand in
 // `{ send, onMessage }`; an rm-native host mounted under GatewaySocketProvider
@@ -27,7 +35,7 @@
 // kept current by step frames. Details are only ever added to, never cleared
 // by a sparser snapshot.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = void 0;
+exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_LIVE_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = void 0;
 exports.stepLabelFor = stepLabelFor;
 exports.retryLabel = retryLabel;
 exports.requestPipelineRun = requestPipelineRun;
@@ -661,10 +669,24 @@ function phaseFromEvent(type, p, prev, pipelineId, tables = {}) {
 // The hook
 // ---------------------------------------------------------------------------
 exports.DEFAULT_POLL_MS = 1500;
+exports.DEFAULT_LIVE_POLL_MS = 30_000;
+/** Whether the document is hidden, kept current. Always false outside a browser. */
+function useDocumentHidden() {
+    const [hidden, setHidden] = (0, react_1.useState)(() => typeof document !== 'undefined' && document.hidden === true);
+    (0, react_1.useEffect)(() => {
+        if (typeof document === 'undefined')
+            return undefined;
+        const update = () => setHidden(document.hidden === true);
+        document.addEventListener('visibilitychange', update);
+        return () => document.removeEventListener('visibilitychange', update);
+    }, []);
+    return hidden;
+}
 exports.DEFAULT_REVIEW_POLL_MS = 15_000;
 function usePipelineRunStatus(runs, opts) {
     const { apiBaseUrl, idToken, transport, stepLabels, pipelineStepLabels } = opts;
     const pollMs = opts.pollMs ?? exports.DEFAULT_POLL_MS;
+    const livePollMs = Math.max(opts.livePollMs ?? exports.DEFAULT_LIVE_POLL_MS, pollMs);
     const reviewPollMs = opts.reviewPollMs ?? exports.DEFAULT_REVIEW_POLL_MS;
     // Hooks cannot be conditional, so the context is always read; it is only
     // USED when the host handed in no transport of its own.
@@ -675,6 +697,13 @@ function usePipelineRunStatus(runs, opts) {
     const fetched = (0, react_1.useRef)(new Set());
     const [tick, setTick] = (0, react_1.useState)(0);
     const key = runs.map((r) => r.runId).sort().join(',');
+    // executor run id → the card's run id, learned from snapshots.
+    const [executors, setExecutors] = (0, react_1.useState)({});
+    const executorsRef = (0, react_1.useRef)(executors);
+    executorsRef.current = executors;
+    const executorKey = Object.keys(executors).sort().join(',');
+    const hidden = useDocumentHidden();
+    const live = !!send && !!onMessage;
     // Label tables travel by ref so a caller passing a fresh literal each render
     // does not resubscribe the socket.
     const tablesRef = (0, react_1.useRef)({ stepLabels, pipelineStepLabels });
@@ -685,15 +714,17 @@ function usePipelineRunStatus(runs, opts) {
     (0, react_1.useEffect)(() => {
         if (runs.length === 0 || !send || !onMessage)
             return;
+        const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
         send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
-        for (const r of runs)
-            send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${r.runId}` });
+        for (const id of channels)
+            send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
         const unregister = onMessage((frame) => {
             const msg = frame;
             if (!msg || msg.type !== 'pipeline:event')
                 return;
             const p = msg.payload ?? {};
-            const runId = typeof p.runId === 'string' ? p.runId : null;
+            const frameRunId = typeof p.runId === 'string' ? p.runId : null;
+            const runId = frameRunId ? (executorsRef.current[frameRunId] ?? frameRunId) : null;
             const run = runId ? runsRef.current.find((r) => r.runId === runId) : undefined;
             if (!runId || !run)
                 return;
@@ -705,11 +736,11 @@ function usePipelineRunStatus(runs, opts) {
         });
         return () => {
             unregister();
-            for (const r of runs)
-                send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${r.runId}` });
+            for (const id of channels)
+                send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, send, onMessage]);
+    }, [key, executorKey, send, onMessage]);
     // Once (and on every tick): the durable answer, for anyone arriving late.
     (0, react_1.useEffect)(() => {
         if (!idToken)
@@ -724,6 +755,10 @@ function usePipelineRunStatus(runs, opts) {
                     if (!res.ok)
                         return;
                     const snap = (await res.json());
+                    const executor = typeof snap.executorRunId === 'string' && snap.executorRunId !== r.runId ? snap.executorRunId : undefined;
+                    if (executor && executorsRef.current[executor] !== r.runId) {
+                        setExecutors((prev) => ({ ...prev, [executor]: r.runId }));
+                    }
                     setStatuses((prev) => {
                         const cur = prev[r.runId];
                         if (TERMINAL.has(cur?.phase)) {
@@ -742,24 +777,31 @@ function usePipelineRunStatus(runs, opts) {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, idToken, tick, apiBaseUrl]);
-    // While a run is not terminal, re-read the snapshot every `pollMs`.
+    // While a run is not terminal, re-read the snapshot — every `pollMs` with
+    // no live transport, every `livePollMs` with one; never while hidden.
+    const pendingKey = runs.filter((r) => !TERMINAL.has(statuses[r.runId]?.phase)).map((r) => r.runId).sort().join(',');
+    const wasHidden = (0, react_1.useRef)(hidden);
     (0, react_1.useEffect)(() => {
-        if (!idToken || pollMs <= 0)
+        const cameBack = wasHidden.current && !hidden;
+        wasHidden.current = hidden;
+        if (!idToken || pollMs <= 0 || hidden || !pendingKey)
             return;
-        const pending = runs.filter((r) => !TERMINAL.has(statuses[r.runId]?.phase));
-        if (pending.length === 0)
-            return;
-        const timer = setInterval(() => {
-            for (const r of pending)
-                fetched.current.delete(r.runId);
+        const pending = pendingKey.split(',');
+        const refresh = () => {
+            for (const id of pending)
+                fetched.current.delete(id);
             setTick((t) => t + 1);
-        }, pollMs);
+        };
+        // Back from hidden: frames may have been missed while nothing polled.
+        if (cameBack)
+            refresh();
+        const timer = setInterval(refresh, live ? livePollMs : pollMs);
         return () => clearInterval(timer);
-    }, [runs, statuses, idToken, pollMs]);
+    }, [pendingKey, idToken, pollMs, livePollMs, live, hidden]);
     // A completed suggestion waits on a person; re-read slowly until the review
     // lands (the `pipeline.run.reviewed` frame is the fast path). Reviewed = settled.
     (0, react_1.useEffect)(() => {
-        if (!idToken || reviewPollMs <= 0)
+        if (!idToken || reviewPollMs <= 0 || hidden)
             return;
         const awaiting = runs.filter((r) => isAwaitingReview(statuses[r.runId]));
         if (awaiting.length === 0)
@@ -770,7 +812,7 @@ function usePipelineRunStatus(runs, opts) {
             setTick((t) => t + 1);
         }, reviewPollMs);
         return () => clearInterval(timer);
-    }, [runs, statuses, idToken, reviewPollMs]);
+    }, [runs, statuses, idToken, reviewPollMs, hidden]);
     return (0, react_1.useCallback)((runId) => statuses[runId], [statuses]);
 }
 exports.default = usePipelineRunStatus;

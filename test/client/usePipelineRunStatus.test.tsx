@@ -241,7 +241,7 @@ describe('usePipelineRunStatus (hook)', () => {
       .mockResolvedValueOnce(snapshotResponse({ status: 'running', currentStepIds: ['plan'] }))
       .mockResolvedValue(snapshotResponse({ status: 'completed', result: 'final', steps: { apply: { output: { applied: 1 } } } }));
 
-    const { result } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok', transport, pollMs: 500 }));
+    const { result } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok', transport, pollMs: 500, livePollMs: 500 }));
 
     // Mount read.
     await act(async () => { await Promise.resolve(); });
@@ -265,6 +265,50 @@ describe('usePipelineRunStatus (hook)', () => {
     // Terminal: the clock keeps running, the poll does not.
     await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledTimes(callsAtTerminal);
+  });
+
+  it('with a live transport, re-reads a running run only every livePollMs (30 s), and never a settled one (NFR #136)', async () => {
+    const { transport } = makeTransport();
+    const LOOP = { runId: 'loop-1', pipelineId: 'chat-agent-loop' };
+    const DONE = { runId: 'loop-2', pipelineId: 'chat-agent-loop' };
+    fetchMock.mockImplementation(async (input) => snapshotResponse({ status: String(input).endsWith('loop-2') ? 'completed' : 'running' }));
+    renderHook(() => usePipelineRunStatus([LOOP, DONE], { apiBaseUrl: API, idToken: 'tok', transport }));
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => { jest.advanceTimersByTime(29_000); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => { jest.advanceTimersByTime(1_000); await Promise.resolve(); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(String(fetchMock.mock.calls[2][0])).toMatch(/loop-1$/);
+  });
+
+  it('does not poll while the tab is hidden, and reads once on coming back', async () => {
+    const { transport } = makeTransport();
+    fetchMock.mockResolvedValue(snapshotResponse({ status: 'running' }));
+    const visibility = jest.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    try {
+      renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok', transport }));
+      await act(async () => { await Promise.resolve(); });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await act(async () => { jest.advanceTimersByTime(120_000); await Promise.resolve(); });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      visibility.mockReturnValue(false);
+      act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("follows an /agent loop to its executor: subscribes that run's channel and lands its frames on the card", async () => {
+    const { transport, send, emit } = makeTransport();
+    const LOOP = { runId: 'loop-1', pipelineId: 'chat-agent-loop' };
+    fetchMock.mockResolvedValue(snapshotResponse({ status: 'running', executorRunId: 'exec-1' }));
+    const { result } = renderHook(() => usePipelineRunStatus([LOOP], { apiBaseUrl: API, idToken: 'tok', transport }));
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(send).toHaveBeenCalledWith({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:run:exec-1' }));
+    emit('pipeline.run.completed', { runId: 'exec-1', status: 'completed' });
+    expect(result.current('loop-1')?.phase).toBe('completed');
   });
 
   it('never lets a late snapshot overwrite a terminal phase learned from a frame', async () => {

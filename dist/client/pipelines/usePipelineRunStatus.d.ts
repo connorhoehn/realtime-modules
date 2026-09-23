@@ -95,8 +95,14 @@ export interface UsePipelineRunStatusOptions {
     stepLabels?: Record<string, string>;
     /** Per-pipeline overrides for step ids that collide across pipelines, merged over `DEFAULT_PIPELINE_STEP_LABELS`. */
     pipelineStepLabels?: Record<string, Record<string, string>>;
-    /** Snapshot re-read interval while a run is not terminal. Default 1500. */
+    /** Snapshot re-read interval while a run is not terminal and no live transport is connected. Default 1500. */
     pollMs?: number;
+    /**
+     * The same, while a live transport IS connected: its frames move the card,
+     * so this is only the safety net for a missed frame. Default 30000; never
+     * faster than `pollMs`.
+     */
+    livePollMs?: number;
     /**
      * Re-read interval for a completed run whose suggestions are still unreviewed —
      * the review usually arrives as a `pipeline.run.reviewed` frame, so this is
@@ -202,6 +208,8 @@ export type PipelineSnapshotStep = {
 };
 export interface PipelineRunSnapshot {
     status?: string;
+    /** Set when the run asked about is a pointer (an /agent loop's accept-time row): the run that actually executes it. */
+    executorRunId?: string;
     currentStepIds?: string[];
     steps?: PipelineSnapshotStep[] | Record<string, PipelineSnapshotStep>;
     error?: {
@@ -263,6 +271,7 @@ export declare function enrichTerminalStatus(cur: PipelineRunStatus, snap: Pipel
 /** The card's status after one live frame; `undefined` when the frame is not about the card. */
 export declare function statusFromEvent(eventType: string | undefined, p: Record<string, unknown>, prev: PipelineRunStatus | undefined, pipelineId?: string, tables?: StepLabelTables): PipelineRunStatus | undefined;
 export declare const DEFAULT_POLL_MS = 1500;
+export declare const DEFAULT_LIVE_POLL_MS = 30000;
 export declare const DEFAULT_REVIEW_POLL_MS = 15000;
 export declare function usePipelineRunStatus(runs: readonly PipelineRunRef[], opts: UsePipelineRunStatusOptions): (runId: string) => PipelineRunStatus | undefined;
 export default usePipelineRunStatus;
