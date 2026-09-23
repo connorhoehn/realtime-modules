@@ -26,4 +26,5 @@ __exportStar(require("./projectEvent"), exports);
 __exportStar(require("./references"), exports);
 __exportStar(require("./sharingLifecycle"), exports);
 __exportStar(require("./validation"), exports);
+__exportStar(require("./viewPatch"), exports);
 //# sourceMappingURL=index.js.map

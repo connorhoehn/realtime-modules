@@ -5,6 +5,11 @@ import type { WorkGraphSnapshotV2 } from '../../work-graph/contractsV2';
 import { validateWorkGraphDeltaBatch, validateWorkGraphSnapshot } from '../../work-graph/validation';
 import { validateWorkGraphQueryV2, validateWorkGraphSnapshotV2 } from '../../work-graph/validationV2';
 import {
+  applyWorkGraphViewPatchV2,
+  type WorkGraphStreamViewV2,
+  type WorkGraphViewPatchV2,
+} from '../../work-graph/viewPatch';
+import {
   applyWorkGraphActivity,
   applyWorkGraphSnapshot,
   applyWorkGraphSnapshotV2,
@@ -45,6 +50,12 @@ export interface WorkGraphSocketRequest {
   subscriptionGeneration: string;
   /** Present only when the caller opted into schemaVersion 2. */
   activity?: WorkGraphActivityRequest;
+  /**
+   * Set with schemaVersion 2: this reader applies `viewPatch` frames (NFR #66),
+   * so the transport should forward it on the subscribe frame. A gateway that
+   * never sees it keeps sending the whole view.
+   */
+  viewPatch?: 1;
   onMessage(message: unknown): void;
   onClose(): void;
   onError(): void;
@@ -84,6 +95,27 @@ export interface UseWorkGraphOptions {
   schemaVersion?: 1 | 2;
   /** Required with schemaVersion 2: the selected interval inside the local day. */
   window?: { start: string; end: string; mode?: 'live' | 'as-of' };
+  /** Ceiling for the backoff between recovery attempts after transient failures. */
+  retryMaxDelayMs?: number;
+  /**
+   * How long transient failures (5xx, refused connections, a dropped socket)
+   * are retried silently before the hook reports an error. It keeps retrying
+   * after that; only a refusal (401/403/404 and other 4xx) stops it.
+   */
+  outageGraceMs?: number;
+  /** Jitter source, injectable for tests. */
+  random?: () => number;
+}
+
+/**
+ * A snapshot failure that retrying cannot fix: the platform answered and said
+ * no (not authenticated, not shared, not found, a malformed request). A
+ * missing or 5xx/408/429 status is transient — a restart, a refused
+ * connection, a timeout — and is retried with backoff.
+ */
+function isRefusal(error: unknown): boolean {
+  const status = error !== null && typeof error === 'object' ? (error as { status?: unknown }).status : undefined;
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
 export interface UseWorkGraphResult {
@@ -184,14 +216,26 @@ function parseActivityMessage(value: unknown): {
  * extra `view` key, rejected the frame and the hook refetched the whole
  * snapshot on every change — no v2 panel ever applied a delta.
  */
-function parseDeltaV2(value: unknown): { batch: WorkGraphDeltaBatch; view: Record<string, unknown> } | null {
+function parseDeltaV2(value: unknown):
+  | { batch: WorkGraphDeltaBatch; view: Record<string, unknown>; viewPatch?: undefined }
+  | { batch: WorkGraphDeltaBatch; view?: undefined; viewPatch: WorkGraphViewPatchV2 }
+  | null {
   if (!exactRecord(value, ['kind', 'batch']) || value.kind !== 'delta') return null;
   const raw = value.batch;
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const { view, schemaVersion, ...rest } = raw as Record<string, unknown>;
-  if (schemaVersion !== 2 || view === null || typeof view !== 'object' || Array.isArray(view)) return null;
+  const { view, viewPatch, schemaVersion, ...rest } = raw as Record<string, unknown>;
+  if (schemaVersion !== 2) return null;
+  const isRecord = (candidate: unknown) => candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate);
+  // Exactly one of the two: a whole view, or a patch against the last one.
+  if (isRecord(view) === isRecord(viewPatch) || (view !== undefined && !isRecord(view))
+    || (viewPatch !== undefined && !isRecord(viewPatch))) return null;
   const batch = validateWorkGraphDeltaBatch({ ...rest, schemaVersion: 1 });
-  return batch.ok ? { batch: batch.value, view: view as Record<string, unknown> } : null;
+  if (!batch.ok) return null;
+  if (isRecord(viewPatch)) {
+    const patch = viewPatch as unknown as WorkGraphViewPatchV2;
+    return Number.isSafeInteger(patch.baseWatermark) ? { batch: batch.value, viewPatch: patch } : null;
+  }
+  return { batch: batch.value, view: view as Record<string, unknown> };
 }
 
 /**
@@ -255,6 +299,9 @@ export function useWorkGraph({
   createSubscriptionGeneration,
   schemaVersion = 1,
   window,
+  retryMaxDelayMs = 15_000,
+  outageGraceMs = 20_000,
+  random = Math.random,
 }: UseWorkGraphOptions): UseWorkGraphResult {
   const scopeKey = keyForScope(scope);
   const generationSequence = useRef(0);
@@ -262,6 +309,11 @@ export function useWorkGraph({
   /** Set by a keep-visible reset; consumed by the very next handshake only. */
   const carryVisible = useRef<string | null>(null);
   const [restart, setRestart] = useState(0);
+  /** Consecutive transient failures, and when the current outage began (NFR #68). */
+  const failures = useRef(0);
+  const outageStartedAt = useRef<number | null>(null);
+  const randomRef = useRef(random);
+  randomRef.current = random;
   const [internal, setInternal] = useState<InternalState>(() => ({
     scopeKey,
     graph: createClientWorkGraphState(reducerScope(scope), 'pending'),
@@ -269,6 +321,8 @@ export function useWorkGraph({
   }));
 
   const retry = useCallback(() => {
+    failures.current = 0;
+    outageStartedAt.current = null;
     // Clear synchronously rather than rendering the preceding authorization
     // decision for one more frame while the replacement effect starts.
     setInternal({
@@ -331,6 +385,22 @@ export function useWorkGraph({
       else recoveryTimer = setTimeout(restartNow, delayMs);
     };
 
+    /**
+     * A transient failure: retry with exponential backoff and full-range
+     * jitter (so a restarted platform is not hit by every panel at once), and
+     * only report `error` once the outage has lasted `outageGraceMs`.
+     */
+    const recoverTransient = (error: WorkGraphClientError) => {
+      const attempt = failures.current;
+      failures.current = attempt + 1;
+      const now = Date.now();
+      if (outageStartedAt.current === null) outageStartedAt.current = now;
+      const sustained = now - outageStartedAt.current >= outageGraceMs;
+      const ceiling = Math.min(retryMaxDelayMs, Math.max(reconnectDelayMs, 1) * 2 ** attempt);
+      const delay = Math.max(1, Math.round(ceiling * (0.5 + 0.5 * randomRef.current())));
+      recover(delay, sustained ? error : null);
+    };
+
     const bootstrap = async () => {
       if (schemaVersion === 2) {
         // Refuse to issue a v2 request the server would have to interpret.
@@ -356,8 +426,10 @@ export function useWorkGraph({
           signal: abortController.signal,
           ...(activityRequest ? { activity: activityRequest } : {}),
         });
-      } catch {
-        if (!disposed && !abortController.signal.aborted) publish(graph, 'snapshot-unavailable');
+      } catch (error) {
+        if (disposed || abortController.signal.aborted) return;
+        if (isRefusal(error)) publish(graph, 'snapshot-unavailable');
+        else recoverTransient('snapshot-unavailable');
         return;
       }
       if (disposed) return;
@@ -379,6 +451,13 @@ export function useWorkGraph({
         return;
       }
       publish(next);
+      failures.current = 0;
+      outageStartedAt.current = null;
+
+      // The last whole view this stream sent, and the frame it came with: the
+      // only base a `viewPatch` may apply to. The snapshot's view is never
+      // one — the gateway has not seen it.
+      let streamView: { watermark: number; view: WorkGraphStreamViewV2 } | null = null;
 
       const onMessage = (rawMessage: unknown) => {
         if (disposed || recoveryStarted) return;
@@ -398,11 +477,27 @@ export function useWorkGraph({
             }
             // A batch at or below the current watermark changes nothing.
             if (reduced === graph) return;
-            const activity = deltaActivity(reduced, deltaV2.batch, deltaV2.view);
+            let view: Record<string, unknown> | null;
+            if (deltaV2.viewPatch) {
+              // A patch against a view this reader does not hold is not an
+              // error the user should see: resync from a snapshot, keeping the
+              // graph on screen (access has not changed).
+              view = streamView && deltaV2.viewPatch.baseWatermark === streamView.watermark
+                ? applyWorkGraphViewPatchV2(streamView.view, deltaV2.viewPatch) as Record<string, unknown> | null
+                : null;
+              if (!view) {
+                recover(0, null, true);
+                return;
+              }
+            } else {
+              view = deltaV2.view;
+            }
+            const activity = deltaActivity(reduced, deltaV2.batch, view);
             if (!activity) {
               recover(reconnectDelayMs);
               return;
             }
+            streamView = { watermark: deltaV2.batch.watermark, view: view as unknown as WorkGraphStreamViewV2 };
             publish(applyWorkGraphActivity(reduced, activity, deltaV2.batch));
             return;
           }
@@ -426,13 +521,13 @@ export function useWorkGraph({
           scope: { ...scope },
           cursor: snapshot.cursor,
           subscriptionGeneration,
-          ...(activityRequest ? { activity: activityRequest } : {}),
+          ...(activityRequest ? { activity: activityRequest, viewPatch: 1 as const } : {}),
           onMessage,
-          onClose: () => recover(reconnectDelayMs),
-          onError: () => recover(reconnectDelayMs, 'stream-unavailable'),
+          onClose: () => recoverTransient('stream-unavailable'),
+          onError: () => recoverTransient('stream-unavailable'),
         });
       } catch {
-        recover(reconnectDelayMs, 'stream-unavailable');
+        recoverTransient('stream-unavailable');
       }
     };
 
@@ -448,6 +543,8 @@ export function useWorkGraph({
   }, [
     enabled,
     reconnectDelayMs,
+    retryMaxDelayMs,
+    outageGraceMs,
     restart,
     schemaVersion,
     window?.start,

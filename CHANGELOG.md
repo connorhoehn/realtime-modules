@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.83.0 — 2026-09-23
+
+- Work-graph view patches (NFR #66). New shared `diffWorkGraphViewV2` /
+  `applyWorkGraphViewPatchV2` (`@connorhoehn/realtime-modules/work-graph`): a keyed patch of
+  the v2 activity view (efforts by `id`, details by `nodeId`: upsert, remove, order only when
+  it moved; the small fields travel whole). `useWorkGraph` v2 sends `viewPatch: 1` on its
+  socket request and applies `batch.viewPatch` against the view of the last stream frame
+  (`baseWatermark`); a patch for any other base resyncs from a snapshot with the graph kept.
+- `useWorkGraph` retries transient failures (NFR #68): a snapshot error without a 4xx status
+  (5xx, refused connection, timeout, 408/429) and a dropped/errored socket back off
+  exponentially from `reconnectDelayMs` to `retryMaxDelayMs` (15 s) with jitter, reset by the
+  next good snapshot. `error` is reported only once the outage has lasted `outageGraceMs`
+  (20 s), and retrying continues after that. A 4xx refusal (401/403/404…) is still final.
+
 ## 0.82.1 — 2026-09-23
 
 - `useWorkGraph` (schemaVersion 2) applies the gateway's v2 delta frames. Every v2 batch

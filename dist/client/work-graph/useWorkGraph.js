@@ -4,7 +4,18 @@ exports.useWorkGraph = useWorkGraph;
 const react_1 = require("react");
 const validation_1 = require("../../work-graph/validation");
 const validationV2_1 = require("../../work-graph/validationV2");
+const viewPatch_1 = require("../../work-graph/viewPatch");
 const reduceSnapshot_1 = require("./reduceSnapshot");
+/**
+ * A snapshot failure that retrying cannot fix: the platform answered and said
+ * no (not authenticated, not shared, not found, a malformed request). A
+ * missing or 5xx/408/429 status is transient — a restart, a refused
+ * connection, a timeout — and is retried with backoff.
+ */
+function isRefusal(error) {
+    const status = error !== null && typeof error === 'object' ? error.status : undefined;
+    return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
 const invalidationReasons = new Set([
     'policy-changed',
     'sharing-paused',
@@ -93,11 +104,22 @@ function parseDeltaV2(value) {
     const raw = value.batch;
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
         return null;
-    const { view, schemaVersion, ...rest } = raw;
-    if (schemaVersion !== 2 || view === null || typeof view !== 'object' || Array.isArray(view))
+    const { view, viewPatch, schemaVersion, ...rest } = raw;
+    if (schemaVersion !== 2)
+        return null;
+    const isRecord = (candidate) => candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate);
+    // Exactly one of the two: a whole view, or a patch against the last one.
+    if (isRecord(view) === isRecord(viewPatch) || (view !== undefined && !isRecord(view))
+        || (viewPatch !== undefined && !isRecord(viewPatch)))
         return null;
     const batch = (0, validation_1.validateWorkGraphDeltaBatch)({ ...rest, schemaVersion: 1 });
-    return batch.ok ? { batch: batch.value, view: view } : null;
+    if (!batch.ok)
+        return null;
+    if (isRecord(viewPatch)) {
+        const patch = viewPatch;
+        return Number.isSafeInteger(patch.baseWatermark) ? { batch: batch.value, viewPatch: patch } : null;
+    }
+    return { batch: batch.value, view: view };
 }
 /**
  * The view is checked against the graph the delta just produced, with the same
@@ -148,19 +170,26 @@ function defaultGeneration(sequence) {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, }) {
+function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, retryMaxDelayMs = 15_000, outageGraceMs = 20_000, random = Math.random, }) {
     const scopeKey = keyForScope(scope);
     const generationSequence = (0, react_1.useRef)(0);
     const generationFactory = (0, react_1.useRef)(createSubscriptionGeneration);
     /** Set by a keep-visible reset; consumed by the very next handshake only. */
     const carryVisible = (0, react_1.useRef)(null);
     const [restart, setRestart] = (0, react_1.useState)(0);
+    /** Consecutive transient failures, and when the current outage began (NFR #68). */
+    const failures = (0, react_1.useRef)(0);
+    const outageStartedAt = (0, react_1.useRef)(null);
+    const randomRef = (0, react_1.useRef)(random);
+    randomRef.current = random;
     const [internal, setInternal] = (0, react_1.useState)(() => ({
         scopeKey,
         graph: (0, reduceSnapshot_1.createClientWorkGraphState)(reducerScope(scope), 'pending'),
         error: null,
     }));
     const retry = (0, react_1.useCallback)(() => {
+        failures.current = 0;
+        outageStartedAt.current = null;
         // Clear synchronously rather than rendering the preceding authorization
         // decision for one more frame while the replacement effect starts.
         setInternal({
@@ -222,6 +251,22 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             else
                 recoveryTimer = setTimeout(restartNow, delayMs);
         };
+        /**
+         * A transient failure: retry with exponential backoff and full-range
+         * jitter (so a restarted platform is not hit by every panel at once), and
+         * only report `error` once the outage has lasted `outageGraceMs`.
+         */
+        const recoverTransient = (error) => {
+            const attempt = failures.current;
+            failures.current = attempt + 1;
+            const now = Date.now();
+            if (outageStartedAt.current === null)
+                outageStartedAt.current = now;
+            const sustained = now - outageStartedAt.current >= outageGraceMs;
+            const ceiling = Math.min(retryMaxDelayMs, Math.max(reconnectDelayMs, 1) * 2 ** attempt);
+            const delay = Math.max(1, Math.round(ceiling * (0.5 + 0.5 * randomRef.current())));
+            recover(delay, sustained ? error : null);
+        };
         const bootstrap = async () => {
             if (schemaVersion === 2) {
                 // Refuse to issue a v2 request the server would have to interpret.
@@ -248,9 +293,13 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                     ...(activityRequest ? { activity: activityRequest } : {}),
                 });
             }
-            catch {
-                if (!disposed && !abortController.signal.aborted)
+            catch (error) {
+                if (disposed || abortController.signal.aborted)
+                    return;
+                if (isRefusal(error))
                     publish(graph, 'snapshot-unavailable');
+                else
+                    recoverTransient('snapshot-unavailable');
                 return;
             }
             if (disposed)
@@ -271,6 +320,12 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                 return;
             }
             publish(next);
+            failures.current = 0;
+            outageStartedAt.current = null;
+            // The last whole view this stream sent, and the frame it came with: the
+            // only base a `viewPatch` may apply to. The snapshot's view is never
+            // one — the gateway has not seen it.
+            let streamView = null;
             const onMessage = (rawMessage) => {
                 if (disposed || recoveryStarted)
                     return;
@@ -291,11 +346,28 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                         // A batch at or below the current watermark changes nothing.
                         if (reduced === graph)
                             return;
-                        const activity = deltaActivity(reduced, deltaV2.batch, deltaV2.view);
+                        let view;
+                        if (deltaV2.viewPatch) {
+                            // A patch against a view this reader does not hold is not an
+                            // error the user should see: resync from a snapshot, keeping the
+                            // graph on screen (access has not changed).
+                            view = streamView && deltaV2.viewPatch.baseWatermark === streamView.watermark
+                                ? (0, viewPatch_1.applyWorkGraphViewPatchV2)(streamView.view, deltaV2.viewPatch)
+                                : null;
+                            if (!view) {
+                                recover(0, null, true);
+                                return;
+                            }
+                        }
+                        else {
+                            view = deltaV2.view;
+                        }
+                        const activity = deltaActivity(reduced, deltaV2.batch, view);
                         if (!activity) {
                             recover(reconnectDelayMs);
                             return;
                         }
+                        streamView = { watermark: deltaV2.batch.watermark, view: view };
                         publish((0, reduceSnapshot_1.applyWorkGraphActivity)(reduced, activity, deltaV2.batch));
                         return;
                     }
@@ -318,14 +390,14 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                     scope: { ...scope },
                     cursor: snapshot.cursor,
                     subscriptionGeneration,
-                    ...(activityRequest ? { activity: activityRequest } : {}),
+                    ...(activityRequest ? { activity: activityRequest, viewPatch: 1 } : {}),
                     onMessage,
-                    onClose: () => recover(reconnectDelayMs),
-                    onError: () => recover(reconnectDelayMs, 'stream-unavailable'),
+                    onClose: () => recoverTransient('stream-unavailable'),
+                    onError: () => recoverTransient('stream-unavailable'),
                 });
             }
             catch {
-                recover(reconnectDelayMs, 'stream-unavailable');
+                recoverTransient('stream-unavailable');
             }
         };
         void bootstrap();
@@ -341,6 +413,8 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
     }, [
         enabled,
         reconnectDelayMs,
+        retryMaxDelayMs,
+        outageGraceMs,
         restart,
         schemaVersion,
         window?.start,

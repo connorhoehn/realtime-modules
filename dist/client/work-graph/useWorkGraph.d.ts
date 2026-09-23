@@ -26,6 +26,12 @@ export interface WorkGraphSocketRequest {
     subscriptionGeneration: string;
     /** Present only when the caller opted into schemaVersion 2. */
     activity?: WorkGraphActivityRequest;
+    /**
+     * Set with schemaVersion 2: this reader applies `viewPatch` frames (NFR #66),
+     * so the transport should forward it on the subscribe frame. A gateway that
+     * never sees it keeps sending the whole view.
+     */
+    viewPatch?: 1;
     onMessage(message: unknown): void;
     onClose(): void;
     onError(): void;
@@ -61,6 +67,16 @@ export interface UseWorkGraphOptions {
         end: string;
         mode?: 'live' | 'as-of';
     };
+    /** Ceiling for the backoff between recovery attempts after transient failures. */
+    retryMaxDelayMs?: number;
+    /**
+     * How long transient failures (5xx, refused connections, a dropped socket)
+     * are retried silently before the hook reports an error. It keeps retrying
+     * after that; only a refusal (401/403/404 and other 4xx) stops it.
+     */
+    outageGraceMs?: number;
+    /** Jitter source, injectable for tests. */
+    random?: () => number;
 }
 export interface UseWorkGraphResult {
     graph: ClientWorkGraphState;
@@ -73,5 +89,5 @@ export interface UseWorkGraphResult {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, }: UseWorkGraphOptions): UseWorkGraphResult;
+export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, retryMaxDelayMs, outageGraceMs, random, }: UseWorkGraphOptions): UseWorkGraphResult;
 //# sourceMappingURL=useWorkGraph.d.ts.map

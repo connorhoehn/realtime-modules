@@ -10,3 +10,4 @@ export * from './projectEvent';
 export * from './references';
 export * from './sharingLifecycle';
 export * from './validation';
+export * from './viewPatch';

@@ -234,7 +234,7 @@ describe('useWorkGraph', () => {
     const testHarness = harness([snapshot()]);
     testHarness.fetchSnapshot
       .mockResolvedValueOnce(snapshot())
-      .mockRejectedValueOnce(new Error('platform down'));
+      .mockRejectedValueOnce(Object.assign(new Error('platform down'), { status: 403 }));
     const { result } = renderHook(() => useWorkGraph({
       scope: baseScope,
       transport: testHarness.transport,
@@ -326,7 +326,7 @@ describe('useWorkGraph', () => {
   test('reports a generic error and retry starts from empty authorized state', async () => {
     const testHarness = harness([snapshot()]);
     testHarness.fetchSnapshot
-      .mockRejectedValueOnce(new Error('private token and upstream URL'))
+      .mockRejectedValueOnce(Object.assign(new Error('private token and upstream URL'), { status: 404 }))
       .mockResolvedValueOnce(snapshot(baseScope, [node('node_after_retry')]));
     const createSubscriptionGeneration = generations('gen_1', 'gen_2');
     const { result } = renderHook(() => useWorkGraph({
