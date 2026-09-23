@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.83.2 — 2026-09-23
+
+- `useWorkGraph` abandons a snapshot request after `snapshotTimeoutMs` (10 s) and retries it as
+  a transient failure. Live, a GET into a restarting gateway hung 30 s, long enough for the
+  host's 20 s stall guard to show "unavailable" although the retry loop was healthy (NFR #68).
+
 ## 0.83.1 — 2026-09-23
 
 - View patch wire format, measured live: `order` is a list of indices into the list

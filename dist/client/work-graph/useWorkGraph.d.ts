@@ -77,6 +77,8 @@ export interface UseWorkGraphOptions {
     outageGraceMs?: number;
     /** Jitter source, injectable for tests. */
     random?: () => number;
+    /** A snapshot request that has not answered by then is abandoned and retried. */
+    snapshotTimeoutMs?: number;
 }
 export interface UseWorkGraphResult {
     graph: ClientWorkGraphState;
@@ -89,5 +91,5 @@ export interface UseWorkGraphResult {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, retryMaxDelayMs, outageGraceMs, random, }: UseWorkGraphOptions): UseWorkGraphResult;
+export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, retryMaxDelayMs, outageGraceMs, random, snapshotTimeoutMs, }: UseWorkGraphOptions): UseWorkGraphResult;
 //# sourceMappingURL=useWorkGraph.d.ts.map

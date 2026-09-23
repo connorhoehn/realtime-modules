@@ -170,7 +170,7 @@ function defaultGeneration(sequence) {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, retryMaxDelayMs = 15_000, outageGraceMs = 20_000, random = Math.random, }) {
+function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, retryMaxDelayMs = 15_000, outageGraceMs = 20_000, random = Math.random, snapshotTimeoutMs = 10_000, }) {
     const scopeKey = keyForScope(scope);
     const generationSequence = (0, react_1.useRef)(0);
     const generationFactory = (0, react_1.useRef)(createSubscriptionGeneration);
@@ -286,21 +286,43 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                 }
             }
             let rawSnapshot;
+            // A request into a restarting gateway can hang until the proxy gives up
+            // (30 s, measured). It is abandoned after snapshotTimeoutMs and retried
+            // like any other transient failure.
+            const fetchController = new AbortController();
+            const forwardAbort = () => fetchController.abort();
+            abortController.signal.addEventListener('abort', forwardAbort);
+            let timedOut = false;
+            let timeoutTimer;
             try {
-                rawSnapshot = await transport.fetchSnapshot({
-                    scope: { ...scope },
-                    signal: abortController.signal,
-                    ...(activityRequest ? { activity: activityRequest } : {}),
-                });
+                rawSnapshot = await Promise.race([
+                    transport.fetchSnapshot({
+                        scope: { ...scope },
+                        signal: fetchController.signal,
+                        ...(activityRequest ? { activity: activityRequest } : {}),
+                    }),
+                    new Promise((_, reject) => {
+                        timeoutTimer = setTimeout(() => {
+                            timedOut = true;
+                            fetchController.abort();
+                            reject(new Error('snapshot timed out'));
+                        }, snapshotTimeoutMs);
+                    }),
+                ]);
             }
             catch (error) {
-                if (disposed || abortController.signal.aborted)
+                if (disposed || (abortController.signal.aborted && !timedOut))
                     return;
-                if (isRefusal(error))
+                if (!timedOut && isRefusal(error))
                     publish(graph, 'snapshot-unavailable');
                 else
                     recoverTransient('snapshot-unavailable');
                 return;
+            }
+            finally {
+                if (timeoutTimer !== undefined)
+                    clearTimeout(timeoutTimer);
+                abortController.signal.removeEventListener('abort', forwardAbort);
             }
             if (disposed)
                 return;
@@ -415,6 +437,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
         reconnectDelayMs,
         retryMaxDelayMs,
         outageGraceMs,
+        snapshotTimeoutMs,
         restart,
         schemaVersion,
         window?.start,

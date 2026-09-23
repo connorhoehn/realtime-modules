@@ -330,6 +330,28 @@ describe('useWorkGraph recovery from transient failures (NFR #68)', () => {
     expect(result.current.error).toBeNull();
   });
 
+  test('a snapshot request that hangs is abandoned and retried (gateway restart)', async () => {
+    jest.useFakeTimers();
+    const test = harness([]);
+    let call = 0;
+    const signals: AbortSignal[] = [];
+    test.fetchSnapshot.mockImplementation(async (request) => {
+      signals.push(request.signal);
+      call += 1;
+      if (call === 1) return new Promise(() => undefined);
+      return snapshotV2();
+    });
+    const { result } = renderHook(() => useWorkGraph({
+      ...v2Options, transport: test.transport, reconnectDelayMs: 1_000, snapshotTimeoutMs: 5_000, random: () => 1,
+    }));
+    await advance(5_000);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(result.current.error).toBeNull();
+    await advance(1_000);
+    expect(test.fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe('ready');
+  });
+
   test('a refusal (404) is final: no retry loop', async () => {
     jest.useFakeTimers();
     const test = flaky(['refuse']);

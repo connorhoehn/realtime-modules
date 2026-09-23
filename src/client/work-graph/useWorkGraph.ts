@@ -105,6 +105,8 @@ export interface UseWorkGraphOptions {
   outageGraceMs?: number;
   /** Jitter source, injectable for tests. */
   random?: () => number;
+  /** A snapshot request that has not answered by then is abandoned and retried. */
+  snapshotTimeoutMs?: number;
 }
 
 /**
@@ -302,6 +304,7 @@ export function useWorkGraph({
   retryMaxDelayMs = 15_000,
   outageGraceMs = 20_000,
   random = Math.random,
+  snapshotTimeoutMs = 10_000,
 }: UseWorkGraphOptions): UseWorkGraphResult {
   const scopeKey = keyForScope(scope);
   const generationSequence = useRef(0);
@@ -420,17 +423,37 @@ export function useWorkGraph({
         }
       }
       let rawSnapshot: unknown;
+      // A request into a restarting gateway can hang until the proxy gives up
+      // (30 s, measured). It is abandoned after snapshotTimeoutMs and retried
+      // like any other transient failure.
+      const fetchController = new AbortController();
+      const forwardAbort = () => fetchController.abort();
+      abortController.signal.addEventListener('abort', forwardAbort);
+      let timedOut = false;
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
       try {
-        rawSnapshot = await transport.fetchSnapshot({
-          scope: { ...scope },
-          signal: abortController.signal,
-          ...(activityRequest ? { activity: activityRequest } : {}),
-        });
+        rawSnapshot = await Promise.race([
+          transport.fetchSnapshot({
+            scope: { ...scope },
+            signal: fetchController.signal,
+            ...(activityRequest ? { activity: activityRequest } : {}),
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutTimer = setTimeout(() => {
+              timedOut = true;
+              fetchController.abort();
+              reject(new Error('snapshot timed out'));
+            }, snapshotTimeoutMs);
+          }),
+        ]);
       } catch (error) {
-        if (disposed || abortController.signal.aborted) return;
-        if (isRefusal(error)) publish(graph, 'snapshot-unavailable');
+        if (disposed || (abortController.signal.aborted && !timedOut)) return;
+        if (!timedOut && isRefusal(error)) publish(graph, 'snapshot-unavailable');
         else recoverTransient('snapshot-unavailable');
         return;
+      } finally {
+        if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+        abortController.signal.removeEventListener('abort', forwardAbort);
       }
       if (disposed) return;
 
@@ -545,6 +568,7 @@ export function useWorkGraph({
     reconnectDelayMs,
     retryMaxDelayMs,
     outageGraceMs,
+    snapshotTimeoutMs,
     restart,
     schemaVersion,
     window?.start,
