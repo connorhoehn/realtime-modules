@@ -79,6 +79,13 @@ class MemoryMetadataStore {
         // Shallow clone so caller mutations don't leak into storage.
         this.docs.set(meta.documentId, { ...meta });
     }
+    async setOwnerNameIfAbsent(documentId, ownerId, ownerName) {
+        const hit = this.docs.get(documentId);
+        if (!hit || hit.ownerName || hit.ownerId !== ownerId)
+            return false;
+        hit.ownerName = ownerName;
+        return true;
+    }
     async getDocument(documentId) {
         const hit = this.docs.get(documentId);
         return hit ? { ...hit } : null;

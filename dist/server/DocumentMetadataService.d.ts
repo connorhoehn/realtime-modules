@@ -80,6 +80,21 @@ declare class DocumentMetadataService {
         channel?: string;
     }): Promise<DocumentWire[]>;
     /**
+     * Backfill-on-read for rows written before `ownerName` was persisted.
+     *
+     * Only the owner's own verified context may name them: a row missing a
+     * name gets it when its owner lists documents, via the store's
+     * conditional single-attribute update (no other row, no other
+     * attribute is rewritten). The wire docs are patched in place so this
+     * answer already carries the name. A failed backfill is logged and the
+     * answer still goes out — it is retried on the owner's next read.
+     * Returns how many rows were backfilled.
+     */
+    backfillOwnerNames(docs: DocumentWire[], actor: {
+        userId?: string;
+        displayName?: string | null;
+    }): Promise<number>;
+    /**
      * Delete a document's metadata.
      */
     handleDeleteDocument(documentId: string): Promise<void>;

@@ -113,6 +113,7 @@ class DocumentMetadataService {
             description: document.description,
             docType: document.type,
             ownerId: document.createdBy,
+            ...(document.createdByName ? { ownerName: document.createdByName } : {}),
             channel,
             createdAt: nowEpoch,
             updatedAt: nowEpoch,
@@ -154,6 +155,39 @@ class DocumentMetadataService {
         return stored.map((d) => this._toWire(d));
     }
     /**
+     * Backfill-on-read for rows written before `ownerName` was persisted.
+     *
+     * Only the owner's own verified context may name them: a row missing a
+     * name gets it when its owner lists documents, via the store's
+     * conditional single-attribute update (no other row, no other
+     * attribute is rewritten). The wire docs are patched in place so this
+     * answer already carries the name. A failed backfill is logged and the
+     * answer still goes out — it is retried on the owner's next read.
+     * Returns how many rows were backfilled.
+     */
+    async backfillOwnerNames(docs, actor) {
+        const name = typeof actor?.displayName === 'string' ? actor.displayName.trim() : '';
+        const userId = actor?.userId;
+        if (!name || !userId || !this.metadataStore.setOwnerNameIfAbsent)
+            return 0;
+        let written = 0;
+        for (const doc of docs) {
+            if (doc.createdBy !== userId || doc.createdByName)
+                continue;
+            doc.createdByName = name;
+            try {
+                if (await this.metadataStore.setOwnerNameIfAbsent(doc.id, userId, name))
+                    written++;
+            }
+            catch (err) {
+                this.logger.warn?.(`ownerName backfill failed for ${doc.id}: ${err?.message ?? err}`);
+            }
+        }
+        if (written)
+            this.logger.info(`ownerName backfilled on ${written} document(s) for ${userId}`);
+        return written;
+    }
+    /**
      * Delete a document's metadata.
      */
     async handleDeleteDocument(documentId) {
@@ -169,6 +203,10 @@ class DocumentMetadataService {
         if (!existing)
             return null;
         const wire = this._toWire(existing);
+        // The persisted owner name is set by the server at creation (or by a
+        // backfill from the owner's own verified context) — never from a
+        // client's updateDocumentMeta payload, which can say anything.
+        const ownerName = existing.ownerName ?? (wire.createdByName || undefined);
         // Merge only allowed fields onto the wire object (preserves
         // gateway's allowlist verbatim).
         const allowedFields = ['title', 'status', 'description', 'icon', 'type', 'activeCallSessionId', 'createdByName'];
@@ -203,6 +241,7 @@ class DocumentMetadataService {
             description: wire.description,
             docType: wire.type,
             ownerId: wire.createdBy,
+            ...(ownerName ? { ownerName } : {}),
             // Carried through explicitly. putDocument is an upsert of the
             // WHOLE row, so leaving this out would quietly unbind a document
             // from its conversation the first time anyone renamed it.
@@ -240,7 +279,10 @@ class DocumentMetadataService {
             type: docType,
             status: stored.status || 'draft',
             createdBy: sidecar.createdBy || stored.ownerId || 'unknown',
-            createdByName: sidecar.createdByName ?? null,
+            // The persisted name first: it is the same on every replica and
+            // after a restart. The sidecar only covers this process's own
+            // creates/renames of rows that predate `ownerName`.
+            createdByName: stored.ownerName ?? sidecar.createdByName ?? null,
             createdAt: sidecar.createdAt || new Date(stored.createdAt).toISOString(),
             updatedAt: new Date(stored.updatedAt).toISOString(),
             icon: sidecar.icon || config_1.TYPE_ICONS[docType] || '',

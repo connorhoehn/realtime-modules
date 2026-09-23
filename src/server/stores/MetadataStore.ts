@@ -48,6 +48,13 @@ export interface DocumentMeta {
     docType?: string;
     ownerId?: string;
     /**
+     * The owner's display name as it was when the document was created.
+     * Persisted (not a wire sidecar) so the byline survives a restart and
+     * reads the same on every replica. Absent on rows written before it
+     * existed; `setOwnerNameIfAbsent` backfills those one row at a time.
+     */
+    ownerName?: string;
+    /**
      * The document this one sits under in the explorer's tree, or null for a
      * root. A tree a person can drag things around in needs somewhere on the
      * record for the drag to LAND — before this, documents could only ever be
@@ -80,6 +87,15 @@ export interface MetadataStore {
     createDocumentIfAbsent?(meta: DocumentMeta): Promise<boolean>;
     /** Upsert metadata for a document. Last writer wins. */
     putDocument(meta: DocumentMeta): Promise<void>;
+
+    /**
+     * Backfill `ownerName` on ONE row that lacks it, only while `ownerId`
+     * still matches. Must not rewrite any other attribute (a conditional
+     * attribute update, not a putDocument). Resolves false when the row
+     * already had a name, changed owner, or is gone. Optional: stores
+     * without it simply never backfill.
+     */
+    setOwnerNameIfAbsent?(documentId: string, ownerId: string, ownerName: string): Promise<boolean>;
 
     /** Fetch metadata for a document, or `null` if it doesn't exist. */
     getDocument(documentId: string): Promise<DocumentMeta | null>;

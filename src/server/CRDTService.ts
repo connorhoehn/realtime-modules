@@ -484,6 +484,10 @@ class CRDTService {
                     const docs = await this.metadataService.handleListDocuments(
                         typeof data?.channel === 'string' && data.channel ? { channel: data.channel } : undefined,
                     );
+                    // Rows from before ownerName was persisted get their owner's
+                    // name when that owner reads them (never anyone else's).
+                    const lister = (this.messageRouter.getClientData?.(clientId) as any)?.userContext;
+                    if (lister?.userId) await this.metadataService.backfillOwnerNames(docs, { userId: lister.userId, displayName: lister.displayName || lister.email || null });
                     this.sendToClient(clientId, { type: 'crdt', action: 'documentList', documents: (await Promise.all(docs.map(async doc => await this.authorize(clientId, `doc:${doc.id}`, 'read', false) ? doc : null))).filter(Boolean) });
                     return;
                 }

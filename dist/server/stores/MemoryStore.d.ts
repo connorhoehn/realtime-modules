@@ -41,6 +41,7 @@ export declare class MemorySnapshotStore implements SnapshotStore {
 export declare class MemoryMetadataStore implements MetadataStore {
     private readonly docs;
     putDocument(meta: DocumentMeta): Promise<void>;
+    setOwnerNameIfAbsent(documentId: string, ownerId: string, ownerName: string): Promise<boolean>;
     getDocument(documentId: string): Promise<DocumentMeta | null>;
     listDocuments(opts?: {
         ownerId?: string;

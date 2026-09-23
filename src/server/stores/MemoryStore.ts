@@ -100,6 +100,13 @@ export class MemoryMetadataStore implements MetadataStore {
         this.docs.set(meta.documentId, { ...meta });
     }
 
+    async setOwnerNameIfAbsent(documentId: string, ownerId: string, ownerName: string): Promise<boolean> {
+        const hit = this.docs.get(documentId);
+        if (!hit || hit.ownerName || hit.ownerId !== ownerId) return false;
+        hit.ownerName = ownerName;
+        return true;
+    }
+
     async getDocument(documentId: string): Promise<DocumentMeta | null> {
         const hit = this.docs.get(documentId);
         return hit ? { ...hit } : null;

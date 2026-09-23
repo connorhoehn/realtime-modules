@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.85.0 — 2026-09-23
+
+- **server:** a document's owner display name is persisted on the row
+  (`DocumentMeta.ownerName`, written at creation, carried through renames,
+  never taken from an `updateDocumentMeta` payload) and `_toWire` reads it
+  before the per-process sidecar — "Owned by …" survives a restart and reads
+  the same on every replica (realtime-examples NFR #80).
+- **server:** `MetadataStore.setOwnerNameIfAbsent?` (optional) +
+  `DocumentMetadataService.backfillOwnerNames`: rows from before the field
+  are named when their OWNER lists documents, one conditional
+  single-attribute write per row. `MemoryMetadataStore` implements it.
+
 ## 0.84.0 — 2026-09-23
 
 - New `reset-required` reason `source-unavailable`: the gateway could not reach or hear back
