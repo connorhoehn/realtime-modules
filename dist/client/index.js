@@ -21,7 +21,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useDeckReviseStatus = exports.PAUSE_UNSUPPORTED_FALLBACK = exports.DEFAULT_AGENT_LOOP_POLL_MS = exports.isAgentLoopOver = exports.agentLoopProgress = exports.agentLoopPhase = exports.useAgentLoopRun = exports.useCursor = exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.resetPresenceEntry = exports.presenceSetFrame = exports.presenceLeaveFrames = exports.joinedPresenceChannels = exports.joinPresenceChannel = exports.PRESENCE_LEFT_KEY = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
-exports.DECK_REVISE_EVENT_PREFIX = exports.DEFAULT_DECK_REVISE_STALE_MS = exports.isDeckReviseSettled = exports.markStaleDeckRevises = exports.reduceDeckReviseFrame = exports.deckRevisePhaseLabel = exports.deckReviseChannel = void 0;
+exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = exports.generatePipelineDraft = exports.normalizeCatalogEntry = exports.fetchPipelineCatalog = exports.usePipelineCatalog = exports.mergeRunEvent = exports.applyRunEvent = exports.runEventFromFrame = exports.statusPillFor = exports.relativeTime = exports.groupByWorkType = exports.groupCatalog = exports.sortSummaries = exports.compareSummaries = exports.summarizeAll = exports.summarize = exports.kindOf = exports.workTypeOf = exports.isTerminalRunStatus = exports.isActiveRunStatus = exports.isFailedRunStatus = exports.isPipelineKind = exports.isWorkType = exports.emptyRollup = exports.RUN_EVENT_STATUS = exports.RECENT_LIMIT = exports.ROLLUP_RECENT_LIMIT = exports.RUN_ITEM_STATUSES = exports.MAX_ROUTE_ENTRIES = exports.MAX_INSTRUCTION_CHARS = exports.ORIGIN_KINDS = exports.PIPELINE_KINDS = exports.KIND_LABEL = exports.KIND_WORK_TYPE = exports.KIND_MARK = exports.PIPELINE_KIND_ORDER = exports.WORK_TYPE_ORDER = exports.WORK_TYPE_LABEL = exports.DECK_REVISE_EVENT_PREFIX = exports.DEFAULT_DECK_REVISE_STALE_MS = exports.isDeckReviseSettled = exports.markStaleDeckRevises = exports.reduceDeckReviseFrame = exports.deckRevisePhaseLabel = exports.deckReviseChannel = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -197,4 +197,51 @@ Object.defineProperty(exports, "markStaleDeckRevises", { enumerable: true, get: 
 Object.defineProperty(exports, "isDeckReviseSettled", { enumerable: true, get: function () { return useDeckReviseStatus_1.isDeckReviseSettled; } });
 Object.defineProperty(exports, "DEFAULT_DECK_REVISE_STALE_MS", { enumerable: true, get: function () { return useDeckReviseStatus_1.DEFAULT_DECK_REVISE_STALE_MS; } });
 Object.defineProperty(exports, "DECK_REVISE_EVENT_PREFIX", { enumerable: true, get: function () { return useDeckReviseStatus_1.DECK_REVISE_EVENT_PREFIX; } });
+// v0.88.0 — the pipelines directory (also under ./client/pipelines): the
+// work-type / kind enum with its labels and marks, the last-run rollup and its
+// merge rule, the status pill, and `usePipelineCatalog`, which reads
+// `GET /api/pipelines/defs?include=rollup` and keeps each row's rollup current
+// from the `pipeline:all` run frames. `generatePipelineDraft` is the `/agent`
+// planner on the page (`POST /api/pipelines/defs/generate`).
+var catalog_1 = require("./pipelines/catalog");
+Object.defineProperty(exports, "WORK_TYPE_LABEL", { enumerable: true, get: function () { return catalog_1.WORK_TYPE_LABEL; } });
+Object.defineProperty(exports, "WORK_TYPE_ORDER", { enumerable: true, get: function () { return catalog_1.WORK_TYPE_ORDER; } });
+Object.defineProperty(exports, "PIPELINE_KIND_ORDER", { enumerable: true, get: function () { return catalog_1.PIPELINE_KIND_ORDER; } });
+Object.defineProperty(exports, "KIND_MARK", { enumerable: true, get: function () { return catalog_1.KIND_MARK; } });
+Object.defineProperty(exports, "KIND_WORK_TYPE", { enumerable: true, get: function () { return catalog_1.KIND_WORK_TYPE; } });
+Object.defineProperty(exports, "KIND_LABEL", { enumerable: true, get: function () { return catalog_1.KIND_LABEL; } });
+Object.defineProperty(exports, "PIPELINE_KINDS", { enumerable: true, get: function () { return catalog_1.PIPELINE_KINDS; } });
+Object.defineProperty(exports, "ORIGIN_KINDS", { enumerable: true, get: function () { return catalog_1.ORIGIN_KINDS; } });
+Object.defineProperty(exports, "MAX_INSTRUCTION_CHARS", { enumerable: true, get: function () { return catalog_1.MAX_INSTRUCTION_CHARS; } });
+Object.defineProperty(exports, "MAX_ROUTE_ENTRIES", { enumerable: true, get: function () { return catalog_1.MAX_ROUTE_ENTRIES; } });
+Object.defineProperty(exports, "RUN_ITEM_STATUSES", { enumerable: true, get: function () { return catalog_1.RUN_ITEM_STATUSES; } });
+Object.defineProperty(exports, "ROLLUP_RECENT_LIMIT", { enumerable: true, get: function () { return catalog_1.ROLLUP_RECENT_LIMIT; } });
+Object.defineProperty(exports, "RECENT_LIMIT", { enumerable: true, get: function () { return catalog_1.RECENT_LIMIT; } });
+Object.defineProperty(exports, "RUN_EVENT_STATUS", { enumerable: true, get: function () { return catalog_1.RUN_EVENT_STATUS; } });
+Object.defineProperty(exports, "emptyRollup", { enumerable: true, get: function () { return catalog_1.emptyRollup; } });
+Object.defineProperty(exports, "isWorkType", { enumerable: true, get: function () { return catalog_1.isWorkType; } });
+Object.defineProperty(exports, "isPipelineKind", { enumerable: true, get: function () { return catalog_1.isPipelineKind; } });
+Object.defineProperty(exports, "isFailedRunStatus", { enumerable: true, get: function () { return catalog_1.isFailedRunStatus; } });
+Object.defineProperty(exports, "isActiveRunStatus", { enumerable: true, get: function () { return catalog_1.isActiveRunStatus; } });
+Object.defineProperty(exports, "isTerminalRunStatus", { enumerable: true, get: function () { return catalog_1.isTerminalRunStatus; } });
+Object.defineProperty(exports, "workTypeOf", { enumerable: true, get: function () { return catalog_1.workTypeOf; } });
+Object.defineProperty(exports, "kindOf", { enumerable: true, get: function () { return catalog_1.kindOf; } });
+Object.defineProperty(exports, "summarize", { enumerable: true, get: function () { return catalog_1.summarize; } });
+Object.defineProperty(exports, "summarizeAll", { enumerable: true, get: function () { return catalog_1.summarizeAll; } });
+Object.defineProperty(exports, "compareSummaries", { enumerable: true, get: function () { return catalog_1.compareSummaries; } });
+Object.defineProperty(exports, "sortSummaries", { enumerable: true, get: function () { return catalog_1.sortSummaries; } });
+Object.defineProperty(exports, "groupCatalog", { enumerable: true, get: function () { return catalog_1.groupCatalog; } });
+Object.defineProperty(exports, "groupByWorkType", { enumerable: true, get: function () { return catalog_1.groupByWorkType; } });
+Object.defineProperty(exports, "relativeTime", { enumerable: true, get: function () { return catalog_1.relativeTime; } });
+Object.defineProperty(exports, "statusPillFor", { enumerable: true, get: function () { return catalog_1.statusPillFor; } });
+Object.defineProperty(exports, "runEventFromFrame", { enumerable: true, get: function () { return catalog_1.runEventFromFrame; } });
+Object.defineProperty(exports, "applyRunEvent", { enumerable: true, get: function () { return catalog_1.applyRunEvent; } });
+Object.defineProperty(exports, "mergeRunEvent", { enumerable: true, get: function () { return catalog_1.mergeRunEvent; } });
+var usePipelineCatalog_1 = require("./pipelines/usePipelineCatalog");
+Object.defineProperty(exports, "usePipelineCatalog", { enumerable: true, get: function () { return usePipelineCatalog_1.usePipelineCatalog; } });
+Object.defineProperty(exports, "fetchPipelineCatalog", { enumerable: true, get: function () { return usePipelineCatalog_1.fetchPipelineCatalog; } });
+Object.defineProperty(exports, "normalizeCatalogEntry", { enumerable: true, get: function () { return usePipelineCatalog_1.normalizeCatalogEntry; } });
+Object.defineProperty(exports, "generatePipelineDraft", { enumerable: true, get: function () { return usePipelineCatalog_1.generatePipelineDraft; } });
+Object.defineProperty(exports, "newPipelineDraftRequestId", { enumerable: true, get: function () { return usePipelineCatalog_1.newPipelineDraftRequestId; } });
+Object.defineProperty(exports, "PIPELINE_ALL_CHANNEL", { enumerable: true, get: function () { return usePipelineCatalog_1.PIPELINE_ALL_CHANNEL; } });
 //# sourceMappingURL=index.js.map

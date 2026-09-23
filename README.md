@@ -199,7 +199,7 @@ is the same as an unpublished one.
 | `./client/media-effects` | Blur, virtual backgrounds, face sprites — lazy MediaPipe engine | Camera surfaces wanting effects |
 | `./client/voice` | Ambient push-to-talk capture + `ContextFrame` (where an utterance attaches) | Dictation / spoken remarks outside a call |
 | `./client/hangout-rooms` | Hangout room hooks + the REST functions behind them | Multi-room video apps |
-| `./client/pipelines` | `usePipelineRunStatus` — live run status merged from `pipeline:event` frames and a REST snapshot; pure helpers for SSR/scripts | Rendering a pipeline-run card |
+| `./client/pipelines` | `usePipelineRunStatus` — live run status merged from `pipeline:event` frames and a REST snapshot; `usePipelineCatalog` — the pipelines directory (work-type/kind enum, last-run rollups kept current from `pipeline:all`, `statusPillFor`, `generatePipelineDraft`); pure helpers for SSR/scripts | Rendering a pipeline-run card or the pipelines page |
 | `./agent-streaming/client` | `useAgentStream` React hook — no Yjs dependency | Browser apps consuming agent streams |
 | `./adapters/tiptap` | `TiptapEditor` + `EditorToolbar` bound to Yjs | Collaborative rich-text editors |
 | `./adapters/excalidraw` | Excalidraw ⇄ Yjs binding, typed structurally (no Excalidraw dependency) | Collaborative diagramming |
@@ -257,6 +257,8 @@ knowing about, and its row says so.
 | `useGatewayOptional()` | The same context value, or `null` outside a provider — the non-throwing read a provider-optional hook needs | No (provider context) |
 | `useFeatures()` | `FeatureName[]` declared by the nearest provider; `[]` outside one | No (provider context) |
 | `useWebSocket(opts)` | `{ send, subscribe, unsubscribe, publish }` plus the state of `UseWebSocketReturn` — `connectionState`, `clientId`, `sessionToken`, `switchChannel`, … `subscribe`/`unsubscribe` address the generic multiplexer, which `attachRealtime` always registers. Takes `opts.webSocketImpl` to supply the constructor (Node, React Native, tests) | No |
+| `usePipelineRunStatus(runs, opts)` | `(runId) => PipelineRunStatus \| undefined` — phase, step label, detail, suggestion/review, expandable `details`; `pipeline:event` frames merged with the run snapshot (also under `./client/pipelines`) | Per run (`pipeline:run:<id>` + `pipeline:all`) |
+| `usePipelineCatalog(opts)` | `{ entries, summaries, groups(by), loading, error, refresh }` — `GET /api/pipelines/defs?include=rollup`, rollups kept current from `pipeline:all` run frames, one refresh per reconnect; `statusPillFor` / `groupByWorkType` / `generatePipelineDraft` beside it (also under `./client/pipelines`) | `pipeline:all` |
 
 **Channel features**
 

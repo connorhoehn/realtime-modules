@@ -307,3 +307,89 @@ export type {
   UseDeckReviseStatusOptions,
   UseDeckReviseStatusResult,
 } from './useDeckReviseStatus';
+
+// v0.88.0 — the pipelines directory (also under ./client/pipelines): the
+// work-type / kind enum with its labels and marks, the last-run rollup and its
+// merge rule, the status pill, and `usePipelineCatalog`, which reads
+// `GET /api/pipelines/defs?include=rollup` and keeps each row's rollup current
+// from the `pipeline:all` run frames. `generatePipelineDraft` is the `/agent`
+// planner on the page (`POST /api/pipelines/defs/generate`).
+export {
+  WORK_TYPE_LABEL,
+  WORK_TYPE_ORDER,
+  PIPELINE_KIND_ORDER,
+  KIND_MARK,
+  KIND_WORK_TYPE,
+  KIND_LABEL,
+  PIPELINE_KINDS,
+  ORIGIN_KINDS,
+  MAX_INSTRUCTION_CHARS,
+  MAX_ROUTE_ENTRIES,
+  RUN_ITEM_STATUSES,
+  ROLLUP_RECENT_LIMIT,
+  RECENT_LIMIT,
+  RUN_EVENT_STATUS,
+  emptyRollup,
+  isWorkType,
+  isPipelineKind,
+  isFailedRunStatus,
+  isActiveRunStatus,
+  isTerminalRunStatus,
+  workTypeOf,
+  kindOf,
+  summarize,
+  summarizeAll,
+  compareSummaries,
+  sortSummaries,
+  groupCatalog,
+  groupByWorkType,
+  relativeTime,
+  statusPillFor,
+  runEventFromFrame,
+  applyRunEvent,
+  mergeRunEvent,
+} from './pipelines/catalog';
+export type {
+  WorkType,
+  PipelineWorkType,
+  PipelineKind,
+  PipelineDefinitionStatus,
+  OriginKind,
+  PipelineOrigin,
+  DefinitionOrigin,
+  InferredField,
+  PipelineCatalogDefinition,
+  RunItemStatus,
+  RollupRunStatus,
+  PipelineRunItemStatus,
+  PipelineRunRollupItem,
+  RollupRecentRun,
+  PipelineRunRollup,
+  PipelineCatalogEntry,
+  PipelineDefinitionSummary,
+  CatalogGroupBy,
+  PipelineCatalogGroupCounts,
+  PipelineCatalogGroup,
+  PipelineStatusPillTone,
+  PipelineStatusPill,
+  RunRollupEvent,
+  PipelineRunLifecycleEvent,
+} from './pipelines/catalog';
+export {
+  usePipelineCatalog,
+  fetchPipelineCatalog,
+  normalizeCatalogEntry,
+  generatePipelineDraft,
+  newPipelineDraftRequestId,
+  PIPELINE_ALL_CHANNEL,
+} from './pipelines/usePipelineCatalog';
+export type {
+  PipelineCatalogRequestError,
+  PipelineCatalogResponse,
+  GeneratePipelineMode,
+  GeneratePipelineDraftInput,
+  GeneratePipelineDraftResponse,
+  UsePipelineCatalogOptions,
+  UsePipelineCatalogResult,
+} from './pipelines/usePipelineCatalog';
+export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
