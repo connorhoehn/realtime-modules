@@ -330,6 +330,26 @@ describe('useWorkGraph recovery from transient failures (NFR #68)', () => {
     expect(result.current.error).toBeNull();
   });
 
+  test('a failing refetch keeps the last graph until the outage grace, then clears it with the error', async () => {
+    jest.useFakeTimers();
+    const test = flaky(['ok', ...Array.from({ length: 8 }, () => 'fail' as const)]);
+    const { result } = renderHook(() => useWorkGraph({
+      ...v2Options, transport: test.transport, reconnectDelayMs: 1_000, retryMaxDelayMs: 4_000,
+      outageGraceMs: 10_000, random: () => 1,
+    }));
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.status).toBe('ready');
+    const shown = Object.keys(result.current.graph.nodes).length;
+    expect(shown).toBeGreaterThan(0);
+    act(() => test.sockets[0].request.onClose());
+    await advance(7_000);
+    expect(Object.keys(result.current.graph.nodes)).toHaveLength(shown);
+    expect(result.current.error).toBeNull();
+    await advance(5_000);
+    expect(result.current.error).toBe('snapshot-unavailable');
+    expect(result.current.graph.nodes).toEqual({});
+  });
+
   test('a snapshot request that hangs is abandoned and retried (gateway restart)', async () => {
     jest.useFakeTimers();
     const test = harness([]);

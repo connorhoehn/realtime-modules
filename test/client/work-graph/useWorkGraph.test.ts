@@ -230,6 +230,51 @@ describe('useWorkGraph', () => {
     expect(result.current.status).toBe('ready');
   });
 
+  test('a platform outage the gateway reports (source-unavailable) keeps the graph through the refetch', async () => {
+    const retrySnapshot = deferred<WorkGraphSnapshot>();
+    const testHarness = harness([snapshot(), retrySnapshot.promise]);
+    const { result } = renderHook(() => useWorkGraph({
+      scope: baseScope,
+      transport: testHarness.transport,
+      reconnectDelayMs: 0,
+      createSubscriptionGeneration: generations('gen_1', 'gen_2'),
+    }));
+    await waitFor(() => expect(result.current.graph.nodes.node_a).toBeDefined());
+
+    act(() => testHarness.sockets[0].request.onMessage({
+      kind: 'reset-required',
+      subscriptionGeneration: 'gen_1',
+      reason: 'source-unavailable',
+    }));
+
+    await waitFor(() => expect(testHarness.fetchSnapshot).toHaveBeenCalledTimes(2));
+    expect(result.current.graph.nodes.node_a).toBeDefined();
+    expect(result.current.error).toBeNull();
+    await act(async () => retrySnapshot.resolve(snapshot(baseScope, [node('node_updated')], 20)));
+    await waitFor(() => expect(result.current.graph.nodes.node_updated).toBeDefined());
+    expect(result.current.status).toBe('ready');
+  });
+
+  test('a dropped stream keeps the last graph on screen while it reconnects', async () => {
+    const retrySnapshot = deferred<WorkGraphSnapshot>();
+    const testHarness = harness([snapshot(), retrySnapshot.promise]);
+    const { result } = renderHook(() => useWorkGraph({
+      scope: baseScope,
+      transport: testHarness.transport,
+      reconnectDelayMs: 0,
+      createSubscriptionGeneration: generations('gen_1', 'gen_2'),
+    }));
+    await waitFor(() => expect(result.current.graph.nodes.node_a).toBeDefined());
+
+    act(() => testHarness.sockets[0].request.onClose());
+    await waitFor(() => expect(testHarness.fetchSnapshot).toHaveBeenCalledTimes(2));
+    expect(result.current.graph.nodes.node_a).toBeDefined();
+    expect(result.current.error).toBeNull();
+    await act(async () => retrySnapshot.resolve(snapshot(baseScope, [node('node_after')], 20)));
+    await waitFor(() => expect(result.current.graph.nodes.node_after).toBeDefined());
+    expect(result.current.graph.nodes.node_a).toBeUndefined();
+  });
+
   test('a kept graph is still cleared when the refetch it waits on fails', async () => {
     const testHarness = harness([snapshot()]);
     testHarness.fetchSnapshot

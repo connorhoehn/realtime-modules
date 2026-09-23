@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.84.0 — 2026-09-23
+
+- New `reset-required` reason `source-unavailable`: the gateway could not reach or hear back
+  from the platform (5xx, timeout, refused, not ready). It is not an access change, so
+  `useWorkGraph` keeps the graph on screen and refetches, like `gap`/`replay-unavailable`.
+  Only a proven access change arrives as `invalidate`.
+- `useWorkGraph` keeps the last authorized graph through transient failures (dropped socket,
+  5xx/timeout snapshot) until `outageGraceMs`; past it the graph clears with the error. A
+  refusal (401/403/404) and every `invalidate` still clear at once. Every retry re-authorizes
+  through a fresh snapshot.
+
 ## 0.83.2 — 2026-09-23
 
 - `useWorkGraph` abandons a snapshot request after `snapshotTimeoutMs` (10 s) and retries it as

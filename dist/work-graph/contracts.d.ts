@@ -372,10 +372,17 @@ export type WorkGraphStreamMessage = {
     kind: 'invalidate';
     subscriptionGeneration: string;
     reason: 'policy-changed' | 'sharing-paused' | 'sharing-stopped' | 'sharing-expired' | 'cursor-expired' | 'source-authorization-unavailable';
-} | {
+}
+/**
+ * `source-unavailable` (0.84.0): the gateway could not reach or hear back
+ * from the platform (5xx, timeout, refused, not ready). It says nothing about
+ * access, so a reader keeps its graph and refetches with backoff. Only a
+ * proven access change is an `invalidate`.
+ */
+ | {
     kind: 'reset-required';
     subscriptionGeneration: string;
-    reason: 'gap' | 'replay-unavailable' | 'scope-changed';
+    reason: 'gap' | 'replay-unavailable' | 'scope-changed' | 'source-unavailable';
 };
 export type WorkReferenceTarget = {
     kind: 'node';

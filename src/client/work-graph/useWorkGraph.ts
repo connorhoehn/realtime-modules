@@ -141,15 +141,16 @@ const invalidationReasons = new Set([
   'cursor-expired',
   'source-authorization-unavailable',
 ]);
-const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed']);
+const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed', 'source-unavailable']);
 /**
  * Server-announced resets that say nothing about access: the stream could not
  * express a change as deltas (every change on a non-UTC day), so a fresh
  * snapshot is needed. The last authorized graph stays on screen until that
  * snapshot lands, instead of flashing an empty canvas on every update.
- * `scope-changed` is excluded: the old graph belongs to another scope.
+ * `source-unavailable` is a platform outage seen by the gateway, not an access
+ * change. `scope-changed` is excluded: the old graph belongs to another scope.
  */
-const keepVisibleResetReasons = new Set(['gap', 'replay-unavailable']);
+const keepVisibleResetReasons = new Set(['gap', 'replay-unavailable', 'source-unavailable']);
 
 function keyForScope(scope: WorkGraphClientScope): string {
   // JSON encoding avoids delimiter ambiguity; this value never leaves memory.
@@ -391,7 +392,11 @@ export function useWorkGraph({
     /**
      * A transient failure: retry with exponential backoff and full-range
      * jitter (so a restarted platform is not hit by every panel at once), and
-     * only report `error` once the outage has lasted `outageGraceMs`.
+     * only report `error` once the outage has lasted `outageGraceMs`. Until
+     * then the last authorized graph stays on screen: a dropped socket, a 5xx
+     * or a timeout says nothing about access, and every retry re-authorizes
+     * through a fresh snapshot (a refusal there clears it). Past the grace the
+     * graph is cleared with the error.
      */
     const recoverTransient = (error: WorkGraphClientError) => {
       const attempt = failures.current;
@@ -401,7 +406,7 @@ export function useWorkGraph({
       const sustained = now - outageStartedAt.current >= outageGraceMs;
       const ceiling = Math.min(retryMaxDelayMs, Math.max(reconnectDelayMs, 1) * 2 ** attempt);
       const delay = Math.max(1, Math.round(ceiling * (0.5 + 0.5 * randomRef.current())));
-      recover(delay, sustained ? error : null);
+      recover(delay, sustained ? error : null, !sustained);
     };
 
     const bootstrap = async () => {
