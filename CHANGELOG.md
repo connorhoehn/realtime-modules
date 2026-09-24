@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.95.1 — 2026-09-23
+
+- **client/pipelines:** a run's steps follow its pipeline's order, without the
+  trigger. `stepsFromSnapshot` orders by the definition (edges, node order for
+  ties) when one is known — the run's own `pipelineDefinitionSnapshot`, or the
+  new `StepLabelTables.definitions` — and by `startedAt` otherwise; trigger
+  nodes are dropped. `usePipelineRunStatus` reads `GET /api/pipelines/:id`
+  once per pipeline, only when a snapshot leaves the order a guess
+  (`snapshotNeedsStepOrder`: a step without a start time and no definition on
+  the run), and re-orders the card when it lands. New exports
+  `orderStepsByDefinition`, `snapshotNeedsStepOrder`,
+  `PipelineStepOrderDefinition`. realtime-examples NFR #158: a deck-revise
+  run card read "Composer edit, Check the edit, Read the deck…".
+
 ## 0.95.0 — 2026-09-23
 
 - **client/pipelines:** `usePipelineRunStatus` stops polling what its frames

@@ -118,7 +118,33 @@ export declare const DEFAULT_PIPELINE_STEP_LABELS: Record<string, Record<string,
 export interface StepLabelTables {
     stepLabels?: Record<string, string>;
     pipelineStepLabels?: Record<string, Record<string, string>>;
+    /** Pipeline definitions by pipeline id — only their nodes and edges are read, for the step order. */
+    definitions?: Record<string, PipelineStepOrderDefinition | undefined>;
 }
+/** What the step order needs from a pipeline definition (the run's `pipelineDefinitionSnapshot` or `GET /api/pipelines/:id`). */
+export interface PipelineStepOrderDefinition {
+    nodes?: Array<{
+        id: string;
+        type?: string;
+    }>;
+    edges?: Array<{
+        source?: string;
+        target?: string;
+    }>;
+}
+/**
+ * A run's steps in the order its pipeline runs them, without the trigger.
+ *
+ * The definition says the order: its edges (a topological walk), its node
+ * order to break ties and to place anything a cycle leaves. Steps the
+ * definition does not name keep their relative place after the ones it does.
+ * Without a definition the steps keep their given order (trigger dropped).
+ * A run row's `stepsSummary` carries no start times and is keyed by id, so
+ * without this a deck-revise run read "Check the edit" before "Read the deck".
+ */
+export declare function orderStepsByDefinition<T extends {
+    id: string;
+}>(steps: readonly T[], definition?: PipelineStepOrderDefinition): T[];
 /** The label for a step: the pipeline-specific one, then the general one, then the raw id. */
 export declare function stepLabelFor(stepId: string, pipelineId?: string, tables?: StepLabelTables): string;
 /** "Retrying — attempt 2 of 3", or without the "of 3" when the budget is not known. */
@@ -227,23 +253,35 @@ export interface PipelineRunSnapshot {
     pipelineDefinitionSnapshot?: {
         nodes?: Array<{
             id: string;
+            type?: string;
             data?: {
                 retryPolicy?: {
                     maxAttempts?: number;
                 };
             };
         }>;
+        edges?: Array<{
+            source?: string;
+            target?: string;
+        }>;
     };
 }
 /** The step's label for a timeline: the narration without its trailing ellipsis. */
 export declare function stepTimelineLabel(stepId: string, pipelineId?: string, tables?: StepLabelTables): string;
 /**
- * The snapshot's steps in the order a person reads them: the trigger first,
- * then by `startedAt` among the steps that have one — a step without a
- * timestamp keeps its place in the record. The definition's node order is
- * not known here.
+ * The snapshot's steps in the order a person reads them, without the trigger:
+ * the pipeline definition's order when one is known (the run's own
+ * `pipelineDefinitionSnapshot`, else `tables.definitions[pipelineId]`);
+ * otherwise by `startedAt` among the steps that have one — a step without a
+ * timestamp keeps its place in the record.
  */
 export declare function stepsFromSnapshot(snap: PipelineRunSnapshot, pipelineId?: string, tables?: StepLabelTables): PipelineRunStepDetail[] | undefined;
+/**
+ * True when a snapshot's step order is only a guess — some step besides the
+ * trigger has no start time and the run carries no definition of its own —
+ * so the definition is worth one read.
+ */
+export declare function snapshotNeedsStepOrder(snap: PipelineRunSnapshot): boolean;
 /** platform-api's DocOp objects, flattened for a card: text cut short, only the fields that name what happened. */
 export declare function opsFromApplyOutput(applyOutput: unknown): PipelineRunOpDetail[] | undefined;
 /**

@@ -34,7 +34,7 @@
 // kept current by step frames. Details are only ever added to, never cleared
 // by a sparser snapshot.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
 
@@ -196,6 +196,69 @@ export const DEFAULT_PIPELINE_STEP_LABELS: Record<string, Record<string, string>
 export interface StepLabelTables {
   stepLabels?: Record<string, string>;
   pipelineStepLabels?: Record<string, Record<string, string>>;
+  /** Pipeline definitions by pipeline id — only their nodes and edges are read, for the step order. */
+  definitions?: Record<string, PipelineStepOrderDefinition | undefined>;
+}
+
+/** What the step order needs from a pipeline definition (the run's `pipelineDefinitionSnapshot` or `GET /api/pipelines/:id`). */
+export interface PipelineStepOrderDefinition {
+  nodes?: Array<{ id: string; type?: string }>;
+  edges?: Array<{ source?: string; target?: string }>;
+}
+
+/** A trigger node is where the run came from, not a step it took. */
+function triggerIdsOf(definition?: PipelineStepOrderDefinition): Set<string> {
+  const ids = new Set((definition?.nodes ?? []).filter((n) => n.type === 'trigger').map((n) => n.id));
+  ids.add('trigger');
+  return ids;
+}
+
+/**
+ * A run's steps in the order its pipeline runs them, without the trigger.
+ *
+ * The definition says the order: its edges (a topological walk), its node
+ * order to break ties and to place anything a cycle leaves. Steps the
+ * definition does not name keep their relative place after the ones it does.
+ * Without a definition the steps keep their given order (trigger dropped).
+ * A run row's `stepsSummary` carries no start times and is keyed by id, so
+ * without this a deck-revise run read "Check the edit" before "Read the deck".
+ */
+export function orderStepsByDefinition<T extends { id: string }>(steps: readonly T[], definition?: PipelineStepOrderDefinition): T[] {
+  const triggers = triggerIdsOf(definition);
+  const kept = steps.filter((s) => !triggers.has(s.id));
+  const nodes = definition?.nodes ?? [];
+  if (!nodes.length) return kept;
+  const position = new Map(nodes.map((n, i) => [n.id, i]));
+  const indegree = new Map(nodes.map((n) => [n.id, 0]));
+  const next = new Map<string, string[]>();
+  for (const e of definition?.edges ?? []) {
+    if (!e.source || !e.target || !position.has(e.source) || !position.has(e.target)) continue;
+    next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
+    indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
+  }
+  const rank = new Map<string, number>();
+  const ready = nodes.filter((n) => indegree.get(n.id) === 0).map((n) => n.id);
+  while (ready.length) {
+    ready.sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0));
+    const id = ready.shift()!;
+    rank.set(id, rank.size);
+    for (const to of next.get(id) ?? []) {
+      indegree.set(to, (indegree.get(to) ?? 0) - 1);
+      if (indegree.get(to) === 0) ready.push(to);
+    }
+  }
+  for (const n of nodes) if (!rank.has(n.id)) rank.set(n.id, rank.size);
+  return kept
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (rank.get(a.s.id) ?? nodes.length + a.i) - (rank.get(b.s.id) ?? nodes.length + b.i))
+    .map(({ s }) => s);
+}
+
+/** The definition that orders a run's steps: the run's own snapshot of it, then the one the caller knows. */
+function orderDefinitionFor(snap: PipelineRunSnapshot | undefined, pipelineId: string | undefined, tables: StepLabelTables): PipelineStepOrderDefinition | undefined {
+  const own = snap?.pipelineDefinitionSnapshot as PipelineStepOrderDefinition | undefined;
+  if (own?.nodes?.length) return own;
+  return pipelineId ? tables.definitions?.[pipelineId] : undefined;
 }
 
 /** The label for a step: the pipeline-specific one, then the general one, then the raw id. */
@@ -444,7 +507,7 @@ export interface PipelineRunSnapshot {
   completedAt?: string;
   /** Present once someone accepted or rejected the run's suggestions. */
   review?: unknown;
-  pipelineDefinitionSnapshot?: { nodes?: Array<{ id: string; data?: { retryPolicy?: { maxAttempts?: number } } }> };
+  pipelineDefinitionSnapshot?: { nodes?: Array<{ id: string; type?: string; data?: { retryPolicy?: { maxAttempts?: number } } }>; edges?: Array<{ source?: string; target?: string }> };
 }
 
 /** The snapshot's steps as a list, each carrying its id (the store keys them by node id; older shapes carried an array). */
@@ -496,25 +559,38 @@ function stepStatusOf(raw: unknown, running: boolean): PipelineRunStepStatus {
 }
 
 /**
- * The snapshot's steps in the order a person reads them: the trigger first,
- * then by `startedAt` among the steps that have one — a step without a
- * timestamp keeps its place in the record. The definition's node order is
- * not known here.
+ * The snapshot's steps in the order a person reads them, without the trigger:
+ * the pipeline definition's order when one is known (the run's own
+ * `pipelineDefinitionSnapshot`, else `tables.definitions[pipelineId]`);
+ * otherwise by `startedAt` among the steps that have one — a step without a
+ * timestamp keeps its place in the record.
  */
 export function stepsFromSnapshot(snap: PipelineRunSnapshot, pipelineId?: string, tables: StepLabelTables = {}): PipelineRunStepDetail[] | undefined {
-  const list = stepListOf(snap).map((s) => ({ ...s, id: s.stepId ?? s.nodeId ?? '' })).filter((s) => s.id);
+  const definition = orderDefinitionFor(snap, pipelineId, tables);
+  const list = orderStepsByDefinition(stepListOf(snap).map((s) => ({ ...s, id: s.stepId ?? s.nodeId ?? '' })).filter((s) => s.id), definition);
   if (list.length === 0) return undefined;
-  const trigger = list.filter((s) => s.id === 'trigger');
-  const rest = list.filter((s) => s.id !== 'trigger');
-  const stamped = rest.filter((s) => typeof s.startedAt === 'string').sort((a, b) => (a.startedAt as string).localeCompare(b.startedAt as string));
-  let next = 0;
-  const ordered = rest.map((s) => (typeof s.startedAt === 'string' ? stamped[next++] : s));
+  let ordered = list;
+  if (!definition?.nodes?.length) {
+    const stamped = list.filter((s) => typeof s.startedAt === 'string').sort((a, b) => (a.startedAt as string).localeCompare(b.startedAt as string));
+    let next = 0;
+    ordered = list.map((s) => (typeof s.startedAt === 'string' ? stamped[next++] : s));
+  }
   const current = new Set(snap.currentStepIds ?? []);
-  return [...trigger, ...ordered].map((s) => ({
+  return ordered.map((s) => ({
     id: s.id,
     label: stepTimelineLabel(s.id, pipelineId, tables),
     status: stepStatusOf(s.status, current.has(s.id) && s.status !== 'awaiting' && s.status !== 'completed' && s.status !== 'failed'),
   }));
+}
+
+/**
+ * True when a snapshot's step order is only a guess — some step besides the
+ * trigger has no start time and the run carries no definition of its own —
+ * so the definition is worth one read.
+ */
+export function snapshotNeedsStepOrder(snap: PipelineRunSnapshot): boolean {
+  if ((snap.pipelineDefinitionSnapshot?.nodes?.length ?? 0) > 0) return false;
+  return stepListOf(snap).some((s) => (s.stepId ?? s.nodeId) !== 'trigger' && typeof s.startedAt !== 'string');
 }
 
 /** platform-api's DocOp objects, flattened for a card: text cut short, only the fields that name what happened. */
@@ -610,12 +686,13 @@ export function detailsFromSnapshot(snap: PipelineRunSnapshot, prev?: PipelineRu
 
 /** One step's status changed in a frame: update it in place, or add it when the timeline had not seen it. */
 function withStepStatus(details: PipelineRunDetails | undefined, stepId: string, status: PipelineRunStepStatus, pipelineId?: string, tables: StepLabelTables = {}): PipelineRunDetails | undefined {
-  if (!stepId) return details;
+  const definition = orderDefinitionFor(undefined, pipelineId, tables);
+  if (!stepId || triggerIdsOf(definition).has(stepId)) return details;
   const steps = details?.steps ?? [];
   const idx = steps.findIndex((s) => s.id === stepId);
   const nextSteps = idx >= 0
     ? steps.map((s, i) => (i === idx ? { ...s, status } : s))
-    : [...steps, { id: stepId, label: stepTimelineLabel(stepId, pipelineId, tables), status }];
+    : orderStepsByDefinition([...steps, { id: stepId, label: stepTimelineLabel(stepId, pipelineId, tables), status }], definition);
   return { ...(details ?? {}), steps: nextSteps };
 }
 
@@ -867,8 +944,26 @@ export function usePipelineRunStatus(
 
   // Label tables travel by ref so a caller passing a fresh literal each render
   // does not resubscribe the socket.
-  const tablesRef = useRef<StepLabelTables>({ stepLabels, pipelineStepLabels });
-  tablesRef.current = { stepLabels, pipelineStepLabels };
+  // Pipeline definitions read for their step order — only for a run whose
+  // snapshot leaves the order a guess (see `snapshotNeedsStepOrder`); one read
+  // per pipeline per hook, a failed read is not retried.
+  const [definitions, setDefinitions] = useState<Record<string, PipelineStepOrderDefinition | undefined>>({});
+  const definitionReads = useRef(new Set<string>());
+  const tablesRef = useRef<StepLabelTables>({ stepLabels, pipelineStepLabels, definitions });
+  tablesRef.current = { stepLabels, pipelineStepLabels, definitions };
+  const readDefinition = (pipelineId: string) => {
+    if (!idToken || definitionReads.current.has(pipelineId)) return;
+    definitionReads.current.add(pipelineId);
+    void (async () => {
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/pipelines/${encodeURIComponent(pipelineId)}`, { headers: { Authorization: `Bearer ${idToken}` } });
+        if (!res.ok) return;
+        const def = (await res.json()) as PipelineStepOrderDefinition;
+        if (!def?.nodes?.length) return;
+        setDefinitions((prev) => ({ ...prev, [pipelineId]: { nodes: def.nodes, edges: def.edges } }));
+      } catch { /* the card keeps the snapshot's order */ }
+    })();
+  };
   const runsRef = useRef(runs);
   runsRef.current = runs;
 
@@ -910,6 +1005,7 @@ export function usePipelineRunStatus(
           const res = await fetch(`${apiBaseUrl}/api/pipelines/${encodeURIComponent(r.pipelineId)}/runs/${encodeURIComponent(r.runId)}`, { headers: { Authorization: `Bearer ${idToken}` } });
           if (!res.ok) return;
           const snap = (await res.json()) as PipelineRunSnapshot;
+          if (snapshotNeedsStepOrder(snap)) readDefinition(r.pipelineId);
           const executor = typeof snap.executorRunId === 'string' && snap.executorRunId !== r.runId ? snap.executorRunId : undefined;
           if (executor && executorsRef.current[executor] !== r.runId) {
             setExecutors((prev) => ({ ...prev, [executor]: r.runId }));
@@ -964,7 +1060,19 @@ export function usePipelineRunStatus(
     return () => clearInterval(timer);
   }, [runs, statuses, idToken, reviewPollMs, hidden]);
 
-  return useCallback((runId: string) => statuses[runId], [statuses]);
+  // A definition that arrives after the card was drawn re-orders its steps.
+  const ordered = useMemo(() => {
+    if (Object.keys(definitions).length === 0) return statuses;
+    const out: Record<string, PipelineRunStatus> = {};
+    for (const [runId, st] of Object.entries(statuses)) {
+      const def = definitions[runsRef.current.find((r) => r.runId === runId)?.pipelineId ?? ''];
+      const steps = st.details?.steps;
+      out[runId] = def && steps ? { ...st, details: { ...st.details, steps: orderStepsByDefinition(steps, def) } } : st;
+    }
+    return out;
+  }, [statuses, definitions]);
+
+  return useCallback((runId: string) => ordered[runId], [ordered]);
 }
 
 export default usePipelineRunStatus;

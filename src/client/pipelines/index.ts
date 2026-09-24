@@ -26,6 +26,8 @@ export {
   enrichTerminalStatus,
   detailsFromSnapshot,
   stepsFromSnapshot,
+  orderStepsByDefinition,
+  snapshotNeedsStepOrder,
   stepTimelineLabel,
   opsFromApplyOutput,
   snippetFromOutline,
@@ -57,6 +59,7 @@ export type {
   PipelineRunSnapshot,
   PipelineRunTransport,
   StepLabelTables,
+  PipelineStepOrderDefinition,
   UsePipelineRunStatusOptions,
 } from './usePipelineRunStatus';
 

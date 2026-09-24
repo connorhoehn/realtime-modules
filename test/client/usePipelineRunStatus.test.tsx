@@ -26,6 +26,8 @@ import {
   reviewDetail,
   isAwaitingReview,
   stepsFromSnapshot,
+  orderStepsByDefinition,
+  snapshotNeedsStepOrder,
   opsFromApplyOutput,
   snippetFromOutline,
   documentFromOutputs,
@@ -64,11 +66,15 @@ function snapshotResponse(body: unknown, ok = true) {
 }
 
 let fetchMock: jest.Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>;
+/** `GET /api/pipelines/:id` (the definition, read for the step order) — kept apart so the run-read counts stay the run reads. 404 unless a test says otherwise. */
+let definitionMock: jest.Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>;
 
 beforeEach(() => {
   jest.useFakeTimers();
   fetchMock = jest.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
-  (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+  definitionMock = jest.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>().mockResolvedValue(snapshotResponse({}, false));
+  (globalThis as unknown as { fetch: unknown }).fetch = (input: RequestInfo | URL, init?: RequestInit) =>
+    (/\/api\/pipelines\/[^/]+$/.test(String(input)) ? definitionMock(input, init) : fetchMock(input, init));
 });
 
 afterEach(() => {
@@ -524,10 +530,9 @@ describe('details — the expanded card', () => {
     },
   };
 
-  it('orders the steps trigger-first then by startedAt, keeps an unstamped step in place, labels them without the ellipsis', () => {
+  it('orders the steps by startedAt without the trigger, keeps an unstamped step in place, labels them without the ellipsis', () => {
     const steps = stepsFromSnapshot(SNAP, RUN.pipelineId);
     expect(steps).toEqual([
-      { id: 'trigger', label: 'trigger', status: 'completed' },
       { id: 'read', label: 'Reading the document', status: 'completed' },
       { id: 'plan', label: 'Deciding what to change (Haiku)', status: 'completed' },
       { id: 'apply', label: 'Applying the edit as a collaborator', status: 'running' },
@@ -603,8 +608,44 @@ describe('details — the expanded card', () => {
     const details = detailsFromSnapshot(SNAP, undefined, RUN.pipelineId);
     expect(details?.document).toEqual({ id: 'doc-1', title: 'Roadmap', snippet: 'First para text.' });
     expect(details?.startedAt).toBe(T(0));
-    expect(details?.steps?.map((s) => s.id)).toEqual(['trigger', 'read', 'plan', 'apply', 'approve']);
+    expect(details?.steps?.map((s) => s.id)).toEqual(['read', 'plan', 'apply', 'approve']);
     expect(statusFromSnapshot(SNAP, undefined, RUN.pipelineId)?.details).toEqual(details);
+  });
+
+  // A deck-revise run row: steps keyed by id (alphabetical), no start times — NFR #158.
+  const DECK_DEF = {
+    nodes: [
+      { id: 'trigger', type: 'trigger' }, { id: 'load', type: 'deck:revise-load' }, { id: 'propose', type: 'deck:revise' },
+      { id: 'check', type: 'deck:revise-check' }, { id: 'write', type: 'deck:revise-write' },
+    ],
+    edges: [{ source: 'trigger', target: 'load' }, { source: 'load', target: 'propose' }, { source: 'propose', target: 'check' }, { source: 'check', target: 'write' }],
+  };
+  const DECK_SNAP = { status: 'completed', steps: { trigger: { status: 'completed' }, check: { status: 'completed' }, load: { status: 'completed' }, propose: { status: 'completed' }, write: { status: 'completed' } } };
+
+  it('orders a run by its pipeline definition (edges, node order for ties), drops the trigger node, and keeps unnamed steps after', () => {
+    expect(snapshotNeedsStepOrder(DECK_SNAP)).toBe(true);
+    expect(stepsFromSnapshot(DECK_SNAP, 'deck-revise')?.map((s) => s.id)).toEqual(['check', 'load', 'propose', 'write']);
+    expect(stepsFromSnapshot(DECK_SNAP, 'deck-revise', { definitions: { 'deck-revise': DECK_DEF } })?.map((s) => s.id)).toEqual(['load', 'propose', 'check', 'write']);
+    // The run's own definition snapshot wins, and then no read is needed.
+    const own = { ...DECK_SNAP, pipelineDefinitionSnapshot: DECK_DEF };
+    expect(snapshotNeedsStepOrder(own)).toBe(false);
+    expect(stepsFromSnapshot(own, 'deck-revise')?.map((s) => s.id)).toEqual(['load', 'propose', 'check', 'write']);
+    // A trigger node under another id is dropped; a step the definition does not name follows; edges beat node order.
+    const def = { nodes: [{ id: 'start', type: 'trigger' }, { id: 'b' }, { id: 'a' }], edges: [{ source: 'start', target: 'a' }, { source: 'a', target: 'b' }] };
+    expect(orderStepsByDefinition([{ id: 'x' }, { id: 'b' }, { id: 'start' }, { id: 'a' }], def).map((s) => s.id)).toEqual(['a', 'b', 'x']);
+    // Without a definition only the trigger goes.
+    expect(orderStepsByDefinition([{ id: 'b' }, { id: 'trigger' }, { id: 'a' }]).map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  it('hook: reads the definition once when the snapshot leaves the order a guess, and the card follows it', async () => {
+    fetchMock.mockResolvedValue(snapshotResponse(DECK_SNAP));
+    definitionMock.mockResolvedValue(snapshotResponse(DECK_DEF));
+    const runs = [{ runId: 'd1', pipelineId: 'deck-revise' }, { runId: 'd2', pipelineId: 'deck-revise' }];
+    const { result } = renderHook(() => usePipelineRunStatus(runs, { apiBaseUrl: 'http://api', idToken: 'tok', transport: null }));
+    await waitFor(() => expect(result.current('d1')?.details?.steps?.map((s) => s.id)).toEqual(['load', 'propose', 'check', 'write']));
+    expect(result.current('d2')?.details?.steps?.map((s) => s.id)).toEqual(['load', 'propose', 'check', 'write']);
+    expect(definitionMock).toHaveBeenCalledTimes(1);
+    expect(String(definitionMock.mock.calls[0][0])).toBe('http://api/api/pipelines/deck-revise');
   });
 
   it('step frames move a step in the timeline in place, add one the snapshot had not seen, and keep everything else', () => {
@@ -613,17 +654,17 @@ describe('details — the expanded card', () => {
     expect(s1.details?.steps?.find((s) => s.id === 'apply')?.status).toBe('completed');
     expect(s1.details?.ops).toEqual([{ op: 'setTitle', text: 'T' }]);
     expect(s1.details?.document).toEqual(start.details?.document);
-    expect(s1.details?.steps).toHaveLength(5);
+    expect(s1.details?.steps).toHaveLength(4);
 
     const s2 = statusFromEvent('pipeline.step.started', { stepId: 'publish' }, s1, RUN.pipelineId)!;
-    expect(s2.details?.steps?.map((s) => `${s.id}:${s.status}`)).toEqual(['trigger:completed', 'read:completed', 'plan:completed', 'apply:completed', 'approve:skipped', 'publish:running']);
-    expect(s2.details?.steps?.[5].label).toBe('Publishing the transcript');
+    expect(s2.details?.steps?.map((s) => `${s.id}:${s.status}`)).toEqual(['read:completed', 'plan:completed', 'apply:completed', 'approve:skipped', 'publish:running']);
+    expect(s2.details?.steps?.[4].label).toBe('Publishing the transcript');
 
     const s3 = statusFromEvent('pipeline.step.failed', { stepId: 'publish', error: { message: 'no channel' } }, s2, RUN.pipelineId)!;
     expect(s3.phase).toBe('failed');
     expect(s3.detail).toBe('no channel');
     expect(s3.details?.error).toBe('no channel');
-    expect(s3.details?.steps?.[5].status).toBe('failed');
+    expect(s3.details?.steps?.[4].status).toBe('failed');
     expect(s3.details?.ops).toEqual(s1.details?.ops);
 
     // A frame that says nothing about the phase still moves its step.
