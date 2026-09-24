@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.95.4 — 2026-09-24
+
+- **server/crdt:** `createDocument` with `meta.announce: false` files the
+  document in `meta.channel` (that conversation's members can open it) without
+  calling `onDocumentCreated`, so no card is posted in the conversation. Omitted
+  or `true` keeps today's behaviour. (realtime-examples Loop 33: the deck
+  preview script shares a test deck with #general without posting there.)
+
 ## 0.95.3 — 2026-09-24
 
 - **client:** `usePresentationRevisions({ apiBaseUrl, documentId, idToken,

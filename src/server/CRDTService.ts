@@ -504,7 +504,9 @@ class CRDTService {
                     // any. After the broadcast: the document exists and every
                     // client already knows, so a slow or failing announcement
                     // cannot hold up the thing it is announcing.
-                    this._announceDocument(doc);
+                    // `meta.announce: false` files it in the conversation (its
+                    // members can open it) without posting a card there.
+                    if (data.meta?.announce !== false) this._announceDocument(doc);
                     return;
                 }
                 case 'deleteDocument': {
