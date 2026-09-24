@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.95.5 — 2026-09-24
+
+- **client/deck revise:** a `waiting-for-model` phase, labelled "Waiting for a
+  model slot" — the platform's revise waits its turn when every fleet-wide
+  model slot is taken (realtime-examples Loop 35 ppt).
+- **client/pipelines:** `pipeline.step.waiting` (reason `model-slot`) reads as
+  the running step "· Waiting for a model slot" with its place in line
+  ("Next in line", "3 in line"); `state: 'granted'` returns to the plain step
+  label.
+
 ## 0.95.4 — 2026-09-24
 
 - **server/crdt:** `createDocument` with `meta.announce: false` files the

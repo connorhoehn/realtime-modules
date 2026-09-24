@@ -26,7 +26,7 @@ import { useGatewayOptional } from './GatewaySocketProvider';
 import type { GatewayMessage } from './types';
 import type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
 
-export type DeckRevisePhase = 'started' | 'reading-sources' | 'asking-model' | 'checking' | 'saving' | 'completed' | 'failed';
+export type DeckRevisePhase = 'started' | 'reading-sources' | 'waiting-for-model' | 'asking-model' | 'checking' | 'saving' | 'completed' | 'failed';
 
 /** The part of a slide a revise was pointed at (platform `DeckReviseTarget`). */
 export interface DeckReviseTargetRef {
@@ -149,6 +149,8 @@ export function deckReviseChannel(documentId: string): string {
 const PHASE_LABELS: Record<DeckRevisePhase, string> = {
   started: 'Starting',
   'reading-sources': 'Reading sources',
+  // Every fleet-wide model slot is taken; the revise waits its turn (platform Loop 35 ppt).
+  'waiting-for-model': 'Waiting for a model slot',
   'asking-model': 'Writing the edit',
   checking: 'Checking the edit',
   saving: 'Saving the new revision',

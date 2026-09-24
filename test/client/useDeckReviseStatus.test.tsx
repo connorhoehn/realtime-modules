@@ -127,6 +127,11 @@ describe('reducers', () => {
     expect(reduceDeckReviseFrame(state, { type: 'pipeline:event', eventType: 'pipeline.deck.revise.phase', payload: { documentId: DOC, requestId: 'r', phase: 'bogus' } }, DOC, 0)).toBe(state);
   });
 
+  it('reads the waiting-for-model phase with its label', () => {
+    const next = reduceDeckReviseFrame({}, { type: 'pipeline:event', eventType: 'pipeline.deck.revise.phase', payload: { documentId: DOC, requestId: 'r', phase: 'waiting-for-model' } }, DOC, 100);
+    expect(next.r).toMatchObject({ phase: 'waiting-for-model', label: 'Waiting for a model slot' });
+  });
+
   it('markStaleDeckRevises leaves settled and fresh revises alone', () => {
     const fresh = reduceDeckReviseFrame({}, { type: 'pipeline:event', eventType: 'pipeline:deck:revise:started', payload: { documentId: DOC, requestId: 'r', phase: 'started' } }, DOC, 100);
     expect(fresh.r?.phase).toBe('started');

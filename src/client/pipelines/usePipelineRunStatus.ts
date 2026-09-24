@@ -848,6 +848,20 @@ function phaseFromEvent(type: string | undefined, p: Record<string, unknown>, pr
       if (n <= 1) return undefined;
       return { phase: 'running', stepLabel: `${stepLabelFor(stepId, pipelineId, tables)} · ${retryLabel(n, typeof p.maxAttempts === 'number' ? p.maxAttempts : undefined)}` };
     }
+    case 'pipeline.step.waiting': {
+      // A step waiting for a fleet-wide model slot (platform Loop 35 ppt): its
+      // place in line until it runs, then the plain step label again.
+      if (p.reason !== 'model-slot') return undefined;
+      const label = stepLabelFor(stepId, pipelineId, tables);
+      if (p.state === 'granted') return { phase: 'running', stepLabel: label };
+      if (p.state !== 'waiting') return undefined;
+      const position = typeof p.position === 'number' && p.position >= 0 ? p.position : undefined;
+      return {
+        phase: 'running',
+        stepLabel: `${label} · Waiting for a model slot`,
+        ...(position !== undefined ? { detail: position === 0 ? 'Next in line' : `${position + 1} in line` } : {}),
+      };
+    }
     case 'pipeline.approval.requested':
       return { phase: 'awaiting_approval', approvalStepId: stepId || 'approve', detail: prev?.detail };
     case 'pipeline.step.completed': {

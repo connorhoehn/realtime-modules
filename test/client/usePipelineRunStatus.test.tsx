@@ -112,6 +112,16 @@ describe('frame → phase', () => {
       .toBe(`${DEFAULT_STEP_LABELS.plan} · Retrying — attempt 2`);
   });
 
+  it('says a step is waiting for a model slot, with its place in line, then drops it when granted', () => {
+    expect(statusFromEvent('pipeline.step.waiting', { stepId: 'plan', reason: 'model-slot', state: 'waiting', position: 2 }, undefined))
+      .toEqual({ phase: 'running', stepLabel: `${DEFAULT_STEP_LABELS.plan} · Waiting for a model slot`, detail: '3 in line' });
+    expect(statusFromEvent('pipeline:step:waiting', { stepId: 'plan', reason: 'model-slot', state: 'waiting', position: 0 }, undefined)?.detail)
+      .toBe('Next in line');
+    expect(statusFromEvent('pipeline.step.waiting', { stepId: 'plan', reason: 'model-slot', state: 'granted', waitedMs: 900 }, undefined))
+      .toEqual({ phase: 'running', stepLabel: DEFAULT_STEP_LABELS.plan });
+    expect(statusFromEvent('pipeline.step.waiting', { stepId: 'plan', reason: 'other', state: 'waiting' }, undefined)).toBeUndefined();
+  });
+
   it('maps rejection and failure, naming who rejected', () => {
     expect(statusFromEvent('pipeline.run.completed', { status: 'rejected', rejection: { displayName: 'Grace', comment: 'not now' } }, undefined))
       .toEqual({ phase: 'rejected', detail: 'Rejected by Grace — not now' });

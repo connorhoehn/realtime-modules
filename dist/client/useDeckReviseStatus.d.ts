@@ -1,5 +1,5 @@
 import type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
-export type DeckRevisePhase = 'started' | 'reading-sources' | 'asking-model' | 'checking' | 'saving' | 'completed' | 'failed';
+export type DeckRevisePhase = 'started' | 'reading-sources' | 'waiting-for-model' | 'asking-model' | 'checking' | 'saving' | 'completed' | 'failed';
 /** The part of a slide a revise was pointed at (platform `DeckReviseTarget`). */
 export interface DeckReviseTargetRef {
     field: 'title' | 'eyebrow' | 'subtitle' | 'bullets' | 'columns' | 'chart' | 'quote' | 'image' | 'notes';

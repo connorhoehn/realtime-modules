@@ -68,6 +68,8 @@ function deckReviseChannel(documentId) {
 const PHASE_LABELS = {
     started: 'Starting',
     'reading-sources': 'Reading sources',
+    // Every fleet-wide model slot is taken; the revise waits its turn (platform Loop 35 ppt).
+    'waiting-for-model': 'Waiting for a model slot',
     'asking-model': 'Writing the edit',
     checking: 'Checking the edit',
     saving: 'Saving the new revision',
