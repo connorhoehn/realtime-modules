@@ -284,6 +284,24 @@ export type {
   UseAgentLoopRunResult,
 } from './useAgentLoopRun';
 
+// v0.95.3 — usePresentationRevisions: a deck's revisions a page at a time
+// (cursor paging over GET …/revisions?limit&before), one module cache per
+// (api, deck, person) shared by every view, live prepend on the deck
+// channel's revision-written (NFR #15). Moved from the gateway frontend.
+export {
+  usePresentationRevisions,
+  mergePresentationRevisions,
+  releasePresentationRevisions,
+  PRESENTATION_REVISION_PAGE_SIZE,
+} from './usePresentationRevisions';
+export type {
+  PresentationRevisionSummary,
+  PresentationSlideSummary,
+  PresentationRevisionsStatus,
+  UsePresentationRevisionsOptions,
+  UsePresentationRevisionsResult,
+} from './usePresentationRevisions';
+
 // v0.80.0 — useDeckReviseStatus: which slides of a presentation an agent is
 // revising right now, from anyone's tab. Listens on
 // `pipeline:run:deck-revise:<documentId>` for platform-api's
@@ -398,7 +416,7 @@ export type {
   UsePipelineCatalogResult,
 } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
-// v0.96.0 — one run-frame sequencer (realtime-examples NFR #184).
+// v0.95.3 — one run-frame sequencer (realtime-examples NFR #184).
 export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';
 

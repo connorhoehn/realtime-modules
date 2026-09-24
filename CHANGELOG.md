@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.95.3 — 2026-09-24
+
+- **client:** `usePresentationRevisions({ apiBaseUrl, documentId, idToken,
+  focusRevisionId?, pageSize?, transport?, fetchImpl? })` — a deck's revisions
+  a page at a time (`GET …/revisions?limit&before`, newest first; the head
+  alone with its slides), `olderCount` / `loadOlder`, a focused revision read
+  on its own. One module cache per (api, deck, signed-in person): every view
+  of a deck reads the head page once between them. A revision written while
+  open (`revision-written`, NFR #15) is prepended with one
+  `GET …/revisions/:rev`; a gap re-reads the head page. Moved from the
+  realtime-examples frontend (`usePresentationDocument`). Also
+  `mergePresentationRevisions`, `releasePresentationRevisions`,
+  `PRESENTATION_REVISION_PAGE_SIZE`.
+
 ## 0.95.1 — 2026-09-23
 
 - **client/pipelines:** a run's steps follow its pipeline's order, without the
