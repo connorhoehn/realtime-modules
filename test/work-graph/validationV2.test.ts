@@ -109,3 +109,19 @@ describe('NFR #126 — the reason a run is waiting', () => {
     expect(validateWorkGraphSnapshotV2(paused({ reason: 'paused_at_breakpoint', step: 'write' }, 'waiting', 'document')).ok).toBe(false);
   });
 });
+
+describe('NFR #221 — nodes a snapshot held back under its cap', () => {
+  const withOmitted = (omitted: unknown) => {
+    const value = snapshot();
+    return { ...value, temporal: { ...value.temporal, coverage: { ...value.temporal.coverage, complete: false, omitted } } };
+  };
+
+  it('accepts a positive count and no count at all', () => {
+    expect(validateWorkGraphSnapshotV2(withOmitted(1_523)).ok).toBe(true);
+    expect(validateWorkGraphSnapshotV2(snapshot()).ok).toBe(true);
+  });
+
+  it.each([0, -1, 1.5, '12', null])('rejects %j', (omitted) => {
+    expect(validateWorkGraphSnapshotV2(withOmitted(omitted)).ok).toBe(false);
+  });
+});

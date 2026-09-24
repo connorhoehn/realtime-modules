@@ -139,7 +139,17 @@ export interface WorkGraphSnapshotV2 extends Omit<WorkGraphSnapshot, 'schemaVers
     /** `recent` is the honest fallback when exact reconstruction is unavailable. */
     mode: 'live' | 'as-of' | 'recent';
     observedAt: string;
-    coverage: { from: string; through: string; complete: boolean };
+    coverage: {
+      from: string;
+      through: string;
+      complete: boolean;
+      /**
+       * NFR #221: authorized nodes this snapshot held back under its node cap
+       * (live work and recent made-or-met work are kept first). Absent when
+       * nothing was held back. The reader pages them on demand.
+       */
+      omitted?: number;
+    };
   };
   efforts: ViewerWorkEffort[];
   details: ViewerWorkActivityDetail[];

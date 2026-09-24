@@ -169,6 +169,12 @@ export interface WorkGraphSnapshotV2 extends Omit<WorkGraphSnapshot, 'schemaVers
             from: string;
             through: string;
             complete: boolean;
+            /**
+             * NFR #221: authorized nodes this snapshot held back under its node cap
+             * (live work and recent made-or-met work are kept first). Absent when
+             * nothing was held back. The reader pages them on demand.
+             */
+            omitted?: number;
         };
     };
     efforts: ViewerWorkEffort[];
