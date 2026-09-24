@@ -70,6 +70,8 @@ export type { WorkType, PipelineWorkType, PipelineKind, PipelineDefinitionStatus
 export { usePipelineCatalog, fetchPipelineCatalog, normalizeCatalogEntry, generatePipelineDraft, newPipelineDraftRequestId, PIPELINE_ALL_CHANNEL, pipelineAllSubscribeFrames, } from './pipelines/usePipelineCatalog';
 export type { PipelineCatalogRequestError, PipelineCatalogResponse, GeneratePipelineMode, GeneratePipelineDraftInput, GeneratePipelineDraftResponse, UsePipelineCatalogOptions, UsePipelineCatalogResult, } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
+export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
+export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';
 export * from './documents';
 export * from './documents/folders';
 //# sourceMappingURL=index.d.ts.map

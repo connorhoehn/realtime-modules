@@ -398,6 +398,9 @@ export type {
   UsePipelineCatalogResult,
 } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
+// v0.96.0 — one run-frame sequencer (realtime-examples NFR #184).
+export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
+export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';
 
 // v0.90.0 — the Documents four-pane redesign (also under ./client/documents):
 // work fields on a document, the Work column grouped by work status, run drafts

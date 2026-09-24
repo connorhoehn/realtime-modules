@@ -4,4 +4,6 @@ export { WORK_TYPE_LABEL, WORK_TYPE_ORDER, PIPELINE_KIND_ORDER, KIND_MARK, KIND_
 export type { WorkType, PipelineWorkType, PipelineKind, PipelineDefinitionStatus, OriginKind, PipelineOrigin, DefinitionOrigin, InferredField, PipelineCatalogDefinition, RunItemStatus, RollupRunStatus, PipelineRunItemStatus, PipelineRunRollupItem, RollupRecentRun, PipelineRunRollup, PipelineCatalogEntry, PipelineDefinitionSummary, CatalogGroupBy, PipelineCatalogGroupCounts, PipelineCatalogGroup, PipelineStatusPillTone, PipelineStatusPill, RunRollupEvent, PipelineRunLifecycleEvent, } from './catalog';
 export { usePipelineCatalog, fetchPipelineCatalog, normalizeCatalogEntry, generatePipelineDraft, newPipelineDraftRequestId, PIPELINE_ALL_CHANNEL, pipelineAllSubscribeFrames, } from './usePipelineCatalog';
 export type { PipelineCatalogRequestError, PipelineCatalogResponse, GeneratePipelineMode, GeneratePipelineDraftInput, GeneratePipelineDraftResponse, UsePipelineCatalogOptions, UsePipelineCatalogResult, } from './usePipelineCatalog';
+export { RunEventSequencer, synthesizeRunStarted } from './runEventSequencer';
+export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './runEventSequencer';
 //# sourceMappingURL=index.d.ts.map

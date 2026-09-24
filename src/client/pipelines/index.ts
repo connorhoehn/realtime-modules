@@ -146,3 +146,8 @@ export type {
   UsePipelineCatalogOptions,
   UsePipelineCatalogResult,
 } from './usePipelineCatalog';
+
+// Loop 30 (realtime-examples NFR #184): one run-frame sequencer for the
+// Activity pane, the run page and the chat run card.
+export { RunEventSequencer, synthesizeRunStarted } from './runEventSequencer';
+export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './runEventSequencer';

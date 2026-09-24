@@ -34,6 +34,7 @@
 // kept current by step frames. Details are only ever added to, never cleared
 // by a sparser snapshot.
 
+import { RunEventSequencer } from './runEventSequencer';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
@@ -973,22 +974,41 @@ export function usePipelineRunStatus(
     const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
     send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
     for (const id of channels) send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
+    type RunFrame = GatewayMessage & { eventType?: string; payload?: Record<string, unknown>; emittedAt?: number };
+    const cardOf = (frameRunId: unknown) => {
+      if (typeof frameRunId !== 'string' || !frameRunId) return undefined;
+      const runId = executorsRef.current[frameRunId] ?? frameRunId;
+      return runsRef.current.find((r) => r.runId === runId);
+    };
+    // A run's frames can arrive out of order across gateway replicas: release
+    // them in `runSeq` order; a gap that does not fill re-reads the snapshot.
+    const sequencer = new RunEventSequencer<RunFrame>({
+      deliver: (msg) => {
+        const p = msg.payload ?? {};
+        const run = cardOf(p.runId);
+        if (!run) return;
+        const eventType = normalizeEventType(msg.eventType);
+        setStatuses((prev) => {
+          const next = statusFromEvent(eventType, p, prev[run.runId], run.pipelineId, tablesRef.current);
+          return next ? { ...prev, [run.runId]: next } : prev;
+        });
+      },
+      onGap: (gap) => {
+        const run = cardOf(gap.runId);
+        if (!run) return;
+        fetched.current.delete(run.runId);
+        setTick((t) => t + 1);
+      },
+    });
     const unregister = onMessage((frame: unknown) => {
-      const msg = frame as GatewayMessage & { eventType?: unknown; payload?: Record<string, unknown> };
+      const msg = frame as RunFrame;
       if (!msg || msg.type !== 'pipeline:event') return;
-      const p = msg.payload ?? {};
-      const frameRunId = typeof p.runId === 'string' ? p.runId : null;
-      const runId = frameRunId ? (executorsRef.current[frameRunId] ?? frameRunId) : null;
-      const run = runId ? runsRef.current.find((r) => r.runId === runId) : undefined;
-      if (!runId || !run) return;
-      const eventType = normalizeEventType(msg.eventType);
-      setStatuses((prev) => {
-        const next = statusFromEvent(eventType, p, prev[runId], run.pipelineId, tablesRef.current);
-        return next ? { ...prev, [runId]: next } : prev;
-      });
+      if (!cardOf((msg.payload ?? {}).runId)) return;
+      sequencer.push(msg);
     });
     return () => {
       unregister();
+      sequencer.flushAll();
       for (const id of channels) send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
