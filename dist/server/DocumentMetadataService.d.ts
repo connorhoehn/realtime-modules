@@ -94,6 +94,8 @@ declare class DocumentMetadataService {
         userId?: string;
         displayName?: string | null;
     }): Promise<number>;
+    /** One document's metadata in wire shape, or null when there is no such row. */
+    handleGetDocument(documentId: string): Promise<DocumentWire | null>;
     /**
      * Delete a document's metadata.
      */

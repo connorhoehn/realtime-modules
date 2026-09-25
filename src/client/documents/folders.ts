@@ -39,6 +39,15 @@
 // `conflict` carrying the current placement, and this hook shows that instead
 // of the optimistic guess. Moves are optimistic; everything else waits for the
 // answer.
+//
+// ## Trash
+//
+// Trash is soft: `trashDocuments(ids)` sets `trashedAt`/`trashedBy` on each
+// placement and `restoreDocuments(ids)` clears them; folder and position are
+// never touched, so a restore puts the document back where it was. Trashed
+// documents stay in `placements` (and in `trashed`, newest first) but are
+// counted nowhere — not in folder counts, the tree, `unfiled` or `totalCount`.
+// Both are optimistic like moves and roll back on refusal.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PipelineRunTransport } from '../pipelines/usePipelineRunStatus';
@@ -72,8 +81,20 @@ export interface DocumentFolderPlacement {
   folderId: string | null;
   position: number;
   version: number;
+  /** ISO time it was put in the trash; absent when it is not trashed. */
+  trashedAt?: string;
+  /** Who trashed it. */
+  trashedBy?: string;
   /** True while an optimistic move waits for the server. */
   pending?: boolean;
+}
+
+export interface DocumentFolderTrashedItem {
+  documentId: string;
+  trashedAt: string;
+  trashedBy?: string;
+  /** The folder it will be restored into (null = Unfiled, or its folder is gone). */
+  folderId: string | null;
 }
 
 export interface DocumentFolderMove {
@@ -121,8 +142,11 @@ export interface UseDocumentFoldersResult {
   /** Visible documents in no folder, by position. */
   unfiled: string[];
   unfiledCount: number;
-  /** Visible documents in total. */
+  /** Visible documents in total, trashed ones excluded. */
   totalCount: number;
+  /** Visible trashed documents, newest first. */
+  trashed: DocumentFolderTrashedItem[];
+  isTrashed: (documentId: string) => boolean;
   /** True until the first list for this session arrives. */
   loading: boolean;
   /** The last failed mutation or read, until the next success. */
@@ -134,6 +158,10 @@ export interface UseDocumentFoldersResult {
   deleteFolder: (folderId: string) => Promise<DocumentFolderResult>;
   moveDocuments: (moves: DocumentFolderMove[]) => Promise<DocumentFolderResult>;
   moveDocument: (documentId: string, folderId: string | null, position?: number) => Promise<DocumentFolderResult>;
+  /** Soft delete (≤100): the documents leave every count and list but keep their folder and position. */
+  trashDocuments: (documentIds: string[]) => Promise<DocumentFolderResult>;
+  /** Take documents out of the trash, back where they were. */
+  restoreDocuments: (documentIds: string[]) => Promise<DocumentFolderResult>;
   /** Re-read the whole picture (a fresh `list`). */
   refresh: () => void;
 }
@@ -165,6 +193,15 @@ export interface DocumentFoldersState {
 }
 type State = DocumentFoldersState;
 
+/** A placement off the wire, keeping only known fields (trash state included). */
+function toPlacement(p: DocumentFolderPlacement): DocumentFolderPlacement {
+  return {
+    documentId: p.documentId, folderId: p.folderId ?? null, position: p.position, version: p.version,
+    ...(typeof p.trashedAt === 'string' ? { trashedAt: p.trashedAt } : {}),
+    ...(typeof p.trashedAt === 'string' && typeof p.trashedBy === 'string' ? { trashedBy: p.trashedBy } : {}),
+  };
+}
+
 /** Folder + ancestors, cycle-safe. */
 function ancestry(folders: Record<string, FolderRecord>, folderId: string | null | undefined): string[] {
   const out: string[] = [];
@@ -180,8 +217,10 @@ export function deriveDocumentFolders(state: State, currentUserId?: string | nul
   const direct: Record<string, number> = {};
   const docsIn: Record<string, DocumentFolderPlacement[]> = {};
   const unfiled: DocumentFolderPlacement[] = [];
+  const trashed: DocumentFolderTrashedItem[] = [];
   for (const p of Object.values(state.placements)) {
     const fid = p.folderId && state.folders[p.folderId] ? p.folderId : null;
+    if (p.trashedAt) { trashed.push({ documentId: p.documentId, trashedAt: p.trashedAt, ...(p.trashedBy ? { trashedBy: p.trashedBy } : {}), folderId: fid }); continue; }
     if (!fid) { unfiled.push(p); continue; }
     direct[fid] = (direct[fid] ?? 0) + 1;
     (docsIn[fid] ??= []).push(p);
@@ -208,7 +247,8 @@ export function deriveDocumentFolders(state: State, currentUserId?: string | nul
   }
   const setDepth = (list: DocumentFolderNode[], depth: number) => { for (const n of list) { n.depth = depth; setDepth(n.children, depth + 1); } };
   setDepth(tree, 0);
-  return { folders, tree, unfiled: unfiled.sort(bySort).map((p) => p.documentId) };
+  trashed.sort((a, b) => b.trashedAt.localeCompare(a.trashedAt) || a.documentId.localeCompare(b.documentId));
+  return { folders, tree, unfiled: unfiled.sort(bySort).map((p) => p.documentId), trashed, totalCount: Object.keys(state.placements).length - trashed.length };
 }
 
 export function useDocumentFolders(options: UseDocumentFoldersOptions = {}): UseDocumentFoldersResult {
@@ -253,7 +293,7 @@ export function useDocumentFolders(options: UseDocumentFoldersOptions = {}): Use
           folders[f.id] = { ...rec, listed: true };
         }
         const placements: Record<string, DocumentFolderPlacement> = {};
-        for (const p of (frame.documents ?? []) as DocumentFolderPlacement[]) placements[p.documentId] = { ...p };
+        for (const p of (frame.documents ?? []) as DocumentFolderPlacement[]) if (p?.documentId) placements[p.documentId] = toPlacement(p);
         setState({ folders, placements });
         setLoading(false);
         return;
@@ -378,7 +418,7 @@ export function useDocumentFolders(options: UseDocumentFoldersOptions = {}): Use
           const now = placements[m.documentId];
           // An event may already have landed something newer.
           if (now && !now.pending && settled && now.version > settled.version) continue;
-          if (settled) placements[m.documentId] = { documentId: m.documentId, folderId: settled.folderId, position: settled.position, version: settled.version };
+          if (settled) placements[m.documentId] = toPlacement({ ...settled, documentId: m.documentId });
           else delete placements[m.documentId];
         }
         return { ...prev, placements };
@@ -388,6 +428,44 @@ export function useDocumentFolders(options: UseDocumentFoldersOptions = {}): Use
 
   const moveDocument = useCallback((documentId: string, folderId: string | null, position?: number) =>
     moveDocuments([{ documentId, folderId, ...(position !== undefined ? { position } : {}) }]), [moveDocuments]);
+
+  const setTrash = useCallback((documentIds: string[], trashed: boolean) => {
+    const ids = [...new Set(documentIds.filter((id) => typeof id === 'string' && id))];
+    const before: Record<string, DocumentFolderPlacement | undefined> = {};
+    for (const id of ids) before[id] = stateRef.current.placements[id];
+    const at = new Date().toISOString();
+    // Optimistic: the rows leave (or come back) at once, marked pending.
+    setState((prev) => {
+      const placements = { ...prev.placements };
+      for (const id of ids) {
+        const cur = placements[id] ?? { documentId: id, folderId: null, position: 0, version: 0 };
+        const { trashedAt: _a, trashedBy: _b, ...rest } = cur;
+        placements[id] = trashed
+          ? { ...rest, trashedAt: cur.trashedAt ?? at, ...(cur.trashedBy ? { trashedBy: cur.trashedBy } : currentUserId ? { trashedBy: currentUserId } : {}), pending: true }
+          : { ...rest, pending: true };
+      }
+      return { ...prev, placements };
+    });
+    return request(trashed ? 'trashDocuments' : 'restoreDocuments', { documentIds: ids }, (r) => {
+      setState((prev) => {
+        const placements = { ...prev.placements };
+        const byDoc = new Map((r.results ?? []).map((x) => [x.documentId, x]));
+        for (const id of ids) {
+          const res = byDoc.get(id);
+          const settled = res?.ok ? res.placement : before[id];
+          const now = placements[id];
+          // An event may already have landed something newer.
+          if (now && !now.pending && settled && now.version > settled.version) continue;
+          if (settled) placements[id] = toPlacement({ ...settled, documentId: id });
+          else delete placements[id];
+        }
+        return { ...prev, placements };
+      });
+    });
+  }, [request, currentUserId]);
+  const trashDocuments = useCallback((documentIds: string[]) => setTrash(documentIds, true), [setTrash]);
+  const restoreDocuments = useCallback((documentIds: string[]) => setTrash(documentIds, false), [setTrash]);
+  const isTrashed = useCallback((documentId: string) => !!state.placements[documentId]?.trashedAt, [state.placements]);
 
   const refresh = useCallback(() => {
     if (active && sendRef.current) sendRef.current({ service: SERVICE, action: 'list', requestId: newRequestId() });
@@ -410,7 +488,9 @@ export function useDocumentFolders(options: UseDocumentFoldersOptions = {}): Use
     pathOf,
     unfiled: derived.unfiled,
     unfiledCount: derived.unfiled.length,
-    totalCount: Object.keys(state.placements).length,
+    totalCount: derived.totalCount,
+    trashed: derived.trashed,
+    isTrashed,
     loading: active ? loading : false,
     error,
     createFolder,
@@ -419,6 +499,8 @@ export function useDocumentFolders(options: UseDocumentFoldersOptions = {}): Use
     deleteFolder,
     moveDocuments,
     moveDocument,
+    trashDocuments,
+    restoreDocuments,
     refresh,
   };
 }
@@ -492,7 +574,7 @@ export function mergeDocumentFolderRead(prev: State, frame: Record<string, any>)
     const cur = prev.placements[p.documentId];
     if (cur && !cur.pending && cur.version >= p.version) continue;
     placements ??= { ...prev.placements };
-    placements[p.documentId] = { documentId: p.documentId, folderId: p.folderId ?? null, position: p.position, version: p.version };
+    placements[p.documentId] = toPlacement(p);
   }
   if (!folders && !placements) return prev;
   return { folders: folders ?? prev.folders, placements: placements ?? prev.placements };
@@ -522,7 +604,7 @@ function mergeEvent(prev: State, event: Record<string, any>): State {
       // Only documents this viewer was shown; only newer versions.
       if (!cur || cur.version >= m.version) continue;
       placements ??= { ...prev.placements };
-      placements[m.documentId] = { documentId: m.documentId, folderId: m.folderId ?? null, position: m.position, version: m.version };
+      placements[m.documentId] = toPlacement(m);
     }
     return placements ? { ...prev, placements } : prev;
   }

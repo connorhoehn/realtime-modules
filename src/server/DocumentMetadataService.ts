@@ -206,6 +206,12 @@ class DocumentMetadataService {
         return written;
     }
 
+    /** One document's metadata in wire shape, or null when there is no such row. */
+    async handleGetDocument(documentId: string): Promise<DocumentWire | null> {
+        const stored = await this.metadataStore.getDocument(documentId);
+        return stored ? this._toWire(stored) : null;
+    }
+
     /**
      * Delete a document's metadata.
      */

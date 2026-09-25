@@ -40,6 +40,15 @@
 // `conflict` carrying the current placement, and this hook shows that instead
 // of the optimistic guess. Moves are optimistic; everything else waits for the
 // answer.
+//
+// ## Trash
+//
+// Trash is soft: `trashDocuments(ids)` sets `trashedAt`/`trashedBy` on each
+// placement and `restoreDocuments(ids)` clears them; folder and position are
+// never touched, so a restore puts the document back where it was. Trashed
+// documents stay in `placements` (and in `trashed`, newest first) but are
+// counted nowhere — not in folder counts, the tree, `unfiled` or `totalCount`.
+// Both are optimistic like moves and roll back on refusal.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.positionBetween = positionBetween;
 exports.deriveDocumentFolders = deriveDocumentFolders;
@@ -66,6 +75,14 @@ function newRequestId() {
     const c = globalThis.crypto;
     return c?.randomUUID ? c.randomUUID() : `rq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
+/** A placement off the wire, keeping only known fields (trash state included). */
+function toPlacement(p) {
+    return {
+        documentId: p.documentId, folderId: p.folderId ?? null, position: p.position, version: p.version,
+        ...(typeof p.trashedAt === 'string' ? { trashedAt: p.trashedAt } : {}),
+        ...(typeof p.trashedAt === 'string' && typeof p.trashedBy === 'string' ? { trashedBy: p.trashedBy } : {}),
+    };
+}
 /** Folder + ancestors, cycle-safe. */
 function ancestry(folders, folderId) {
     const out = [];
@@ -84,8 +101,13 @@ function deriveDocumentFolders(state, currentUserId) {
     const direct = {};
     const docsIn = {};
     const unfiled = [];
+    const trashed = [];
     for (const p of Object.values(state.placements)) {
         const fid = p.folderId && state.folders[p.folderId] ? p.folderId : null;
+        if (p.trashedAt) {
+            trashed.push({ documentId: p.documentId, trashedAt: p.trashedAt, ...(p.trashedBy ? { trashedBy: p.trashedBy } : {}), folderId: fid });
+            continue;
+        }
         if (!fid) {
             unfiled.push(p);
             continue;
@@ -123,7 +145,8 @@ function deriveDocumentFolders(state, currentUserId) {
         setDepth(n.children, depth + 1);
     } };
     setDepth(tree, 0);
-    return { folders, tree, unfiled: unfiled.sort(bySort).map((p) => p.documentId) };
+    trashed.sort((a, b) => b.trashedAt.localeCompare(a.trashedAt) || a.documentId.localeCompare(b.documentId));
+    return { folders, tree, unfiled: unfiled.sort(bySort).map((p) => p.documentId), trashed, totalCount: Object.keys(state.placements).length - trashed.length };
 }
 function useDocumentFolders(options = {}) {
     const { transport, sessionEpoch, enabled = true, currentUserId, timeoutMs = 10_000 } = options;
@@ -172,7 +195,8 @@ function useDocumentFolders(options = {}) {
                 }
                 const placements = {};
                 for (const p of (frame.documents ?? []))
-                    placements[p.documentId] = { ...p };
+                    if (p?.documentId)
+                        placements[p.documentId] = toPlacement(p);
                 setState({ folders, placements });
                 setLoading(false);
                 return;
@@ -307,7 +331,7 @@ function useDocumentFolders(options = {}) {
                     if (now && !now.pending && settled && now.version > settled.version)
                         continue;
                     if (settled)
-                        placements[m.documentId] = { documentId: m.documentId, folderId: settled.folderId, position: settled.position, version: settled.version };
+                        placements[m.documentId] = toPlacement({ ...settled, documentId: m.documentId });
                     else
                         delete placements[m.documentId];
                 }
@@ -316,6 +340,47 @@ function useDocumentFolders(options = {}) {
         });
     }, [request]);
     const moveDocument = (0, react_1.useCallback)((documentId, folderId, position) => moveDocuments([{ documentId, folderId, ...(position !== undefined ? { position } : {}) }]), [moveDocuments]);
+    const setTrash = (0, react_1.useCallback)((documentIds, trashed) => {
+        const ids = [...new Set(documentIds.filter((id) => typeof id === 'string' && id))];
+        const before = {};
+        for (const id of ids)
+            before[id] = stateRef.current.placements[id];
+        const at = new Date().toISOString();
+        // Optimistic: the rows leave (or come back) at once, marked pending.
+        setState((prev) => {
+            const placements = { ...prev.placements };
+            for (const id of ids) {
+                const cur = placements[id] ?? { documentId: id, folderId: null, position: 0, version: 0 };
+                const { trashedAt: _a, trashedBy: _b, ...rest } = cur;
+                placements[id] = trashed
+                    ? { ...rest, trashedAt: cur.trashedAt ?? at, ...(cur.trashedBy ? { trashedBy: cur.trashedBy } : currentUserId ? { trashedBy: currentUserId } : {}), pending: true }
+                    : { ...rest, pending: true };
+            }
+            return { ...prev, placements };
+        });
+        return request(trashed ? 'trashDocuments' : 'restoreDocuments', { documentIds: ids }, (r) => {
+            setState((prev) => {
+                const placements = { ...prev.placements };
+                const byDoc = new Map((r.results ?? []).map((x) => [x.documentId, x]));
+                for (const id of ids) {
+                    const res = byDoc.get(id);
+                    const settled = res?.ok ? res.placement : before[id];
+                    const now = placements[id];
+                    // An event may already have landed something newer.
+                    if (now && !now.pending && settled && now.version > settled.version)
+                        continue;
+                    if (settled)
+                        placements[id] = toPlacement({ ...settled, documentId: id });
+                    else
+                        delete placements[id];
+                }
+                return { ...prev, placements };
+            });
+        });
+    }, [request, currentUserId]);
+    const trashDocuments = (0, react_1.useCallback)((documentIds) => setTrash(documentIds, true), [setTrash]);
+    const restoreDocuments = (0, react_1.useCallback)((documentIds) => setTrash(documentIds, false), [setTrash]);
+    const isTrashed = (0, react_1.useCallback)((documentId) => !!state.placements[documentId]?.trashedAt, [state.placements]);
     const refresh = (0, react_1.useCallback)(() => {
         if (active && sendRef.current)
             sendRef.current({ service: SERVICE, action: 'list', requestId: newRequestId() });
@@ -335,7 +400,9 @@ function useDocumentFolders(options = {}) {
         pathOf,
         unfiled: derived.unfiled,
         unfiledCount: derived.unfiled.length,
-        totalCount: Object.keys(state.placements).length,
+        totalCount: derived.totalCount,
+        trashed: derived.trashed,
+        isTrashed,
         loading: active ? loading : false,
         error,
         createFolder,
@@ -344,6 +411,8 @@ function useDocumentFolders(options = {}) {
         deleteFolder,
         moveDocuments,
         moveDocument,
+        trashDocuments,
+        restoreDocuments,
         refresh,
     };
 }
@@ -431,7 +500,7 @@ function mergeDocumentFolderRead(prev, frame) {
         if (cur && !cur.pending && cur.version >= p.version)
             continue;
         placements ??= { ...prev.placements };
-        placements[p.documentId] = { documentId: p.documentId, folderId: p.folderId ?? null, position: p.position, version: p.version };
+        placements[p.documentId] = toPlacement(p);
     }
     if (!folders && !placements)
         return prev;
@@ -463,7 +532,7 @@ function mergeEvent(prev, event) {
             if (!cur || cur.version >= m.version)
                 continue;
             placements ??= { ...prev.placements };
-            placements[m.documentId] = { documentId: m.documentId, folderId: m.folderId ?? null, position: m.position, version: m.version };
+            placements[m.documentId] = toPlacement(m);
         }
         return placements ? { ...prev, placements } : prev;
     }

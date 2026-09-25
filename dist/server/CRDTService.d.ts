@@ -122,6 +122,7 @@ declare class CRDTService {
         alreadySeeded: boolean;
     }>;
     handleAction(clientId: string, action: string, data: any): Promise<void>;
+    handleCopyDocument(clientId: string, data: any): Promise<void>;
     private ensureHydratedState;
     handleSubscribe(clientId: string, { channel }: {
         channel: string;

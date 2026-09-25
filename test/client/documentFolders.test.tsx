@@ -145,6 +145,77 @@ describe('useDocumentFolders', () => {
     expect(result.current.placements.d4).toEqual({ documentId: 'd4', folderId: 'mt', position: 3, version: 1 });
   });
 
+  it('trashed documents from the list are counted nowhere and listed in trashed, newest first', async () => {
+    const t = makeTransport();
+    const { result } = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));
+    t.emit({ ...LIST, documents: [
+      ...LIST.documents.slice(0, 2),
+      { documentId: 'd3', folderId: 'ra', position: 1, version: 2, trashedAt: '2026-09-24T10:00:00.000Z', trashedBy: 'bob' },
+      { documentId: 'd4', folderId: null, position: 0, version: 1, trashedAt: '2026-09-24T11:00:00.000Z' },
+    ] });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // Release assets holds only a trashed document: it counts nothing and lists no document.
+    expect(result.current.tree[0]).toMatchObject({ name: 'Sprint planning', count: 2 });
+    expect(result.current.tree[0].children.map((c) => [c.name, c.count, c.documentIds])).toEqual([['Meetings', 2, ['d1', 'd2']], ['Release assets', 0, []]]);
+    expect(result.current.unfiled).toEqual([]);
+    expect(result.current.unfiledCount).toBe(0);
+    expect(result.current.totalCount).toBe(2);
+    expect(result.current.trashed).toEqual([
+      { documentId: 'd4', trashedAt: '2026-09-24T11:00:00.000Z', folderId: null },
+      { documentId: 'd3', trashedAt: '2026-09-24T10:00:00.000Z', trashedBy: 'bob', folderId: 'ra' },
+    ]);
+    expect(result.current.isTrashed('d3')).toBe(true);
+    expect(result.current.isTrashed('d1')).toBe(false);
+  });
+
+  it('trashes optimistically, settles on the answer, and restores back to the same folder', async () => {
+    const t = makeTransport();
+    const { result } = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1, currentUserId: 'alice' }));
+    t.emit(LIST);
+    let settled: any;
+    act(() => { void result.current.trashDocuments(['d1']).then((r) => { settled = r; }); });
+    expect(result.current.placements.d1).toMatchObject({ folderId: 'mt', trashedBy: 'alice', pending: true });
+    expect(result.current.tree[0].count).toBe(2);
+    const [frame] = sentOf(t.send, 'trashDocuments');
+    expect(frame).toMatchObject({ service: 'document-folders', documentIds: ['d1'], requestId: expect.any(String) });
+    const placement = { documentId: 'd1', folderId: 'mt', position: 1, version: 2, trashedAt: '2026-09-24T12:00:00.000Z', trashedBy: 'alice' };
+    t.emit({ type: 'document-folders:result', requestId: frame.requestId, action: 'trashDocuments', ok: true, placements: [placement], results: [{ documentId: 'd1', ok: true, placement }] });
+    await waitFor(() => expect(settled).toMatchObject({ ok: true }));
+    expect(result.current.placements.d1).toEqual(placement);
+    expect(result.current.trashed.map((x) => x.documentId)).toEqual(['d1']);
+
+    act(() => { void result.current.restoreDocuments(['d1']); });
+    expect(result.current.isTrashed('d1')).toBe(false);
+    const [restore] = sentOf(t.send, 'restoreDocuments');
+    const back = { documentId: 'd1', folderId: 'mt', position: 1, version: 3 };
+    t.emit({ type: 'document-folders:result', requestId: restore.requestId, action: 'restoreDocuments', ok: true, placements: [back], results: [{ documentId: 'd1', ok: true, placement: back }] });
+    await waitFor(() => expect(result.current.placements.d1).toEqual(back));
+    expect(result.current.tree[0].count).toBe(3);
+    expect(result.current.trashed).toEqual([]);
+  });
+
+  it('a refused trash rolls back', async () => {
+    const t = makeTransport();
+    const { result } = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));
+    t.emit(LIST);
+    let settled: any;
+    act(() => { void result.current.trashDocuments(['d2']).then((r) => { settled = r; }); });
+    expect(result.current.isTrashed('d2')).toBe(true);
+    const [frame] = sentOf(t.send, 'trashDocuments');
+    t.emit({ type: 'document-folders:result', requestId: frame.requestId, action: 'trashDocuments', ok: false, code: 'forbidden', results: [{ documentId: 'd2', ok: false, code: 'forbidden' }] });
+    await waitFor(() => expect(settled).toMatchObject({ ok: false, code: 'forbidden' }));
+    expect(result.current.placements.d2).toEqual({ documentId: 'd2', folderId: 'mt', position: 2, version: 1 });
+    expect(result.current.error).toMatchObject({ code: 'forbidden' });
+  });
+
+  it('a re-read after a signal carries the trash state', () => {
+    const prev = { folders: {}, placements: { d1: { documentId: 'd1', folderId: 'mt', position: 1, version: 1 } } };
+    const next = mergeDocumentFolderRead(prev, { documents: [{ documentId: 'd1', folderId: 'mt', position: 1, version: 2, trashedAt: '2026-09-24T12:00:00.000Z', trashedBy: 'bob' }] });
+    expect(next.placements.d1).toMatchObject({ trashedAt: '2026-09-24T12:00:00.000Z', trashedBy: 'bob' });
+    const restored = mergeDocumentFolderRead(next, { documents: [{ documentId: 'd1', folderId: 'mt', position: 1, version: 3 }] });
+    expect(restored.placements.d1.trashedAt).toBeUndefined();
+  });
+
   it('a conflicting move is replaced by the placement the server says is current', async () => {
     const t = makeTransport();
     const { result } = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));

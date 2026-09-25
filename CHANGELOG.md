@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.95.10 — 2026-09-25
+
+- **server/crdt:** `copyDocument { documentId, requestId, title? }` — needs
+  `read` on the source and `create`; makes a new document (source type, icon,
+  description, conversation; title `<source> (copy)` unless given; owned by the
+  verified actor) with a clone of the source's CRDT content (meta `id`/`title`
+  rewritten, `importSourceRevision` dropped), snapshotted before it is
+  announced. Answers `documentCopied { requestId, sourceId, document }` or
+  `documentCopyFailed { requestId, sourceId, error, code }` (code
+  `invalid_request | unauthenticated | forbidden | not_found | copy_failed`);
+  broadcasts `documentCreated` and does not announce in a conversation. A
+  failure after the row was written deletes it.
+- **client/documents:** `useDocumentFolders` soft-delete trash — placements
+  carry `trashedAt?`/`trashedBy?`; trashed documents are counted nowhere
+  (folder counts, tree, `unfiled`, `totalCount`); new `trashed` (newest first),
+  `isTrashed(id)`, `trashDocuments(ids)` and `restoreDocuments(ids)`
+  (optimistic, rolled back on refusal) over the gateway's `document-folders`
+  `trashDocuments`/`restoreDocuments`.
+
 ## 0.95.9 — 2026-09-25
 
 - **client/documents:** `useDocumentSearch` asks for `fresh=1` on a

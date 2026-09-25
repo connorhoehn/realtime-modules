@@ -509,6 +509,8 @@ class CRDTService {
                     if (data.meta?.announce !== false) this._announceDocument(doc);
                     return;
                 }
+                case 'copyDocument':
+                    return await this.handleCopyDocument(clientId, data);
                 case 'deleteDocument': {
                     if (!this._requireAuth(clientId, 'deleteDocument')) return;
                     const docId = data.documentId;
@@ -590,6 +592,81 @@ class CRDTService {
             if (duration > 500) {
                 this.logger.warn(`Slow message handler: crdt/${action} took ${duration}ms`, { clientId });
             }
+        }
+    }
+
+    // ===================================================================
+    // handleCopyDocument — a new document with the source's metadata and a
+    // clone of its CRDT content. The source is only read.
+    //
+    //   in:  { service:'crdt', action:'copyDocument', documentId, requestId, title? }
+    //   ok:  { type:'crdt', action:'documentCopied', requestId, sourceId, document }  (to the requester)
+    //        { type:'crdt', action:'documentCreated', document }                     (to everyone)
+    //   err: { type:'crdt', action:'documentCopyFailed', requestId, sourceId, error, code }
+    //        code ∈ invalid_request | unauthenticated | forbidden | not_found | copy_failed
+    // ===================================================================
+
+    async handleCopyDocument(clientId: string, data: any): Promise<void> {
+        const requestId = typeof data?.requestId === 'string' ? data.requestId : undefined;
+        const sourceId = typeof data?.documentId === 'string' ? data.documentId : '';
+        const fail = (code: string, error: string) =>
+            this.sendToClient(clientId, { type: 'crdt', action: 'documentCopyFailed', requestId, sourceId, error, code });
+        const sourceChannel = `doc:${sourceId}`;
+        if (!sourceId || !this._validateChannel(sourceChannel)) return fail('invalid_request', 'documentId is required');
+        if (data.title !== undefined && (typeof data.title !== 'string' || !data.title.trim())) return fail('invalid_request', 'title must be a non-empty string');
+        const userContext = (this.messageRouter.getClientData?.(clientId) as any)?.userContext;
+        if (!userContext?.userId) return fail('unauthenticated', 'Copying a document requires a verified actor');
+        let createdId: string | null = null;
+        try {
+            if (!await this.authorize(clientId, sourceChannel, 'read', false)) return fail('forbidden', 'Not allowed to read the source document');
+            if (!await this.authorize(clientId, '', 'create', false)) return fail('forbidden', 'Not allowed to create documents');
+            const source = await this.metadataService.handleGetDocument(sourceId);
+            if (!source) return fail('not_found', 'Source document not found');
+            const title = (typeof data.title === 'string' ? data.title.trim() : `${source.title} (copy)`).slice(0, 512);
+            const sourceState = await this.ensureHydratedState(sourceChannel);
+            const content = Y.encodeStateAsUpdate(sourceState.ydoc);
+            const doc = await this.metadataService.handleCreateDocument({
+                meta: { title, type: source.type, icon: source.icon, description: source.description, ...(source.channel ? { channel: source.channel } : {}) },
+                createdBy: userContext.userId,
+                createdByName: userContext.displayName || userContext.email || null,
+            });
+            createdId = doc.id;
+            const channel = `doc:${doc.id}`;
+            const state = await this.ensureHydratedState(channel);
+            Y.applyUpdate(state.ydoc, content);
+            const meta = state.ydoc.getMap('meta');
+            state.ydoc.transact(() => {
+                if (meta.has('id')) meta.set('id', doc.id);
+                if (meta.has('documentId')) meta.set('documentId', doc.id);
+                if (meta.has('title')) meta.set('title', title);
+                // A copy was not imported from the source's seed revision.
+                if (meta.has('importSourceRevision')) meta.delete('importSourceRevision');
+            });
+            state.operationsSinceSnapshot++;
+            await this.snapshotManager.writeSnapshot(channel);
+            // Durable now, and nobody knows the id before the broadcast: do not
+            // keep an unsubscribed copy resident — the first subscriber hydrates it.
+            if (state.subscriberCount === 0 && this.channelStates.get(channel) === state) {
+                this.channelStates.delete(channel);
+                this.snapshotManager.cancelDebouncedSnapshot(channel);
+                state.ydoc.destroy();
+            }
+            await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentCreated', document: doc });
+            this.sendToClient(clientId, { type: 'crdt', action: 'documentCopied', requestId, sourceId, document: doc });
+        } catch (error: any) {
+            this.logger.error(`copyDocument ${sourceId} failed:`, error);
+            if (createdId) {
+                const channel = `doc:${createdId}`;
+                const state = this.channelStates.get(channel);
+                if (state && state.subscriberCount === 0) {
+                    state.ydoc.destroy();
+                    this.channelStates.delete(channel);
+                    this.snapshotManager.cancelDebouncedSnapshot(channel);
+                }
+                try { await this.metadataService.handleDeleteDocument(createdId); }
+                catch (cleanupErr) { this.logger.error(`copyDocument cleanup of ${createdId} failed:`, cleanupErr); }
+            }
+            fail('copy_failed', 'Could not copy the document');
         }
     }
 

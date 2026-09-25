@@ -25,8 +25,19 @@ export interface DocumentFolderPlacement {
     folderId: string | null;
     position: number;
     version: number;
+    /** ISO time it was put in the trash; absent when it is not trashed. */
+    trashedAt?: string;
+    /** Who trashed it. */
+    trashedBy?: string;
     /** True while an optimistic move waits for the server. */
     pending?: boolean;
+}
+export interface DocumentFolderTrashedItem {
+    documentId: string;
+    trashedAt: string;
+    trashedBy?: string;
+    /** The folder it will be restored into (null = Unfiled, or its folder is gone). */
+    folderId: string | null;
 }
 export interface DocumentFolderMove {
     documentId: string;
@@ -77,8 +88,11 @@ export interface UseDocumentFoldersResult {
     /** Visible documents in no folder, by position. */
     unfiled: string[];
     unfiledCount: number;
-    /** Visible documents in total. */
+    /** Visible documents in total, trashed ones excluded. */
     totalCount: number;
+    /** Visible trashed documents, newest first. */
+    trashed: DocumentFolderTrashedItem[];
+    isTrashed: (documentId: string) => boolean;
     /** True until the first list for this session arrives. */
     loading: boolean;
     /** The last failed mutation or read, until the next success. */
@@ -94,6 +108,10 @@ export interface UseDocumentFoldersResult {
     deleteFolder: (folderId: string) => Promise<DocumentFolderResult>;
     moveDocuments: (moves: DocumentFolderMove[]) => Promise<DocumentFolderResult>;
     moveDocument: (documentId: string, folderId: string | null, position?: number) => Promise<DocumentFolderResult>;
+    /** Soft delete (≤100): the documents leave every count and list but keep their folder and position. */
+    trashDocuments: (documentIds: string[]) => Promise<DocumentFolderResult>;
+    /** Take documents out of the trash, back where they were. */
+    restoreDocuments: (documentIds: string[]) => Promise<DocumentFolderResult>;
     /** Re-read the whole picture (a fresh `list`). */
     refresh: () => void;
 }
@@ -114,6 +132,8 @@ export declare function deriveDocumentFolders(state: State, currentUserId?: stri
     folders: DocumentFolder[];
     tree: DocumentFolderNode[];
     unfiled: string[];
+    trashed: DocumentFolderTrashedItem[];
+    totalCount: number;
 };
 export declare function useDocumentFolders(options?: UseDocumentFoldersOptions): UseDocumentFoldersResult;
 /**
