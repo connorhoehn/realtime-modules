@@ -30,6 +30,9 @@
   `kind: 'document-review'` and the server routes such a frame to the call's
   members only.
 - event-catalog 0.8.4: `ws.call.invite-expired` gains `inviteAt`.
+- (follow-up commit, tests only) two expiry assertions updated for the
+  new `invite-expired` audience and `inviteAt`; the 0.97.6 release commit
+  had shipped with them failing. No code or `dist/` change.
 
 ## 0.97.5 — 2026-09-25
 

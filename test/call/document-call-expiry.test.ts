@@ -77,8 +77,9 @@ describe('document calls — per-target expiry', () => {
     expect(m2!.invites['u-bob'].state).toBe('missed');
     expect(m2!.invites['u-alice'].state).toBe('accepted');
     const expired = n.wire.filter((w) => w.message.action === 'invite-expired');
-    expect(expired.map((w) => w.clientId)).toEqual(['c-host']);
-    expect(expired[0].message.data).toEqual({ callId: 'd1', userId: 'u-bob' });
+    // The inviter (row → "Didn't answer") and Bob himself (his ring closes).
+    expect(expired.map((w) => w.clientId).sort()).toEqual(['c-bob', 'c-host']);
+    expect(expired[0].message.data).toEqual({ callId: 'd1', userId: 'u-bob', inviteAt: expect.any(Number) });
     // Everyone in the call learns Bob didn't answer.
     expect(n.wire.filter((w) => w.message.action === 'call-meta').map((w) => w.clientId).sort()).toEqual(['c-alice', 'c-host']);
     expect(n.svc.getStats().activeCalls).toBe(1);
@@ -170,7 +171,8 @@ describe('two replicas (shared Redis)', () => {
     await flush();
     const expired = c.frames('a-host', 'invite-expired');
     expect(expired).toHaveLength(1);
-    expect(expired[0].data).toEqual({ callId: 'x1', userId: 'u-bob' });
+    expect(expired[0].data).toEqual({ callId: 'x1', userId: 'u-bob', inviteAt: expect.any(Number) });
+    expect(c.frames('b-bob', 'invite-expired')).toHaveLength(1);
     const meta = await new (require('../../src/call/CallStateStore').RedisDocumentCallMetaStore)(c.redis).get('x1');
     expect(meta.invites['u-bob'].state).toBe('missed');
     expect(meta.invites['u-alice'].state).toBe('accepted');
