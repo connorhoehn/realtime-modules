@@ -331,6 +331,10 @@ transport. They speak to a live-video-streaming deployment, not to
 | `useLVSRecordings(opts)` | `{ recordings, isLoading, error, refetch }` |
 | `useLVSHlsPlayer(opts)` | `{ playlistUrl, tokenExpiresInSec, ready }` — the near-realtime lane |
 | `useLiveCaptions(opts)` | `CaptionLine[]` |
+| `useMediaDevices(opts?)` | `{ microphones, cameras, speakers, permission: { microphone, camera }, speakerSelectionSupported, loading, refresh, requestPermission }` — device lists and browser permission for call surfaces |
+| `useAudioVideoSettings(opts?)` | `{ settings, update, constraints, previewStream, previewError, micLevel, testMic, testSound, testMicState }` — per-browser mic/speaker/camera settings under `call-device-preferences` |
+| `useDocumentCall(opts)` | `{ call, phase, joined, isHost, elapsedMs, error, ended, participants, inCallCount, activeSpeakerId, self, start, join, leave, endForEveryone, invite, ringAgain, setDocuments, setTitle, present, following, follow, toggleMic, toggleCamera, startScreenShare, stopScreenShare, lvs, inviteLink, refresh }` — a call that belongs to a document review; see [the calls recipe](./docs/recipes/calls.md#document-calls) |
+| `useIncomingDocumentCalls(opts)` | `{ current, queue, queueLength, accept, decline, dismiss }` — rings for `kind:'document-review'` invites |
 
 `./client/voice` and `./client/media-effects`:
 

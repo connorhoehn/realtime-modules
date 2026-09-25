@@ -5,7 +5,7 @@
 // reach for the hooks first; transport helpers are surfaced for
 // advanced cases (custom retry, headless tests).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSViewerCount = exports.useLVSLiveHls = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
+exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.DEFAULT_AUDIO_VIDEO_SETTINGS = exports.parseDocumentInvite = exports.useIncomingDocumentCalls = exports.toDocumentCallSession = exports.mergeDocumentCall = exports.useDocumentCall = exports.AUDIO_VIDEO_SETTINGS_KEY = exports.audioVideoConstraints = exports.readAudioVideoSettings = exports.useAudioVideoSettings = exports.isSpeakerSelectionSupported = exports.toDeviceOptions = exports.useMediaDevices = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSViewerCount = exports.useLVSLiveHls = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
 var LVSProvider_1 = require("./LVSProvider");
 Object.defineProperty(exports, "LVSProvider", { enumerable: true, get: function () { return LVSProvider_1.LVSProvider; } });
 Object.defineProperty(exports, "useLVSContext", { enumerable: true, get: function () { return LVSProvider_1.useLVSContext; } });
@@ -34,6 +34,27 @@ var useLVSHlsPlayer_1 = require("./useLVSHlsPlayer");
 Object.defineProperty(exports, "useLVSHlsPlayer", { enumerable: true, get: function () { return useLVSHlsPlayer_1.useLVSHlsPlayer; } });
 var useLiveCaptions_1 = require("./useLiveCaptions");
 Object.defineProperty(exports, "useLiveCaptions", { enumerable: true, get: function () { return useLiveCaptions_1.useLiveCaptions; } });
+// Document calls (2026-09-24): device enumeration, local media settings, the
+// call itself, and its rings. See realtime-examples
+// docs/design/document-calls/SPEC.md §5.3.
+var useMediaDevices_1 = require("./useMediaDevices");
+Object.defineProperty(exports, "useMediaDevices", { enumerable: true, get: function () { return useMediaDevices_1.useMediaDevices; } });
+Object.defineProperty(exports, "toDeviceOptions", { enumerable: true, get: function () { return useMediaDevices_1.toDeviceOptions; } });
+Object.defineProperty(exports, "isSpeakerSelectionSupported", { enumerable: true, get: function () { return useMediaDevices_1.isSpeakerSelectionSupported; } });
+var useAudioVideoSettings_1 = require("./useAudioVideoSettings");
+Object.defineProperty(exports, "useAudioVideoSettings", { enumerable: true, get: function () { return useAudioVideoSettings_1.useAudioVideoSettings; } });
+Object.defineProperty(exports, "readAudioVideoSettings", { enumerable: true, get: function () { return useAudioVideoSettings_1.readAudioVideoSettings; } });
+Object.defineProperty(exports, "audioVideoConstraints", { enumerable: true, get: function () { return useAudioVideoSettings_1.audioVideoConstraints; } });
+Object.defineProperty(exports, "AUDIO_VIDEO_SETTINGS_KEY", { enumerable: true, get: function () { return useAudioVideoSettings_1.AUDIO_VIDEO_SETTINGS_KEY; } });
+var useDocumentCall_1 = require("./useDocumentCall");
+Object.defineProperty(exports, "useDocumentCall", { enumerable: true, get: function () { return useDocumentCall_1.useDocumentCall; } });
+Object.defineProperty(exports, "mergeDocumentCall", { enumerable: true, get: function () { return useDocumentCall_1.mergeDocumentCall; } });
+Object.defineProperty(exports, "toDocumentCallSession", { enumerable: true, get: function () { return useDocumentCall_1.toDocumentCallSession; } });
+var useIncomingDocumentCalls_1 = require("./useIncomingDocumentCalls");
+Object.defineProperty(exports, "useIncomingDocumentCalls", { enumerable: true, get: function () { return useIncomingDocumentCalls_1.useIncomingDocumentCalls; } });
+Object.defineProperty(exports, "parseDocumentInvite", { enumerable: true, get: function () { return useIncomingDocumentCalls_1.parseDocumentInvite; } });
+var documentCallTypes_1 = require("./documentCallTypes");
+Object.defineProperty(exports, "DEFAULT_AUDIO_VIDEO_SETTINGS", { enumerable: true, get: function () { return documentCallTypes_1.DEFAULT_AUDIO_VIDEO_SETTINGS; } });
 // Transport re-exports for advanced consumers (custom WHIP retry loops,
 // SSR-shimmed fetch in tests). The hooks above own the common path.
 var transport_1 = require("./lib/transport");

@@ -82,3 +82,35 @@ calls({ stateStore: new RedisCallStateStore(redis) })  // multi-replica call sta
 Multi-node? Swap the transport, not the features: pass a Redis-backed
 `RealtimeRouter` via `attachRealtime(server, { router })` — the
 websocket-gateway MessageRouter is the reference implementation.
+
+## Document calls
+
+A call that belongs to a document review (2026-09-24): a title, a list of
+review documents, a presenter others can follow, and per-person ring state.
+Server side, pass a meta store to the call service:
+
+```ts
+import { CallService, RedisCallStateStore, RedisDocumentCallMetaStore } from '@connorhoehn/realtime-modules/call';
+
+new CallService({
+  messageRouter, logger,
+  stateStore: new RedisCallStateStore(redis),
+  metaStore: new RedisDocumentCallMetaStore(redis),       // call:meta:<callId>, TTL 4 h
+  onOfflineInvite: (userId, invite) => notifications.notifyUser(userId, …),
+  isClientAlive: (clientId) => nodeOfClientHasHeartbeat(clientId),
+});
+```
+
+New actions: `meta` (reply `call-meta` to the asker), `set-documents`,
+`present` and `set-title` (each broadcasts `call-meta`); server-only
+`call-meta` and `invite-expired`; `user-status` gains `reconnecting`. An
+invite with `kind:'document-review'` writes the meta; rings expire per person
+(the caller gets `invite-expired`), and a call someone answered is never ended
+by a ring timing out. Document calls never broadcast to every connected
+client.
+
+Client side (`./client/video`): `useDocumentCall` for the call,
+`useIncomingDocumentCalls` for the rings, `useMediaDevices` and
+`useAudioVideoSettings` for the settings drawer. `useDocumentCall` mints the
+LVS stage token (`lvs`); mount `LVSHangoutSessionProvider` with it and pass
+the session back as `media` so toggles and members line up.

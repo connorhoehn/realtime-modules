@@ -8,6 +8,12 @@ export { useLVSLiveHls, type UseLVSLiveHlsOptions, type UseLVSLiveHlsResult, } f
 export { useLVSViewerCount, type UseLVSViewerCountOptions, type UseLVSViewerCountResult, } from './useLVSViewerCount';
 export { useLVSHlsPlayer, type UseLVSHlsPlayerOptions, type UseLVSHlsPlayerResult, } from './useLVSHlsPlayer';
 export { useLiveCaptions, type CaptionLine, type UseLiveCaptionsOptions, } from './useLiveCaptions';
+export { useMediaDevices, toDeviceOptions, isSpeakerSelectionSupported, type UseMediaDevicesOptions, type UseMediaDevicesResult, } from './useMediaDevices';
+export { useAudioVideoSettings, readAudioVideoSettings, audioVideoConstraints, AUDIO_VIDEO_SETTINGS_KEY, type UseAudioVideoSettingsOptions, type UseAudioVideoSettingsResult, } from './useAudioVideoSettings';
+export { useDocumentCall, mergeDocumentCall, toDocumentCallSession, type DocumentCall, type DocumentCallMediaBinding, type DocumentCallPhase, type DocumentCallStartInput, type UseDocumentCallOptions, type UseDocumentCallResult, } from './useDocumentCall';
+export { useIncomingDocumentCalls, parseDocumentInvite, type IncomingDocumentCall, type IncomingDocumentCallPerson, type UseIncomingDocumentCallsOptions, type UseIncomingDocumentCallsResult, } from './useIncomingDocumentCalls';
+export type { DocumentCallGateway } from './documentCallGateway';
+export { DEFAULT_AUDIO_VIDEO_SETTINGS, type AudioVideoSettings, type CallQuality, type DeviceOption, type DocumentCallAwarenessParticipant, type DocumentCallInvite, type DocumentCallMediaMember, type DocumentCallMeta, type DocumentCallParticipant, type DocumentCallParticipantState, type DocumentCallPresenting, type DocumentCallSession, type MediaPermission, } from './documentCallTypes';
 export { whipPublish, whepPublish, fetchIceServers, LVSApiError, } from './lib/transport';
 export type { TransportLog } from './lib/transport';
 export { decodeJwt, decodeArn } from './lib/jwt';
