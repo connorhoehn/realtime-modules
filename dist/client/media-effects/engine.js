@@ -32,8 +32,20 @@
 // machine without jsdom, canvas, or MediaPipe.
 //
 // Ownership: the engine NEVER stops the source track — the caller acquired
-// it (getUserMedia) and owns its lifecycle. Only pipeline-created canvas
-// tracks are stopped on teardown.
+// it (getUserMedia) and owns its lifecycle. Only pipeline-created tracks
+// (the canvas capture, and the engine's clone of the source) are stopped on
+// teardown.
+//
+// Why the pipeline reads a CLONE of the source (2026-09-25): a publisher may
+// stop the source out from under the engine. Live, LVS's
+// replaceLocalVideoTrack recorded the raw camera (republished while effects
+// were off) as a "transformed" track and stop()ped it when the canvas track
+// replaced it on Apply — the pipeline then drew a dead camera (black) for
+// the rest of the call, B&W and None alike. The clone keeps the pipeline fed
+// whatever happens to the original. In exchange, the pipeline must not keep
+// the camera on after the call: when a consumer stops the engine's canvas
+// output (a publisher's leave does), the draw loop tears the pipeline down,
+// which stops the clone.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MediaEffectsEngine = exports.SEGMENT_FRAME_INTERVAL = exports.MASK_FEATHER_PX = exports.MASK_EMA_ALPHA = void 0;
 const presets_1 = require("./presets");
@@ -94,6 +106,9 @@ class MediaEffectsEngine {
     getBackgroundImageUrl() { return this.backgroundImageUrl; }
     getFaceSpriteId() { return this.faceSpriteId; }
     getSource() { return this.source; }
+    /** The track that actually carries camera frames: the pipeline's clone
+     *  while one exists (it outlives a stopped source), else the source. */
+    getLiveSource() { return this.pipeline?.input ?? this.source; }
     /** Active = at least one effect is on. Drives pipeline existence. */
     isActive() {
         return this.filterId !== 'none' || this.backgroundMode !== 'none' || this.faceSpriteId != null;
@@ -208,7 +223,9 @@ class MediaEffectsEngine {
         const settings = track.getSettings?.() ?? {};
         const width = settings.width ?? 1280;
         const height = settings.height ?? 720;
-        const video = this.createVideoElement(track);
+        const clone = this.cloneSource(track);
+        const input = clone ?? track;
+        const video = this.createVideoElement(input);
         const outputCanvas = this.createCanvas(width, height);
         // Auxiliary canvases for the background pipeline. Allocated up front so
         // we don't churn on every frame; sizes re-synced in the draw loop when
@@ -235,6 +252,8 @@ class MediaEffectsEngine {
             segmenter: this.createSegmenter(),
             faceTracker: this.createFaceTracker(),
             startTimeMs: this.now(),
+            input,
+            ownsInput: !!clone,
         };
         this.pipeline = pipeline;
         const loop = () => {
@@ -272,7 +291,13 @@ class MediaEffectsEngine {
             p.faceTracker.close();
         }
         catch { /* ignore */ }
-        // Stop only pipeline-created (canvas capture) tracks — never the source.
+        // Stop only pipeline-created tracks — never the source.
+        if (p.ownsInput && p.input !== this.source) {
+            try {
+                p.input.stop();
+            }
+            catch { /* already stopped */ }
+        }
         if (p.stream) {
             for (const t of p.stream.getTracks?.() ?? []) {
                 if (t !== this.source) {
@@ -286,6 +311,15 @@ class MediaEffectsEngine {
     }
     // ------------------------------------------------------------ draw loop
     drawFrame(p) {
+        // Our output was stopped by whoever published it (a call ended): nothing
+        // will read it again, so release the pipeline — and with it our clone of
+        // the camera — instead of keeping the device on.
+        if (p.outputTrack && p.outputTrack.readyState === 'ended') {
+            const prev = this.getOutputTrack();
+            this.teardownPipeline();
+            this.emitIfChanged(prev);
+            return;
+        }
         const { video, outputCanvas, bgCanvas, personCanvas, outputCtx } = p;
         if (!outputCtx)
             return;
@@ -464,6 +498,16 @@ class MediaEffectsEngine {
     // All DOM/global construction is funneled through these so tests can
     // subclass and stub them — the state machine above is then exercisable
     // in plain node with fake tracks/canvases.
+    /** Clone the source for the pipeline; null when the track cannot be
+     *  cloned (the pipeline then reads the source directly). */
+    cloneSource(track) {
+        try {
+            return typeof track.clone === 'function' ? track.clone() : null;
+        }
+        catch {
+            return null;
+        }
+    }
     createVideoElement(track) {
         const video = document.createElement('video');
         video.srcObject = new MediaStream([track]);

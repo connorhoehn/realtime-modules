@@ -37,7 +37,8 @@ import type { FaceTracker } from '../../../src/client/media-effects/faceLandmark
 
 class FakeTrack {
   kind = 'video';
-  stop = jest.fn();
+  readyState: 'live' | 'ended' = 'live';
+  stop = jest.fn(() => { this.readyState = 'ended'; });
   clones: FakeTrack[] = [];
   private listeners = new Map<string, Set<() => void>>();
 
@@ -81,9 +82,17 @@ class TestEngine extends MediaEffectsEngine {
   private static seq = 0;
   readonly id = TestEngine.seq++;
 
+  /** The preview tests count the PREVIEW's clones of the camera; the live
+   *  pipeline's own clone is covered by the lane-D suite (ClonePipelineEngine). */
+  clonePipelineSource = false;
+
   override dispose(): void {
     this.isDisposed = true;
     super.dispose();
+  }
+
+  protected override cloneSource(track: MediaStreamTrack): MediaStreamTrack | null {
+    return this.clonePipelineSource ? super.cloneSource(track) : null;
   }
 
   protected override createVideoElement(): HTMLVideoElement {
@@ -118,7 +127,10 @@ class TestEngine extends MediaEffectsEngine {
   }
 
   protected override loadBackgroundImage(): void { /* no-op */ }
-  protected override requestFrame(): number { return 1; }
+  private frameCb: FrameRequestCallback | null = null;
+  protected override requestFrame(cb: FrameRequestCallback): number { this.frameCb = cb; return 1; }
+  /** Run one draw-loop frame. */
+  tick(): void { const cb = this.frameCb; this.frameCb = null; cb?.(0); }
   protected override cancelFrame(): void { /* no-op */ }
   protected override warmupSegmentation(): Promise<void> { return Promise.resolve(); }
   protected override warmupFaces(): Promise<void> { return Promise.resolve(); }
@@ -599,5 +611,80 @@ describe('useMediaEffects — persistence records committed settings only', () =
     expect(result.current.filterId).toBe('sepia');
     act(() => { result.current.beginPreview(); });
     expect(result.current.draft).toMatchObject({ filterId: 'sepia' });
+  });
+});
+
+describe('useMediaEffects — lane D sequence: apply, re-open preview, back to None', () => {
+  function cloningFactory() {
+    const engines: TestEngine[] = [];
+    return {
+      engines,
+      createEngine: () => { const e = new TestEngine(); e.clonePipelineSource = true; engines.push(e); return e; },
+    };
+  }
+
+  it('preview → apply B&W → new preview → select None → apply: the live engine draws no filter', () => {
+    const factory = cloningFactory();
+    const source = new FakeTrack('cam');
+    const { result } = renderHook(() => useMediaEffects({ createEngine: factory.createEngine }));
+    act(() => { result.current.attach(source.asTrack()); });
+    const live = factory.engines[0];
+
+    act(() => { result.current.beginPreview(); });
+    act(() => { result.current.setFilter('bw'); });
+    act(() => { result.current.applyPreview(); });
+    expect(live.getFilterId()).toBe('bw');
+    const published = result.current.outputTrack;
+    expect(published).toBe(live.canvasTracks[0].asTrack());
+
+    // The app re-opens a preview right after each Apply, to keep the tiles live.
+    act(() => { result.current.beginPreview(); });
+    act(() => { result.current.setFilter('none'); });
+    act(() => { result.current.applyPreview(); });
+
+    expect(result.current.filterId).toBe('none');
+    expect(live.getFilterId()).toBe('none');
+    expect(live.isActive()).toBe(false);
+    expect(result.current.outputTrack).toBe(published);
+    expect(live.canvasTracks[0].stop).not.toHaveBeenCalled();
+  });
+
+  it('the publisher stopping the raw camera at the canvas swap does not starve the pipeline (live bug)', () => {
+    const factory = cloningFactory();
+    const cam = new FakeTrack('cam');
+    const { result } = renderHook(() => useMediaEffects({ createEngine: factory.createEngine }));
+    act(() => { result.current.attach(cam.asTrack()); });
+    const live = factory.engines[0];
+
+    act(() => { result.current.beginPreview(); });
+    act(() => { result.current.setFilter('bw'); });
+    act(() => { result.current.applyPreview(); });
+    // The pipeline reads its own clone of the camera, not the camera itself.
+    const pipelineInput = live.getLiveSource() as unknown as FakeTrack;
+    expect(pipelineInput).not.toBe(cam);
+    expect(cam.clones).toContain(pipelineInput);
+
+    // What LVS did live: it stopped the raw camera when the canvas replaced it.
+    cam.stop();
+    expect(cam.readyState).toBe('ended');
+    expect(pipelineInput.readyState).toBe('live'); // the pipeline still has frames
+
+    // New preview + None + Apply: the preview is fed from the live clone,
+    // not from a clone of the dead original.
+    act(() => { result.current.beginPreview(); });
+    act(() => { result.current.setFilter('none'); });
+    const preview = factory.engines[factory.engines.length - 1];
+    expect(preview).not.toBe(live);
+    expect(preview.getSource()).toBe(pipelineInput.clones[0].asTrack());
+    act(() => { result.current.applyPreview(); });
+    expect(live.getFilterId()).toBe('none');
+    expect(live.getLiveSource()?.readyState).toBe('live');
+
+    // The call ends: the publisher stops our canvas track → the next frame
+    // releases the pipeline and its clone (camera off).
+    live.canvasTracks[0].stop();
+    live.tick();
+    expect(pipelineInput.stop).toHaveBeenCalled();
+    expect(live.getLiveSource()).toBe(cam.asTrack());
   });
 });

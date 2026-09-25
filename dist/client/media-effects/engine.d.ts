@@ -45,6 +45,9 @@ export declare class MediaEffectsEngine {
     getBackgroundImageUrl(): string | null;
     getFaceSpriteId(): string | null;
     getSource(): MediaStreamTrack | null;
+    /** The track that actually carries camera frames: the pipeline's clone
+     *  while one exists (it outlives a stopped source), else the source. */
+    getLiveSource(): MediaStreamTrack | null;
     /** Active = at least one effect is on. Drives pipeline existence. */
     isActive(): boolean;
     /** Canvas track while a pipeline exists (active, or passthrough after an
@@ -85,6 +88,9 @@ export declare class MediaEffectsEngine {
      */
     warmup(target?: WarmupTarget): void;
     private emitIfChanged;
+    /** Clone the source for the pipeline; null when the track cannot be
+     *  cloned (the pipeline then reads the source directly). */
+    protected cloneSource(track: MediaStreamTrack): MediaStreamTrack | null;
     protected createVideoElement(track: MediaStreamTrack): HTMLVideoElement;
     protected createCanvas(width: number, height: number): HTMLCanvasElement;
     protected captureCanvasStream(canvas: HTMLCanvasElement): MediaStream | null;

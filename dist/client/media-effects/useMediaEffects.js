@@ -161,7 +161,9 @@ function useMediaEffects(opts) {
     /** Build the second engine on the first divergent draft. Returns null when
      *  there is no source to clone (no camera attached yet). */
     const createPreviewEngine = (0, react_1.useCallback)(() => {
-        const source = engineRef.current?.getSource() ?? null;
+        // The live pipeline's clone when there is one: the original may have been
+        // stopped by a publisher, and a clone of a stopped track is dead.
+        const source = engineRef.current?.getLiveSource() ?? null;
         if (!source)
             return null;
         const engine = newEngine();

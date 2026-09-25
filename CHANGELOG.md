@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.97.7 — 2026-09-25
+
+- **client/media-effects (fix): Apply None showed a black (chroma-0) picture
+  for the rest of the call — so did B&W.** Measured live (lane D/E sequence,
+  Playwright probe on the stack): the engine's filter did go back to `none`,
+  but its input, the raw camera track, had been `stop()`ped at Apply B&W. The
+  stack: LVS `replaceLocalVideoTrack` → `prev.stop()`. The app republishes the
+  engine's output whenever it changes, including the raw camera while effects
+  are off; LVS recorded that raw track as a "transformed" one (its raw check
+  only knows its own local stream) and stopped it when the canvas track
+  replaced it. The engine then drew a dead camera. Now the pipeline reads its
+  OWN clone of the source (`cloneSource`, overridable), so a publisher
+  stopping the original cannot starve it; previews clone the live pipeline
+  input (`getLiveSource()`), not a possibly-dead original. When a consumer
+  stops the engine's canvas output (a call ending), the next frame tears the
+  pipeline down and stops the clone, so the camera does not stay on.
+  Verified in Chromium: a clone of a stopped camera or canvas track keeps
+  delivering frames.
+
 ## 0.97.6 — 2026-09-25
 
 - **client/media-effects (fix): back to None no longer sends black.** On the
