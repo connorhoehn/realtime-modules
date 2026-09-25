@@ -32,6 +32,7 @@ function harness() {
   });
   ref.dir = c.dir;
   const handlers = new Map<string, Set<(m: GatewayMessage) => void>>();
+  const sentBy = new Map<string, Record<string, unknown>[]>();
   let delivered = 0;
   const pump = async () => {
     for (let round = 0; round < 10; round++) {
@@ -47,6 +48,7 @@ function harness() {
     return {
       connectionState: 'connected',
       send: (msg: Record<string, unknown>) => {
+        (sentBy.get(clientId) ?? sentBy.set(clientId, []).get(clientId)!).push(msg);
         if (msg.service !== 'call') return;
         void c[node].svc.handleAction(clientId, String(msg.action), msg as any);
       },
@@ -58,7 +60,7 @@ function harness() {
       },
     };
   };
-  return { c, pump, gateway };
+  return { c, pump, gateway, sentBy };
 }
 
 describe('live sequence: hooks ↔ CallService on two replicas', () => {
@@ -124,6 +126,59 @@ describe('live sequence: hooks ↔ CallService on two replicas', () => {
     expect(bob.result.current.current?.callId).toBe('sess-1');
 
     host.unmount(); alice.unmount(); bob.unmount();
+    await c.dispose();
+  });
+
+  it('no status echo: each person sends a bounded number of status frames and platform-api reads per join', async () => {
+    const { c, pump, gateway, sentBy } = harness();
+    // Platform-api answers, but never knows the call — the case where the old
+    // active-call → refresh → status → active-call loop never settled.
+    const paHost = makeFakePlatformApi();
+    const paOthers = makeFakePlatformApi();
+    const people = [
+      { id: 'dev-connor', cid: 'a-connor', node: 'A' as const, pa: paHost },
+      { id: 'dev-frank', cid: 'b-frank', node: 'B' as const, pa: paOthers },
+      { id: 'dev-bob', cid: 'a-bob', node: 'A' as const, pa: paOthers },
+      { id: 'dev-alice', cid: 'b-alice', node: 'B' as const, pa: paOthers },
+    ];
+    const hooks = new Map<string, ReturnType<typeof renderHook<ReturnType<typeof useDocumentCall>, unknown>>>();
+    for (const p of people) {
+      const gw = gateway(p.cid, p.id, p.node);
+      hooks.set(p.id, renderHook(() => useDocumentCall({
+        documentId: 'doc-auth', gateway: gw, platformApi: p.pa.platformApi, fetch: p.pa.fetchImpl,
+        identity: { userId: p.id, displayName: p.id }, discoveryPollMs: 0,
+      })));
+    }
+    await act(async () => { await pump(); });
+    const host = hooks.get('dev-connor')!;
+    await act(async () => {
+      await host.result.current.start({
+        title: 'T', media: 'video', documentIds: ['doc-auth'], targetUserIds: ['dev-frank', 'dev-bob', 'dev-alice'],
+        ring: true, micOn: true, cameraOn: true,
+      });
+      await pump();
+    });
+    // Frank and Bob join, one after the other (each join pushes the roster to
+    // whoever is still ringing → more active-call frames).
+    for (const id of ['dev-frank', 'dev-bob']) {
+      await act(async () => { await hooks.get(id)!.result.current.join('sess-1', { micOn: true, cameraOn: true }); await pump(); });
+    }
+    // A later roster change while Alice is still ringing.
+    await act(async () => { await hooks.get('dev-frank')!.result.current.leave(); await pump(); });
+
+    const statusCount = (cid: string) => (sentBy.get(cid) ?? []).filter((m) => m.service === 'call' && m.action === 'status').length;
+    const docReads = (pa: ReturnType<typeof makeFakePlatformApi>) => pa.calls.filter((x) => x.method === 'GET').length;
+    for (const p of people) {
+      // One on mount; nothing echoes. (A reconnect or the discovery poll would add one each.)
+      expect({ who: p.id, status: statusCount(p.cid) }).toEqual({ who: p.id, status: 1 });
+    }
+    // Three non-hosts share one fake platform-api. Per person at most: the
+    // mount read (1 GET) + one read for the new call id + one on join (each
+    // 2 GETs when the record is unknown) = 5 — single-flight + cooldown, not
+    // one per active-call frame. The echo made this unbounded.
+    expect(docReads(paOthers)).toBeLessThanOrEqual(3 * 5);
+    expect(c.wire.filter((w) => w.message.type === 'error')).toHaveLength(0);
+    for (const h of hooks.values()) h.unmount();
     await c.dispose();
   });
 });

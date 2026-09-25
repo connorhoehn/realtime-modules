@@ -387,43 +387,88 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
   }, [selfStateFrame, send]);
 
   // ---- discovery -------------------------------------------------------
-  const [refreshTick, setRefreshTick] = useState(0);
-  const refresh = useCallback(() => setRefreshTick((n) => n + 1), []);
+  //
+  // Two separate things (2026-09-25, lane C): the platform-api READ of the
+  // call record, and the gateway `status` QUERY. They used to be one effect
+  // keyed on a refresh counter, and an `active-call` reply that did not match
+  // the record called refresh() — which sent another `status`, whose reply was
+  // another `active-call`: 300–1,400 `status` frames per run for a joiner,
+  // enough to exhaust the gateway's per-client call budget and get their
+  // `accepted` refused. Now `active-call` only triggers the read, at most one
+  // in flight per call id and not again for READ_COOLDOWN_MS; `status` goes
+  // out on mount / document change, reconnect, the discovery poll, and an
+  // explicit refresh() by the consumer.
+  const readsInFlight = useRef(new Set<string>());
+  const lastReadAt = useRef(new Map<string, number>());
+  const readGeneration = useRef(0);
+
+  const readPlatformSession = useCallback(async (wantedCallId?: string | null) => {
+    const docId = optsRef.current.documentId;
+    const key = `${docId}|${wantedCallId ?? ''}`;
+    if (readsInFlight.current.has(key)) return;
+    readsInFlight.current.add(key);
+    lastReadAt.current.set(key, Date.now());
+    const generation = readGeneration.current;
+    try {
+      let found: DocumentCallSession | null = null;
+      const wanted = wantedCallId ?? optsRef.current.callId ?? joinedRef.current;
+      if (wanted) {
+        try {
+          const body = await api(`/api/video/sessions/${encodeURIComponent(wanted)}`);
+          const row = ((body.session as Record<string, unknown>) ?? body);
+          const s = toDocumentCallSession(row);
+          if (s && isLive(s, row)) found = s;
+        } catch { /* fall back to the document listing */ }
+      }
+      if (!found) {
+        const body = await api(`/api/video/sessions/document/${encodeURIComponent(docId)}`);
+        const rows = Array.isArray(body.sessions) ? (body.sessions as Record<string, unknown>[]) : [];
+        const live = rows
+          .map((r) => ({ r, s: toDocumentCallSession(r) }))
+          .filter((x): x is { r: Record<string, unknown>; s: DocumentCallSession } => !!x.s && isLive(x.s, x.r))
+          .filter((x) => x.r.kind === undefined || x.r.kind === 'document-review')
+          .sort((a, b) => b.s.createdAt - a.s.createdAt);
+        found = live[0]?.s ?? null;
+      }
+      // Stale: the page moved to another document (or unmounted) meanwhile.
+      if (generation !== readGeneration.current) return;
+      // Never drop the record of the call we are in over a flaky read.
+      if (found || !joinedRef.current) setSession(found);
+    } catch { /* no PA, no record — gateway discovery still works */ }
+    finally {
+      readsInFlight.current.delete(key);
+    }
+  }, [api]);
+
+  /** `active-call` named a call the record does not match: read it — once. */
+  const READ_COOLDOWN_MS = 5_000;
+  const readForActiveCall = useCallback((callId: string) => {
+    const key = `${optsRef.current.documentId}|${callId}`;
+    if (readsInFlight.current.has(key)) return;
+    const last = lastReadAt.current.get(key);
+    if (last !== undefined && Date.now() - last < READ_COOLDOWN_MS) return;
+    void readPlatformSession(callId);
+  }, [readPlatformSession]);
+
+  const sendStatus = useCallback(() => {
+    send({ service: 'call', action: 'status', lobbyName: optsRef.current.documentId });
+  }, [send]);
+
+  /** Consumer-requested re-read (after a navigation, say): record + one `status`. */
+  const refresh = useCallback(() => {
+    void readPlatformSession(null);
+    sendStatus();
+  }, [readPlatformSession, sendStatus]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        let found: DocumentCallSession | null = null;
-        const wanted = opts.callId ?? joinedRef.current;
-        if (wanted) {
-          try {
-            const body = await api(`/api/video/sessions/${encodeURIComponent(wanted)}`);
-            const row = ((body.session as Record<string, unknown>) ?? body);
-            const s = toDocumentCallSession(row);
-            if (s && isLive(s, row)) found = s;
-          } catch { /* fall back to the document listing */ }
-        }
-        if (!found) {
-          const body = await api(`/api/video/sessions/document/${encodeURIComponent(documentId)}`);
-          const rows = Array.isArray(body.sessions) ? (body.sessions as Record<string, unknown>[]) : [];
-          const live = rows
-            .map((r) => ({ r, s: toDocumentCallSession(r) }))
-            .filter((x): x is { r: Record<string, unknown>; s: DocumentCallSession } => !!x.s && isLive(x.s, x.r))
-            .filter((x) => x.r.kind === undefined || x.r.kind === 'document-review')
-            .sort((a, b) => b.s.createdAt - a.s.createdAt);
-          found = live[0]?.s ?? null;
-        }
-        if (!cancelled) {
-          // Never drop the record of the call we are in over a flaky read.
-          if (found || !joinedRef.current) setSession(found);
-        }
-      } catch { /* no PA, no record — gateway discovery below still works */ }
-    })();
-    send({ service: 'call', action: 'status', lobbyName: documentId });
-    return () => { cancelled = true; };
+    readGeneration.current += 1;
+    readsInFlight.current.clear();
+    lastReadAt.current.clear();
+    void readPlatformSession(null);
+    sendStatus();
+    return () => { readGeneration.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentId, opts.callId, refreshTick, api, send]);
+  }, [documentId, opts.callId]);
 
   // ---- keep a watched call's count live -------------------------------
   const discoveryPollMs = opts.discoveryPollMs ?? 15_000;
@@ -488,7 +533,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
               ? Array.from(new Set((d.participantUserIds as unknown[]).filter((u): u is string => typeof u === 'string' && !!u)))
               : [],
           });
-          if (!sessionRef.current || sessionRef.current.sessionId !== callId) refresh();
+          if (!sessionRef.current || sessionRef.current.sessionId !== callId) readForActiveCall(callId);
         } else {
           setDiscovered(null);
         }
@@ -566,7 +611,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
         }
       }
     });
-  }, [onMessage, refresh, announceSelf]);
+  }, [onMessage, readForActiveCall, announceSelf]);
 
   // ---- reconnect: re-announce on a new gateway session -----------------
   const epoch = gw?.sessionEpoch;
@@ -784,14 +829,14 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
       });
       announceSelf(true);
       send({ service: 'call', action: 'meta', callId });
-      if (!c) refresh();
+      if (!c) void readPlatformSession(callId);
     } catch (err) {
       const message = (err as Error).message || 'Could not join the call';
       setError({ message, retry: () => { void join(callId, m); } });
     } finally {
       setBusy(null);
     }
-  }, [discovered, enterCall, send, announceSelf, refresh]);
+  }, [discovered, enterCall, send, announceSelf, readPlatformSession]);
 
   const leaveInternal = useCallback(async (mode: 'left' | 'everyone' | 'removed') => {
     const forEveryone = mode === 'everyone';

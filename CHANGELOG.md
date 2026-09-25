@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.97.8 — 2026-09-25
+
+- **client/video (fix): `useDocumentCall` status echo.** An `active-call`
+  that did not match the platform-api record called `refresh()`, which read
+  platform-api AND sent another `status`, whose reply was another
+  `active-call` — 300–1,400 `status` frames per run for a joiner (lane C),
+  enough to exhaust the gateway's per-client call budget and get their
+  `accepted` refused. Now `active-call` only triggers the platform-api read,
+  single-flight per call id with a 5 s cooldown, and never sends `status`;
+  `status` goes out on mount / document change, reconnect, the discovery
+  poll, and an explicit `refresh()`.
+- **call:** someone invited (ringing or notified) may read the call's `meta`.
+  A joiner's `meta` could overtake their own `accepted` and was refused with
+  "Not a participant".
+
 ## 0.97.7 — 2026-09-25
 
 - **client/media-effects (fix): Apply None showed a black (chroma-0) picture

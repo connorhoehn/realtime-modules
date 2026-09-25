@@ -2654,7 +2654,13 @@ export class CallService {
             return;
         }
         const userId = await this.resolveActorUserId(clientId, payload, true);
-        if (!this.isDocParticipant(meta, userId, clientId)) {
+        // Reading the meta is also fine for someone invited and not yet in:
+        // a joiner's `meta` can overtake their own `accepted` (a socket's
+        // frames are handled concurrently), and the ring already shows them
+        // the title and documents.
+        const invitedState = userId ? meta.invites[userId]?.state : undefined;
+        const mayRead = action === 'meta' && (invitedState === 'ringing' || invitedState === 'notified');
+        if (!mayRead && !this.isDocParticipant(meta, userId, clientId)) {
             this.sendError(clientId, `Not a participant of call ${callId}`);
             return;
         }
