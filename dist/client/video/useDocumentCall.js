@@ -118,7 +118,12 @@ function useDocumentCall(opts) {
     const endedHoldMs = opts.endedHoldMs ?? 10_000;
     const [session, setSession] = (0, react_1.useState)(null);
     const [meta, setMeta] = (0, react_1.useState)(null);
+    // A live call on this document that we are not in (from `status` → `active-call`).
+    // `participantUserIds` is what the gateway reply carries; `participantCount` only
+    // as a fallback for a reply without ids. Roster frames keep the ids current.
     const [discovered, setDiscovered] = (0, react_1.useState)(null);
+    const discoveredRef = (0, react_1.useRef)(discovered);
+    discoveredRef.current = discovered;
     const [joinedCallId, setJoinedCallId] = (0, react_1.useState)(null);
     const joinedRef = (0, react_1.useRef)(null);
     joinedRef.current = joinedCallId;
@@ -262,6 +267,17 @@ function useDocumentCall(opts) {
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [documentId, opts.callId, refreshTick, api, send]);
+    // ---- keep a watched call's count live -------------------------------
+    const discoveryPollMs = opts.discoveryPollMs ?? 15_000;
+    const watchingCallId = !joinedCallId ? discovered?.callId ?? null : null;
+    (0, react_1.useEffect)(() => {
+        if (!watchingCallId || discoveryPollMs <= 0)
+            return;
+        const t = setInterval(() => {
+            send({ service: 'call', action: 'status', lobbyName: optsRef.current.documentId });
+        }, discoveryPollMs);
+        return () => clearInterval(t);
+    }, [watchingCallId, discoveryPollMs, send]);
     // ---- follow target (per tab) ----------------------------------------
     const callIdForFollow = joinedCallId ?? call?.callId ?? null;
     (0, react_1.useEffect)(() => {
@@ -300,7 +316,23 @@ function useDocumentCall(opts) {
                 return;
             const d = f.data;
             const callId = str(d.callId);
-            const known = (id) => !!id && (id === joinedRef.current || id === callRef.current?.callId || id === sessionRef.current?.sessionId);
+            const known = (id) => !!id && (id === joinedRef.current || id === callRef.current?.callId || id === sessionRef.current?.sessionId
+                || id === discoveredRef.current?.callId);
+            // Not in the call but watching it: keep the discovered people current.
+            const trackDiscovered = (uid, present) => {
+                if (!uid || joinedRef.current || !callId || discoveredRef.current?.callId !== callId)
+                    return;
+                setDiscovered((cur) => {
+                    if (!cur || cur.callId !== callId)
+                        return cur;
+                    const has = cur.participantUserIds.includes(uid);
+                    if (present === has)
+                        return cur;
+                    const ids = present ? [...cur.participantUserIds, uid] : cur.participantUserIds.filter((u) => u !== uid);
+                    // Once we track ids, the reply's count no longer applies.
+                    return { ...cur, participantUserIds: ids, participantCount: ids.length };
+                });
+            };
             if (f.action === 'active-call') {
                 if (d.lobbyName !== optsRef.current.documentId)
                     return;
@@ -308,7 +340,9 @@ function useDocumentCall(opts) {
                     setDiscovered({
                         callId,
                         participantCount: typeof d.participantCount === 'number' ? d.participantCount : 0,
-                        participantUserIds: Array.isArray(d.participantUserIds) ? d.participantUserIds : [],
+                        participantUserIds: Array.isArray(d.participantUserIds)
+                            ? Array.from(new Set(d.participantUserIds.filter((u) => typeof u === 'string' && !!u)))
+                            : [],
                     });
                     if (!sessionRef.current || sessionRef.current.sessionId !== callId)
                         refresh();
@@ -332,6 +366,7 @@ function useDocumentCall(opts) {
                 if (!uid || uid === optsRef.current.identity.userId)
                     return;
                 const status = (str(d.status) ?? 'in-call');
+                trackDiscovered(uid, status !== 'left');
                 const wasAbsent = !rosterRef.current[uid] || rosterRef.current[uid].status === 'left';
                 setRoster((r) => {
                     const prev = r[uid];
@@ -353,6 +388,7 @@ function useDocumentCall(opts) {
                 return;
             }
             if (f.action === 'accepted') {
+                trackDiscovered(str(d.userId), true);
                 if (joinedRef.current)
                     announceSelf(true);
                 return;
@@ -864,7 +900,12 @@ function useDocumentCall(opts) {
     }, [call, roster, mutedForMe, media?.members, opts.awareness?.participants, opts.people, joined, self, selfId, identity.displayName, identity.avatarUrl]);
     const inCallCount = joined
         ? participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length
-        : Math.max(discovered?.participantCount ?? 0, session?.participantCount ?? 0);
+        : discovered && discovered.callId === (call?.callId ?? discovered.callId)
+            ? (discovered.participantUserIds.length > 0 ? discovered.participantUserIds.length : discovered.participantCount)
+            : (session?.participantCount ?? 0);
+    const inCallUserIds = joined
+        ? participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').map((p) => p.userId)
+        : (discovered?.participantUserIds ?? []);
     const followingOut = (0, react_1.useMemo)(() => {
         if (!following)
             return null;
@@ -891,6 +932,7 @@ function useDocumentCall(opts) {
         ended: phase === 'ended' ? ended : null,
         participants,
         inCallCount,
+        inCallUserIds,
         activeSpeakerId: media?.activeSpeakerUserId ?? null,
         self,
         start,

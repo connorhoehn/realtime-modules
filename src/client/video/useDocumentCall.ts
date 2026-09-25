@@ -77,6 +77,10 @@ export interface UseDocumentCallOptions {
   leftLingerMs?: number;
   /** How long `ended` shows before the phase returns to idle. Default 10 s. */
   endedHoldMs?: number;
+  /** While a call on this document is live and you are not in it, re-ask the
+   *  gateway (`status`) this often, since members-only frames never reach you.
+   *  Default 15 s; 0 disables. */
+  discoveryPollMs?: number;
 }
 
 export type DocumentCallPhase = 'idle' | 'starting' | 'connecting' | 'active' | 'reconnecting' | 'ended' | 'error';
@@ -107,8 +111,11 @@ export interface UseDocumentCallResult {
   /** How the last call ended, while phase is 'ended'. */
   ended: { at: number; durationMs: number | null; reason: string } | null;
   participants: DocumentCallParticipant[];
-  /** People in the call now (in-call + reconnecting) — "4 people". */
+  /** People in the call now (in-call + reconnecting) — "4 people", or "Join · 3"
+   *  for a call you are not in (from the gateway's participantUserIds, kept live). */
   inCallCount: number;
+  /** Who those people are (for a face pile), joined or not. */
+  inCallUserIds: string[];
   activeSpeakerId: string | null;
   self: { audioOn: boolean; cameraOn: boolean; screenSharing: boolean };
   start(input: DocumentCallStartInput): Promise<void>;
@@ -248,7 +255,12 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
 
   const [session, setSession] = useState<DocumentCallSession | null>(null);
   const [meta, setMeta] = useState<DocumentCallMeta | null>(null);
+  // A live call on this document that we are not in (from `status` → `active-call`).
+  // `participantUserIds` is what the gateway reply carries; `participantCount` only
+  // as a fallback for a reply without ids. Roster frames keep the ids current.
   const [discovered, setDiscovered] = useState<{ callId: string; participantCount: number; participantUserIds: string[] } | null>(null);
+  const discoveredRef = useRef(discovered);
+  discoveredRef.current = discovered;
   const [joinedCallId, setJoinedCallId] = useState<string | null>(null);
   const joinedRef = useRef<string | null>(null);
   joinedRef.current = joinedCallId;
@@ -391,6 +403,17 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, opts.callId, refreshTick, api, send]);
 
+  // ---- keep a watched call's count live -------------------------------
+  const discoveryPollMs = opts.discoveryPollMs ?? 15_000;
+  const watchingCallId = !joinedCallId ? discovered?.callId ?? null : null;
+  useEffect(() => {
+    if (!watchingCallId || discoveryPollMs <= 0) return;
+    const t = setInterval(() => {
+      send({ service: 'call', action: 'status', lobbyName: optsRef.current.documentId });
+    }, discoveryPollMs);
+    return () => clearInterval(t);
+  }, [watchingCallId, discoveryPollMs, send]);
+
   // ---- follow target (per tab) ----------------------------------------
   const callIdForFollow = joinedCallId ?? call?.callId ?? null;
   useEffect(() => {
@@ -418,7 +441,20 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
       const d = f.data;
       const callId = str(d.callId);
       const known = (id: string | undefined) =>
-        !!id && (id === joinedRef.current || id === callRef.current?.callId || id === sessionRef.current?.sessionId);
+        !!id && (id === joinedRef.current || id === callRef.current?.callId || id === sessionRef.current?.sessionId
+          || id === discoveredRef.current?.callId);
+      // Not in the call but watching it: keep the discovered people current.
+      const trackDiscovered = (uid: string | undefined, present: boolean) => {
+        if (!uid || joinedRef.current || !callId || discoveredRef.current?.callId !== callId) return;
+        setDiscovered((cur) => {
+          if (!cur || cur.callId !== callId) return cur;
+          const has = cur.participantUserIds.includes(uid);
+          if (present === has) return cur;
+          const ids = present ? [...cur.participantUserIds, uid] : cur.participantUserIds.filter((u) => u !== uid);
+          // Once we track ids, the reply's count no longer applies.
+          return { ...cur, participantUserIds: ids, participantCount: ids.length };
+        });
+      };
 
       if (f.action === 'active-call') {
         if (d.lobbyName !== optsRef.current.documentId) return;
@@ -426,7 +462,9 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
           setDiscovered({
             callId,
             participantCount: typeof d.participantCount === 'number' ? d.participantCount : 0,
-            participantUserIds: Array.isArray(d.participantUserIds) ? (d.participantUserIds as string[]) : [],
+            participantUserIds: Array.isArray(d.participantUserIds)
+              ? Array.from(new Set((d.participantUserIds as unknown[]).filter((u): u is string => typeof u === 'string' && !!u)))
+              : [],
           });
           if (!sessionRef.current || sessionRef.current.sessionId !== callId) refresh();
         } else {
@@ -446,6 +484,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
         const uid = str(d.userId) ?? str(d.callerId);
         if (!uid || uid === optsRef.current.identity.userId) return;
         const status = (str(d.status) ?? 'in-call') as RosterEntry['status'];
+        trackDiscovered(uid, status !== 'left');
         const wasAbsent = !rosterRef.current[uid] || rosterRef.current[uid].status === 'left';
         setRoster((r) => {
           const prev = r[uid];
@@ -466,6 +505,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
         return;
       }
       if (f.action === 'accepted') {
+        trackDiscovered(str(d.userId), true);
         if (joinedRef.current) announceSelf(true);
         return;
       }
@@ -960,7 +1000,12 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
 
   const inCallCount = joined
     ? participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length
-    : Math.max(discovered?.participantCount ?? 0, session?.participantCount ?? 0);
+    : discovered && discovered.callId === (call?.callId ?? discovered.callId)
+      ? (discovered.participantUserIds.length > 0 ? discovered.participantUserIds.length : discovered.participantCount)
+      : (session?.participantCount ?? 0);
+  const inCallUserIds = joined
+    ? participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').map((p) => p.userId)
+    : (discovered?.participantUserIds ?? []);
 
   const followingOut = useMemo(() => {
     if (!following) return null;
@@ -989,6 +1034,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     ended: phase === 'ended' ? ended : null,
     participants,
     inCallCount,
+    inCallUserIds,
     activeSpeakerId: media?.activeSpeakerUserId ?? null,
     self,
     start,

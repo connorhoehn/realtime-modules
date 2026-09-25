@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.97.1 — 2026-09-25
+
+- **client/video (fix):** `useDocumentCall` counted a call you are not in from
+  `participantCount`, and ignored the `participantUserIds` the `active-call`
+  reply carries, so "Join · N" / "3 people in the call" was wrong. The count is
+  now the distinct `participantUserIds` (falling back to `participantCount` only
+  when a reply has no ids), kept live by `participant-state` / `user-status` /
+  `accepted` frames for that call, and re-asked with `status` every
+  `discoveryPollMs` (default 15 s) while you watch it. New `inCallUserIds`
+  (the people behind the count, joined or not).
+- **call (fix):** a `status` reply built from the local cache listed only this
+  replica's sockets; it now unions the cluster roster. For document calls the
+  user ids come from the meta's connection map, so people on other replicas are
+  named instead of falling back to "caller + every invitee", and
+  `participantCount` counts people rather than tabs.
+
 ## 0.97.0 — 2026-09-24
 
 Document-call host moderation (mockup 06 person menu).

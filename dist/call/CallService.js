@@ -1037,6 +1037,20 @@ class CallService {
             this.logger.info(`[CallService] status query reaped dead call ${id} in lobby ${lobbyName}`);
             this.forgetCall(id);
         }
+        // The local cache only holds this node's sockets; a call found there
+        // may have people on other replicas. Union in the cluster roster.
+        if (foundCallId && this.stateStore) {
+            try {
+                const view = await this.stateStore.getCall(foundCallId);
+                if (view) {
+                    for (const cid of liveParticipants(view.participantClientIds)) {
+                        if (!participantClientIds.includes(cid))
+                            participantClientIds.push(cid);
+                    }
+                }
+            }
+            catch { /* local view stands */ }
+        }
         // Cluster-wide fallback via the lobby index.
         if (!foundCallId && this.stateStore && typeof this.stateStore.getCallIdsByLobby === 'function') {
             try {
@@ -1078,6 +1092,16 @@ class CallService {
             // Best-effort participant userIds: reverse-map live clientIds
             // (local router knowledge), fall back to caller + invitees.
             const userIds = new Set();
+            // Document calls know every connection's user, whichever replica
+            // it lives on — the local router only knows its own sockets.
+            const docMeta = await this.getDocumentMeta(foundCallId);
+            if (docMeta?.clients) {
+                for (const cid of participantClientIds) {
+                    const uid = docMeta.clients[cid];
+                    if (uid)
+                        userIds.add(uid);
+                }
+            }
             if (typeof this.messageRouter.getUserIdForClient === 'function') {
                 for (const cid of participantClientIds) {
                     try {
@@ -1102,8 +1126,9 @@ class CallService {
             if (typeof startedAt === 'number' && startedAt > 0) {
                 data.startedAt = new Date(startedAt).toISOString();
             }
-            data.participantCount = participantClientIds.length;
             data.participantUserIds = Array.from(userIds);
+            // People, not connections: two tabs of one person count once.
+            data.participantCount = docMeta ? userIds.size : participantClientIds.length;
         }
         const envelope = {
             type: 'call',

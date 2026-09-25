@@ -57,6 +57,10 @@ export interface UseDocumentCallOptions {
     leftLingerMs?: number;
     /** How long `ended` shows before the phase returns to idle. Default 10 s. */
     endedHoldMs?: number;
+    /** While a call on this document is live and you are not in it, re-ask the
+     *  gateway (`status`) this often, since members-only frames never reach you.
+     *  Default 15 s; 0 disables. */
+    discoveryPollMs?: number;
 }
 export type DocumentCallPhase = 'idle' | 'starting' | 'connecting' | 'active' | 'reconnecting' | 'ended' | 'error';
 export interface DocumentCallStartInput {
@@ -90,8 +94,11 @@ export interface UseDocumentCallResult {
         reason: string;
     } | null;
     participants: DocumentCallParticipant[];
-    /** People in the call now (in-call + reconnecting) — "4 people". */
+    /** People in the call now (in-call + reconnecting) — "4 people", or "Join · 3"
+     *  for a call you are not in (from the gateway's participantUserIds, kept live). */
     inCallCount: number;
+    /** Who those people are (for a face pile), joined or not. */
+    inCallUserIds: string[];
     activeSpeakerId: string | null;
     self: {
         audioOn: boolean;

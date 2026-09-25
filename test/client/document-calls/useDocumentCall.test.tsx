@@ -261,4 +261,40 @@ describe('useDocumentCall', () => {
     expect(hook.result.current.ended).toMatchObject({ reason: 'removed' });
     expect(hook.result.current.moderation).toMatchObject({ kind: 'removed', by: 'u-host' });
   });
+
+  it('a call you are not in: counts participantUserIds and keeps the count live', async () => {
+    jest.useFakeTimers();
+    try {
+      const { g, hook } = setup({ identity: { userId: 'u-bob', displayName: 'Bob' }, discoveryPollMs: 5_000 });
+      // The gateway reply carries ids (possibly a stale or connection-based count).
+      act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantUserIds: ['u-host', 'u-alice', 'u-frank', 'u-alice'] }); });
+      expect(hook.result.current.inCallCount).toBe(3);
+      expect(hook.result.current.inCallUserIds).toEqual(['u-host', 'u-alice', 'u-frank']);
+      act(() => { g.push('user-status', { callId: 'sess-9', userId: 'u-frank', status: 'left' }); });
+      expect(hook.result.current.inCallCount).toBe(2);
+      act(() => { g.push('accepted', { callId: 'sess-9', userId: 'u-carol' }); });
+      act(() => { g.push('participant-state', { callId: 'sess-9', userId: 'u-dan', status: 'in-call' }); });
+      expect(hook.result.current.inCallCount).toBe(4);
+      // Frames for some other call change nothing.
+      act(() => { g.push('participant-state', { callId: 'other', userId: 'u-zed', status: 'in-call' }); });
+      expect(hook.result.current.inCallCount).toBe(4);
+      // It keeps asking while watching.
+      g.sent.length = 0;
+      act(() => { jest.advanceTimersByTime(5_000); });
+      expect(g.callFrames('status')).toHaveLength(1);
+      // A fresh reply replaces the tracked set.
+      act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantUserIds: ['u-host'] }); });
+      expect(hook.result.current.inCallCount).toBe(1);
+      // Without ids, the count is the fallback.
+      act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantCount: 5 }); });
+      expect(hook.result.current.inCallCount).toBe(5);
+      act(() => { g.push('ended', { callId: 'sess-9' }); });
+      expect(hook.result.current.inCallCount).toBe(0);
+      g.sent.length = 0;
+      act(() => { jest.advanceTimersByTime(10_000); });
+      expect(g.callFrames('status')).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
