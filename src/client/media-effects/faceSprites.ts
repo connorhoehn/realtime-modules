@@ -14,7 +14,10 @@ import { LANDMARK } from './faceLandmarker';
 
 export interface FaceSprite {
   id: string;
+  /** Sentence-case name, no glyph (mockup 04: "Sunglasses", "Dog ears"). */
   label: string;
+  /** The emoji the sprite draws, for a picker that wants a glyph beside the label. */
+  icon?: string;
   render: (ctx: CanvasRenderingContext2D, landmarks: NormalizedLandmark[], w: number, h: number) => void;
 }
 
@@ -47,7 +50,8 @@ function drawEmoji(ctx: CanvasRenderingContext2D, emoji: string, fontSize: numbe
 
 const dogEars: FaceSprite = {
   id: 'dog-ears',
-  label: '🐶 Dog Ears',
+  label: 'Dog ears',
+  icon: '🐶',
   render: (ctx, lms, w, h) => {
     const top = px(lms[LANDMARK.FOREHEAD_TOP], w, h);
     const fw = faceWidth(lms, w, h);
@@ -65,7 +69,8 @@ const dogEars: FaceSprite = {
 
 const sunglasses: FaceSprite = {
   id: 'sunglasses',
-  label: '🕶️ Sunglasses',
+  label: 'Sunglasses',
+  icon: '🕶️',
   render: (ctx, lms, w, h) => {
     const leftOuter = px(lms[LANDMARK.LEFT_EYE_OUTER], w, h);
     const rightOuter = px(lms[LANDMARK.RIGHT_EYE_OUTER], w, h);
@@ -83,7 +88,8 @@ const sunglasses: FaceSprite = {
 
 const mustache: FaceSprite = {
   id: 'mustache',
-  label: '🥸 Disguise',
+  label: 'Disguise',
+  icon: '🥸',
   render: (ctx, lms, w, h) => {
     const nose = px(lms[LANDMARK.NOSE_TIP], w, h);
     const fw = faceWidth(lms, w, h);
@@ -101,7 +107,8 @@ const mustache: FaceSprite = {
 
 const partyHat: FaceSprite = {
   id: 'party-hat',
-  label: '🎉 Party',
+  label: 'Party hat',
+  icon: '🎉',
   render: (ctx, lms, w, h) => {
     const top = px(lms[LANDMARK.FOREHEAD_TOP], w, h);
     const fw = faceWidth(lms, w, h);
@@ -117,7 +124,8 @@ const partyHat: FaceSprite = {
 
 const crown: FaceSprite = {
   id: 'crown',
-  label: '👑 Crown',
+  label: 'Crown',
+  icon: '👑',
   render: (ctx, lms, w, h) => {
     const top = px(lms[LANDMARK.FOREHEAD_TOP], w, h);
     const fw = faceWidth(lms, w, h);
@@ -131,7 +139,8 @@ const crown: FaceSprite = {
   },
 };
 
-export const FACE_SPRITES: FaceSprite[] = [dogEars, sunglasses, mustache, partyHat, crown];
+// Mockup 04 order: Sunglasses and Dog ears lead the row.
+export const FACE_SPRITES: FaceSprite[] = [sunglasses, dogEars, mustache, partyHat, crown];
 
 export function getSpriteById(id: string | null | undefined): FaceSprite | null {
   if (!id) return null;

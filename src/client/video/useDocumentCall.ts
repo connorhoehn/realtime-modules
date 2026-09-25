@@ -236,7 +236,7 @@ interface RosterEntry {
   at: number;
 }
 
-const INVITE_ORDER: Record<string, number> = { 'in-call': 0, reconnecting: 1, ringing: 2, missed: 3, declined: 4, left: 5 };
+const INVITE_ORDER: Record<string, number> = { 'in-call': 0, reconnecting: 1, ringing: 2, missed: 3, notified: 4, declined: 5, left: 6 };
 
 export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallResult {
   const gw = useDocumentCallGateway(opts.gateway);
@@ -966,17 +966,19 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     // Invites first (ringing / missed / declined / accepted).
     for (const [uid, inv] of Object.entries(call.invites ?? {})) {
       if (uid === selfId) continue;
-      if (inv.state === 'notified' || inv.state === 'removed') continue;
-      if (inv.state === 'accepted') {
-        const r = roster[uid];
-        byUser.set(uid, base(uid, r ? r.status : 'in-call'));
-      } else {
-        byUser.set(uid, base(uid, inv.state));
-      }
+      if (inv.state === 'removed') continue;
+      const row = inv.state === 'accepted'
+        ? base(uid, roster[uid] ? roster[uid].status : 'in-call')
+        : base(uid, inv.state);
+      row.inviteState = inv.state;
+      byUser.set(uid, row);
     }
     // Then everyone the roster has seen (joined without an invite, host, …).
     for (const [uid, r] of Object.entries(roster)) {
-      byUser.set(uid, base(uid, r.status));
+      const row = base(uid, r.status);
+      const inv = call.invites?.[uid];
+      if (inv) row.inviteState = inv.state;
+      byUser.set(uid, row);
     }
     // The host, when they are someone else and we have not heard from them.
     if (call.hostUserId && call.hostUserId !== selfId && !byUser.has(call.hostUserId) && joined) {

@@ -38,7 +38,8 @@ function drawEmoji(ctx, emoji, fontSize) {
 }
 const dogEars = {
     id: 'dog-ears',
-    label: '🐶 Dog Ears',
+    label: 'Dog ears',
+    icon: '🐶',
     render: (ctx, lms, w, h) => {
         const top = px(lms[faceLandmarker_1.LANDMARK.FOREHEAD_TOP], w, h);
         const fw = faceWidth(lms, w, h);
@@ -55,7 +56,8 @@ const dogEars = {
 };
 const sunglasses = {
     id: 'sunglasses',
-    label: '🕶️ Sunglasses',
+    label: 'Sunglasses',
+    icon: '🕶️',
     render: (ctx, lms, w, h) => {
         const leftOuter = px(lms[faceLandmarker_1.LANDMARK.LEFT_EYE_OUTER], w, h);
         const rightOuter = px(lms[faceLandmarker_1.LANDMARK.RIGHT_EYE_OUTER], w, h);
@@ -72,7 +74,8 @@ const sunglasses = {
 };
 const mustache = {
     id: 'mustache',
-    label: '🥸 Disguise',
+    label: 'Disguise',
+    icon: '🥸',
     render: (ctx, lms, w, h) => {
         const nose = px(lms[faceLandmarker_1.LANDMARK.NOSE_TIP], w, h);
         const fw = faceWidth(lms, w, h);
@@ -89,7 +92,8 @@ const mustache = {
 };
 const partyHat = {
     id: 'party-hat',
-    label: '🎉 Party',
+    label: 'Party hat',
+    icon: '🎉',
     render: (ctx, lms, w, h) => {
         const top = px(lms[faceLandmarker_1.LANDMARK.FOREHEAD_TOP], w, h);
         const fw = faceWidth(lms, w, h);
@@ -104,7 +108,8 @@ const partyHat = {
 };
 const crown = {
     id: 'crown',
-    label: '👑 Crown',
+    label: 'Crown',
+    icon: '👑',
     render: (ctx, lms, w, h) => {
         const top = px(lms[faceLandmarker_1.LANDMARK.FOREHEAD_TOP], w, h);
         const fw = faceWidth(lms, w, h);
@@ -117,7 +122,8 @@ const crown = {
         ctx.restore();
     },
 };
-exports.FACE_SPRITES = [dogEars, sunglasses, mustache, partyHat, crown];
+// Mockup 04 order: Sunglasses and Dog ears lead the row.
+exports.FACE_SPRITES = [sunglasses, dogEars, mustache, partyHat, crown];
 function getSpriteById(id) {
     if (!id)
         return null;

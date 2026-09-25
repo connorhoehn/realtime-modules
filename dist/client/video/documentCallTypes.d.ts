@@ -65,7 +65,8 @@ export interface DocumentCallMediaMember {
     /** The consumer's own member object (tracks, video element, …), passed through. */
     [k: string]: unknown;
 }
-export type DocumentCallParticipantState = 'in-call' | 'left' | 'reconnecting' | 'ringing' | 'missed' | 'declined';
+/** `notified` = invited while offline; they got a notification with the invite link ("Offline · notified"). */
+export type DocumentCallParticipantState = 'in-call' | 'left' | 'reconnecting' | 'ringing' | 'missed' | 'declined' | 'notified';
 export interface DocumentCallParticipant {
     userId: string;
     /** Last connection seen for this person ('' until they are in the call). */
@@ -79,6 +80,8 @@ export interface DocumentCallParticipant {
     screenSharing: boolean;
     presenting: boolean;
     isHost: boolean;
+    /** Their invite's state when they were invited (absent for people who joined without one). */
+    inviteState?: DocumentCallInvite['state'];
     isSelf: boolean;
     /** Silenced locally with "Mute for me" (never sent anywhere). The consumer
      *  applies it to the person's audio element. */

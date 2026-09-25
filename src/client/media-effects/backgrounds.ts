@@ -35,8 +35,10 @@ const GRADIENTS: GradientSpec[] = [
   { id: 'dusk',   label: 'Dusk',   from: '#2b2150', to: '#d97a5a' },
   { id: 'ocean',  label: 'Ocean',  from: '#0b3550', to: '#3ba9a0' },
   { id: 'forest', label: 'Forest', from: '#12331f', to: '#7aa66a' },
-  { id: 'slate',  label: 'Slate',  from: '#22262e', to: '#5c6672' },
 ];
+// 'slate' was dropped 2026-09-25: mockup 04's grid is None · Blur · Dusk /
+// Ocean · Forest · + Custom. A person who had picked it keeps it — the stored
+// value is the image's own data URI, which still renders as a custom image.
 
 /** Diagonal gradient via canvas → JPEG data URI. Falls back to an SVG data
  *  URI when Canvas 2D is unavailable (e.g. jsdom without the `canvas`

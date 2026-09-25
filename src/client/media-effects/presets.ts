@@ -15,12 +15,13 @@ export interface FilterPreset {
 export const FILTER_PRESETS: FilterPreset[] = [
   { id: 'none',       label: 'None',       cssFilter: 'none' },
   { id: 'bw',         label: 'B&W',        cssFilter: 'grayscale(1)' },
-  { id: 'sepia',      label: 'Sepia',      cssFilter: 'sepia(1)' },
+  // Mockup 04 grid order: None · B&W · Warm / Cool · Sepia · More…
   { id: 'warm',       label: 'Warm',       cssFilter: 'saturate(1.35) contrast(1.05) brightness(1.03) hue-rotate(-6deg)' },
   { id: 'cool',       label: 'Cool',       cssFilter: 'saturate(1.15) contrast(1.05) hue-rotate(12deg)' },
+  { id: 'sepia',      label: 'Sepia',      cssFilter: 'sepia(1)' },
   { id: 'vintage',    label: 'Vintage',    cssFilter: 'sepia(0.5) contrast(1.1) brightness(0.95) saturate(0.75)' },
   { id: 'noir',       label: 'Noir',       cssFilter: 'grayscale(1) contrast(1.45) brightness(1.05)' },
-  { id: 'hi-contrast', label: 'High Contrast', cssFilter: 'contrast(1.5) saturate(1.25)' },
+  { id: 'hi-contrast', label: 'High contrast', cssFilter: 'contrast(1.5) saturate(1.25)' },
   { id: 'beauty',     label: 'Beauty',     cssFilter: 'blur(1.2px) brightness(1.08) saturate(0.92) contrast(0.98)' },
 ];
 

@@ -97,8 +97,11 @@ describe('useDocumentCall', () => {
     });
     const people = hook.result.current.participants;
     expect(people.map((p) => [p.userId, p.state])).toEqual([
-      ['u-host', 'in-call'], ['u-alice', 'in-call'], ['u-frank', 'reconnecting'], ['u-bob', 'ringing'], ['u-carol', 'missed'],
+      ['u-host', 'in-call'], ['u-alice', 'in-call'], ['u-frank', 'reconnecting'], ['u-bob', 'ringing'], ['u-carol', 'missed'], ['u-dan', 'notified'],
     ]);
+    // Offline invitee: shown as "Offline · notified", not counted as in the call.
+    expect(people.find((p) => p.userId === 'u-dan')).toMatchObject({ state: 'notified', inviteState: 'notified', presenting: false });
+    expect(people.find((p) => p.userId === 'u-alice')!.inviteState).toBe('accepted');
     const alice = people.find((p) => p.userId === 'u-alice')!;
     expect(alice).toMatchObject({ displayName: 'Alice Chen', presenting: true, isHost: false });
     expect(people[0]).toMatchObject({ isSelf: true, isHost: true, displayName: 'Connor Hoehn' });

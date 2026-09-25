@@ -24,7 +24,7 @@ describe('FILTER_PRESETS registry', () => {
     const ids = FILTER_PRESETS.map((p) => p.id);
     expect(new Set(ids).size).toBe(9);
     expect(ids).toEqual([
-      'none', 'bw', 'sepia', 'warm', 'cool', 'vintage', 'noir', 'hi-contrast', 'beauty',
+      'none', 'bw', 'warm', 'cool', 'sepia', 'vintage', 'noir', 'hi-contrast', 'beauty',
     ]);
   });
 
@@ -43,8 +43,14 @@ describe('FILTER_PRESETS registry', () => {
 describe('FACE_SPRITES registry', () => {
   it('ships the 5 ported sprites with render functions', () => {
     expect(FACE_SPRITES.map((s) => s.id)).toEqual([
-      'dog-ears', 'sunglasses', 'mustache', 'party-hat', 'crown',
+      'sunglasses', 'dog-ears', 'mustache', 'party-hat', 'crown',
     ]);
+    // Mockup 04: sentence case, no glyph in the label.
+    expect(FACE_SPRITES.slice(0, 2).map((s) => s.label)).toEqual(['Sunglasses', 'Dog ears']);
+    for (const s of FACE_SPRITES) {
+      expect(s.label).toMatch(/^[A-Z][a-z]*( [a-z]+)*$/);
+      expect(s.icon).toBeTruthy();
+    }
     for (const sprite of FACE_SPRITES) {
       expect(typeof sprite.render).toBe('function');
       expect(sprite.label.length).toBeGreaterThan(0);
@@ -65,3 +71,4 @@ describe('getBuiltInBackgrounds (SSR / node)', () => {
     expect(getBuiltInBackgrounds()).toEqual([]);
   });
 });
+

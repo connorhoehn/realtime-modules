@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.97.4 — 2026-09-25
+
+- **client/video:** `useDocumentCall` lists invitees whose invite is
+  `notified` (invited while offline; they got a notification with the link) as
+  participants with `state: 'notified'` — the "Offline · notified" row of the
+  People list — instead of leaving them out. Every invite-derived row now
+  carries `inviteState`. Not counted in `inCallCount`.
+- **call (fix):** a document-call target whose only connection in the user
+  index is dead (its replica is gone — the gateway's `isClientAlive` says so)
+  is `notified`, not `ringing`; before, a stale index entry made the People
+  list show "Ringing…" for someone nobody could ring.
+- **client/media-effects:** catalogue matches mockup 04. Face sprite labels are
+  sentence case without the glyph (`Sunglasses`, `Dog ears`, `Disguise`,
+  `Party hat`, `Crown`; the emoji moves to a new `icon` field), and Sunglasses
+  and Dog ears lead the list. Filters run None · B&W · Warm · Cool · Sepia ·
+  … ("High contrast"). The built-in backgrounds are Dusk · Ocean · Forest —
+  Slate is gone; someone who had picked it keeps it (the stored value is its
+  own data URI).
+
 ## 0.97.3 — 2026-09-25
 
 - **client/video (fix): accepted participants were missing from the call

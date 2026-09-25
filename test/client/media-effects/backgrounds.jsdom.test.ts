@@ -13,9 +13,9 @@ import { describe, it, expect } from '@jest/globals';
 import { getBuiltInBackgrounds } from '../../../src/client/media-effects/backgrounds';
 
 describe('getBuiltInBackgrounds (browser-like)', () => {
-  it('generates the 4 built-in gradients as data: URIs', () => {
+  it('generates the 3 built-in gradients (mockup 04: no Slate) as data: URIs', () => {
     const backgrounds = getBuiltInBackgrounds();
-    expect(backgrounds.map((b) => b.id)).toEqual(['dusk', 'ocean', 'forest', 'slate']);
+    expect(backgrounds.map((b) => b.id)).toEqual(['dusk', 'ocean', 'forest']);
     for (const bg of backgrounds) {
       expect(bg.label.length).toBeGreaterThan(0);
       // Self-contained by contract: never an http(s) URL.

@@ -2486,7 +2486,24 @@ class CallService {
             let online = false;
             if (ring) {
                 try {
-                    online = (await this.findClientsForUsers([target], clientId)).length > 0;
+                    // The user index can hold a tab that died with its
+                    // replica; ringing it would show "Ringing…" to nobody.
+                    // Ask the cluster-wide liveness check when there is one.
+                    for (const cid of await this.findClientsForUsers([target], clientId)) {
+                        let alive = true;
+                        if (this.isClientAliveHook) {
+                            try {
+                                alive = (await Promise.resolve(this.isClientAliveHook(cid))) !== false;
+                            }
+                            catch {
+                                alive = true;
+                            }
+                        }
+                        if (alive) {
+                            online = true;
+                            break;
+                        }
+                    }
                 }
                 catch {
                     online = false;
