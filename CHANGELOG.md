@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.95.8 — 2026-09-25
+
+- **client/documents:** `useDocumentSearch({ apiBaseUrl, idToken, query, sort,
+  filters })` over platform-api `GET /api/document-search` — ranked (title >
+  summary > body, recency tiebreak), paged by cursor (`loadMore`), scoped to
+  documents the viewer may read. The words are debounced (200 ms), every new
+  request aborts the one in flight, `refreshKey` re-reads the first page. Plus
+  `fetchDocumentSearch`, `documentSearchUrl` and the normalizers
+  (realtime-examples NFR #230).
+
 ## 0.95.7 — 2026-09-25
 
 - **client/documents:** `useLinkedDocumentWork(ids, opts)` — the work rows of

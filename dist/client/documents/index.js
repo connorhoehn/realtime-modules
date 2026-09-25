@@ -3,7 +3,7 @@
 // work fields, run drafts and estimates (realtime-examples
 // `docs/design/documents-detail/PLAN.md` §2), read through hooks.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.invalidateRunEstimates = exports.useRunEstimate = exports.useRunDraft = exports.useWorkList = exports.useLinkedDocumentWork = exports.useDocumentWork = exports.acquireChannelSubscription = exports.docWorkSignalFromFrame = exports.docWorkSubscribeFrame = exports.docWorkScopeChannelMatches = exports.docWorkScopeChannel = exports.docWorkChannel = exports.DOC_WORK_SCOPE_CHANNEL_PREFIX = exports.DOC_WORK_CHANNEL_PREFIX = exports.fetchRunEstimate = exports.cancelDraftRun = exports.dispatchRunDraft = exports.putRunDraft = exports.fetchRunDraft = exports.fetchRunDrafts = exports.fetchWorkList = exports.patchDocumentWork = exports.fetchDocumentWork = exports.normalizeRunEstimate = exports.currentRunDraft = exports.normalizeRunDraft = exports.runDraftPhase = exports.RUN_DRAFT_DISPATCH_STALE_MS = exports.mergeWorkIntoRow = exports.normalizeWorkList = exports.pointsRollup = exports.groupWorkRows = exports.workGroupOf = exports.WORK_GROUP_ORDER = exports.WORK_STATUS_LABEL = exports.rankAfter = exports.newWorkItemId = exports.normalizeDocumentWork = exports.orderedCriteria = exports.applyWorkUpdate = void 0;
+exports.useDocumentSearch = exports.normalizeDocumentSearchItem = exports.normalizeDocumentSearchPage = exports.documentSearchUrl = exports.fetchDocumentSearch = exports.invalidateRunEstimates = exports.useRunEstimate = exports.useRunDraft = exports.useWorkList = exports.useLinkedDocumentWork = exports.useDocumentWork = exports.acquireChannelSubscription = exports.docWorkSignalFromFrame = exports.docWorkSubscribeFrame = exports.docWorkScopeChannelMatches = exports.docWorkScopeChannel = exports.docWorkChannel = exports.DOC_WORK_SCOPE_CHANNEL_PREFIX = exports.DOC_WORK_CHANNEL_PREFIX = exports.fetchRunEstimate = exports.cancelDraftRun = exports.dispatchRunDraft = exports.putRunDraft = exports.fetchRunDraft = exports.fetchRunDrafts = exports.fetchWorkList = exports.patchDocumentWork = exports.fetchDocumentWork = exports.normalizeRunEstimate = exports.currentRunDraft = exports.normalizeRunDraft = exports.runDraftPhase = exports.RUN_DRAFT_DISPATCH_STALE_MS = exports.mergeWorkIntoRow = exports.normalizeWorkList = exports.pointsRollup = exports.groupWorkRows = exports.workGroupOf = exports.WORK_GROUP_ORDER = exports.WORK_STATUS_LABEL = exports.rankAfter = exports.newWorkItemId = exports.normalizeDocumentWork = exports.orderedCriteria = exports.applyWorkUpdate = void 0;
 var work_1 = require("./work");
 Object.defineProperty(exports, "applyWorkUpdate", { enumerable: true, get: function () { return work_1.applyWorkUpdate; } });
 Object.defineProperty(exports, "orderedCriteria", { enumerable: true, get: function () { return work_1.orderedCriteria; } });
@@ -50,4 +50,11 @@ Object.defineProperty(exports, "useRunDraft", { enumerable: true, get: function 
 var useRunEstimate_1 = require("./useRunEstimate");
 Object.defineProperty(exports, "useRunEstimate", { enumerable: true, get: function () { return useRunEstimate_1.useRunEstimate; } });
 Object.defineProperty(exports, "invalidateRunEstimates", { enumerable: true, get: function () { return useRunEstimate_1.invalidateRunEstimates; } });
+var search_1 = require("./search");
+Object.defineProperty(exports, "fetchDocumentSearch", { enumerable: true, get: function () { return search_1.fetchDocumentSearch; } });
+Object.defineProperty(exports, "documentSearchUrl", { enumerable: true, get: function () { return search_1.documentSearchUrl; } });
+Object.defineProperty(exports, "normalizeDocumentSearchPage", { enumerable: true, get: function () { return search_1.normalizeDocumentSearchPage; } });
+Object.defineProperty(exports, "normalizeDocumentSearchItem", { enumerable: true, get: function () { return search_1.normalizeDocumentSearchItem; } });
+var useDocumentSearch_1 = require("./useDocumentSearch");
+Object.defineProperty(exports, "useDocumentSearch", { enumerable: true, get: function () { return useDocumentSearch_1.useDocumentSearch; } });
 //# sourceMappingURL=index.js.map

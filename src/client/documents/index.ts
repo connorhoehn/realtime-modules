@@ -80,3 +80,21 @@ export { useRunDraft } from './useRunDraft';
 export type { UseRunDraftOptions, UseRunDraftResult } from './useRunDraft';
 export { useRunEstimate, invalidateRunEstimates } from './useRunEstimate';
 export type { UseRunEstimateOptions, UseRunEstimateResult } from './useRunEstimate';
+export {
+  fetchDocumentSearch,
+  documentSearchUrl,
+  normalizeDocumentSearchPage,
+  normalizeDocumentSearchItem,
+} from './search';
+export type {
+  DocumentSearchKind,
+  DocumentSearchSort,
+  DocumentSearchMatch,
+  DocumentSearchFilters,
+  DocumentSearchItem,
+  DocumentSearchFacets,
+  DocumentSearchPage,
+  DocumentSearchQuery,
+} from './search';
+export { useDocumentSearch } from './useDocumentSearch';
+export type { UseDocumentSearchOptions, UseDocumentSearchResult } from './useDocumentSearch';
