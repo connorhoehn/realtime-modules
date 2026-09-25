@@ -3,7 +3,7 @@
 // work fields, run drafts and estimates (realtime-examples
 // `docs/design/documents-detail/PLAN.md` §2), read through hooks.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.invalidateRunEstimates = exports.useRunEstimate = exports.useRunDraft = exports.useWorkList = exports.useDocumentWork = exports.acquireChannelSubscription = exports.docWorkSignalFromFrame = exports.docWorkSubscribeFrame = exports.docWorkScopeChannelMatches = exports.docWorkScopeChannel = exports.docWorkChannel = exports.DOC_WORK_SCOPE_CHANNEL_PREFIX = exports.DOC_WORK_CHANNEL_PREFIX = exports.fetchRunEstimate = exports.cancelDraftRun = exports.dispatchRunDraft = exports.putRunDraft = exports.fetchRunDraft = exports.fetchRunDrafts = exports.fetchWorkList = exports.patchDocumentWork = exports.fetchDocumentWork = exports.normalizeRunEstimate = exports.currentRunDraft = exports.normalizeRunDraft = exports.runDraftPhase = exports.RUN_DRAFT_DISPATCH_STALE_MS = exports.mergeWorkIntoRow = exports.normalizeWorkList = exports.pointsRollup = exports.groupWorkRows = exports.workGroupOf = exports.WORK_GROUP_ORDER = exports.WORK_STATUS_LABEL = exports.rankAfter = exports.newWorkItemId = exports.normalizeDocumentWork = exports.orderedCriteria = exports.applyWorkUpdate = void 0;
+exports.invalidateRunEstimates = exports.useRunEstimate = exports.useRunDraft = exports.useWorkList = exports.useLinkedDocumentWork = exports.useDocumentWork = exports.acquireChannelSubscription = exports.docWorkSignalFromFrame = exports.docWorkSubscribeFrame = exports.docWorkScopeChannelMatches = exports.docWorkScopeChannel = exports.docWorkChannel = exports.DOC_WORK_SCOPE_CHANNEL_PREFIX = exports.DOC_WORK_CHANNEL_PREFIX = exports.fetchRunEstimate = exports.cancelDraftRun = exports.dispatchRunDraft = exports.putRunDraft = exports.fetchRunDraft = exports.fetchRunDrafts = exports.fetchWorkList = exports.patchDocumentWork = exports.fetchDocumentWork = exports.normalizeRunEstimate = exports.currentRunDraft = exports.normalizeRunDraft = exports.runDraftPhase = exports.RUN_DRAFT_DISPATCH_STALE_MS = exports.mergeWorkIntoRow = exports.normalizeWorkList = exports.pointsRollup = exports.groupWorkRows = exports.workGroupOf = exports.WORK_GROUP_ORDER = exports.WORK_STATUS_LABEL = exports.rankAfter = exports.newWorkItemId = exports.normalizeDocumentWork = exports.orderedCriteria = exports.applyWorkUpdate = void 0;
 var work_1 = require("./work");
 Object.defineProperty(exports, "applyWorkUpdate", { enumerable: true, get: function () { return work_1.applyWorkUpdate; } });
 Object.defineProperty(exports, "orderedCriteria", { enumerable: true, get: function () { return work_1.orderedCriteria; } });
@@ -41,6 +41,8 @@ Object.defineProperty(exports, "docWorkSignalFromFrame", { enumerable: true, get
 Object.defineProperty(exports, "acquireChannelSubscription", { enumerable: true, get: function () { return work_1.acquireChannelSubscription; } });
 var useDocumentWork_1 = require("./useDocumentWork");
 Object.defineProperty(exports, "useDocumentWork", { enumerable: true, get: function () { return useDocumentWork_1.useDocumentWork; } });
+var useLinkedDocumentWork_1 = require("./useLinkedDocumentWork");
+Object.defineProperty(exports, "useLinkedDocumentWork", { enumerable: true, get: function () { return useLinkedDocumentWork_1.useLinkedDocumentWork; } });
 var useWorkList_1 = require("./useWorkList");
 Object.defineProperty(exports, "useWorkList", { enumerable: true, get: function () { return useWorkList_1.useWorkList; } });
 var useRunDraft_1 = require("./useRunDraft");

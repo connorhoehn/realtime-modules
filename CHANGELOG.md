@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.95.7 — 2026-09-25
+
+- **client/documents:** `useLinkedDocumentWork(ids, opts)` — the work rows of
+  the documents an item links to, kept live on each linked `doc-work:<id>`
+  (re-reads only the signalled row). A 403/404 read lands in `restricted` and is
+  never subscribed, so a viewer learns neither the title nor the status of an
+  item they cannot read (realtime-examples NFR #137, Loop 37 activity).
+
 ## 0.95.5 — 2026-09-24
 
 - **client/deck revise:** a `waiting-for-model` phase, labelled "Waiting for a

@@ -1,0 +1,102 @@
+"use strict";
+// realtime-modules/src/client/documents/useLinkedDocumentWork.ts
+//
+// The work rows of the documents another item links to (the Brief tab's
+// "Dependencies & decisions" chips). Each linked row is read over REST behind
+// the viewer's own token, and kept current by the same id-only
+// `doc:work_updated` signal `useDocumentWork` rides, on `doc-work:<linkedId>`.
+//
+// ACCESS: a linked document the viewer may not read answers the REST read
+// 403/404. That id is reported in `restricted` and is never subscribed, so the
+// viewer learns nothing about it — not its title (the host must not draw one)
+// and not its status. The gateway's `doc-work` service applies the document
+// read rule to every subscription too; subscribing only after a successful
+// read keeps a refused subscribe from ever being sent.
+//
+// A signal re-reads only the document it names. A newer signal wins over an
+// in-flight read (the read is aborted and re-issued). Reconnect re-reads all.
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useLinkedDocumentWork = useLinkedDocumentWork;
+const react_1 = require("react");
+const work_1 = require("./work");
+const transport_1 = require("./transport");
+const isRestricted = (err) => {
+    const status = err?.status;
+    return status === 403 || status === 404;
+};
+function useLinkedDocumentWork(documentIds, opts) {
+    const { apiBaseUrl, idToken } = opts;
+    const enabled = opts.enabled !== false && !!idToken;
+    const { send, onMessage, epoch } = (0, transport_1.useResolvedTransport)(opts.transport, opts.sessionEpoch);
+    // A stable key: the same set in any order is the same set.
+    const key = (0, react_1.useMemo)(() => Array.from(new Set(documentIds.filter(Boolean))).sort().join('\n'), [documentIds]);
+    const ids = (0, react_1.useMemo)(() => (key ? key.split('\n') : []), [key]);
+    const [work, setWork] = (0, react_1.useState)({});
+    const [restricted, setRestricted] = (0, react_1.useState)(() => new Set());
+    const inflight = (0, react_1.useRef)(new Map());
+    const alive = (0, react_1.useRef)(true);
+    (0, react_1.useEffect)(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+    const read = (0, react_1.useCallback)((id) => {
+        if (!idToken)
+            return;
+        inflight.current.get(id)?.abort();
+        const controller = new AbortController();
+        inflight.current.set(id, controller);
+        (0, work_1.fetchDocumentWork)(apiBaseUrl, idToken, id, { signal: controller.signal })
+            .then((row) => {
+            if (!alive.current || controller.signal.aborted)
+                return;
+            setWork((w) => (w[id] && w[id].revision > row.revision ? w : { ...w, [id]: row }));
+            setRestricted((r) => { if (!r.has(id))
+                return r; const n = new Set(r); n.delete(id); return n; });
+        })
+            .catch((err) => {
+            if (!alive.current || controller.signal.aborted)
+                return;
+            if (!isRestricted(err))
+                return; // a transient failure keeps what we had
+            setWork((w) => { if (!(id in w))
+                return w; const n = { ...w }; delete n[id]; return n; });
+            setRestricted((r) => (r.has(id) ? r : new Set(r).add(id)));
+        })
+            .finally(() => { if (inflight.current.get(id) === controller)
+            inflight.current.delete(id); });
+    }, [apiBaseUrl, idToken]);
+    const [tick, setTick] = (0, react_1.useState)(0);
+    const refresh = (0, react_1.useCallback)(() => setTick((t) => t + 1), []);
+    // Read every linked row when the set (or identity) changes; drop rows no longer linked.
+    (0, react_1.useEffect)(() => {
+        if (!enabled) {
+            setWork({});
+            setRestricted(new Set());
+            return;
+        }
+        const keep = new Set(ids);
+        setWork((w) => Object.fromEntries(Object.entries(w).filter(([id]) => keep.has(id))));
+        setRestricted((r) => new Set([...r].filter((id) => keep.has(id))));
+        for (const id of ids)
+            read(id);
+        const flights = inflight.current;
+        return () => { for (const c of flights.values())
+            c.abort(); flights.clear(); };
+    }, [enabled, ids, read, tick]);
+    // Live: one refcounted `doc-work:<id>` subscription per READABLE linked row.
+    const readable = (0, react_1.useMemo)(() => ids.filter((id) => id in work).join('\n'), [ids, work]);
+    (0, react_1.useEffect)(() => {
+        if (!enabled || !readable || !send || !onMessage)
+            return;
+        const live = new Set(readable.split('\n'));
+        const releases = [...live].map((id) => (0, work_1.acquireChannelSubscription)(send, (0, work_1.docWorkChannel)(id), (0, work_1.docWorkSubscribeFrame)('subscribe', { documentId: id }), (0, work_1.docWorkSubscribeFrame)('unsubscribe', { documentId: id }), epoch));
+        const unregister = onMessage((frame) => {
+            const signal = (0, work_1.docWorkSignalFromFrame)(frame);
+            if (!signal || signal.type !== 'doc:work_updated' || !live.has(signal.documentId))
+                return;
+            read(signal.documentId);
+        });
+        return () => { unregister(); for (const r of releases)
+            r(); };
+    }, [enabled, readable, send, onMessage, epoch, read]);
+    (0, transport_1.useRefreshOnReconnect)(epoch, refresh);
+    return { work, restricted, refresh };
+}
+//# sourceMappingURL=useLinkedDocumentWork.js.map

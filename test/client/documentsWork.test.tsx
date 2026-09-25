@@ -21,6 +21,7 @@ import {
   normalizeRunEstimate,
   runDraftPhase,
   useDocumentWork,
+  useLinkedDocumentWork,
   useRunDraft,
   useRunEstimate,
   useWorkList,
@@ -412,5 +413,29 @@ describe('useRunEstimate', () => {
     await waitFor(() => expect(b.result.current.estimate?.basis.runs).toBe(3));
     expect(a.result.current.noPriorRuns).toBe(false);
     expect(calls('GET', /estimate/)).toHaveLength(2);
+  });
+});
+
+describe('useLinkedDocumentWork', () => {
+  it('reads each linked row, marks 403/404 restricted without subscribing, and re-reads only the signalled row', async () => {
+    let a = { ...WORK, documentId: 'a', status: 'in_progress', revision: 1 };
+    route('GET', /\/api\/documents\/a\/work$/, () => response(a));
+    route('GET', /\/api\/documents\/b\/work$/, () => response({ error: 'document not found' }, 404));
+    const { transport, send, emit } = makeTransport();
+    const { result } = renderHook(() => useLinkedDocumentWork(['b', 'a'], { apiBaseUrl: API, idToken: 't', transport }));
+    await waitFor(() => expect(result.current.work.a?.status).toBe('in_progress'));
+    await waitFor(() => expect(result.current.restricted.has('b')).toBe(true));
+    expect(result.current.work.b).toBeUndefined();
+    expect(send).toHaveBeenCalledWith({ service: 'doc-work', action: 'subscribe', documentId: 'a' });
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'subscribe', documentId: 'b' }));
+
+    const readsOfB = calls('GET', /\/documents\/b\/work$/).length;
+    a = { ...a, status: 'done', revision: 2 };
+    emit({ type: 'doc:work_updated', channel: 'doc-work:a', payload: { documentId: 'a', revision: 2 } });
+    await waitFor(() => expect(result.current.work.a?.status).toBe('done'));
+    expect(calls('GET', /\/documents\/b\/work$/).length).toBe(readsOfB);
+    // A signal for a restricted id is ignored.
+    emit({ type: 'doc:work_updated', channel: 'doc-work:b', payload: { documentId: 'b', revision: 9 } });
+    expect(calls('GET', /\/documents\/b\/work$/).length).toBe(readsOfB);
   });
 });

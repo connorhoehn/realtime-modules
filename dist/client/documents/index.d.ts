@@ -3,6 +3,8 @@ export type { WorkStatus, WorkPriority, WorkLinkRelation, WorkScalarField, WorkC
 export type { DocumentsLiveOptions } from './transport';
 export { useDocumentWork } from './useDocumentWork';
 export type { UseDocumentWorkOptions, UseDocumentWorkResult, DocumentWorkConflict } from './useDocumentWork';
+export { useLinkedDocumentWork } from './useLinkedDocumentWork';
+export type { LinkedDocumentWorkResult } from './useLinkedDocumentWork';
 export { useWorkList } from './useWorkList';
 export type { UseWorkListOptions, UseWorkListResult } from './useWorkList';
 export { useRunDraft } from './useRunDraft';
