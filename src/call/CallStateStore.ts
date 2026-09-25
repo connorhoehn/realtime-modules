@@ -925,3 +925,210 @@ export class RedisCallStateStore implements CallStateStore {
         return this.getCallIdsByClient(clientId);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Document call meta (2026-09-24)
+// ---------------------------------------------------------------------------
+
+import type {
+    DocumentCallInvite,
+    DocumentCallMeta,
+    DocumentCallMetaPatch,
+    DocumentCallMetaStore,
+    DocumentCallPresenting,
+} from './types';
+
+function cloneMeta(m: DocumentCallMeta): DocumentCallMeta {
+    return JSON.parse(JSON.stringify(m)) as DocumentCallMeta;
+}
+
+/** Single-replica / test implementation of DocumentCallMetaStore. */
+export class InMemoryDocumentCallMetaStore implements DocumentCallMetaStore {
+    private records = new Map<string, DocumentCallMeta>();
+
+    async get(callId: string): Promise<DocumentCallMeta | null> {
+        const m = this.records.get(callId);
+        return m ? cloneMeta(m) : null;
+    }
+    async set(meta: DocumentCallMeta): Promise<void> {
+        this.records.set(meta.callId, cloneMeta({ ...meta, clients: meta.clients ?? {} }));
+    }
+    async patch(callId: string, patch: DocumentCallMetaPatch): Promise<DocumentCallMeta | null> {
+        const m = this.records.get(callId);
+        if (!m) return null;
+        for (const [k, v] of Object.entries(patch)) {
+            if (v !== undefined) (m as unknown as Record<string, unknown>)[k] = JSON.parse(JSON.stringify(v));
+        }
+        return cloneMeta(m);
+    }
+    async delete(callId: string): Promise<void> {
+        this.records.delete(callId);
+    }
+    async setPresenting(callId: string, presenting: DocumentCallPresenting | null): Promise<DocumentCallPresenting | null> {
+        const m = this.records.get(callId);
+        if (!m) return null;
+        m.presenting = presenting ? { ...presenting } : null;
+        return m.presenting ? { ...m.presenting } : null;
+    }
+    async markInvite(callId: string, userId: string, invite: DocumentCallInvite | null): Promise<void> {
+        const m = this.records.get(callId);
+        if (!m) return;
+        if (invite) m.invites[userId] = { ...invite };
+        else delete m.invites[userId];
+    }
+    async markClient(callId: string, clientId: string, userId: string | null): Promise<void> {
+        const m = this.records.get(callId);
+        if (!m) return;
+        m.clients ??= {};
+        if (userId) m.clients[clientId] = userId;
+        else delete m.clients[clientId];
+    }
+    async listCallIds(): Promise<string[]> {
+        return Array.from(this.records.keys());
+    }
+}
+
+/** Redis surface the meta store needs. `hget` is optional: without it the
+ *  presenter read-back uses HGETALL. */
+export type DocumentCallMetaRedis = Pick<CallStateRedis,
+    'hset' | 'hgetall' | 'hdel' | 'sadd' | 'srem' | 'smembers' | 'del' | 'expire'> & {
+    hget?(key: string, field: string): Promise<string | null | undefined>;
+};
+
+const META_KEY_PREFIX = 'call:meta:';
+/** Set of callIds that have a meta record. Not a `call:meta:<id>` key, so it
+ *  can never collide with a callId. */
+const META_INDEX_KEY = 'call:meta-index';
+const META_TTL_SECONDS = 4 * 60 * 60;
+const INVITE_FIELD = 'invite:';
+const CLIENT_FIELD = 'client:';
+const JSON_FIELDS = new Set(['documentIds', 'documentTitles', 'presenting']);
+
+/**
+ * Redis-backed DocumentCallMeta: hash `call:meta:<callId>`, TTL 4 h
+ * refreshed on every write, plus the `call:meta-index` set the sweep leader
+ * walks.
+ *
+ * Scalars are plain fields; `documentIds` / `documentTitles` / `presenting`
+ * are JSON fields. Invites are one field per person (`invite:<userId>` →
+ * JSON), not one JSON blob: a blob is read-modify-write, and two replicas
+ * marking two different people (an accept on one, the sweep on the other)
+ * would lose one of the marks. Read back as `invites` all the same.
+ */
+export class RedisDocumentCallMetaStore implements DocumentCallMetaStore {
+    constructor(private redis: DocumentCallMetaRedis, private ttlSeconds: number = META_TTL_SECONDS) {}
+
+    private key(callId: string): string { return `${META_KEY_PREFIX}${callId}`; }
+
+    private async touch(callId: string): Promise<void> {
+        await this.redis.expire(this.key(callId), this.ttlSeconds);
+    }
+
+    private async exists(callId: string): Promise<boolean> {
+        const all = await this.redis.hgetall(this.key(callId));
+        return !!all && typeof all.callId === 'string' && all.callId.length > 0;
+    }
+
+    async get(callId: string): Promise<DocumentCallMeta | null> {
+        const h = await this.redis.hgetall(this.key(callId));
+        if (!h || !h.callId) return null;
+        const parse = <T>(raw: string | undefined, fallback: T): T => {
+            if (!raw) return fallback;
+            try { return JSON.parse(raw) as T; } catch { return fallback; }
+        };
+        const invites: Record<string, DocumentCallInvite> = {};
+        const clients: Record<string, string> = {};
+        for (const [field, value] of Object.entries(h)) {
+            if (field.startsWith(INVITE_FIELD)) {
+                const inv = parse<DocumentCallInvite | null>(value, null);
+                if (inv) invites[field.slice(INVITE_FIELD.length)] = inv;
+            } else if (field.startsWith(CLIENT_FIELD)) {
+                clients[field.slice(CLIENT_FIELD.length)] = value;
+            }
+        }
+        const meta: DocumentCallMeta = {
+            callId: h.callId,
+            documentId: h.documentId ?? '',
+            title: h.title ?? '',
+            documentIds: parse<string[]>(h.documentIds, []),
+            hostUserId: h.hostUserId ?? '',
+            media: h.media === 'audio' ? 'audio' : 'video',
+            startedAt: Number(h.startedAt) || 0,
+            presenting: parse<DocumentCallPresenting | null>(h.presenting, null),
+            invites,
+            clients,
+        };
+        const titles = parse<Record<string, string> | null>(h.documentTitles, null);
+        if (titles) meta.documentTitles = titles;
+        return meta;
+    }
+
+    async set(meta: DocumentCallMeta): Promise<void> {
+        const k = this.key(meta.callId);
+        await this.redis.del(k);
+        const fields: Array<[string, string]> = [
+            ['callId', meta.callId],
+            ['documentId', meta.documentId],
+            ['title', meta.title],
+            ['documentIds', JSON.stringify(meta.documentIds ?? [])],
+            ['hostUserId', meta.hostUserId],
+            ['media', meta.media],
+            ['startedAt', String(meta.startedAt)],
+            ['presenting', meta.presenting ? JSON.stringify(meta.presenting) : ''],
+        ];
+        if (meta.documentTitles) fields.push(['documentTitles', JSON.stringify(meta.documentTitles)]);
+        for (const [uid, inv] of Object.entries(meta.invites ?? {})) fields.push([`${INVITE_FIELD}${uid}`, JSON.stringify(inv)]);
+        for (const [cid, uid] of Object.entries(meta.clients ?? {})) fields.push([`${CLIENT_FIELD}${cid}`, uid]);
+        for (const [f, v] of fields) await this.redis.hset(k, f, v);
+        await this.touch(meta.callId);
+        await this.redis.sadd(META_INDEX_KEY, meta.callId);
+    }
+
+    async patch(callId: string, patch: DocumentCallMetaPatch): Promise<DocumentCallMeta | null> {
+        if (!(await this.exists(callId))) return null;
+        const k = this.key(callId);
+        for (const [f, v] of Object.entries(patch)) {
+            if (v === undefined) continue;
+            await this.redis.hset(k, f, JSON_FIELDS.has(f) ? JSON.stringify(v) : String(v));
+        }
+        await this.touch(callId);
+        return this.get(callId);
+    }
+
+    async delete(callId: string): Promise<void> {
+        await this.redis.del(this.key(callId));
+        await this.redis.srem(META_INDEX_KEY, callId);
+    }
+
+    async setPresenting(callId: string, presenting: DocumentCallPresenting | null): Promise<DocumentCallPresenting | null> {
+        if (!(await this.exists(callId))) return null;
+        const k = this.key(callId);
+        await this.redis.hset(k, 'presenting', presenting ? JSON.stringify(presenting) : '');
+        await this.touch(callId);
+        // Read back: the broadcast must carry whatever won, not what we wrote.
+        let raw: string | null | undefined;
+        if (typeof this.redis.hget === 'function') raw = await this.redis.hget(k, 'presenting');
+        else raw = (await this.redis.hgetall(k))?.presenting;
+        if (!raw) return null;
+        try { return JSON.parse(raw) as DocumentCallPresenting; } catch { return null; }
+    }
+
+    async markInvite(callId: string, userId: string, invite: DocumentCallInvite | null): Promise<void> {
+        const k = this.key(callId);
+        if (invite) await this.redis.hset(k, `${INVITE_FIELD}${userId}`, JSON.stringify(invite));
+        else await this.redis.hdel(k, `${INVITE_FIELD}${userId}`);
+        await this.touch(callId);
+    }
+
+    async markClient(callId: string, clientId: string, userId: string | null): Promise<void> {
+        const k = this.key(callId);
+        if (userId) await this.redis.hset(k, `${CLIENT_FIELD}${clientId}`, userId);
+        else await this.redis.hdel(k, `${CLIENT_FIELD}${clientId}`);
+        await this.touch(callId);
+    }
+
+    async listCallIds(): Promise<string[]> {
+        const ids = await this.redis.smembers(META_INDEX_KEY);
+        return Array.isArray(ids) ? ids : [];
+    }
+}

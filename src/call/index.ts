@@ -28,17 +28,28 @@ export type {
     CallServiceOptions,
     CallSweeperIsLeader,
     CallWithSpan,
+    CallUserStatus,
+    DocumentCallInvite,
+    DocumentCallInviteState,
+    DocumentCallMeta,
+    DocumentCallMetaPatch,
+    DocumentCallMetaStore,
+    DocumentCallOfflineInvite,
+    DocumentCallPresenting,
     ParticipantStateBroadcast,
     UserClientMatch,
 } from './types';
 export {
     InMemoryCallStateStore,
     RedisCallStateStore,
+    InMemoryDocumentCallMetaStore,
+    RedisDocumentCallMetaStore,
 } from './CallStateStore';
 export type {
     ActiveCallStateView,
     CallStateStore,
     CallStateRedis,
+    DocumentCallMetaRedis,
 } from './CallStateStore';
 // The call ↔ conversation mapping, in both directions. Exported because both
 // the gateway (posting a finished call into its thread) and the frontend

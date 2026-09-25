@@ -56,7 +56,123 @@ export type CallAction =
      *  participants left. data: { callId }. */
     | 'forget'
     /** Server → client ack for `forget`. data: { callId, forgotten: true }. */
-    | 'forgotten';
+    | 'forgotten'
+    /** Document calls (2026-09-24) — client → server: "send me this call's
+     *  meta". data: { callId }. Replies `call-meta` to the asker only. */
+    | 'meta'
+    /** Document calls — client → server, any participant: replace the
+     *  review-document list. data: { callId, documentIds, documentTitles? }.
+     *  Broadcasts `call-meta` to the call. */
+    | 'set-documents'
+    /** Document calls — client → server: start (documentId) or stop (null)
+     *  presenting. Only the current presenter or the host may replace a
+     *  presenter. Broadcasts `call-meta`. */
+    | 'present'
+    /** Document calls — client → server, host only: rename the call.
+     *  data: { callId, title }. Broadcasts `call-meta`. */
+    | 'set-title'
+    /** Document calls — server → client: the full DocumentCallMeta, sent
+     *  after `meta` and after every change. Server-only. */
+    | 'call-meta'
+    /** Document calls — server → client, to the inviter's clients: one
+     *  target's ring timed out. data: { callId, userId }. Server-only. */
+    | 'invite-expired';
+
+/** Vocabulary of the `status` field on `user-status`. `reconnecting` is
+ *  sent for document calls while a dropped participant is inside the
+ *  rejoin grace; `left` follows if they do not come back. */
+export type CallUserStatus = 'in-call' | 'left' | 'on-hold' | 'reconnecting';
+
+// ---------------------------------------------------------------------------
+// Document calls (2026-09-24) — see realtime-examples
+// docs/design/document-calls/SPEC.md §4–5.
+// ---------------------------------------------------------------------------
+
+/** Ring state of one invited person. `notified` = they had no connected
+ *  client, so they got a notification (and the invite link) instead. */
+export type DocumentCallInviteState = 'ringing' | 'accepted' | 'declined' | 'missed' | 'notified';
+
+/** One invited person, keyed by userId in DocumentCallMeta.invites. */
+export interface DocumentCallInvite {
+    /** Epoch ms of the (latest) ring. Per-target expiry runs off this. */
+    at: number;
+    state: DocumentCallInviteState;
+    /** userId of whoever sent the invite; `invite-expired` goes to them. */
+    by?: string;
+}
+
+/** Who is presenting which document. */
+export interface DocumentCallPresenting {
+    documentId: string;
+    userId: string;
+    since: number;
+}
+
+/**
+ * Live, shared meta of a document call. Redis hash `call:meta:<callId>`
+ * (TTL 4 h) behind RedisDocumentCallMetaStore; no owner replica — every
+ * replica reads and writes the same hash, and every broadcast carries what
+ * was read back after the write.
+ */
+export interface DocumentCallMeta {
+    callId: string;
+    /** Host document (also the LVS lobby name). */
+    documentId: string;
+    title: string;
+    /** Review list, host document first. */
+    documentIds: string[];
+    /** Optional id → title map the client sent with the list, so a joiner can
+     *  label rows before its own document list has loaded. */
+    documentTitles?: Record<string, string>;
+    hostUserId: string;
+    media: 'video' | 'audio';
+    startedAt: number;
+    presenting: DocumentCallPresenting | null;
+    invites: Record<string, DocumentCallInvite>;
+    /** clientId → userId of every connection that has been in the call.
+     *  Lets any replica name a participant whose socket lives (or died) on
+     *  another replica. */
+    clients?: Record<string, string>;
+}
+
+/** Mutable scalar fields of DocumentCallMeta. */
+export type DocumentCallMetaPatch = Partial<Pick<DocumentCallMeta,
+    'title' | 'documentIds' | 'documentTitles' | 'hostUserId' | 'media'>>;
+
+/**
+ * Storage for DocumentCallMeta. The in-memory implementation serves one
+ * replica and tests; the Redis one is shared by every replica.
+ */
+export interface DocumentCallMetaStore {
+    get(callId: string): Promise<DocumentCallMeta | null>;
+    /** Create or overwrite the whole record (invites and clients included). */
+    set(meta: DocumentCallMeta): Promise<void>;
+    /** Merge scalar fields; returns the record read back, or null if absent. */
+    patch(callId: string, patch: DocumentCallMetaPatch): Promise<DocumentCallMeta | null>;
+    delete(callId: string): Promise<void>;
+    /** Write the presenter, then read it back. The read-back is the value to
+     *  broadcast: with two replicas racing, both converge on the last write. */
+    setPresenting(callId: string, presenting: DocumentCallPresenting | null): Promise<DocumentCallPresenting | null>;
+    /** Set (or with null remove) one person's invite. Per-person field, so two
+     *  replicas marking different people never overwrite each other. */
+    markInvite(callId: string, userId: string, invite: DocumentCallInvite | null): Promise<void>;
+    /** Remember which user a connection belongs to (null removes it). */
+    markClient(callId: string, clientId: string, userId: string | null): Promise<void>;
+    /** Every call with a meta record — the sweep leader walks this. */
+    listCallIds(): Promise<string[]>;
+}
+
+/** What `onOfflineInvite` receives: the invite as the caller sent it. */
+export interface DocumentCallOfflineInvite {
+    callId: string;
+    documentId: string;
+    title: string;
+    callerId: string;
+    callerName?: string;
+    message?: string;
+    documentIds: string[];
+    media: 'video' | 'audio';
+}
 
 /**
  * Wire-form payload supplied by the FE alongside a call action. All
@@ -104,7 +220,7 @@ export interface ParticipantStateBroadcast {
     cameraOn?: boolean;
     /** True when the peer's mic is unmuted. Undefined treated as true (legacy). */
     audioOn?: boolean;
-    /** For `user-status` verb: 'in-call' | 'left' | 'on-hold' etc. */
+    /** For `user-status` verb: see CallUserStatus ('reconnecting' is new). */
     status?: string;
     /** Legacy displayName source. */
     callerName?: string;
@@ -373,6 +489,25 @@ export interface CallServiceOptions {
      * on distributed-core, so tracing is the consumer's to supply.
      */
     withSpan?: CallWithSpan;
+    /**
+     * Document calls (2026-09-24) — live call meta (title, review documents,
+     * presenter, per-person invites). Without it the four document-call
+     * actions answer with an error frame and `kind:'document-review'`
+     * invites behave like any other invite.
+     */
+    metaStore?: DocumentCallMetaStore;
+    /**
+     * Document calls — a target of a `kind:'document-review'` invite has no
+     * connected client (or the caller asked not to ring). The gateway leaves
+     * them a notification. Best-effort: a throw is logged and swallowed.
+     */
+    onOfflineInvite?: (targetUserId: string, invite: DocumentCallOfflineInvite) => Promise<void> | void;
+    /**
+     * Cluster-wide liveness of a clientId, used by the sweep leader to prune
+     * roster entries whose socket died with its replica (the node's heartbeat
+     * is gone). Return false only when the client is provably dead.
+     */
+    isClientAlive?: (clientId: string) => boolean | Promise<boolean>;
 }
 
 /** Shape of the injectable tracing wrapper (matches distributed-core's withSpan). */
@@ -446,4 +581,10 @@ export const ALLOWED_CALL_ACTIONS: ReadonlySet<CallAction> = new Set<CallAction>
     // call. `forgotten` (the ack) is server→client only, like
     // `active-call`.
     'forget',
+    // Document calls (2026-09-24). `call-meta` and `invite-expired` are
+    // server → client only and deliberately absent.
+    'meta',
+    'set-documents',
+    'present',
+    'set-title',
 ]);
