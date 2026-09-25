@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.95.11 — 2026-09-25
+
+- **server/crdt:** `copyDocument` claims the new document's channel for the
+  requester's node (as `seedDocument` does) before writing its snapshot, and
+  releases it after — an owner-gated snapshot store refused the write
+  otherwise, so every copy on the gateway failed with `copy_failed`.
+
 ## 0.95.10 — 2026-09-25
 
 - **server/crdt:** `copyDocument { documentId, requestId, title? }` — needs

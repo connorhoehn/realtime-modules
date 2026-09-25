@@ -45,6 +45,9 @@ describe('copyDocument', () => {
             expect(doc.id).not.toBe(src.id);
             expect(doc).toMatchObject({ title: 'Release plan (copy)', type: 'page', icon: 'P', description: 'the plan', createdBy: 'copier', createdByName: 'Copier' });
             expect(router.broadcastToAll).toHaveBeenCalledWith({ type: 'crdt', action: 'documentCreated', document: doc });
+            // The new channel was claimed for the write and released afterwards.
+            expect(router.subscribeToChannel).toHaveBeenCalledWith('conn', `doc:${doc.id}`);
+            expect(router.unsubscribeFromChannel).toHaveBeenCalledWith('conn', `doc:${doc.id}`);
             // The copy is durable: drop in-memory state and rehydrate from the snapshot.
             service.channelStates.delete(`doc:${doc.id}`);
             const copy = await service.ensureHydratedState(`doc:${doc.id}`);
@@ -91,6 +94,17 @@ describe('copyDocument', () => {
             await ok.service.handleAction('conn', 'copyDocument', { documentId: 'missing', requestId: 'b' });
             expect(sent(ok.router, 'documentCopyFailed')[0]).toMatchObject({ requestId: 'b', sourceId: 'missing', code: 'not_found' });
         } finally { await anon.service.shutdown(); await ok.service.shutdown(); }
+    });
+
+    it('fails cleanly when ownership of the new channel is refused', async () => {
+        const { service, router, metadataStore } = setup();
+        try {
+            const src = await seedSource(service);
+            router.subscribeToChannel.mockResolvedValueOnce(false);
+            await service.handleAction('conn', 'copyDocument', { documentId: src.id, requestId: 'r5' });
+            expect(sent(router, 'documentCopyFailed')[0]).toMatchObject({ requestId: 'r5', code: 'copy_failed' });
+            expect(await metadataStore.listDocuments()).toHaveLength(1);
+        } finally { await service.shutdown(); }
     });
 
     it('deletes the new metadata row when the content write fails', async () => {

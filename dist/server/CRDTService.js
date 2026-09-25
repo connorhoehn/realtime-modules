@@ -590,6 +590,7 @@ class CRDTService {
         if (!userContext?.userId)
             return fail('unauthenticated', 'Copying a document requires a verified actor');
         let createdId = null;
+        let claimed = null;
         try {
             if (!await this.authorize(clientId, sourceChannel, 'read', false))
                 return fail('forbidden', 'Not allowed to read the source document');
@@ -608,6 +609,13 @@ class CRDTService {
             });
             createdId = doc.id;
             const channel = `doc:${doc.id}`;
+            // Claim the new document's channel for this node before writing it,
+            // the way seedDocument does: an owner-gated snapshot store refuses
+            // a write from a node that does not own the channel.
+            const admitted = await this.messageRouter.subscribeToChannel?.(clientId, channel);
+            if (admitted === false)
+                throw new Error('Document ownership admission rejected');
+            claimed = channel;
             const state = await this.ensureHydratedState(channel);
             Y.applyUpdate(state.ydoc, content);
             const meta = state.ydoc.getMap('meta');
@@ -635,7 +643,7 @@ class CRDTService {
             this.sendToClient(clientId, { type: 'crdt', action: 'documentCopied', requestId, sourceId, document: doc });
         }
         catch (error) {
-            this.logger.error(`copyDocument ${sourceId} failed:`, error);
+            this.logger.error(`copyDocument ${sourceId} failed: ${error?.message ?? error}`, error);
             if (createdId) {
                 const channel = `doc:${createdId}`;
                 const state = this.channelStates.get(channel);
@@ -652,6 +660,16 @@ class CRDTService {
                 }
             }
             fail('copy_failed', 'Could not copy the document');
+        }
+        finally {
+            if (claimed) {
+                try {
+                    await this.messageRouter.unsubscribeFromChannel?.(clientId, claimed);
+                }
+                catch (err) {
+                    this.logger.warn?.(`copyDocument could not release ${claimed}:`, err);
+                }
+            }
         }
     }
     // ===================================================================
