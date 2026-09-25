@@ -88,6 +88,11 @@ export function inviteDedupKey(callId: string, targetUserIds: string[]): string 
 
 const INVITE_DEDUP_MAX_ENTRIES = 10_000;
 
+/** How long a call this node just registered may be missing from the shared
+ *  store (its write-through mirror is fire-and-forget) before `status` treats
+ *  "not in the store" as "gone". */
+const STORE_SETTLE_MS = 5_000;
+
 interface CrossNodeDepartedPayload {
     callId: string;
     departedClientId: string;
@@ -248,6 +253,9 @@ export class CallService {
     /** Document calls — `<callId>|<userId>` → timer that turns a
      *  `reconnecting` participant into `left` when the grace runs out. */
     private docLeaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /** Calls whose registration has reached the shared store at least once —
+     *  after that, "not in the store" means gone. */
+    private storeMirrored = new Set<string>();
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning = false;
 
@@ -595,6 +603,7 @@ export class CallService {
         // for THIS node; the store is for cross-node visibility.
         if (this.stateStore) {
             void this.stateStore.registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds)
+                .then(() => { this.storeMirrored.add(callId); })
                 .catch((e: any) => this.logger.warn(`[CallService] stateStore.register failed for ${callId}/${clientId}: ${e?.message ?? e}`));
             // PR-W2.1 (completion) — also mirror via the explicit
             // addClientToCall API so peer nodes can query
@@ -704,6 +713,7 @@ export class CallService {
         }
         this.activeCalls.delete(callId);
         this.acceptedCallIds.delete(callId);
+        this.storeMirrored.delete(callId);
         // J2 — also drop any pending grace for a call we are forgetting
         // outright, so a late timer can't resurrect a terminal decision.
         const pendingGrace = this.rejoinGraceTimers.get(callId);
@@ -1033,112 +1043,118 @@ export class CallService {
         const now = Date.now();
 
         // Ghost-call guard: call state has a 4h safety TTL, so a call whose
-        // every participant crashed away (specs, tab kills) lingers in the
-        // registries long after anyone can be joined. Liveness-filter
-        // participants through the router's three-state isClientLive
-        // (true=live, false=dead-local, null=unknown/cross-node → trust);
-        // a call with zero surviving participants is NOT active.
-        const liveParticipants = (ids: string[]): string[] => {
-            if (typeof this.messageRouter.isClientLive !== 'function') return ids;
-            return ids.filter((cid) => this.messageRouter.isClientLive!(cid) !== false);
+        // every participant crashed away lingers in the registries long after
+        // anyone can be joined. Liveness per participant: the router's
+        // three-state isClientLive for this node's sockets (true / false =
+        // dead here), and for sockets on other replicas (null) the consumer's
+        // cluster-wide isClientAlive when wired (the gateway checks the
+        // owning node's heartbeat), else trust.
+        const liveParticipants = async (ids: string[]): Promise<string[]> => {
+            const out: string[] = [];
+            for (const cid of ids) {
+                const local = typeof this.messageRouter.isClientLive === 'function'
+                    ? this.messageRouter.isClientLive(cid)
+                    : null;
+                if (local === false) continue;
+                if (local === null && this.isClientAliveHook) {
+                    let alive = true;
+                    try { alive = (await Promise.resolve(this.isClientAliveHook(cid))) !== false; }
+                    catch { alive = true; /* unknown is not dead */ }
+                    if (!alive) continue;
+                }
+                out.push(cid);
+            }
+            return out;
         };
 
-        let foundCallId: string | null = null;
-        let callerId = '';
-        let callerName: string | null = null;
-        let startedAt: number | null = null;
-        let participantClientIds: string[] = [];
-        let targetUserIds: string[] = [];
-
-        // Local cache first. Skip expired unaccepted invites — they are
-        // dead air even if the sweep timer hasn't reaped them yet.
-        // UX audit 2026-08-24 — dead calls found here are REAPED, not just
-        // skipped. A stale entry whose every participant is provably dead
-        // (isClientLive === false) used to linger for the full 4h TTL,
-        // resurrecting ResumeCallDialogs and discovery banners in every
-        // fresh session. A status query is the natural touch-point: the
-        // moment we can prove "nobody is actually in this call", clear
-        // the lobby + user indexes so it stops haunting the UI.
-        const deadLocalCallIds: string[] = [];
+        // 2026-09-25 (lane C, stale call id) — collect EVERY candidate for
+        // this lobby, from this node's cache and the cluster lobby index, then
+        // choose. Before, the first local match (Map order = the oldest) won
+        // without checking the call still existed cluster-wide, so a call
+        // whose state had been deleted kept answering `status` while a newer
+        // live call on the same document was never offered.
+        type Candidate = {
+            id: string; callerId: string; callerName: string | null; startedAt: number | null;
+            participantClientIds: string[]; targetUserIds: string[]; meta: DocumentCallMeta | null;
+        };
+        const candidateIds = new Set<string>();
         for (const [id, state] of this.activeCalls) {
             if (state.lobbyName !== lobbyName && state.originalLobbyName !== lobbyName) continue;
+            // Expired unaccepted invites are dead air even before the sweep.
             if (
                 typeof state.inviteExpiresAt === 'number'
                 && now > state.inviteExpiresAt
                 && !this.acceptedCallIds.has(id)
+                && !(await this.getDocumentMeta(id))
             ) continue;
-            const alive = liveParticipants(Array.from(state.participantClientIds));
-            if (alive.length === 0) {
-                // Only provably-dead: participants existed and every one
-                // failed the liveness probe. (Zero-participant states are
-                // dead by definition.)
-                deadLocalCallIds.push(id);
-                continue;
-            }
-            foundCallId = id;
-            callerId = state.callerId;
-            callerName = state.originalCallerName ?? null;
-            startedAt = state.invitedAt ?? null;
-            participantClientIds = alive;
-            targetUserIds = (state.originalTargetUserIds ?? state.targetUserIds).slice();
-            break;
+            candidateIds.add(id);
         }
-        // Reap the provably-dead locals outside the iteration (forgetCall
-        // mutates activeCalls). forgetCall also clears the F2/F3 lobby +
-        // user discovery indexes — that's the point.
-        for (const id of deadLocalCallIds) {
-            this.logger.info(`[CallService] status query reaped dead call ${id} in lobby ${lobbyName}`);
-            this.forgetCall(id);
-        }
-
-        // The local cache only holds this node's sockets; a call found there
-        // may have people on other replicas. Union in the cluster roster.
-        if (foundCallId && this.stateStore) {
+        if (this.stateStore && typeof this.stateStore.getCallIdsByLobby === 'function') {
             try {
-                const view = await this.stateStore.getCall(foundCallId);
-                if (view) {
-                    for (const cid of liveParticipants(view.participantClientIds)) {
-                        if (!participantClientIds.includes(cid)) participantClientIds.push(cid);
-                    }
-                }
-            } catch { /* local view stands */ }
-        }
-
-        // Cluster-wide fallback via the lobby index.
-        if (!foundCallId && this.stateStore && typeof this.stateStore.getCallIdsByLobby === 'function') {
-            try {
-                const ids = await this.stateStore.getCallIdsByLobby(lobbyName);
-                for (const id of ids) {
-                    const view = await this.stateStore.getCall(id);
-                    if (!view) {
-                        // Call hash expired but the lobby index still points
-                        // at it — index hygiene, best-effort.
-                        if (typeof this.stateStore.forgetLobbyCall === 'function') {
-                            void this.stateStore.forgetLobbyCall(lobbyName, id).catch(() => { /* */ });
-                        }
-                        continue;
-                    }
-                    const alive = liveParticipants(view.participantClientIds);
-                    if (alive.length === 0) {
-                        // Provably dead (every registered participant failed
-                        // the local liveness probe — cross-node/unknown
-                        // clients return null and count as alive, so this
-                        // never reaps a call that lives on a peer node).
-                        await this.reapDeadStoredCall(id, lobbyName, view);
-                        continue;
-                    }
-                    foundCallId = id;
-                    callerId = view.callerId;
-                    callerName = view.callerName ?? null;
-                    startedAt = view.invitedAt ?? null;
-                    participantClientIds = alive;
-                    targetUserIds = view.targetUserIds.slice();
-                    break;
-                }
+                for (const id of await this.stateStore.getCallIdsByLobby(lobbyName)) candidateIds.add(id);
             } catch (e: any) {
                 this.logger.warn(`[CallService] status lobby lookup failed for ${lobbyName}: ${e?.message ?? e}`);
             }
         }
+
+        const candidates: Candidate[] = [];
+        for (const id of candidateIds) {
+            const local = this.activeCalls.get(id) ?? null;
+            let view: import('./CallStateStore').ActiveCallStateView | null = null;
+            let viewKnown = false;
+            if (this.stateStore) {
+                try { view = await this.stateStore.getCall(id); viewKnown = true; }
+                catch { /* store hiccup: fall back to the local view */ }
+            }
+            if (viewKnown && !view) {
+                // Gone cluster-wide (ended, forgotten, or its state deleted).
+                // A call this node registered moments ago may simply not have
+                // reached the store yet (the mirror is fire-and-forget), so a
+                // young local entry gets the benefit of the doubt.
+                const young = this.isUnmirroredYoung(id, now);
+                if (!young) {
+                    this.logger.info(`[CallService] status query dropped call ${id} in lobby ${lobbyName}: gone cluster-wide`);
+                    if (local) this.forgetCall(id);
+                    if (this.stateStore && typeof this.stateStore.forgetLobbyCall === 'function') {
+                        void this.stateStore.forgetLobbyCall(lobbyName, id).catch(() => { /* best-effort */ });
+                    }
+                    continue;
+                }
+            }
+            const ids = new Set<string>(local ? Array.from(local.participantClientIds) : []);
+            if (view) for (const cid of view.participantClientIds) ids.add(cid);
+            const alive = await liveParticipants(Array.from(ids));
+            if (alive.length === 0) {
+                // Provably dead: every registered participant failed the probe.
+                this.logger.info(`[CallService] status query reaped dead call ${id} in lobby ${lobbyName}`);
+                if (local) this.forgetCall(id);
+                else if (view) await this.reapDeadStoredCall(id, lobbyName, view);
+                continue;
+            }
+            const meta = await this.getDocumentMeta(id);
+            candidates.push({
+                id,
+                callerId: local?.callerId || view?.callerId || '',
+                callerName: local?.originalCallerName ?? view?.callerName ?? null,
+                startedAt: meta?.startedAt ?? local?.invitedAt ?? view?.invitedAt ?? null,
+                participantClientIds: alive,
+                targetUserIds: (local ? (local.originalTargetUserIds ?? local.targetUserIds) : (view?.targetUserIds ?? [])).slice(),
+                meta,
+            });
+        }
+        // Document calls with live meta first (a document call whose meta is
+        // gone has ended), then the newest.
+        const withMeta = candidates.filter((c) => c.meta);
+        const pool = withMeta.length > 0 ? withMeta : candidates;
+        pool.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+        const best = pool[0] ?? null;
+
+        const foundCallId: string | null = best?.id ?? null;
+        const callerId = best?.callerId ?? '';
+        const callerName = best?.callerName ?? null;
+        const startedAt = best?.startedAt ?? null;
+        const participantClientIds = best?.participantClientIds ?? [];
+        const targetUserIds = best?.targetUserIds ?? [];
 
         const data: Record<string, unknown> = { lobbyName, active: !!foundCallId };
         if (foundCallId) {
@@ -1663,6 +1679,7 @@ export class CallService {
                     // here. This path never goes through forgetCall().
                     this._announceCallEnded(callId, state);
                     this.activeCalls.delete(callId);
+                    this.storeMirrored.delete(callId);
                 }
             }
             // W11 — mirror to durable store. Fire-and-forget.
@@ -2483,7 +2500,7 @@ export class CallService {
             };
             const titles = normalizeTitles(payload.documentTitles);
             if (titles) meta.documentTitles = titles;
-            await store.set(meta);
+            await store.set(meta);            await this.pruneLobbyIndex(documentId, callId);
         }
         if (callerUserId) await store.markClient(callId, clientId, callerUserId);
 
@@ -2520,6 +2537,34 @@ export class CallService {
         const fresh = await store.get(callId);
         if (fresh) await this.broadcastCallMeta(fresh, [clientId]);
         return { ringTargets };
+    }
+
+    /** A call this node registered moments ago whose store write has not
+     *  landed yet — not in the store, but not gone either. */
+    private isUnmirroredYoung(callId: string, now: number): boolean {
+        const local = this.activeCalls.get(callId);
+        if (!local || this.storeMirrored.has(callId)) return false;
+        return typeof local.invitedAt !== 'number' || now - local.invitedAt < STORE_SETTLE_MS;
+    }
+
+    /** A new document call starts: drop lobby-index entries that point at
+     *  calls whose state is gone cluster-wide, so `status` stops finding them.
+     *  Live calls are left alone. */
+    private async pruneLobbyIndex(lobbyName: string, keepCallId: string): Promise<void> {
+        const st = this.stateStore;
+        if (!st || typeof st.getCallIdsByLobby !== 'function' || typeof st.forgetLobbyCall !== 'function') return;
+        try {
+            for (const id of await st.getCallIdsByLobby(lobbyName)) {
+                if (id === keepCallId) continue;
+                if (await st.getCall(id)) continue;
+                if (this.isUnmirroredYoung(id, Date.now())) continue;
+                await st.forgetLobbyCall(lobbyName, id);
+                if (this.activeCalls.has(id)) this.forgetCall(id);
+                this.logger.info(`[CallService] pruned stale call ${id} from lobby ${lobbyName}`);
+            }
+        } catch (e: any) {
+            this.logger.warn(`[CallService] lobby prune failed for ${lobbyName}: ${e?.message ?? e}`);
+        }
     }
 
     /** `meta` / `set-documents` / `present` / `set-title`. */

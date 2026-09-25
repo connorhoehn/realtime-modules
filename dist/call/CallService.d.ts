@@ -101,6 +101,9 @@ export declare class CallService {
     /** Document calls — `<callId>|<userId>` → timer that turns a
      *  `reconnecting` participant into `left` when the grace runs out. */
     private docLeaveTimers;
+    /** Calls whose registration has reached the shared store at least once —
+     *  after that, "not in the store" means gone. */
+    private storeMirrored;
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning;
     constructor(opts: CallServiceOptions);
@@ -330,6 +333,13 @@ export declare class CallService {
      * client, or `ring:false`), and returns who should actually be rung.
      */
     private handleDocumentInvite;
+    /** A call this node registered moments ago whose store write has not
+     *  landed yet — not in the store, but not gone either. */
+    private isUnmirroredYoung;
+    /** A new document call starts: drop lobby-index entries that point at
+     *  calls whose state is gone cluster-wide, so `status` stops finding them.
+     *  Live calls are left alone. */
+    private pruneLobbyIndex;
     /** `meta` / `set-documents` / `present` / `set-title`. */
     private handleDocumentCallAction;
     /**

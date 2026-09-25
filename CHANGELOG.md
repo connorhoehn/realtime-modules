@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.97.2 — 2026-09-25
+
+- **call (fix): `status` no longer answers with a call whose state is gone.**
+  It took the first local match (the oldest call this replica had seen) without
+  checking the call still existed cluster-wide, and counted sockets on other
+  replicas as alive, so after a call's Redis state was deleted under live
+  sockets (a test-harness reset) both replicas kept offering the old call, "1
+  person", while a newer call ran on the same document. Now it collects
+  candidates from this node's memory and the `call:lobby:<name>` index, drops
+  (and forgets) any the store no longer has — unless this node registered it so
+  recently that its write has not landed — checks non-local sockets with
+  `isClientAlive` when wired, and ranks document calls with live meta first,
+  then the newest.
+- **call:** a new document call prunes lobby-index entries whose call state is
+  gone. Live calls are left alone.
+
 ## 0.97.1 — 2026-09-25
 
 - **client/video (fix):** `useDocumentCall` counted a call you are not in from
