@@ -141,6 +141,15 @@ describe('useDocumentCall', () => {
     expect(sessionStorage.getItem('doc-call:follow:sess-1')).toBeNull();
   });
 
+  it('an invitee joining a call it has no record of reads the session with its lobby (platform-api needs lobbyName)', async () => {
+    const { g, pa, hook } = setup({ identity: { userId: 'u-frank', displayName: 'Frank Davis' } });
+    act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantCount: 3 }); });
+    await act(async () => { await hook.result.current.join('sess-9', { micOn: true, cameraOn: false }); });
+    await waitFor(() => expect(pa.calls.some((c) => c.method === 'GET' && c.path.startsWith('/api/video/sessions/sess-9'))).toBe(true));
+    const reads = pa.calls.filter((c) => c.method === 'GET' && c.path.startsWith('/api/video/sessions/sess-9'));
+    for (const r of reads) expect(r.path).toBe('/api/video/sessions/sess-9?lobbyName=doc-auth');
+  });
+
   it('a follower navigates when the person they follow presents another document; host takeover moves the follow', async () => {
     const { g, hook, onNavigate } = setup({ identity: { userId: 'u-frank', displayName: 'Frank Davis' } });
     act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantCount: 3 }); });

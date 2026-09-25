@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.97.11 — 2026-09-25
+
+- **client/video (fix): `useDocumentCall` reads a session with its lobby.**
+  `GET /api/video/sessions/:id` is keyed by lobby and platform-api answers
+  400 without `?lobbyName=`, so every invitee's read of the ringing call (and
+  the read after joining a call this page had no record of) failed and fell
+  through to the document listing. The read now carries the lobby it knows
+  (the join's, the record's, else the page's document).
+
 ## 0.97.10 — 2026-09-25
 
 - **call: `onCallStarted` and `onCallMissed` hooks** beside `onCallEnded`.

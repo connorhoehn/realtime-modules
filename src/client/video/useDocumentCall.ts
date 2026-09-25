@@ -402,7 +402,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
   const lastReadAt = useRef(new Map<string, number>());
   const readGeneration = useRef(0);
 
-  const readPlatformSession = useCallback(async (wantedCallId?: string | null) => {
+  const readPlatformSession = useCallback(async (wantedCallId?: string | null, lobby?: string | null) => {
     const docId = optsRef.current.documentId;
     const key = `${docId}|${wantedCallId ?? ''}`;
     if (readsInFlight.current.has(key)) return;
@@ -414,7 +414,12 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
       const wanted = wantedCallId ?? optsRef.current.callId ?? joinedRef.current;
       if (wanted) {
         try {
-          const body = await api(`/api/video/sessions/${encodeURIComponent(wanted)}`);
+          // The row's partition key is its lobby (the host document); without
+          // `lobbyName` platform-api answers 400 and every invitee's read of
+          // the ringing call fell through to the document listing.
+          const known = callRef.current && callRef.current.callId === wanted ? callRef.current : null;
+          const lobbyName = lobby || known?.lobbyName || known?.documentId || docId;
+          const body = await api(`/api/video/sessions/${encodeURIComponent(wanted)}?lobbyName=${encodeURIComponent(lobbyName)}`);
           const row = ((body.session as Record<string, unknown>) ?? body);
           const s = toDocumentCallSession(row);
           if (s && isLive(s, row)) found = s;
@@ -829,7 +834,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
       });
       announceSelf(true);
       send({ service: 'call', action: 'meta', callId });
-      if (!c) void readPlatformSession(callId);
+      if (!c) void readPlatformSession(callId, lobby);
     } catch (err) {
       const message = (err as Error).message || 'Could not join the call';
       setError({ message, retry: () => { void join(callId, m); } });
