@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.96.0 — 2026-09-24
+
+Document calls: a call that belongs to a document review (realtime-examples
+`docs/design/document-calls/SPEC.md` §4–5).
+
+- **call (fix): ring expiry is per target.** The invite sweep used to forget
+  the whole call once `inviteExpiresAt` passed, so one unanswered invitee in a
+  group call — or an unanswered mid-call invite — ended the call for everyone,
+  and on two replicas an accept on the other node never counted. A call
+  someone answered is now never forgotten by the sweep (checked locally and in
+  the state store); only the expired target's replay entry is dropped. An
+  unanswered legacy 1:1 ring still ends as a missed call. The replay path
+  follows the same rule. The tick body is now `runInviteSweep(now?)`.
+- **call:** `DocumentCallMeta` + `DocumentCallMetaStore`, with
+  `InMemoryDocumentCallMetaStore` and `RedisDocumentCallMetaStore`
+  (`call:meta:<callId>` hash, TTL 4 h, one field per invited person so two
+  replicas never overwrite each other's marks, presenter written then read
+  back; `call:meta-index` set for the sweep). New `CallServiceOptions`:
+  `metaStore`, `onOfflineInvite(target, invite)`, `isClientAlive(clientId)`.
+- **call:** new actions `meta` (reply `call-meta` to the asker),
+  `set-documents` (any participant), `present` (presenter or host may replace a
+  presenter; only review documents), `set-title` (host); server-only
+  `call-meta` and `invite-expired`; `user-status` gains `reconnecting`.
+- **call:** a `kind:'document-review'` invite writes the meta on the call's
+  first invite and marks each target `ringing` (online) or `notified` (no
+  connected client, or `ring:false` — `onOfflineInvite` runs). Document calls
+  never broadcast to every client: signalling with no targets goes to the
+  call's participants. `ended` with `forEveryone` is host-only and ends the call
+  on every node; plain `ended` is one person leaving (`user-status: left`), the
+  last one out ends it. A dropped socket is `reconnecting` for the rejoin grace,
+  then `left`; a lone participant refreshing keeps the call. The sweep leader
+  expires rings per person (`missed`, `invite-expired` to the inviter) and,
+  with `isClientAlive`, prunes roster entries whose replica died.
+- **client/video:** `useMediaDevices`, `useAudioVideoSettings` (stored under
+  `call-device-preferences`, compatible with the older DevicePreferences
+  shape), `useDocumentCall` (PA session create/join/end + `activeCallSessionId`,
+  signalling, roster, follow-the-presenter with `onNavigate`, reconnect
+  re-sends; the consumer mounts `LVSHangoutSessionProvider` with `lvs` and
+  passes the session back as `media`) and `useIncomingDocumentCalls` (FIFO
+  rings, 60 s TTL, `accept` / `decline(reason)` / `dismiss`).
+- event-catalog 0.8.2 declares the new frames (`document-calls` bundle).
+
 ## 0.95.11 — 2026-09-25
 
 - **server/crdt:** `copyDocument` claims the new document's channel for the
