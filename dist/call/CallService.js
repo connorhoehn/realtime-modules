@@ -198,6 +198,9 @@ class CallService {
     /** Calls whose registration has reached the shared store at least once —
      *  after that, "not in the store" means gone. */
     storeMirrored = new Set();
+    /** Roster size last pushed to ringing invitees, per call — so every
+     *  participant-state (mic toggles) does not re-push an unchanged roster. */
+    lastRingingPush = new Map();
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     sweepRunning = false;
     constructor(opts) {
@@ -631,6 +634,7 @@ class CallService {
         this.activeCalls.delete(callId);
         this.acceptedCallIds.delete(callId);
         this.storeMirrored.delete(callId);
+        this.lastRingingPush.delete(callId);
         // J2 — also drop any pending grace for a call we are forgetting
         // outright, so a late timer can't resurrect a terminal decision.
         const pendingGrace = this.rejoinGraceTimers.get(callId);
@@ -988,6 +992,40 @@ class CallService {
             this.sendError(clientId, 'lobbyName is required on status');
             return;
         }
+        await this.sendToClients([clientId], {
+            type: 'call',
+            action: 'active-call',
+            data: await this.buildActiveCallData(lobbyName),
+            timestamp: new Date().toISOString(),
+        });
+    }
+    /**
+     * Push a fresh `active-call` for a document call to everyone still being
+     * rung for it. Someone ringing is not in the call, so no roster frame ever
+     * reaches them; without this the popover's "3 people in the call" was
+     * whatever their one `status` right after the ring said (lane D/E,
+     * 2026-09-25: always just the host, because everyone else accepts after
+     * that). Called on every roster change of a document call.
+     */
+    async pushRosterToRinging(callId) {
+        const meta = await this.getDocumentMeta(callId);
+        if (!meta)
+            return;
+        const ringing = Object.entries(meta.invites).filter(([, i]) => i.state === 'ringing').map(([u]) => u);
+        if (ringing.length === 0)
+            return;
+        try {
+            const data = await this.buildActiveCallData(meta.documentId);
+            if (data.callId !== callId)
+                return; // another call is the lobby's answer now
+            await this.sendToUsers(ringing, { type: 'call', action: 'active-call', data, timestamp: new Date().toISOString() });
+        }
+        catch (e) {
+            this.logger.warn(`[CallService] roster push to ringing invitees failed for ${callId}: ${e?.message ?? e}`);
+        }
+    }
+    /** The `active-call` answer for a lobby (see handleStatusQuery). */
+    async buildActiveCallData(lobbyName) {
         const now = Date.now();
         // Ghost-call guard: call state has a 4h safety TTL, so a call whose
         // every participant crashed away lingers in the registries long after
@@ -1148,18 +1186,7 @@ class CallService {
             // People, not connections: two tabs of one person count once.
             data.participantCount = docMeta ? userIds.size : participantClientIds.length;
         }
-        const envelope = {
-            type: 'call',
-            action: 'active-call',
-            data: data,
-            timestamp: new Date().toISOString(),
-        };
-        try {
-            await Promise.resolve(this.messageRouter.sendToClient(clientId, envelope));
-        }
-        catch (e) {
-            this.logger.warn(`[CallService] active-call reply failed for ${clientId}: ${e?.message ?? e}`);
-        }
+        return data;
     }
     async handleAction(clientId, action, data) {
         // Wrap the whole action in a per-verb span so the trace UI shows
@@ -1581,6 +1608,16 @@ class CallService {
             if (this.stateStore && typeof this.stateStore.markAccepted === 'function') {
                 void this.stateStore.markAccepted(callId, CallService.ACCEPTED_CALL_TTL_SEC)
                     .catch((e) => this.logger.warn(`[CallService] stateStore.markAccepted failed for ${callId}: ${e?.message ?? e}`));
+            }
+        }
+        // Document call: someone joined (or came back) — people still being
+        // rung see the new count.
+        if (docMeta && callId && (action === 'accepted' || action === 'participant-state')) {
+            const before = this.lastRingingPush.get(callId);
+            const size = this.activeCalls.get(callId)?.participantClientIds.size ?? 0;
+            if (action === 'accepted' || before !== size) {
+                this.lastRingingPush.set(callId, size);
+                void this.pushRosterToRinging(callId);
             }
         }
         if (callId && (action === 'ended' || action === 'declined' || action === 'cancelled')) {
@@ -2309,6 +2346,7 @@ class CallService {
                 presentingCleared = true;
             }
         }
+        void this.pushRosterToRinging(callId);
         this.logger.info(`[CallService] pruned ${dead.length} dead client(s) from document call ${callId}`);
         return 'changed';
     }
@@ -2747,6 +2785,7 @@ class CallService {
             await store.setPresenting(callId, null);
         const rest = members.filter((c) => !targetClients.includes(c));
         await this.sendToClients(rest, this.userStatusEnvelope(callId, meta, target, 'left', 'removed', { by: actorUserId }));
+        void this.pushRosterToRinging(callId);
         this.logger.info(`[CallService] host ${actorUserId} removed ${target} from ${callId}`);
         return false;
     }
@@ -2851,6 +2890,7 @@ class CallService {
             return;
         }
         const stillThere = members.some((c) => meta.clients?.[c] === userId);
+        void this.pushRosterToRinging(callId);
         if (!stillThere && userId) {
             this.clearDocLeaveTimer(callId, userId);
             await this.sendToClients(members, this.userStatusEnvelope(callId, meta, userId, 'left', reason));
@@ -2941,6 +2981,7 @@ class CallService {
         }
         if (!stillThere)
             this.scheduleDocLeave(callId, userId);
+        void this.pushRosterToRinging(callId);
     }
     scheduleDocLeave(callId, userId) {
         const key = `${callId}|${userId}`;

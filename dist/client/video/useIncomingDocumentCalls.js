@@ -99,6 +99,16 @@ function useIncomingDocumentCalls(opts) {
                 setQueue((q) => q.filter((i) => i.callId !== callId));
                 return;
             }
+            if (f.action === 'active-call') {
+                // The live roster of a call that is ringing us.
+                if (!Array.isArray(f.data.participantUserIds))
+                    return;
+                const ids = Array.from(new Set(f.data.participantUserIds.filter((u) => typeof u === 'string' && !!u)));
+                setQueue((q) => (q.some((i) => i.callId === callId)
+                    ? q.map((i) => (i.callId === callId ? { ...i, participantUserIds: ids, participantCount: ids.length } : i))
+                    : q));
+                return;
+            }
             if (f.action !== 'invite')
                 return;
             const inv = parseDocumentInvite(f.data, localUserId, ttlMs);

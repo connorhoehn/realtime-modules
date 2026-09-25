@@ -83,4 +83,15 @@ describe('useIncomingDocumentCalls', () => {
     act(() => { g.push('invite', inviteData('c2', { replayed: true, originalTimestamp: new Date(Date.now() - 70_000).toISOString() })); });
     expect(result.current.queueLength).toBe(1);
   });
+
+  it('keeps a queued ring\'s count live from active-call pushes', () => {
+    const g = makeFakeGateway();
+    const { result } = renderHook(() => useIncomingDocumentCalls({ gateway: g.gw, localUserId: 'u-bob' }));
+    act(() => { g.push('invite', inviteData('c1', { participantCount: 1 })); });
+    expect(result.current.current!.participantCount).toBe(1);
+    act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'c1', participantUserIds: ['u-host', 'u-frank', 'u-dan'] }); });
+    expect(result.current.current).toMatchObject({ participantCount: 3, participantUserIds: ['u-host', 'u-frank', 'u-dan'] });
+    act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'other', participantUserIds: ['x'] }); });
+    expect(result.current.current!.participantCount).toBe(3);
+  });
 });

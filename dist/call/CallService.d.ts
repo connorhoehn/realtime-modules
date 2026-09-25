@@ -104,6 +104,9 @@ export declare class CallService {
     /** Calls whose registration has reached the shared store at least once —
      *  after that, "not in the store" means gone. */
     private storeMirrored;
+    /** Roster size last pushed to ringing invitees, per call — so every
+     *  participant-state (mic toggles) does not re-push an unchanged roster. */
+    private lastRingingPush;
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning;
     constructor(opts: CallServiceOptions);
@@ -238,6 +241,17 @@ export declare class CallService {
      * liveness-filtered through getCall).
      */
     private handleStatusQuery;
+    /**
+     * Push a fresh `active-call` for a document call to everyone still being
+     * rung for it. Someone ringing is not in the call, so no roster frame ever
+     * reaches them; without this the popover's "3 people in the call" was
+     * whatever their one `status` right after the ring said (lane D/E,
+     * 2026-09-25: always just the host, because everyone else accepts after
+     * that). Called on every roster change of a document call.
+     */
+    private pushRosterToRinging;
+    /** The `active-call` answer for a lobby (see handleStatusQuery). */
+    private buildActiveCallData;
     handleAction(clientId: string, action: string, data: CallInvite | null | undefined): Promise<void>;
     handleCallEvent(clientId: string, action: CallAction, data: CallInvite | null | undefined): Promise<void>;
     /**

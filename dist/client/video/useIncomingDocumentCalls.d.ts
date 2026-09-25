@@ -19,8 +19,11 @@ export interface IncomingDocumentCall {
     documentIds: string[];
     documentTitles?: Record<string, string>;
     message?: string;
-    /** People in the call when the invite was sent (for "3 in call"). */
+    /** People in the call now ("3 in call"): the invite's snapshot, then kept
+     *  live by the `active-call` pushes the server sends to ringing invitees. */
     participantCount: number;
+    /** Who they are, once the server has pushed the live roster. */
+    participantUserIds?: string[];
     /** Who is in it, when the caller sent names (avatar stack). */
     participants?: IncomingDocumentCallPerson[];
     media: 'video' | 'audio';

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.97.5 — 2026-09-25
+
+- **call (fix): someone being rung now sees who is in the call, live.** The
+  roster itself was right (Redis held every accepted connection, the meta
+  mapped them to people), but a ringing invitee is not in the call, so no
+  roster frame reached them; their one `status` came right after the ring,
+  before anyone else had accepted, and the popover read "1 person in the call"
+  for good (reproduced on the live stack with the 05 scene: every `active-call`
+  Alice got arrived within 0.4 s of her ring, all before Frank and Bob joined).
+  The server now pushes a fresh `active-call` to every invitee still `ringing`
+  whenever a document call's roster changes — join, rejoin, leave, disconnect,
+  removal, dead-client prune — not on mic/camera toggles.
+- **client/video:** `useIncomingDocumentCalls` updates a queued ring's
+  `participantCount` (and new `participantUserIds`) from those pushes, so the
+  popover count is live on any page. `useDocumentCall` already took them.
+
 ## 0.97.4 — 2026-09-25
 
 - **client/video:** `useDocumentCall` lists invitees whose invite is
