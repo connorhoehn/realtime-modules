@@ -75,6 +75,10 @@ export interface UseIncomingDocumentCallsResult {
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 
+/** How far the client's clock may be off the server's before we stop trusting
+ *  `invitedAt` for the ring's end (only used without `expiresInMs`). */
+export const MAX_CLOCK_SKEW_MS = 5_000;
+
 /** Parse an invite frame into an IncomingDocumentCall, or null when it is not
  *  a document-call ring for this user. Exported for tests and custom queues. */
 export function parseDocumentInvite(data: Record<string, unknown>, localUserId: string | null, ttlMs: number, now = Date.now()): IncomingDocumentCall | null {
@@ -84,10 +88,22 @@ export function parseDocumentInvite(data: Record<string, unknown>, localUserId: 
   if (!callId || !callerId) return null;
   if (localUserId && callerId === localUserId) return null; // my own other tabs
   const targets = Array.isArray(data.targetUserIds) ? (data.targetUserIds as unknown[]).filter((t): t is string => typeof t === 'string') : [];
+  // When the ring started and ends, on the SERVER's clock where it said so.
+  // `expiresInMs` (time left when the server sent it) is skew-free; failing
+  // that, `invitedAt` / a replay's `originalTimestamp` with the client's clock
+  // skew bounded to MAX_CLOCK_SKEW_MS; failing that, arrival.
   let receivedAt = now;
-  if (data.replayed === true && typeof data.originalTimestamp === 'string') {
-    const t = Date.parse(data.originalTimestamp);
-    if (Number.isFinite(t)) receivedAt = t;
+  let expiresAt: number | null = null;
+  const serverStart = typeof data.invitedAt === 'number' ? data.invitedAt
+    : (data.replayed === true && typeof data.originalTimestamp === 'string' ? Date.parse(data.originalTimestamp) : NaN);
+  if (Number.isFinite(serverStart)) receivedAt = Math.min(now, serverStart as number);
+  if (typeof data.expiresInMs === 'number' && Number.isFinite(data.expiresInMs)) {
+    expiresAt = now + Math.max(0, Math.min(ttlMs, data.expiresInMs));
+  } else if (Number.isFinite(serverStart)) {
+    // A client clock behind the server makes serverStart look like the
+    // future; one ahead makes it look older. Clamp both by the bound.
+    const start = Math.min(now + MAX_CLOCK_SKEW_MS, Math.max(serverStart as number, now - ttlMs - MAX_CLOCK_SKEW_MS));
+    expiresAt = Math.min(now + ttlMs, start + ttlMs);
   }
   const documentId = str(data.documentId) ?? str(data.lobbyName) ?? '';
   const documentIds = Array.isArray(data.documentIds)
@@ -106,7 +122,7 @@ export function parseDocumentInvite(data: Record<string, unknown>, localUserId: 
     participantCount: typeof data.participantCount === 'number' ? data.participantCount : 1,
     media: data.media === 'audio' ? 'audio' : 'video',
     receivedAt,
-    expiresAt: receivedAt + ttlMs,
+    expiresAt: expiresAt ?? receivedAt + ttlMs,
   };
   const avatar = str(data.callerAvatarUrl);
   if (avatar) out.callerAvatarUrl = avatar;
@@ -152,6 +168,15 @@ export function useIncomingDocumentCalls(opts: UseIncomingDocumentCallsOptions):
       if (f.action === 'ended' || f.action === 'cancelled' || f.action === 'accepted') {
         // Over, withdrawn, or answered on another of my tabs.
         setQueue((q) => q.filter((i) => i.callId !== callId));
+        return;
+      }
+      if (f.action === 'invite-expired') {
+        // The server's ring for me ran out: close it now, whatever my timer says.
+        if (str(f.data.userId) !== localUserId) return;
+        const expired = queueRef.current.find((i) => i.callId === callId);
+        if (!expired) return;
+        setQueue((q) => q.filter((i) => i.callId !== callId));
+        onMissedRef.current?.(expired);
         return;
       }
       if (f.action === 'active-call') {

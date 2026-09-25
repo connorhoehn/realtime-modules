@@ -94,4 +94,45 @@ describe('useIncomingDocumentCalls', () => {
     act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'other', participantUserIds: ['x'] }); });
     expect(result.current.current!.participantCount).toBe(3);
   });
+
+  it('ends the ring on the server\'s clock: a late-delivered invite does not outlive it', () => {
+    jest.useFakeTimers();
+    try {
+      const g = makeFakeGateway();
+      const onMissed = jest.fn();
+      const { result } = renderHook(() => useIncomingDocumentCalls({ gateway: g.gw, localUserId: 'u-bob', onMissed }));
+      // Delivered 50 s into the ring: 10 s left, not 60.
+      act(() => { g.push('invite', inviteData('c1', { invitedAt: Date.now() - 50_000, expiresInMs: 10_000 })); });
+      act(() => { jest.advanceTimersByTime(9_000); });
+      expect(result.current.current).not.toBeNull();
+      act(() => { jest.advanceTimersByTime(1_500); });
+      expect(result.current.current).toBeNull();
+      expect(onMissed).toHaveBeenCalledTimes(1);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('without expiresInMs, invitedAt counts with the clock skew bounded', () => {
+    const g = makeFakeGateway();
+    const { result } = renderHook(() => useIncomingDocumentCalls({ gateway: g.gw, localUserId: 'u-bob' }));
+    const now = Date.now();
+    // Server clock far ahead of ours: treated as at most 5 s ahead.
+    act(() => { g.push('invite', inviteData('c1', { invitedAt: now + 120_000 })); });
+    expect(result.current.current!.expiresAt).toBeLessThanOrEqual(Date.now() + 60_000);
+    // Rung 55 s ago by the server's clock: 5 s left.
+    act(() => { g.push('invite', inviteData('c2', { invitedAt: now - 55_000 })); });
+    const c2 = result.current.queue.find((q) => q.callId === 'c2')!;
+    expect(c2.expiresAt - now).toBeLessThanOrEqual(5_000 + 50);
+  });
+
+  it('closes on invite-expired for me, reports it missed once, ignores it for others', () => {
+    const g = makeFakeGateway();
+    const onMissed = jest.fn();
+    const { result } = renderHook(() => useIncomingDocumentCalls({ gateway: g.gw, localUserId: 'u-bob', onMissed }));
+    act(() => { g.push('invite', inviteData('c1')); });
+    act(() => { g.push('invite-expired', { callId: 'c1', userId: 'u-alice' }); });
+    expect(result.current.current?.callId).toBe('c1');
+    act(() => { g.push('invite-expired', { callId: 'c1', userId: 'u-bob' }); });
+    expect(result.current.current).toBeNull();
+    expect(onMissed).toHaveBeenCalledTimes(1);
+  });
 });

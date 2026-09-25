@@ -165,7 +165,32 @@ function useDocumentCall(opts) {
     const sessionRef = (0, react_1.useRef)(session);
     sessionRef.current = session;
     const authRef = (0, react_1.useRef)({});
-    const call = (0, react_1.useMemo)(() => mergeDocumentCall(session, meta), [session, meta]);
+    // Ring outcomes (declined / didn't answer) as they arrive, per call. Kept
+    // apart from `meta` so an outcome that arrives before the call's meta —
+    // or a call-meta read before the change but delivered after it — cannot
+    // leave the row on "Ringing…". A later ring of the same person (a newer
+    // invite `at`) supersedes it.
+    const [outcomes, setOutcomes] = (0, react_1.useState)({});
+    const call = (0, react_1.useMemo)(() => {
+        const merged = mergeDocumentCall(session, meta);
+        if (!merged)
+            return merged;
+        let invites = merged.invites;
+        for (const [key, o] of Object.entries(outcomes)) {
+            const [cid, uid] = key.split('|');
+            if (cid !== merged.callId || !uid)
+                continue;
+            const cur = invites[uid];
+            if (cur && (cur.state === 'accepted' || cur.state === 'removed' || cur.state === 'notified'))
+                continue;
+            if (cur && o.inviteAt !== undefined && cur.at > o.inviteAt)
+                continue; // rung again since
+            if (cur && o.inviteAt === undefined && cur.state !== 'ringing')
+                continue;
+            invites = { ...invites, [uid]: { ...(cur ?? { at: o.inviteAt ?? 0 }), state: o.state } };
+        }
+        return invites === merged.invites ? merged : { ...merged, invites };
+    }, [session, meta, outcomes]);
     const callRef = (0, react_1.useRef)(call);
     callRef.current = call;
     // ---- transport helpers ---------------------------------------------
@@ -214,6 +239,8 @@ function useDocumentCall(opts) {
             cameraOn: selfRef.current.cameraOn,
             screenSharing: selfRef.current.screenSharing,
             status,
+            // Lets the server route it to the call even if it overtakes the invite.
+            kind: 'document-review',
         };
     }, []);
     const lastAnnounce = (0, react_1.useRef)(0);
@@ -397,12 +424,11 @@ function useDocumentCall(opts) {
                 const uid = str(d.userId);
                 if (!uid)
                     return;
+                if (uid === optsRef.current.identity.userId)
+                    return; // my own ring (useIncomingDocumentCalls)
                 const state = f.action === 'declined' ? 'declined' : 'missed';
-                setMeta((m) => {
-                    if (!m || !m.invites[uid])
-                        return m;
-                    return { ...m, invites: { ...m.invites, [uid]: { ...m.invites[uid], state } } };
-                });
+                const inviteAt = typeof d.inviteAt === 'number' ? d.inviteAt : undefined;
+                setOutcomes((o) => ({ ...o, [`${callId}|${uid}`]: { state, ...(inviteAt !== undefined ? { inviteAt } : {}) } }));
                 return;
             }
             if (f.action === 'mute-participant' || f.action === 'remove-participant') {
@@ -748,6 +774,19 @@ function useDocumentCall(opts) {
         return () => window.removeEventListener('beforeunload', onUnload);
     }, []);
     const invite = (0, react_1.useCallback)((userIds, message) => {
+        // Ringing someone again clears their last outcome.
+        const cid = joinedRef.current;
+        if (cid)
+            setOutcomes((o) => {
+                let next = o;
+                for (const u of userIds)
+                    if (next[`${cid}|${u}`]) {
+                        if (next === o)
+                            next = { ...o };
+                        delete next[`${cid}|${u}`];
+                    }
+                return next;
+            });
         const frame = inviteFrame(userIds.filter((u) => u && u !== optsRef.current.identity.userId), { message });
         if (frame && frame.targetUserIds.length)
             send(frame);

@@ -197,7 +197,10 @@ describe('useMediaEffects — no preview session (unchanged legacy path)', () =>
 
     act(() => { result.current.setFilter('none'); result.current.setBackgroundMode('none'); });
     expect(result.current.active).toBe(false);
-    expect(result.current.outputTrack).toBe(source.asTrack());
+    // Back to None keeps the published canvas track, now a plain passthrough —
+    // a call that published it keeps sending the camera, not black.
+    expect(result.current.outputTrack).toBe(live.canvasTracks[0].asTrack());
+    expect(live.canvasTracks[0].stop).not.toHaveBeenCalled();
   });
 
   it('exposes an empty preview surface and ignores apply/cancel', () => {

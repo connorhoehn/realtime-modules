@@ -976,6 +976,8 @@ export class CallService {
                     participantCount: Object.values(docMeta.invites).filter((i) => i.state === 'accepted').length + 1,
                     replayed: true,
                     originalTimestamp: new Date(inv.at).toISOString(),
+                    invitedAt: inv.at,
+                    expiresInMs: Math.max(0, CallService.INVITE_TTL_MS - (now - inv.at)),
                 };
                 if (docMeta.documentTitles) docData.documentTitles = docMeta.documentTitles;
                 if (state.originalCallerName) docData.callerName = state.originalCallerName;
@@ -1350,6 +1352,13 @@ export class CallService {
                 const r = await this.handleDocumentCallVerb(clientId, action, payload, docMeta);
                 if (r.handled) return;
                 if (targetUserIds.length === 0) docRecipients = r.recipientsIfUntargeted;
+            } else if (payload.kind === 'document-review' && targetUserIds.length === 0) {
+                // A document-call frame that overtook its own invite (the
+                // gateway handles a socket's frames concurrently, and the hook
+                // sends participant-state right after invite): the meta is not
+                // written yet. Send it to whoever the call already has —
+                // never broadcast it to every connected client.
+                docRecipients = (await this.docCallMemberClientIds(callId)).filter((c) => c !== clientId);
             }
         }
 
@@ -1736,6 +1745,13 @@ export class CallService {
             timestamp: new Date().toISOString(),
         };
 
+        if (docInvite) {
+            // The ring's clock is the server's: a client that got the invite
+            // late (queued, replayed, slow link) still closes it on time.
+            // `expiresInMs` is relative, so the client's clock skew does not matter.
+            payload = { ...payload, invitedAt: Date.now(), expiresInMs: CallService.INVITE_TTL_MS };
+            envelope.data = payload;
+        }
         if (docInvite && docInvite.ringTargets.length === 0) {
             // Nobody online to ring (or ring:false) — the invite is recorded
             // in the meta and the offline hook ran; nothing goes out.
@@ -2335,10 +2351,12 @@ export class CallService {
             changed = true;
             this.dropInviteForUser(userId, callId);
             const inviter = inv.by || meta.hostUserId;
-            await this.sendToUsers([inviter], {
+            // The inviter's row reads "Didn't answer"; the target's popover
+            // closes on it even if its own timer started late.
+            await this.sendToUsers([inviter, userId], {
                 type: 'call',
                 action: 'invite-expired',
-                data: { callId, userId },
+                data: { callId, userId, inviteAt: inv.at },
                 timestamp: new Date().toISOString(),
             });
             this.logger.info(`[CallService] ring to ${userId} in document call ${callId} expired (missed)`);
@@ -2868,7 +2886,11 @@ export class CallService {
             this.dropInviteForUser(userId, callId);
             const inviter = prev?.by || meta.hostUserId;
             const members = await this.docCallMemberClientIds(callId);
-            const envelope: CallEvent = { type: 'call', action: 'declined', data: { ...payload, userId }, timestamp: new Date().toISOString() };
+            const envelope: CallEvent = {
+                type: 'call', action: 'declined',
+                data: { ...payload, userId, ...(prev ? { inviteAt: prev.at } : {}) },
+                timestamp: new Date().toISOString(),
+            };
             await this.sendToClients(members.filter((c) => c !== clientId), envelope);
             await this.sendToUsers([inviter], envelope);
             const fresh = await store.get(callId);

@@ -35,6 +35,10 @@ export declare class MediaEffectsEngine {
     private pipeline;
     private listeners;
     private disposed;
+    private readonly passthroughAfterUse;
+    constructor(opts?: {
+        passthroughAfterUse?: boolean;
+    });
     private handleSourceEnded;
     getFilterId(): string;
     getBackgroundMode(): BackgroundMode;
@@ -43,7 +47,8 @@ export declare class MediaEffectsEngine {
     getSource(): MediaStreamTrack | null;
     /** Active = at least one effect is on. Drives pipeline existence. */
     isActive(): boolean;
-    /** Canvas track while active, raw source track while inactive. */
+    /** Canvas track while a pipeline exists (active, or passthrough after an
+     *  effect was used on this source); raw source track before that. */
     getOutputTrack(): MediaStreamTrack | null;
     /** Fired whenever output identity changes (activation, deactivation,
      *  setSource, source ended). Returns unsubscribe. */

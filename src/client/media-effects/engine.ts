@@ -13,8 +13,14 @@
 //   - On the inactive→active edge the pipeline is built (hidden <video>
 //     playing the source track, output/bg/person canvases allocated once,
 //     RAF draw loop, canvas.captureStream(30)) and the output becomes the
-//     canvas track. On the active→inactive edge it is torn down and the
-//     output reverts to the raw track.
+//     canvas track. On the active→inactive edge the pipeline STAYS UP as a
+//     passthrough (camera frames drawn with no effect), so the output track
+//     is unchanged. (2026-09-25: tearing it down stopped the canvas track
+//     that calls had already published, and anyone who did not re-publish
+//     on onOutputChange showed remote viewers black after "None".) It is
+//     torn down with the source (setSource / source ended / dispose).
+//     `new MediaEffectsEngine({ passthroughAfterUse: false })` restores the
+//     old revert-to-raw behaviour.
 //   - Setting changes while active are plain field reads in the draw loop —
 //     no rebuild, no output identity change, so downstream consumers
 //     (RTCRtpSender.replaceTrack etc.) only hear from onOutputChange when
@@ -96,6 +102,11 @@ export class MediaEffectsEngine {
   private pipeline: Pipeline | null = null;
   private listeners = new Set<OutputChangeListener>();
   private disposed = false;
+  private readonly passthroughAfterUse: boolean;
+
+  constructor(opts: { passthroughAfterUse?: boolean } = {}) {
+    this.passthroughAfterUse = opts.passthroughAfterUse !== false;
+  }
 
   // Bound once so add/removeEventListener pair correctly across setSource calls.
   private handleSourceEnded = () => {
@@ -123,7 +134,8 @@ export class MediaEffectsEngine {
     return this.filterId !== 'none' || this.backgroundMode !== 'none' || this.faceSpriteId != null;
   }
 
-  /** Canvas track while active, raw source track while inactive. */
+  /** Canvas track while a pipeline exists (active, or passthrough after an
+   *  effect was used on this source); raw source track before that. */
   getOutputTrack(): MediaStreamTrack | null {
     return this.pipeline?.outputTrack ?? this.source;
   }
@@ -222,6 +234,9 @@ export class MediaEffectsEngine {
     if (shouldRun && !this.pipeline) {
       this.buildPipeline();
     } else if (!shouldRun && this.pipeline) {
+      // Effects off with a source still attached: keep drawing plain frames
+      // into the same canvas track (see header). No source / disposed: tear down.
+      if (this.passthroughAfterUse && this.source && !this.disposed) return;
       this.teardownPipeline();
     }
   }

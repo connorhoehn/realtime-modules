@@ -58,6 +58,9 @@ export interface UseIncomingDocumentCallsResult {
     /** Pop without telling anyone (the ring stays unanswered → missed). */
     dismiss(): void;
 }
+/** How far the client's clock may be off the server's before we stop trusting
+ *  `invitedAt` for the ring's end (only used without `expiresInMs`). */
+export declare const MAX_CLOCK_SKEW_MS = 5000;
 /** Parse an invite frame into an IncomingDocumentCall, or null when it is not
  *  a document-call ring for this user. Exported for tests and custom queues. */
 export declare function parseDocumentInvite(data: Record<string, unknown>, localUserId: string | null, ttlMs: number, now?: number): IncomingDocumentCall | null;

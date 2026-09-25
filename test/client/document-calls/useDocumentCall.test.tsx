@@ -303,4 +303,30 @@ describe('useDocumentCall', () => {
       jest.useRealTimers();
     }
   });
+
+  it('ring outcomes survive arriving before the meta, and a stale call-meta after them', async () => {
+    const { g, hook } = setup();
+    await act(async () => { await hook.result.current.start({ ...startInput, targetUserIds: ['u-alice', 'u-bob'] }); });
+    const metaWith = (invites: Record<string, unknown>) => ({
+      callId: 'sess-1', documentId: 'doc-auth', title: 'T', documentIds: ['doc-auth'], hostUserId: 'u-host', media: 'video',
+      startedAt: Date.now(), presenting: null, invites,
+    });
+    // Declined lands before any call-meta (the hook only has its seed meta).
+    act(() => { g.push('declined', { callId: 'sess-1', userId: 'u-alice', reason: 'not-now', inviteAt: 1000 }); });
+    const row = (uid: string) => hook.result.current.participants.find((p) => p.userId === uid);
+    expect(row('u-alice')?.state).toBe('declined');
+    // A call-meta read before the decline, delivered after it.
+    act(() => { g.push('call-meta', metaWith({ 'u-alice': { at: 1000, state: 'ringing' }, 'u-bob': { at: 1000, state: 'ringing' } })); });
+    expect(row('u-alice')?.state).toBe('declined');
+    // Expiry, then another stale call-meta.
+    act(() => { g.push('invite-expired', { callId: 'sess-1', userId: 'u-bob', inviteAt: 1000 }); });
+    act(() => { g.push('call-meta', metaWith({ 'u-alice': { at: 1000, state: 'ringing' }, 'u-bob': { at: 1000, state: 'ringing' } })); });
+    expect(row('u-bob')?.state).toBe('missed');
+    // Someone rings Bob again (a newer invite time): ringing again.
+    act(() => { g.push('call-meta', metaWith({ 'u-alice': { at: 1000, state: 'declined' }, 'u-bob': { at: 2000, state: 'ringing' } })); });
+    expect(row('u-bob')?.state).toBe('ringing');
+    // Frames about my own ring are not outcomes on my list.
+    act(() => { g.push('invite-expired', { callId: 'sess-1', userId: 'u-host' }); });
+    expect(row('u-host')?.state).toBe('in-call');
+  });
 });

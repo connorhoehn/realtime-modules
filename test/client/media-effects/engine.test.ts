@@ -164,7 +164,33 @@ describe('MediaEffectsEngine state machine', () => {
     expect(engine.canvasesCreated).toBe(4); // no second pipeline
   });
 
-  it('tears down and reverts to raw on the active→inactive edge', () => {
+  it('back to None: keeps the same canvas track as a passthrough (published track never goes black)', () => {
+    engine.setSource(raw.asTrack());
+    engine.setFilter('warm');
+    const out = engine.getOutputTrack();
+    const emissions = outputs.length;
+    engine.setFilter('none');
+
+    expect(engine.isActive()).toBe(false);
+    // Same live track, still running; nobody is told to swap.
+    expect(engine.getOutputTrack()).toBe(out);
+    expect(outputs.length).toBe(emissions);
+    expect(engine.canvasTracks[0].stop).not.toHaveBeenCalled();
+    expect(engine.framesRequested).toBeGreaterThan(0);
+    // Turning an effect on again reuses it — no second pipeline.
+    engine.setFilter('cool');
+    expect(engine.getOutputTrack()).toBe(out);
+    expect(engine.canvasesCreated).toBe(4);
+    // Detaching the source ends it.
+    engine.setSource(null);
+    expect(engine.canvasTracks[0].stop).toHaveBeenCalled();
+    expect(raw.stop).not.toHaveBeenCalled();
+  });
+
+  it('passthroughAfterUse:false restores revert-to-raw on the active→inactive edge', () => {
+    engine = new TestEngine({ passthroughAfterUse: false });
+    outputs = [];
+    engine.onOutputChange((t) => outputs.push(t));
     engine.setSource(raw.asTrack());
     engine.setFilter('warm');
     engine.setFilter('none');

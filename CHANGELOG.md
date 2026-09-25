@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.97.6 — 2026-09-25
+
+- **client/media-effects (fix): back to None no longer sends black.** On the
+  active→inactive edge the engine tore its canvas pipeline down and stopped the
+  canvas track, expecting every consumer to re-publish the raw camera on
+  `onOutputChange`; a call (docked or overlay) that had published the canvas
+  track kept sending a stopped track. The pipeline now stays up as a
+  passthrough — plain camera frames, same track — until the source changes,
+  ends, or the engine is disposed. `new MediaEffectsEngine({
+  passthroughAfterUse: false })` keeps the old behaviour.
+- **call + client/video (fix): rings end on the server's clock.** Document
+  invites carry `invitedAt` and `expiresInMs` (replays: the time left);
+  `useIncomingDocumentCalls` ends the ring from `expiresInMs` (skew-free), else
+  from `invitedAt` with the client's clock skew bounded to 5 s
+  (`MAX_CLOCK_SKEW_MS`), and closes it on `invite-expired` for itself — which
+  the sweep now sends to the expired person as well as the inviter. A
+  late-delivered invite no longer outlives its ring.
+- **client/video (fix): "Declined" / "Didn't answer" stick on the caller's
+  row.** `useDocumentCall` dropped a `declined` / `invite-expired` that arrived
+  before the invite was in its meta, and a `call-meta` read before the change
+  but delivered after it put the row back to "Ringing…". Outcomes are now kept
+  per call and person and win over any older ring (`inviteAt`, sent with both
+  frames); a newer ring (Ring again) supersedes them.
+- **call (fix): a document call's first `participant-state` went to every
+  connected client.** The hook sends it right after `invite`; the gateway
+  handles a socket's frames concurrently, so it could overtake the invite
+  before the meta existed and fall back to broadcast. The hook tags it
+  `kind: 'document-review'` and the server routes such a frame to the call's
+  members only.
+- event-catalog 0.8.4: `ws.call.invite-expired` gains `inviteAt`.
+
 ## 0.97.5 — 2026-09-25
 
 - **call (fix): someone being rung now sees who is in the call, live.** The
