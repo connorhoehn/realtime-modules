@@ -94,6 +94,15 @@ export declare class CallService {
     private rejoinGraceMs;
     private onSweepSkipped;
     private readonly _withSpan;
+    /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
+    private metaStore;
+    private onOfflineInviteHook;
+    private isClientAliveHook;
+    /** Document calls — `<callId>|<userId>` → timer that turns a
+     *  `reconnecting` participant into `left` when the grace runs out. */
+    private docLeaveTimers;
+    /** Guards against two overlapping sweep ticks (the tick is async now). */
+    private sweepRunning;
     constructor(opts: CallServiceOptions);
     /**
      * Fan-out logic for a cross-node departure. Mirrors handleDisconnect
@@ -260,6 +269,91 @@ export declare class CallService {
      * terminal departure cross-node, and forgets the call.
      */
     private scheduleGraceEnd;
+    /**
+     * One sweep tick. Public so tests (and a consumer that wants a sweep on
+     * demand) can drive it without waiting 15 s.
+     *
+     * Expiry is PER TARGET. Before 2026-09-24 the sweep forgot the whole call
+     * the moment `inviteExpiresAt` passed, so one unanswered invitee in a
+     * group call — or an unanswered mid-call invite — ended the call for
+     * everyone, and on a two-replica gateway an accept on the other replica
+     * never reached this node's `acceptedCallIds` at all. Now:
+     *   - a call someone has accepted is never forgotten here; only the
+     *     expired target's invite-replay entry is dropped;
+     *   - an unanswered legacy (non-document) call still ends as a missed
+     *     call, as before;
+     *   - document calls are swept from the meta store: each ringing invite
+     *     older than the TTL becomes `missed`, the inviter's clients get
+     *     `invite-expired`, and the call itself is left alone;
+     *   - roster entries whose client is provably dead (its replica is gone)
+     *     are pruned when `isClientAlive` is wired.
+     */
+    runInviteSweep(now?: number): Promise<void>;
+    /** Legacy half of the sweep: this node's in-memory invite registry. */
+    private sweepLegacyInvites;
+    /** True when anyone besides the caller is (or was) in the call — checked
+     *  locally and in the cluster store, because the accept may have landed on
+     *  another replica. */
+    private callHasAcceptedParticipant;
+    /** Drop one person's invite-replay entry for one call (local + store). */
+    private dropInviteForUser;
+    /** Meta half of the sweep, for one document call. */
+    private sweepDocumentCall;
+    /**
+     * Remove roster entries whose client is provably dead — its replica went
+     * away without running handleDisconnect, so nobody else will. Uses the
+     * consumer's `isClientAlive` (the gateway checks the owning node's
+     * heartbeat). Each person with no live connection left gets a synthetic
+     * `user-status: left`; a call with nobody left ends.
+     */
+    private pruneDeadClients;
+    /** The authenticated user behind a client, falling back to what the
+     *  payload claims (SKIP_AUTH dev setups have no router identity). */
+    private resolveActorUserId;
+    private getDocumentMeta;
+    /** Participant = the host, anyone whose invite is `accepted`, or a
+     *  connection the call has seen. */
+    private isDocParticipant;
+    /** Connections currently in the call, cluster-wide (store) plus this
+     *  node's cache. */
+    private docCallMemberClientIds;
+    private removeClientFromCallEverywhere;
+    private sendToClients;
+    /** Every connection of the given users, cluster-wide. */
+    private sendToUsers;
+    private userStatusEnvelope;
+    /** Send `call-meta` to everyone in the call (plus `extraClientIds`). */
+    private broadcastCallMeta;
+    /**
+     * `kind:'document-review'` invite. Writes the meta on the call's first
+     * invite, marks each target ringing (online) or notified (no connected
+     * client, or `ring:false`), and returns who should actually be rung.
+     */
+    private handleDocumentInvite;
+    /** `meta` / `set-documents` / `present` / `set-title`. */
+    private handleDocumentCallAction;
+    /**
+     * Routing + bookkeeping for the signalling verbs of a document call.
+     * Returns true when it fully handled the action (the generic path must
+     * not run), or the recipients to use when the payload named none —
+     * a document call never falls back to broadcast-to-everyone.
+     */
+    private handleDocumentCallVerb;
+    /** One person leaves (explicitly). Others get `user-status: left`; the
+     *  last one out ends the call. */
+    private leaveDocumentCall;
+    /** The call is over for everyone: tell them, then drop every trace. */
+    private endDocumentCall;
+    /**
+     * A participant's socket dropped. Everyone else sees them as
+     * `reconnecting` for the rejoin grace; if no connection of theirs is back
+     * by then, `left`. The call itself survives even when nobody else is in
+     * it — a lone host refreshing the page keeps the call.
+     */
+    private handleDocumentDisconnect;
+    private scheduleDocLeave;
+    private clearDocLeaveTimer;
+    private clearDocLeaveTimerKey;
     sendError(clientId: string, message: string): void;
     getStats(): {
         stateful: true;

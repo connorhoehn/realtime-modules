@@ -65,6 +65,35 @@ function inviteDedupKey(callId, targetUserIds) {
     return `${callId}|${[...targetUserIds].sort().join(',')}`;
 }
 const INVITE_DEDUP_MAX_ENTRIES = 10_000;
+/** Review list with the host document first, deduped, strings only. */
+function normalizeDocumentIds(raw, hostDocumentId) {
+    const out = [];
+    if (hostDocumentId)
+        out.push(hostDocumentId);
+    if (Array.isArray(raw)) {
+        for (const id of raw) {
+            if (typeof id === 'string' && id && !out.includes(id))
+                out.push(id);
+        }
+    }
+    return out.slice(0, 50);
+}
+function normalizeTitles(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return null;
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+        if (typeof v === 'string')
+            out[k] = v.slice(0, 200);
+    }
+    return Object.keys(out).length ? out : null;
+}
+/** The meta as it goes on the wire: `clients` (connection ids) stays
+ *  server-side. */
+function publicMeta(meta) {
+    const { clients: _clients, ...rest } = meta;
+    return rest;
+}
 class CallService {
     static INVITE_TTL_MS = 60_000;
     static INVITE_SWEEP_INTERVAL_MS = 15_000;
@@ -155,6 +184,15 @@ class CallService {
     rejoinGraceMs = 30_000;
     onSweepSkipped = null;
     _withSpan;
+    /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
+    metaStore;
+    onOfflineInviteHook;
+    isClientAliveHook;
+    /** Document calls — `<callId>|<userId>` → timer that turns a
+     *  `reconnecting` participant into `left` when the grace runs out. */
+    docLeaveTimers = new Map();
+    /** Guards against two overlapping sweep ticks (the tick is async now). */
+    sweepRunning = false;
     constructor(opts) {
         if (!opts || !opts.messageRouter) {
             throw new Error('CallService: messageRouter is required');
@@ -172,6 +210,9 @@ class CallService {
         }
         this.onSweepSkipped = opts.onSweepSkipped ?? null;
         this._withSpan = opts.withSpan ?? _passthroughWithSpan;
+        this.metaStore = opts.metaStore ?? null;
+        this.onOfflineInviteHook = opts.onOfflineInvite ?? null;
+        this.isClientAliveHook = opts.isClientAlive ?? null;
         const config = opts.config ?? {};
         this.authorize = config.authorize ?? (() => true);
         this.canCallHook = config.canCall ?? null;
@@ -193,44 +234,7 @@ class CallService {
                 }
                 return;
             }
-            const now = Date.now();
-            // Collect expired callIds first so we can fully forgetCall
-            // them — Map mutation while iterating the index is OK for the
-            // current key, but forgetCall ripples through activeCalls +
-            // clientToCalls + acceptedCallIds + stateStore which is safer
-            // to do after the scan.
-            const expiredCallIds = new Set();
-            for (const [, callIds] of this.activeInvitesByUserId) {
-                for (const callId of callIds) {
-                    const state = this.activeCalls.get(callId);
-                    if (!state) {
-                        // Index references a call we already forgot —
-                        // safe to drop the stale reference.
-                        callIds.delete(callId);
-                        continue;
-                    }
-                    if (typeof state.inviteExpiresAt === 'number' && now > state.inviteExpiresAt) {
-                        expiredCallIds.add(callId);
-                    }
-                }
-            }
-            for (const callId of expiredCallIds) {
-                this.forgetCall(callId);
-            }
-            // Second pass: prune any user-index entries that ended up
-            // empty (either from the orphan-drop above, or from forgetCall
-            // which calls clearInviteRegistryForCall internally).
-            for (const [userId, callIds] of this.activeInvitesByUserId) {
-                if (callIds.size === 0)
-                    this.activeInvitesByUserId.delete(userId);
-            }
-            // Sweep stale recentInvites dedup entries too — bounded, but
-            // long-lived processes shouldn't carry hours-old timestamps.
-            const dedupCutoff = now - INVITE_DEDUP_WINDOW_MS;
-            for (const [k, ts] of this.recentInvites) {
-                if (ts < dedupCutoff)
-                    this.recentInvites.delete(k);
-            }
+            void this.runInviteSweep();
         }, CallService.INVITE_SWEEP_INTERVAL_MS);
         if (typeof this.inviteSweepTimer.unref === 'function') {
             this.inviteSweepTimer.unref();
@@ -311,7 +315,7 @@ class CallService {
         //    lobbies) doesn't drop the second.
         let totalNotified = 0;
         for (const callId of candidateCallIds) {
-            await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName, evt.callContinues === true)
+            await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName, evt.callContinues === true, evt.notified === true)
                 .then((n) => { totalNotified += n; })
                 .catch((e) => this.logger.warn(`[CallService] cross-node notify loop failed for ${callId}: ${e?.message ?? e}`));
         }
@@ -323,7 +327,26 @@ class CallService {
      * filters to local-live clientIds, sends synthetic `ended`, and
      * cleans local state. Returns the count of notified peers.
      */
-    async notifyLocalPeersOfDeparture(callId, departedClientId, fallbackCallerId, fallbackLobbyName, callContinues = false) {
+    async notifyLocalPeersOfDeparture(callId, departedClientId, fallbackCallerId, fallbackLobbyName, callContinues = false, alreadyNotified = false) {
+        if (alreadyNotified) {
+            // Document call: the origin replica told everyone cluster-wide.
+            // Only keep this node's cache in step.
+            const local = this.activeCalls.get(callId);
+            if (callContinues) {
+                if (local && departedClientId)
+                    local.participantClientIds.delete(departedClientId);
+                const cs = departedClientId ? this.clientToCalls.get(departedClientId) : undefined;
+                if (cs) {
+                    cs.delete(callId);
+                    if (cs.size === 0)
+                        this.clientToCalls.delete(departedClientId);
+                }
+            }
+            else if (local) {
+                this.forgetCall(callId);
+            }
+            return 0;
+        }
         let participantClientIds = [];
         let callerId = fallbackCallerId;
         let lobbyName = fallbackLobbyName;
@@ -424,6 +447,9 @@ class CallService {
         for (const t of this.rejoinGraceTimers.values())
             clearTimeout(t);
         this.rejoinGraceTimers.clear();
+        for (const t of this.docLeaveTimers.values())
+            clearTimeout(t);
+        this.docLeaveTimers.clear();
         if (this.crossNodeUnsubscribe) {
             try {
                 this.crossNodeUnsubscribe();
@@ -605,6 +631,13 @@ class CallService {
         }
         this.clearInviteRegistryForCall(callId);
         void this.clearInviteRegistryForCallStore(callId);
+        if (this.metaStore) {
+            void this.metaStore.delete(callId).catch(() => { });
+        }
+        for (const key of Array.from(this.docLeaveTimers.keys())) {
+            if (key.startsWith(`${callId}|`))
+                this.clearDocLeaveTimerKey(key);
+        }
         // J2 — evict from the F2/F3 discovery indexes. They were
         // append-only with a 4h TTL: readers liveness-filter, so this
         // was not supposed to leak, but leaving forgotten calls in the
@@ -855,7 +888,49 @@ class CallService {
                 }
                 continue;
             }
+            const docMeta = await this.getDocumentMeta(callId);
+            if (docMeta) {
+                // Document call: replay only a ring that is still live FOR
+                // THIS USER, and never end the call over it.
+                const inv = docMeta.invites[userId];
+                if (!inv || inv.state !== 'ringing' || now - inv.at > CallService.INVITE_TTL_MS) {
+                    this.dropInviteForUser(userId, callId);
+                    continue;
+                }
+                const docData = {
+                    callId,
+                    callerId: inv.by || docMeta.hostUserId,
+                    lobbyName: docMeta.documentId,
+                    targetUserIds: [userId],
+                    kind: 'document-review',
+                    documentId: docMeta.documentId,
+                    title: docMeta.title,
+                    documentIds: docMeta.documentIds,
+                    media: docMeta.media,
+                    participantCount: Object.values(docMeta.invites).filter((i) => i.state === 'accepted').length + 1,
+                    replayed: true,
+                    originalTimestamp: new Date(inv.at).toISOString(),
+                };
+                if (docMeta.documentTitles)
+                    docData.documentTitles = docMeta.documentTitles;
+                if (state.originalCallerName)
+                    docData.callerName = state.originalCallerName;
+                try {
+                    await Promise.resolve(this.messageRouter.sendToClient(clientId, {
+                        type: 'call', action: 'invite', data: docData, timestamp: new Date().toISOString(),
+                    }));
+                    replayed += 1;
+                }
+                catch { /* best-effort */ }
+                continue;
+            }
             if (typeof state.inviteExpiresAt === 'number' && now > state.inviteExpiresAt) {
+                // An answered call is not ended by a late ring expiring —
+                // only this user's stale replay entry goes.
+                if (await this.callHasAcceptedParticipant(callId, state)) {
+                    this.dropInviteForUser(userId, callId);
+                    continue;
+                }
                 // Fully forget — covers all participants' indexes + the
                 // call entry + acceptedCallIds + stateStore mirror.
                 this.forgetCall(callId);
@@ -1129,6 +1204,25 @@ class CallService {
             await this.handleForgetRequest(clientId, payload);
             return;
         }
+        // Document calls (2026-09-24) — meta queries and edits.
+        if (action === 'meta' || action === 'set-documents' || action === 'present' || action === 'set-title') {
+            await this.handleDocumentCallAction(clientId, action, payload);
+            return;
+        }
+        // Document calls — signalling verbs on a call that has meta get their
+        // own bookkeeping, and never fall back to broadcast-to-everyone.
+        let docMeta = null;
+        let docRecipients = null;
+        if (this.metaStore && callId && action !== 'invite') {
+            docMeta = await this.getDocumentMeta(callId);
+            if (docMeta) {
+                const r = await this.handleDocumentCallVerb(clientId, action, payload, docMeta);
+                if (r.handled)
+                    return;
+                if (targetUserIds.length === 0)
+                    docRecipients = r.recipientsIfUntargeted;
+            }
+        }
         // W3 — RoomService bridge. participant-state + user-status are
         // the only call verbs that fire inside a live session (invite/
         // accepted/declined/cancelled/ended are signaling-edge events).
@@ -1284,6 +1378,12 @@ class CallService {
                 return;
             }
         }
+        let docInvite = null;
+        if (action === 'invite' && this.metaStore && callId
+            && (payload.kind === 'document-review' || await this.getDocumentMeta(callId))) {
+            const callerUserId = await this.resolveActorUserId(clientId, payload, true);
+            docInvite = await this.handleDocumentInvite(clientId, callerUserId, payload, targetUserIds);
+        }
         // Track participation so handleDisconnect can fire synthetic
         // `ended` to peers if this client drops uncleanly.
         const callerId = typeof payload.callerId === 'string' ? payload.callerId : '';
@@ -1365,7 +1465,7 @@ class CallService {
                     void this.stateStore.setInviteMetadata(callId, meta)
                         .catch((e) => this.logger.warn(`[CallService] stateStore.setInviteMetadata failed for ${callId}: ${e?.message ?? e}`));
                 }
-                for (const targetUserId of targetUserIds) {
+                for (const targetUserId of (docInvite ? docInvite.ringTargets : targetUserIds)) {
                     let set = this.activeInvitesByUserId.get(targetUserId);
                     if (!set) {
                         set = new Set();
@@ -1420,8 +1520,12 @@ class CallService {
         // ringers + replay registry stuck after a successful accept.
         if (action === 'accepted' && callId && wasFirstAccepted) {
             this.acceptedCallIds.add(callId);
-            this.clearInviteRegistryForCall(callId);
-            void this.clearInviteRegistryForCallStore(callId);
+            // A document call keeps ringing the others: only the accepter's
+            // entry was dropped (handleDocumentCallVerb).
+            if (!docMeta) {
+                this.clearInviteRegistryForCall(callId);
+                void this.clearInviteRegistryForCallStore(callId);
+            }
             // PR-W2.1 (completion) — cluster-wide accept dedup so a
             // racing accepted on a peer node doesn't trigger duplicate
             // "answered elsewhere" prompts. SETNX with the accepted
@@ -1475,8 +1579,20 @@ class CallService {
             data: payload,
             timestamp: new Date().toISOString(),
         };
-        if (targetUserIds.length > 0) {
-            const recipients = await this.findClientsForUsers(targetUserIds, /* excludeClientId */ clientId);
+        if (docInvite && docInvite.ringTargets.length === 0) {
+            // Nobody online to ring (or ring:false) — the invite is recorded
+            // in the meta and the offline hook ran; nothing goes out.
+            this.recordCallActionMetric(action, 'targeted');
+            return;
+        }
+        if (docRecipients) {
+            await this.sendToClients(docRecipients, envelope);
+            this.recordCallActionMetric(action, 'targeted');
+            return;
+        }
+        const fanoutTargets = docInvite ? docInvite.ringTargets : targetUserIds;
+        if (fanoutTargets.length > 0) {
+            const recipients = await this.findClientsForUsers(fanoutTargets, /* excludeClientId */ clientId);
             const planned = recipients.length;
             // Promise.allSettled — never short-circuit on a single send failure.
             // sendToClient itself returns false on a closed socket and may throw
@@ -1680,6 +1796,11 @@ class CallService {
         if (callIdSet.size === 0)
             return;
         for (const callId of callIdSet) {
+            const docMeta = await this.getDocumentMeta(callId);
+            if (docMeta) {
+                await this.handleDocumentDisconnect(callId, docMeta, clientId);
+                continue;
+            }
             const state = this.activeCalls.get(callId);
             // PR-W2.1 (completion) — when local cache is cold (cluster-
             // only entry from getCallsForClient), still publish the
@@ -1931,6 +2052,744 @@ class CallService {
             timer.unref();
         this.rejoinGraceTimers.set(callId, timer);
         this.logger.info(`[CallService] call ${callId} entering rejoin grace (${this.rejoinGraceMs}ms) after ${departedClientId} dropped`);
+    }
+    // -----------------------------------------------------------------
+    // Invite sweep (runs on the `__leader:call-sweep` holder only)
+    // -----------------------------------------------------------------
+    /**
+     * One sweep tick. Public so tests (and a consumer that wants a sweep on
+     * demand) can drive it without waiting 15 s.
+     *
+     * Expiry is PER TARGET. Before 2026-09-24 the sweep forgot the whole call
+     * the moment `inviteExpiresAt` passed, so one unanswered invitee in a
+     * group call — or an unanswered mid-call invite — ended the call for
+     * everyone, and on a two-replica gateway an accept on the other replica
+     * never reached this node's `acceptedCallIds` at all. Now:
+     *   - a call someone has accepted is never forgotten here; only the
+     *     expired target's invite-replay entry is dropped;
+     *   - an unanswered legacy (non-document) call still ends as a missed
+     *     call, as before;
+     *   - document calls are swept from the meta store: each ringing invite
+     *     older than the TTL becomes `missed`, the inviter's clients get
+     *     `invite-expired`, and the call itself is left alone;
+     *   - roster entries whose client is provably dead (its replica is gone)
+     *     are pruned when `isClientAlive` is wired.
+     */
+    async runInviteSweep(now = Date.now()) {
+        if (this.sweepRunning)
+            return;
+        this.sweepRunning = true;
+        try {
+            let docCallIds = new Set();
+            if (this.metaStore) {
+                try {
+                    docCallIds = new Set(await this.metaStore.listCallIds());
+                }
+                catch (e) {
+                    this.logger.warn(`[CallService] meta listCallIds failed: ${e?.message ?? e}`);
+                }
+            }
+            await this.sweepLegacyInvites(now, docCallIds);
+            if (this.metaStore) {
+                for (const callId of docCallIds) {
+                    try {
+                        await this.sweepDocumentCall(callId, now);
+                    }
+                    catch (e) {
+                        this.logger.warn(`[CallService] document-call sweep failed for ${callId}: ${e?.message ?? e}`);
+                    }
+                }
+            }
+            const dedupCutoff = now - INVITE_DEDUP_WINDOW_MS;
+            for (const [k, ts] of this.recentInvites) {
+                if (ts < dedupCutoff)
+                    this.recentInvites.delete(k);
+            }
+        }
+        finally {
+            this.sweepRunning = false;
+        }
+    }
+    /** Legacy half of the sweep: this node's in-memory invite registry. */
+    async sweepLegacyInvites(now, docCallIds) {
+        const expiredCallIds = new Set();
+        const expiredTargets = [];
+        for (const [userId, callIds] of this.activeInvitesByUserId) {
+            for (const callId of callIds) {
+                const state = this.activeCalls.get(callId);
+                if (!state) {
+                    callIds.delete(callId);
+                    continue;
+                }
+                if (!(typeof state.inviteExpiresAt === 'number' && now > state.inviteExpiresAt))
+                    continue;
+                expiredTargets.push({ userId, callId });
+            }
+        }
+        for (const { userId, callId } of expiredTargets) {
+            const state = this.activeCalls.get(callId);
+            if (!state)
+                continue;
+            // Document calls are never ended by a ring timing out: the meta
+            // sweep marks the target missed. A call someone answered is not
+            // ended either — only this target's replay entry goes.
+            if (docCallIds.has(callId) || await this.callHasAcceptedParticipant(callId, state)) {
+                this.dropInviteForUser(userId, callId);
+            }
+            else {
+                expiredCallIds.add(callId);
+            }
+        }
+        for (const callId of expiredCallIds)
+            this.forgetCall(callId);
+        for (const [userId, callIds] of this.activeInvitesByUserId) {
+            if (callIds.size === 0)
+                this.activeInvitesByUserId.delete(userId);
+        }
+    }
+    /** True when anyone besides the caller is (or was) in the call — checked
+     *  locally and in the cluster store, because the accept may have landed on
+     *  another replica. */
+    async callHasAcceptedParticipant(callId, state) {
+        if (this.acceptedCallIds.has(callId))
+            return true;
+        if (state && state.participantClientIds.size > 1)
+            return true;
+        if (this.stateStore) {
+            try {
+                const view = await this.stateStore.getCall(callId);
+                if (view && view.participantClientIds.length > 1)
+                    return true;
+            }
+            catch { /* local view stands */ }
+        }
+        return false;
+    }
+    /** Drop one person's invite-replay entry for one call (local + store). */
+    dropInviteForUser(userId, callId) {
+        const set = this.activeInvitesByUserId.get(userId);
+        if (set) {
+            set.delete(callId);
+            if (set.size === 0)
+                this.activeInvitesByUserId.delete(userId);
+        }
+        if (this.stateStore && typeof this.stateStore.clearInviteForUser === 'function') {
+            void this.stateStore.clearInviteForUser(userId, callId).catch(() => { });
+        }
+    }
+    /** Meta half of the sweep, for one document call. */
+    async sweepDocumentCall(callId, now) {
+        const store = this.metaStore;
+        const meta = await store.get(callId);
+        if (!meta) {
+            // Hash expired under its index entry — drop the index entry.
+            await store.delete(callId);
+            return;
+        }
+        let changed = false;
+        for (const [userId, inv] of Object.entries(meta.invites)) {
+            if (inv.state !== 'ringing' || now - inv.at <= CallService.INVITE_TTL_MS)
+                continue;
+            const missed = { ...inv, state: 'missed' };
+            await store.markInvite(callId, userId, missed);
+            meta.invites[userId] = missed;
+            changed = true;
+            this.dropInviteForUser(userId, callId);
+            const inviter = inv.by || meta.hostUserId;
+            await this.sendToUsers([inviter], {
+                type: 'call',
+                action: 'invite-expired',
+                data: { callId, userId },
+                timestamp: new Date().toISOString(),
+            });
+            this.logger.info(`[CallService] ring to ${userId} in document call ${callId} expired (missed)`);
+        }
+        const pruned = await this.pruneDeadClients(callId, meta);
+        if (pruned === 'ended')
+            return;
+        if (changed || pruned === 'changed') {
+            const fresh = await store.get(callId);
+            if (fresh)
+                await this.broadcastCallMeta(fresh);
+        }
+    }
+    /**
+     * Remove roster entries whose client is provably dead — its replica went
+     * away without running handleDisconnect, so nobody else will. Uses the
+     * consumer's `isClientAlive` (the gateway checks the owning node's
+     * heartbeat). Each person with no live connection left gets a synthetic
+     * `user-status: left`; a call with nobody left ends.
+     */
+    async pruneDeadClients(callId, meta) {
+        if (!this.isClientAliveHook)
+            return 'none';
+        const members = await this.docCallMemberClientIds(callId);
+        if (members.length === 0)
+            return 'none';
+        const dead = [];
+        for (const cid of members) {
+            let alive = true;
+            try {
+                alive = (await Promise.resolve(this.isClientAliveHook(cid))) !== false;
+            }
+            catch {
+                alive = true; /* unknown is not dead */
+            }
+            if (!alive)
+                dead.push(cid);
+        }
+        if (dead.length === 0)
+            return 'none';
+        for (const cid of dead)
+            this.removeClientFromCallEverywhere(callId, cid);
+        const survivors = members.filter((c) => !dead.includes(c));
+        if (survivors.length === 0) {
+            await this.endDocumentCall(callId, meta, 'participants-lost');
+            return 'ended';
+        }
+        const survivorUsers = new Set(survivors.map((c) => meta.clients?.[c]).filter(Boolean));
+        let presentingCleared = false;
+        for (const cid of dead) {
+            const uid = meta.clients?.[cid];
+            if (!uid || survivorUsers.has(uid))
+                continue;
+            this.clearDocLeaveTimer(callId, uid);
+            await this.sendToClients(survivors, this.userStatusEnvelope(callId, meta, uid, 'left', 'node-lost'));
+            if (meta.presenting?.userId === uid && !presentingCleared) {
+                await this.metaStore.setPresenting(callId, null);
+                presentingCleared = true;
+            }
+        }
+        this.logger.info(`[CallService] pruned ${dead.length} dead client(s) from document call ${callId}`);
+        return 'changed';
+    }
+    // -----------------------------------------------------------------
+    // Document calls (2026-09-24)
+    // -----------------------------------------------------------------
+    /** The authenticated user behind a client, falling back to what the
+     *  payload claims (SKIP_AUTH dev setups have no router identity). */
+    async resolveActorUserId(clientId, payload, allowCallerId) {
+        if (typeof this.messageRouter.getUserIdForClient === 'function') {
+            try {
+                const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));
+                if (uid)
+                    return uid;
+            }
+            catch { /* fall through */ }
+        }
+        if (typeof payload.userId === 'string' && payload.userId)
+            return payload.userId;
+        if (allowCallerId && typeof payload.callerId === 'string')
+            return payload.callerId;
+        return '';
+    }
+    async getDocumentMeta(callId) {
+        if (!this.metaStore || !callId)
+            return null;
+        try {
+            return await this.metaStore.get(callId);
+        }
+        catch (e) {
+            this.logger.warn(`[CallService] meta read failed for ${callId}: ${e?.message ?? e}`);
+            return null;
+        }
+    }
+    /** Participant = the host, anyone whose invite is `accepted`, or a
+     *  connection the call has seen. */
+    isDocParticipant(meta, userId, clientId) {
+        if (userId && meta.hostUserId === userId)
+            return true;
+        if (userId && meta.invites[userId]?.state === 'accepted')
+            return true;
+        return !!meta.clients && Object.prototype.hasOwnProperty.call(meta.clients, clientId);
+    }
+    /** Connections currently in the call, cluster-wide (store) plus this
+     *  node's cache. */
+    async docCallMemberClientIds(callId) {
+        const out = new Set();
+        const local = this.activeCalls.get(callId);
+        if (local)
+            for (const cid of local.participantClientIds)
+                out.add(cid);
+        if (this.stateStore) {
+            try {
+                const view = await this.stateStore.getCall(callId);
+                if (view)
+                    for (const cid of view.participantClientIds)
+                        out.add(cid);
+            }
+            catch { /* local view stands */ }
+        }
+        return Array.from(out);
+    }
+    removeClientFromCallEverywhere(callId, clientId) {
+        const state = this.activeCalls.get(callId);
+        if (state)
+            state.participantClientIds.delete(clientId);
+        const cs = this.clientToCalls.get(clientId);
+        if (cs) {
+            cs.delete(callId);
+            if (cs.size === 0)
+                this.clientToCalls.delete(clientId);
+        }
+        if (this.stateStore) {
+            void this.stateStore.removeParticipant(callId, clientId).catch(() => { });
+            if (typeof this.stateStore.removeClientFromCall === 'function') {
+                void this.stateStore.removeClientFromCall(clientId, callId).catch(() => { });
+            }
+        }
+    }
+    async sendToClients(clientIds, envelope) {
+        await Promise.allSettled(Array.from(new Set(clientIds)).map((cid) => {
+            try {
+                return Promise.resolve(this.messageRouter.sendToClient(cid, envelope));
+            }
+            catch (err) {
+                return Promise.reject(err);
+            }
+        }));
+    }
+    /** Every connection of the given users, cluster-wide. */
+    async sendToUsers(userIds, envelope) {
+        const ids = userIds.filter(Boolean);
+        if (ids.length === 0 || typeof this.messageRouter.getClientsByUserId !== 'function')
+            return;
+        let matches = [];
+        try {
+            const r = await Promise.resolve(this.messageRouter.getClientsByUserId(ids, ''));
+            matches = Array.isArray(r) ? r : [];
+        }
+        catch {
+            return;
+        }
+        await this.sendToClients(matches.map((m) => m.clientId), envelope);
+    }
+    userStatusEnvelope(callId, meta, userId, status, reason, extra = {}) {
+        return {
+            type: 'call',
+            action: 'user-status',
+            data: {
+                callId,
+                callerId: meta.hostUserId,
+                lobbyName: meta.documentId,
+                userId,
+                status,
+                reason,
+                ...extra,
+            },
+            timestamp: new Date().toISOString(),
+        };
+    }
+    /** Send `call-meta` to everyone in the call (plus `extraClientIds`). */
+    async broadcastCallMeta(meta, extraClientIds = []) {
+        const members = await this.docCallMemberClientIds(meta.callId);
+        const envelope = {
+            type: 'call',
+            action: 'call-meta',
+            data: publicMeta(meta),
+            timestamp: new Date().toISOString(),
+        };
+        await this.sendToClients([...members, ...extraClientIds], envelope);
+    }
+    /**
+     * `kind:'document-review'` invite. Writes the meta on the call's first
+     * invite, marks each target ringing (online) or notified (no connected
+     * client, or `ring:false`), and returns who should actually be rung.
+     */
+    async handleDocumentInvite(clientId, callerUserId, payload, targetUserIds) {
+        const store = this.metaStore;
+        const callId = payload.callId;
+        const now = Date.now();
+        let meta = await store.get(callId);
+        const documentId = typeof payload.documentId === 'string' && payload.documentId
+            ? payload.documentId
+            : String(payload.lobbyName ?? '');
+        if (!meta) {
+            const documentIds = normalizeDocumentIds(payload.documentIds, documentId);
+            meta = {
+                callId,
+                documentId,
+                title: typeof payload.title === 'string' && payload.title.trim() ? payload.title.trim().slice(0, 200) : documentId,
+                documentIds,
+                hostUserId: callerUserId,
+                media: payload.media === 'audio' ? 'audio' : 'video',
+                startedAt: now,
+                presenting: null,
+                invites: {},
+                clients: {},
+            };
+            const titles = normalizeTitles(payload.documentTitles);
+            if (titles)
+                meta.documentTitles = titles;
+            await store.set(meta);
+        }
+        if (callerUserId)
+            await store.markClient(callId, clientId, callerUserId);
+        const ring = payload.ring !== false;
+        const ringTargets = [];
+        for (const target of targetUserIds) {
+            if (!target || target === callerUserId)
+                continue;
+            // Somebody already in the call is not rung again.
+            if (meta.invites[target]?.state === 'accepted' || meta.hostUserId === target)
+                continue;
+            let online = false;
+            if (ring) {
+                try {
+                    online = (await this.findClientsForUsers([target], clientId)).length > 0;
+                }
+                catch {
+                    online = false;
+                }
+            }
+            const state = ring && online ? 'ringing' : 'notified';
+            await store.markInvite(callId, target, { at: now, state, by: callerUserId });
+            if (state === 'ringing') {
+                ringTargets.push(target);
+            }
+            else if (this.onOfflineInviteHook) {
+                const offline = {
+                    callId,
+                    documentId: meta.documentId,
+                    title: meta.title,
+                    callerId: callerUserId,
+                    documentIds: meta.documentIds,
+                    media: meta.media,
+                };
+                if (typeof payload.callerName === 'string')
+                    offline.callerName = payload.callerName;
+                if (typeof payload.message === 'string' && payload.message)
+                    offline.message = payload.message.slice(0, 280);
+                try {
+                    await Promise.resolve(this.onOfflineInviteHook(target, offline));
+                }
+                catch (e) {
+                    this.logger.warn(`[CallService] onOfflineInvite failed for ${target}/${callId}: ${e?.message ?? e}`);
+                }
+            }
+        }
+        const fresh = await store.get(callId);
+        if (fresh)
+            await this.broadcastCallMeta(fresh, [clientId]);
+        return { ringTargets };
+    }
+    /** `meta` / `set-documents` / `present` / `set-title`. */
+    async handleDocumentCallAction(clientId, action, payload) {
+        if (!this.metaStore) {
+            this.sendError(clientId, `Document calls are not enabled (${action})`);
+            return;
+        }
+        const callId = typeof payload.callId === 'string' ? payload.callId : '';
+        if (!callId) {
+            this.sendError(clientId, `callId is required on ${action}`);
+            return;
+        }
+        const meta = await this.metaStore.get(callId);
+        if (!meta) {
+            this.sendError(clientId, `Unknown call: ${callId}`);
+            return;
+        }
+        const userId = await this.resolveActorUserId(clientId, payload, true);
+        if (!this.isDocParticipant(meta, userId, clientId)) {
+            this.sendError(clientId, `Not a participant of call ${callId}`);
+            return;
+        }
+        if (action === 'meta') {
+            await this.sendToClients([clientId], {
+                type: 'call',
+                action: 'call-meta',
+                data: publicMeta(meta),
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
+        if (action === 'set-documents') {
+            if (!Array.isArray(payload.documentIds)) {
+                this.sendError(clientId, 'documentIds is required on set-documents');
+                return;
+            }
+            const documentIds = normalizeDocumentIds(payload.documentIds, meta.documentId);
+            const titles = normalizeTitles(payload.documentTitles);
+            const patch = { documentIds };
+            if (titles || meta.documentTitles) {
+                const merged = { ...(meta.documentTitles ?? {}), ...(titles ?? {}) };
+                for (const k of Object.keys(merged))
+                    if (!documentIds.includes(k))
+                        delete merged[k];
+                patch.documentTitles = merged;
+            }
+            await this.metaStore.patch(callId, patch);
+            // A presented document that left the list stops being presented.
+            if (meta.presenting && !documentIds.includes(meta.presenting.documentId)) {
+                await this.metaStore.setPresenting(callId, null);
+            }
+        }
+        else if (action === 'present') {
+            const raw = payload.documentId;
+            const documentId = typeof raw === 'string' && raw ? raw : null;
+            const current = meta.presenting;
+            const isHost = userId === meta.hostUserId;
+            if (current && current.userId !== userId && !isHost) {
+                this.sendError(clientId, `Someone else is presenting (${current.userId})`);
+                return;
+            }
+            if (documentId && !meta.documentIds.includes(documentId)) {
+                this.sendError(clientId, 'Only a review document can be presented');
+                return;
+            }
+            if (!documentId && !current) {
+                // Nothing to stop — answer with the unchanged meta.
+                await this.broadcastCallMeta(meta, [clientId]);
+                return;
+            }
+            await this.metaStore.setPresenting(callId, documentId
+                ? { documentId, userId, since: Date.now() }
+                : null);
+        }
+        else if (action === 'set-title') {
+            if (userId !== meta.hostUserId) {
+                this.sendError(clientId, 'Only the host can rename the call');
+                return;
+            }
+            const title = typeof payload.title === 'string' ? payload.title.trim().slice(0, 200) : '';
+            if (!title) {
+                this.sendError(clientId, 'title is required on set-title');
+                return;
+            }
+            await this.metaStore.patch(callId, { title });
+        }
+        const fresh = await this.metaStore.get(callId);
+        if (fresh)
+            await this.broadcastCallMeta(fresh, [clientId]);
+    }
+    /**
+     * Routing + bookkeeping for the signalling verbs of a document call.
+     * Returns true when it fully handled the action (the generic path must
+     * not run), or the recipients to use when the payload named none —
+     * a document call never falls back to broadcast-to-everyone.
+     */
+    async handleDocumentCallVerb(clientId, action, payload, meta) {
+        const callId = meta.callId;
+        const store = this.metaStore;
+        const userId = await this.resolveActorUserId(clientId, payload, action !== 'accepted');
+        if (action === 'ended') {
+            if (payload.forEveryone === true) {
+                if (userId !== meta.hostUserId) {
+                    this.sendError(clientId, 'Only the host can end the call for everyone');
+                    return { handled: true };
+                }
+                await this.endDocumentCall(callId, meta, 'ended-for-everyone', userId);
+                return { handled: true };
+            }
+            await this.leaveDocumentCall(callId, meta, clientId, userId, 'left');
+            return { handled: true };
+        }
+        if (action === 'accepted' && userId) {
+            this.clearDocLeaveTimer(callId, userId);
+            const prev = meta.invites[userId];
+            if (meta.hostUserId !== userId && prev?.state !== 'accepted') {
+                await store.markInvite(callId, userId, { at: prev?.at ?? Date.now(), state: 'accepted', ...(prev?.by ? { by: prev.by } : {}) });
+            }
+            await store.markClient(callId, clientId, userId);
+            this.dropInviteForUser(userId, callId);
+        }
+        if (action === 'participant-state' && userId) {
+            const status = typeof payload.status === 'string' ? payload.status : 'in-call';
+            const member = meta.hostUserId === userId || meta.invites[userId]?.state === 'accepted';
+            if (status !== 'left' && member) {
+                // Reconnect: a fresh socket re-announces itself. Put it back
+                // on the roster and cancel the pending `left`.
+                const local = this.activeCalls.get(callId);
+                if (!local || !local.participantClientIds.has(clientId)) {
+                    this.registerParticipant(callId, clientId, meta.hostUserId, meta.documentId, []);
+                }
+                await store.markClient(callId, clientId, userId);
+                this.clearDocLeaveTimer(callId, userId);
+            }
+        }
+        if (action === 'declined' && userId) {
+            const prev = meta.invites[userId];
+            if (prev && prev.state !== 'accepted') {
+                await store.markInvite(callId, userId, { ...prev, state: 'declined' });
+            }
+            this.dropInviteForUser(userId, callId);
+            const inviter = prev?.by || meta.hostUserId;
+            const members = await this.docCallMemberClientIds(callId);
+            const envelope = { type: 'call', action: 'declined', data: { ...payload, userId }, timestamp: new Date().toISOString() };
+            await this.sendToClients(members.filter((c) => c !== clientId), envelope);
+            await this.sendToUsers([inviter], envelope);
+            const fresh = await store.get(callId);
+            if (fresh)
+                await this.broadcastCallMeta(fresh);
+            this.recordCallActionMetric(action, 'targeted');
+            return { handled: true };
+        }
+        if (action === 'cancelled') {
+            // Caller stops ringing specific people; the call goes on.
+            const targets = this.normalizeTargetUserIds(payload);
+            for (const t of targets) {
+                if (meta.invites[t] && meta.invites[t].state !== 'accepted')
+                    await store.markInvite(callId, t, null);
+                this.dropInviteForUser(t, callId);
+            }
+            const envelope = { type: 'call', action: 'cancelled', data: payload, timestamp: new Date().toISOString() };
+            await this.sendToUsers(targets, envelope);
+            const fresh = await store.get(callId);
+            if (fresh)
+                await this.broadcastCallMeta(fresh);
+            this.recordCallActionMetric(action, 'targeted');
+            return { handled: true };
+        }
+        const members = await this.docCallMemberClientIds(callId);
+        if (action === 'accepted') {
+            const fresh = await store.get(callId);
+            if (fresh)
+                await this.broadcastCallMeta(fresh, [clientId]);
+        }
+        return { handled: false, recipientsIfUntargeted: members.filter((c) => c !== clientId) };
+    }
+    /** One person leaves (explicitly). Others get `user-status: left`; the
+     *  last one out ends the call. */
+    async leaveDocumentCall(callId, meta, clientId, userId, reason) {
+        this.removeClientFromCallEverywhere(callId, clientId);
+        const members = await this.docCallMemberClientIds(callId);
+        if (members.length === 0) {
+            await this.endDocumentCall(callId, meta, 'last-participant-left', userId);
+            return;
+        }
+        const stillThere = members.some((c) => meta.clients?.[c] === userId);
+        if (!stillThere && userId) {
+            this.clearDocLeaveTimer(callId, userId);
+            await this.sendToClients(members, this.userStatusEnvelope(callId, meta, userId, 'left', reason));
+            if (meta.presenting?.userId === userId) {
+                await this.metaStore.setPresenting(callId, null);
+                const fresh = await this.metaStore.get(callId);
+                if (fresh)
+                    await this.broadcastCallMeta(fresh);
+            }
+        }
+    }
+    /** The call is over for everyone: tell them, then drop every trace. */
+    async endDocumentCall(callId, meta, reason, endedBy) {
+        const members = await this.docCallMemberClientIds(callId);
+        const envelope = {
+            type: 'call',
+            action: 'ended',
+            data: {
+                callId,
+                callerId: meta.hostUserId,
+                lobbyName: meta.documentId,
+                reason,
+                ...(reason === 'ended-for-everyone' ? { forEveryone: true } : {}),
+                ...(endedBy ? { endedBy } : {}),
+            },
+            timestamp: new Date().toISOString(),
+        };
+        await this.sendToClients(members, envelope);
+        // Ringing invitees stop ringing.
+        const ringing = Object.entries(meta.invites).filter(([, i]) => i.state === 'ringing').map(([u]) => u);
+        if (ringing.length)
+            await this.sendToUsers(ringing, envelope);
+        for (const key of Array.from(this.docLeaveTimers.keys())) {
+            if (key.startsWith(`${callId}|`))
+                this.clearDocLeaveTimerKey(key);
+        }
+        const hadLocal = this.activeCalls.has(callId);
+        this.forgetCall(callId);
+        if (!hadLocal) {
+            if (this.stateStore) {
+                void this.stateStore.forgetCall(callId).catch(() => { });
+                if (typeof this.stateStore.forgetLobbyCall === 'function' && meta.documentId) {
+                    void this.stateStore.forgetLobbyCall(meta.documentId, callId).catch(() => { });
+                }
+            }
+            if (this.metaStore)
+                await this.metaStore.delete(callId).catch(() => { });
+        }
+        if (this.crossNodePubSub) {
+            try {
+                const p = {
+                    callId, departedClientId: '', callerId: meta.hostUserId, lobbyName: meta.documentId,
+                    callContinues: false, notified: true,
+                };
+                await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(p)));
+            }
+            catch { /* best-effort */ }
+        }
+        this.logger.info(`[CallService] document call ${callId} ended (${reason})`);
+    }
+    /**
+     * A participant's socket dropped. Everyone else sees them as
+     * `reconnecting` for the rejoin grace; if no connection of theirs is back
+     * by then, `left`. The call itself survives even when nobody else is in
+     * it — a lone host refreshing the page keeps the call.
+     */
+    async handleDocumentDisconnect(callId, meta, clientId) {
+        const userId = meta.clients?.[clientId]
+            ?? (typeof this.messageRouter.getUserIdForClient === 'function' ? this.messageRouter.getUserIdForClient(clientId) : null)
+            ?? '';
+        this.removeClientFromCallEverywhere(callId, clientId);
+        const members = await this.docCallMemberClientIds(callId);
+        const stillThere = !!userId && members.some((c) => meta.clients?.[c] === userId);
+        if (userId && !stillThere && members.length > 0) {
+            await this.sendToClients(members, this.userStatusEnvelope(callId, meta, userId, 'reconnecting', 'peer-disconnected', {
+                rejoinGraceMs: this.rejoinGraceMs,
+            }));
+        }
+        if (this.crossNodePubSub) {
+            try {
+                const p = {
+                    callId, departedClientId: clientId, callerId: meta.hostUserId, lobbyName: meta.documentId,
+                    callContinues: true, notified: true,
+                };
+                await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(p)));
+            }
+            catch { /* best-effort */ }
+        }
+        if (!stillThere)
+            this.scheduleDocLeave(callId, userId);
+    }
+    scheduleDocLeave(callId, userId) {
+        const key = `${callId}|${userId}`;
+        this.clearDocLeaveTimerKey(key);
+        const fire = async () => {
+            this.docLeaveTimers.delete(key);
+            const meta = await this.getDocumentMeta(callId);
+            if (!meta)
+                return;
+            const members = await this.docCallMemberClientIds(callId);
+            if (members.length === 0) {
+                await this.endDocumentCall(callId, meta, 'rejoin-grace-expired');
+                return;
+            }
+            if (!userId || members.some((c) => meta.clients?.[c] === userId))
+                return; // came back
+            await this.sendToClients(members, this.userStatusEnvelope(callId, meta, userId, 'left', 'rejoin-grace-expired'));
+            if (meta.presenting?.userId === userId) {
+                await this.metaStore.setPresenting(callId, null);
+                const fresh = await this.metaStore.get(callId);
+                if (fresh)
+                    await this.broadcastCallMeta(fresh);
+            }
+        };
+        if (this.rejoinGraceMs <= 0) {
+            void fire();
+            return;
+        }
+        const timer = setTimeout(() => { void fire(); }, this.rejoinGraceMs);
+        if (typeof timer.unref === 'function')
+            timer.unref();
+        this.docLeaveTimers.set(key, timer);
+    }
+    clearDocLeaveTimer(callId, userId) {
+        this.clearDocLeaveTimerKey(`${callId}|${userId}`);
+    }
+    clearDocLeaveTimerKey(key) {
+        const t = this.docLeaveTimers.get(key);
+        if (t) {
+            clearTimeout(t);
+            this.docLeaveTimers.delete(key);
+        }
     }
     sendError(clientId, message) {
         if (!this.messageRouter)

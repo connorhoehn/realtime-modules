@@ -11,7 +11,7 @@
 // onSweepSkipped) so the library stays dependency-light. The gateway keeps
 // its DDB session-binding repository, Redis wiring and HTTP routes.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CallManifest = exports.shouldKnockToJoin = exports.dmLobbyMembers = exports.isDmLobby = exports.channelForLobby = exports.lobbyForChannel = exports.RedisCallStateStore = exports.InMemoryCallStateStore = exports.isParticipantStateBroadcast = exports.ALLOWED_CALL_ACTIONS = exports.CallService = void 0;
+exports.CallManifest = exports.shouldKnockToJoin = exports.dmLobbyMembers = exports.isDmLobby = exports.channelForLobby = exports.lobbyForChannel = exports.RedisDocumentCallMetaStore = exports.InMemoryDocumentCallMetaStore = exports.RedisCallStateStore = exports.InMemoryCallStateStore = exports.isParticipantStateBroadcast = exports.ALLOWED_CALL_ACTIONS = exports.CallService = void 0;
 var CallService_1 = require("./CallService");
 Object.defineProperty(exports, "CallService", { enumerable: true, get: function () { return CallService_1.CallService; } });
 var types_1 = require("./types");
@@ -20,6 +20,8 @@ Object.defineProperty(exports, "isParticipantStateBroadcast", { enumerable: true
 var CallStateStore_1 = require("./CallStateStore");
 Object.defineProperty(exports, "InMemoryCallStateStore", { enumerable: true, get: function () { return CallStateStore_1.InMemoryCallStateStore; } });
 Object.defineProperty(exports, "RedisCallStateStore", { enumerable: true, get: function () { return CallStateStore_1.RedisCallStateStore; } });
+Object.defineProperty(exports, "InMemoryDocumentCallMetaStore", { enumerable: true, get: function () { return CallStateStore_1.InMemoryDocumentCallMetaStore; } });
+Object.defineProperty(exports, "RedisDocumentCallMetaStore", { enumerable: true, get: function () { return CallStateStore_1.RedisDocumentCallMetaStore; } });
 // The call ↔ conversation mapping, in both directions. Exported because both
 // the gateway (posting a finished call into its thread) and the frontend
 // (listing a conversation's recordings) need it, and two copies of one rule

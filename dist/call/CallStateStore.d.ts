@@ -241,4 +241,49 @@ export declare class RedisCallStateStore implements CallStateStore {
     removeClientFromCall(clientId: string, callId: string): Promise<void>;
     getCallsForClient(clientId: string): Promise<string[]>;
 }
+import type { DocumentCallInvite, DocumentCallMeta, DocumentCallMetaPatch, DocumentCallMetaStore, DocumentCallPresenting } from './types';
+/** Single-replica / test implementation of DocumentCallMetaStore. */
+export declare class InMemoryDocumentCallMetaStore implements DocumentCallMetaStore {
+    private records;
+    get(callId: string): Promise<DocumentCallMeta | null>;
+    set(meta: DocumentCallMeta): Promise<void>;
+    patch(callId: string, patch: DocumentCallMetaPatch): Promise<DocumentCallMeta | null>;
+    delete(callId: string): Promise<void>;
+    setPresenting(callId: string, presenting: DocumentCallPresenting | null): Promise<DocumentCallPresenting | null>;
+    markInvite(callId: string, userId: string, invite: DocumentCallInvite | null): Promise<void>;
+    markClient(callId: string, clientId: string, userId: string | null): Promise<void>;
+    listCallIds(): Promise<string[]>;
+}
+/** Redis surface the meta store needs. `hget` is optional: without it the
+ *  presenter read-back uses HGETALL. */
+export type DocumentCallMetaRedis = Pick<CallStateRedis, 'hset' | 'hgetall' | 'hdel' | 'sadd' | 'srem' | 'smembers' | 'del' | 'expire'> & {
+    hget?(key: string, field: string): Promise<string | null | undefined>;
+};
+/**
+ * Redis-backed DocumentCallMeta: hash `call:meta:<callId>`, TTL 4 h
+ * refreshed on every write, plus the `call:meta-index` set the sweep leader
+ * walks.
+ *
+ * Scalars are plain fields; `documentIds` / `documentTitles` / `presenting`
+ * are JSON fields. Invites are one field per person (`invite:<userId>` →
+ * JSON), not one JSON blob: a blob is read-modify-write, and two replicas
+ * marking two different people (an accept on one, the sweep on the other)
+ * would lose one of the marks. Read back as `invites` all the same.
+ */
+export declare class RedisDocumentCallMetaStore implements DocumentCallMetaStore {
+    private redis;
+    private ttlSeconds;
+    constructor(redis: DocumentCallMetaRedis, ttlSeconds?: number);
+    private key;
+    private touch;
+    private exists;
+    get(callId: string): Promise<DocumentCallMeta | null>;
+    set(meta: DocumentCallMeta): Promise<void>;
+    patch(callId: string, patch: DocumentCallMetaPatch): Promise<DocumentCallMeta | null>;
+    delete(callId: string): Promise<void>;
+    setPresenting(callId: string, presenting: DocumentCallPresenting | null): Promise<DocumentCallPresenting | null>;
+    markInvite(callId: string, userId: string, invite: DocumentCallInvite | null): Promise<void>;
+    markClient(callId: string, clientId: string, userId: string | null): Promise<void>;
+    listCallIds(): Promise<string[]>;
+}
 //# sourceMappingURL=CallStateStore.d.ts.map

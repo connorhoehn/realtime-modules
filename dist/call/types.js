@@ -45,5 +45,11 @@ exports.ALLOWED_CALL_ACTIONS = new Set([
     // call. `forgotten` (the ack) is server→client only, like
     // `active-call`.
     'forget',
+    // Document calls (2026-09-24). `call-meta` and `invite-expired` are
+    // server → client only and deliberately absent.
+    'meta',
+    'set-documents',
+    'present',
+    'set-title',
 ]);
 //# sourceMappingURL=types.js.map
