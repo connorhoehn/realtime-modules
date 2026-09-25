@@ -101,6 +101,8 @@ export interface DocumentSearchQuery {
   filters?: DocumentSearchFilters;
   limit?: number;
   cursor?: string | null;
+  /** Skip the server's row cache — the document list just changed. */
+  fresh?: boolean;
 }
 
 export function documentSearchUrl(apiBaseUrl: string, query: DocumentSearchQuery): string {
@@ -114,6 +116,7 @@ export function documentSearchUrl(apiBaseUrl: string, query: DocumentSearchQuery
   if (typeof f.since === 'number') p.set('since', String(f.since));
   if (query.limit) p.set('limit', String(query.limit));
   if (query.cursor) p.set('cursor', query.cursor);
+  if (query.fresh) p.set('fresh', '1');
   const qs = p.toString();
   return `${apiBaseUrl}/api/document-search${qs ? `?${qs}` : ''}`;
 }

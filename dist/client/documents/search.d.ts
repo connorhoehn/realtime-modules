@@ -58,6 +58,8 @@ export interface DocumentSearchQuery {
     filters?: DocumentSearchFilters;
     limit?: number;
     cursor?: string | null;
+    /** Skip the server's row cache — the document list just changed. */
+    fresh?: boolean;
 }
 export declare function documentSearchUrl(apiBaseUrl: string, query: DocumentSearchQuery): string;
 /** `GET /api/document-search`. */

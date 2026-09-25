@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.95.9 — 2026-09-25
+
+- **client/documents:** `useDocumentSearch` asks for `fresh=1` on a
+  `refreshKey` change or `refresh()`, so a document the host just created is in
+  the answer (the server otherwise answers from a 10 s row cache).
+
 ## 0.95.8 — 2026-09-25
 
 - **client/documents:** `useDocumentSearch({ apiBaseUrl, idToken, query, sort,

@@ -7,7 +7,9 @@
 //     can never overwrite the answer for "release";
 //   - `loadMore()` appends the next page by cursor;
 //   - `refreshKey` re-reads the first page (a host bumps it when a document
-//     is created, renamed or deleted), keeping the rows on screen meanwhile.
+//     is created, renamed or deleted), keeping the rows on screen meanwhile;
+//     that read and `refresh()` ask the server to skip its row cache
+//     (`fresh=1`), so the new document is in the answer.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchDocumentSearch } from './search';
@@ -79,6 +81,7 @@ export function useDocumentSearch(opts: UseDocumentSearchOptions): UseDocumentSe
   const [tick, setTick] = useState(0);
   const inflight = useRef<AbortController | null>(null);
   const request = useRef({ q: '', sort, filters, limit });
+  const lastRefresh = useRef<{ key: unknown; tick: number } | null>(null);
 
   useEffect(() => {
     if (!enabled) { setLoading(false); return; }
@@ -86,8 +89,11 @@ export function useDocumentSearch(opts: UseDocumentSearchOptions): UseDocumentSe
     const ctl = new AbortController();
     inflight.current = ctl;
     request.current = { q: debounced, sort, filters, limit };
+    const prev = lastRefresh.current;
+    const fresh = !!prev && (prev.key !== refreshKey || prev.tick !== tick);
+    lastRefresh.current = { key: refreshKey, tick };
     setLoading(true);
-    fetchDocumentSearch(apiBaseUrl, idToken, { q: debounced, ...(sort ? { sort } : {}), filters, limit }, { signal: ctl.signal })
+    fetchDocumentSearch(apiBaseUrl, idToken, { q: debounced, ...(sort ? { sort } : {}), filters, limit, ...(fresh ? { fresh } : {}) }, { signal: ctl.signal })
       .then((page) => {
         if (ctl.signal.aborted) return;
         setItems(page.items);

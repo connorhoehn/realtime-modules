@@ -49,5 +49,7 @@ describe('document search client', () => {
     expect(calls.find((c) => c.url.includes('q=slow'))!.signal!.aborted).toBe(true);
     await new Promise((r) => setTimeout(r, 120));
     expect(result.current.settledQuery).toBe('fast');
+    act(() => result.current.refresh());
+    await waitFor(() => expect(calls[calls.length - 1]!.url).toContain('fresh=1'));
   });
 });

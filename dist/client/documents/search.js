@@ -72,6 +72,8 @@ function documentSearchUrl(apiBaseUrl, query) {
         p.set('limit', String(query.limit));
     if (query.cursor)
         p.set('cursor', query.cursor);
+    if (query.fresh)
+        p.set('fresh', '1');
     const qs = p.toString();
     return `${apiBaseUrl}/api/document-search${qs ? `?${qs}` : ''}`;
 }
