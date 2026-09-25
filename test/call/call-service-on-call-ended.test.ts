@@ -127,14 +127,20 @@ describe('CallService — onCallEnded', () => {
     expect(onCallEnded).toHaveBeenCalledTimes(1);
   });
 
-  // Until the last person leaves, the call is still happening.
-  it('says nothing while somebody is still in the call', async () => {
+  // A DM has two parties. When one hangs up on a call both were in, the
+  // other side's client shows "call ended" (it is sent `cancelled`) but never
+  // says so back — so the server kept the call, and its card, alive until
+  // that socket happened to close. Either party's hang-up ends a DM.
+  it('a DM ends when either party hangs up', async () => {
     const onCallEnded = jest.fn();
     const { svc } = makeService(onCallEnded);
     await invite(svc);
     await accept(svc);
     await end(svc, 'call-1', ['c-alice']);
-    expect(onCallEnded).not.toHaveBeenCalled();
+    expect(onCallEnded).toHaveBeenCalledTimes(1);
+    expect([...onCallEnded.mock.calls[0]![0].participantClientIds].sort()).toEqual(['c-alice', 'c-bob']);
+    await end(svc, 'call-1', ['c-bob']);
+    expect(onCallEnded).toHaveBeenCalledTimes(1);
   });
 
   // A hang-up must not depend on whatever records it.

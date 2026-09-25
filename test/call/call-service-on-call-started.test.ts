@@ -121,3 +121,102 @@ describe('CallService — onCallMissed', () => {
     svc.dispose();
   });
 });
+
+describe('CallService — the end is announced from wherever the call is seen to end', () => {
+  // Both tabs close together. The roster in the store must lose both, or
+  // the grace timer re-reads a roster of two, decides they "rejoined", and
+  // the call lives on with nobody in it.
+  it('two people dropping together end the call, once, at the moment the last one dropped', async () => {
+    jest.useFakeTimers();
+    try {
+      const onCallEnded = jest.fn();
+      const store = new InMemoryCallStateStore();
+      const svc = new CallService({
+        messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: store, rejoinGraceMs: 30_000, config: { onCallEnded },
+      });
+      await invite(svc);
+      await accept(svc);
+      const t0 = Date.now();
+      jest.setSystemTime(t0 + 5_000);
+      await svc.handleDisconnect('c-alice');
+      // Alone now: the grace is armed for a possible rejoin.
+      expect(onCallEnded).not.toHaveBeenCalled();
+      await svc.handleDisconnect('c-bob');
+      // Nobody left anywhere (the store's roster lost both): over now.
+      expect(onCallEnded).toHaveBeenCalledTimes(1);
+      expect(onCallEnded.mock.calls[0]![0].endedAt).toBe(t0 + 5_000);
+      jest.setSystemTime(t0 + 35_000);
+      await jest.advanceTimersByTimeAsync(31_000);
+      // The armed grace timer finds nothing to announce a second time.
+      expect(onCallEnded).toHaveBeenCalledTimes(1);
+      svc.dispose();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // Two nodes: the accept landed on the other node, so this one never had
+  // the call in its local accepted set. The cluster marker says it was
+  // accepted, and this node — which saw the last person leave — announces
+  // the end rather than a missed call.
+  it('a call accepted on a peer node is announced as ended, not missed', async () => {
+    const onCallEnded = jest.fn();
+    const onCallMissed = jest.fn();
+    const store = new InMemoryCallStateStore();
+    await store.markAccepted('call-1', 600);
+    const svc = new CallService({
+      messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: store, rejoinGraceMs: 0, config: { onCallEnded, onCallMissed },
+    });
+    await invite(svc);
+    await verb(svc, 'c-alice', 'ended');
+    await flush();
+    expect(onCallMissed).not.toHaveBeenCalled();
+    expect(onCallEnded).toHaveBeenCalledTimes(1);
+    expect(onCallEnded.mock.calls[0]![0].callId).toBe('call-1');
+    svc.dispose();
+  });
+
+  it('a peer that already announced the end leaves nothing for this node to say', async () => {
+    const onCallEnded = jest.fn();
+    const onCallMissed = jest.fn();
+    const store = new InMemoryCallStateStore();
+    await store.markAccepted('call-1', 600);
+    await store.takeAccepted('call-1');
+    // The store still lists the other party, so it is not a missed call either.
+    await store.registerParticipant('call-1', 'c-bob', 'u-alice', lobby, ['u-bob']);
+    const svc = new CallService({
+      messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: store, rejoinGraceMs: 0, config: { onCallEnded, onCallMissed },
+    });
+    await invite(svc);
+    await verb(svc, 'c-alice', 'ended');
+    await flush();
+    expect(onCallEnded).not.toHaveBeenCalled();
+    expect(onCallMissed).not.toHaveBeenCalled();
+    svc.dispose();
+  });
+});
+
+describe('CallService — a lone drop ends after the grace, dated when they dropped', () => {
+  it('records the drop time, not the grace expiry', async () => {
+    jest.useFakeTimers();
+    try {
+      const onCallEnded = jest.fn();
+      const svc = new CallService({
+        messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: new InMemoryCallStateStore(), rejoinGraceMs: 30_000, config: { onCallEnded },
+      });
+      await invite(svc);
+      await accept(svc);
+      const t0 = Date.now();
+      jest.setSystemTime(t0 + 5_000);
+      await svc.handleDisconnect('c-alice');
+      expect(onCallEnded).not.toHaveBeenCalled();
+      jest.setSystemTime(t0 + 35_000);
+      await jest.advanceTimersByTimeAsync(31_000);
+      expect(onCallEnded).toHaveBeenCalledTimes(1);
+      expect(onCallEnded.mock.calls[0]![0].endedAt).toBe(t0 + 5_000);
+      svc.dispose();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

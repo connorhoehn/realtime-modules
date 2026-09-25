@@ -208,6 +208,11 @@ class InMemoryCallStateStore {
     async clearAccepted(callId) {
         this.acceptedCalls.delete(callId);
     }
+    async takeAccepted(callId) {
+        const existing = this.acceptedCalls.get(callId);
+        this.acceptedCalls.delete(callId);
+        return typeof existing === 'number' && existing > Date.now();
+    }
     async markRecentInvite(callId, windowSeconds) {
         const now = Date.now();
         const existing = this.recentInvites.get(callId);
@@ -706,6 +711,15 @@ class RedisCallStateStore {
             await this.del(this.acceptedKey(callId));
         }
         catch { /* */ }
+    }
+    async takeAccepted(callId) {
+        try {
+            const n = await this.del(this.acceptedKey(callId));
+            return Number(n) > 0;
+        }
+        catch {
+            return false;
+        }
     }
     async markRecentInvite(callId, windowSeconds) {
         return this.setNxEx(this.recentInviteKey(callId), String(Date.now()), windowSeconds);

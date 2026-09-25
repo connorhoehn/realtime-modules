@@ -69,6 +69,12 @@ export interface CallStateStore {
     /** Clear the accept marker — used on terminal `ended/declined/cancelled`. */
     clearAccepted?(callId: string): Promise<void>;
     /**
+     * Clear the accept marker and say whether it was there: true exactly
+     * once per accepted call across the cluster. The once-guard for
+     * announcing a call's end from whichever node saw the last person leave.
+     */
+    takeAccepted?(callId: string): Promise<boolean>;
+    /**
      * Recent-invites dedup. SETNX with TTL = window. Returns `true` if
      * this is the first time we saw `callId` in the window, `false` if
      * a duplicate. Cluster-wide so a double-click that races across
@@ -162,6 +168,7 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     getActiveInvitesForUser(userId: string): Promise<string[]>;
     markAccepted(callId: string, ttlSeconds: number): Promise<boolean>;
     clearAccepted(callId: string): Promise<void>;
+    takeAccepted(callId: string): Promise<boolean>;
     markRecentInvite(callId: string, windowSeconds: number): Promise<boolean>;
     setCall(callId: string, state: ActiveCallStateView, _ttlSec: number): Promise<void>;
     addClientToCall(clientId: string, callId: string, _ttlSec: number): Promise<void>;
@@ -235,6 +242,7 @@ export declare class RedisCallStateStore implements CallStateStore {
     getActiveInvitesForUser(userId: string): Promise<string[]>;
     markAccepted(callId: string, ttlSeconds: number): Promise<boolean>;
     clearAccepted(callId: string): Promise<void>;
+    takeAccepted(callId: string): Promise<boolean>;
     markRecentInvite(callId: string, windowSeconds: number): Promise<boolean>;
     setCall(callId: string, state: ActiveCallStateView, ttlSec: number): Promise<void>;
     addClientToCall(clientId: string, callId: string, ttlSec: number): Promise<void>;

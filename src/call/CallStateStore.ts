@@ -99,6 +99,12 @@ export interface CallStateStore {
     markAccepted?(callId: string, ttlSeconds: number): Promise<boolean>;
     /** Clear the accept marker — used on terminal `ended/declined/cancelled`. */
     clearAccepted?(callId: string): Promise<void>;
+    /**
+     * Clear the accept marker and say whether it was there: true exactly
+     * once per accepted call across the cluster. The once-guard for
+     * announcing a call's end from whichever node saw the last person leave.
+     */
+    takeAccepted?(callId: string): Promise<boolean>;
 
     /**
      * Recent-invites dedup. SETNX with TTL = window. Returns `true` if
@@ -384,6 +390,12 @@ export class InMemoryCallStateStore implements CallStateStore {
 
     async clearAccepted(callId: string): Promise<void> {
         this.acceptedCalls.delete(callId);
+    }
+
+    async takeAccepted(callId: string): Promise<boolean> {
+        const existing = this.acceptedCalls.get(callId);
+        this.acceptedCalls.delete(callId);
+        return typeof existing === 'number' && existing > Date.now();
     }
 
     async markRecentInvite(callId: string, windowSeconds: number): Promise<boolean> {
@@ -866,6 +878,13 @@ export class RedisCallStateStore implements CallStateStore {
 
     async clearAccepted(callId: string): Promise<void> {
         try { await this.del(this.acceptedKey(callId)); } catch { /* */ }
+    }
+
+    async takeAccepted(callId: string): Promise<boolean> {
+        try {
+            const n = await this.del(this.acceptedKey(callId));
+            return Number(n) > 0;
+        } catch { return false; }
     }
 
     async markRecentInvite(callId: string, windowSeconds: number): Promise<boolean> {

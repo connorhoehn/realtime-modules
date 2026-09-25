@@ -656,44 +656,16 @@ export class CallService {
         callId: string,
         state: ActiveCallState,
         missedReason: 'cancelled' | 'declined' | 'no-answer' = 'cancelled',
+        endedAtHint?: number,
     ): void {
-        if (!this.acceptedCallIds.has(callId)) {
-            // Never accepted HERE. That is a missed call when this node also
-            // rang it (the invite registry is per node, so the ringing node is
-            // the one that knows nobody picked up); a call accepted on a peer
-            // node is that peer's to record, and saying "missed" about it
-            // would be false.
-            if (this.callMissedHook && typeof state.invitedAt === 'number') {
-                const summary = {
-                    callId,
-                    lobbyName: state.lobbyName,
-                    callerId: state.callerId,
-                    callerName: state.originalCallerName,
-                    invitedAt: state.invitedAt,
-                    endedAt: Date.now(),
-                    reason: state.declined ? 'declined' as const : missedReason,
-                };
-                const participants = state.participantClientIds.size;
-                void this.callHasAcceptedParticipant(callId, { ...state, participantClientIds: new Set() })
-                    .then((accepted) => {
-                        if (accepted || participants > 1) return;
-                        return Promise.resolve(this.callMissedHook?.(summary));
-                    })
-                    .catch((e: any) => this.logger.warn(`[CallService] onCallMissed failed for ${callId}: ${e?.message ?? e}`));
-            }
-            return;
-        }
-        this.acceptedCallIds.delete(callId);
-        if (!this.callEndedHook) return;
-
-        const endedAt = Date.now();
+        const endedAt = typeof endedAtHint === 'number' ? endedAtHint : Date.now();
         // The call's clock starts when someone picks up; the ring before that
         // is not time anyone spent in the call. The invite time is the
         // fallback for a call restored without its accept.
         const startedAt = typeof state.acceptedAt === 'number'
             ? state.acceptedAt
             : typeof state.invitedAt === 'number' ? state.invitedAt : undefined;
-        this._emitCallEnded({
+        const ended = {
             callId,
             lobbyName: state.lobbyName,
             callerId: state.callerId,
@@ -702,13 +674,67 @@ export class CallService {
             endedAt,
             // Absent rather than zero when we never knew when it began — a
             // transcript reading "0s" looks like a bug, because it is one.
-            durationMs: startedAt !== undefined ? endedAt - startedAt : undefined,
+            durationMs: startedAt !== undefined ? Math.max(0, endedAt - startedAt) : undefined,
             // The full roster. Reporting whoever happened to leave last
             // would name one person out of however many were in the call.
             participantClientIds: Array.from(
                 state.everParticipated ?? state.participantClientIds,
             ),
-        });
+        };
+        const store = this.stateStore;
+
+        if (this.acceptedCallIds.has(callId)) {
+            // Accepted on this node: announce now, synchronously — teardown
+            // must not wait on a store. The cluster marker is taken too, so
+            // a peer that sees the same call go cannot announce it twice.
+            this.acceptedCallIds.delete(callId);
+            if (store && typeof store.takeAccepted === 'function') {
+                void store.takeAccepted(callId).catch(() => { /* best-effort */ });
+            }
+            this._emitCallEnded(ended);
+            return;
+        }
+
+        // Not accepted HERE. Either it was accepted on a peer node (a
+        // two-node DM: the accept lands on the accepter's node, the caller's
+        // hang-up on the caller's) — then the cluster marker says so and
+        // whoever takes it announces the end — or nobody ever picked up, and
+        // it is a missed call. `callHasAcceptedParticipant` covers a store
+        // without the marker.
+        const participantsNow = state.participantClientIds.size;
+        // Connections THIS node registered. One in the store that is not
+        // among them was registered by a peer — somebody answered there.
+        const localKnown = new Set<string>([...(state.everParticipated ?? []), ...state.participantClientIds]);
+        const missed = typeof state.invitedAt === 'number'
+            ? {
+                callId,
+                lobbyName: state.lobbyName,
+                callerId: state.callerId,
+                callerName: state.originalCallerName,
+                invitedAt: state.invitedAt,
+                endedAt,
+                reason: state.declined ? 'declined' as const : missedReason,
+            }
+            : null;
+        void (async () => {
+            if (store && typeof store.takeAccepted === 'function') {
+                if (await store.takeAccepted(callId)) {
+                    this._emitCallEnded(ended);
+                    return;
+                }
+            }
+            let peerRegistered = false;
+            if (store) {
+                try {
+                    const view = await store.getCall(callId);
+                    peerRegistered = !!view?.participantClientIds.some((cid) => !localKnown.has(cid));
+                } catch { /* the local view stands */ }
+            }
+            if (participantsNow > 1 || peerRegistered) return; // answered elsewhere: a peer's to announce
+            if (missed && this.callMissedHook) {
+                await Promise.resolve(this.callMissedHook(missed));
+            }
+        })().catch((e: any) => this.logger.warn(`[CallService] call-ended/missed hook failed for ${callId}: ${e?.message ?? e}`));
     }
 
     /**
@@ -762,12 +788,16 @@ export class CallService {
         }
     }
 
-    private forgetCall(callId: string, missedReason: 'cancelled' | 'declined' | 'no-answer' = 'cancelled'): void {
+    private forgetCall(
+        callId: string,
+        missedReason: 'cancelled' | 'declined' | 'no-answer' = 'cancelled',
+        endedAt?: number,
+    ): void {
         const state = this.activeCalls.get(callId);
         if (!state) return;
         const departedParticipants = Array.from(state.participantClientIds);
 
-        this._announceCallEnded(callId, state, missedReason);
+        this._announceCallEnded(callId, state, missedReason, endedAt);
         for (const cid of departedParticipants) {
             const calls = this.clientToCalls.get(cid);
             if (calls) {
@@ -1815,6 +1845,19 @@ export class CallService {
                     this._announceCallEnded(callId, state);
                     this.activeCalls.delete(callId);
                     this.storeMirrored.delete(callId);
+                } else if (
+                    state.participantClientIds.size === 1
+                    && state.lobbyName.startsWith('dm:')
+                    && (this.acceptedCallIds.has(callId) || (state.everParticipated?.size ?? 0) > 1)
+                ) {
+                    // A DM has two parties, so when one of them hangs up on a
+                    // call both were in, the call is over — the other side's
+                    // client already shows "call ended" (it was sent
+                    // `cancelled`) but never says so back, and the server
+                    // used to keep the call alive, and its card live, until
+                    // that socket happened to close.
+                    this.logger.info(`[CallService] ${action} by one party ended DM call ${callId}`);
+                    this.forgetCall(callId);
                 }
             }
             // W11 — mirror to durable store. Fire-and-forget.
@@ -2223,12 +2266,18 @@ export class CallService {
                 // `ended`/`declined` path performs.
                 if (state) state.participantClientIds.delete(clientId);
                 if (this.stateStore) {
+                    // Both halves of the store: the call's roster AND the
+                    // client's reverse index. Dropping only the index left
+                    // the departed client on the roster, so when two people
+                    // closed their tabs together the grace timer re-read a
+                    // roster of two, decided they had "rejoined", and the
+                    // call lived on with nobody in it — a ghost call that
+                    // never ended and a card that never stopped saying live.
+                    void this.stateStore.removeParticipant(callId, clientId)
+                        .catch((e: any) => this.logger.warn(`[CallService] stateStore.removeParticipant failed for ${callId}/${clientId}: ${e?.message ?? e}`));
                     if (typeof this.stateStore.removeClientFromCall === 'function') {
                         void this.stateStore.removeClientFromCall(clientId, callId)
                             .catch((e: any) => this.logger.warn(`[CallService] stateStore.removeClientFromCall failed for ${clientId}/${callId}: ${e?.message ?? e}`));
-                    } else {
-                        void this.stateStore.removeParticipant(callId, clientId)
-                            .catch((e: any) => this.logger.warn(`[CallService] stateStore.removeParticipant failed for ${callId}/${clientId}: ${e?.message ?? e}`));
                     }
                 }
             } else {
@@ -2259,6 +2308,10 @@ export class CallService {
     private scheduleGraceEnd(callId: string, departedClientId: string): void {
         const existing = this.rejoinGraceTimers.get(callId);
         if (existing) clearTimeout(existing);
+        // The call ended when they dropped; the grace is how long we waited
+        // to be sure. A record that counts the wait says the call ran 30s
+        // longer than anyone was in it.
+        const departedAt = Date.now();
         const timer = setTimeout(() => {
             this.rejoinGraceTimers.delete(callId);
             void (async () => {
@@ -2306,7 +2359,7 @@ export class CallService {
                     } catch { /* best-effort */ }
                 }
                 this.logger.info(`[CallService] rejoin grace expired — call ${callId} ended`);
-                this.forgetCall(callId);
+                this.forgetCall(callId, 'cancelled', departedAt);
             })();
         }, this.rejoinGraceMs);
         if (typeof (timer as any).unref === 'function') (timer as any).unref();

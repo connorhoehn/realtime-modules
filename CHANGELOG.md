@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.97.12 — 2026-09-25
+
+- **call (fix): ghost DM calls.** A disconnect that deferred teardown (rejoin
+  grace) dropped the client from its reverse index but not from the call's
+  roster in the store, so when two people closed their tabs together the
+  grace timer re-read a roster of two, took it for a rejoin, and the call
+  lived on with nobody in it. Both halves are removed now.
+- **call (fix): a DM ends when either party hangs up.** The other side's
+  client shows "call ended" (it is sent `cancelled`) but never says so back,
+  so the server kept the call alive until that socket closed. `onCallEnded`
+  now fires at the hang-up.
+- **call: `onCallEnded` after a rejoin grace is dated when the last person
+  dropped,** not when the grace ran out.
+- **call: the end is announced from whichever node saw the last person
+  leave.** `CallStateStore.takeAccepted(callId)` (Redis: DEL of the accept
+  marker; true once per call cluster-wide) is the once-guard, so a two-node
+  DM whose accept landed on the other node is still recorded as ended — and
+  never as missed. `onCallMissed` fires only when no node registered anyone
+  but the caller.
+
 ## 0.97.11 — 2026-09-25
 
 - **client/video (fix): `useDocumentCall` reads a session with its lobby.**
