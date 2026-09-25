@@ -128,6 +128,20 @@ export interface UseDocumentCallResult {
     inviteLink: string;
     /** Re-read the record and live state (after a navigation, say). */
     refresh(): void;
+    /** Host only: ask this person to mute (their client mutes itself). */
+    muteParticipant(userId: string): void;
+    /** Host only: remove this person; they can come back only through a new invite. */
+    removeParticipant(userId: string): void;
+    /** Host only: hand the host role to this participant. */
+    transferHost(userId: string): void;
+    /** "Mute for me": silence this person locally only. Reflected as `participant.mutedForMe`. */
+    setMutedForMe(userId: string, muted: boolean): void;
+    /** The last thing the host did to you — for a toast ("Connor muted you"). */
+    moderation: {
+        kind: 'muted' | 'removed';
+        by: string;
+        at: number;
+    } | null;
 }
 /** A platform-api video-session row → DocumentCallSession (lenient: rows from
  *  before `kind` existed still parse, as the host document's call). */

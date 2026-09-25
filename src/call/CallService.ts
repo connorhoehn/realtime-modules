@@ -1269,7 +1269,8 @@ export class CallService {
         }
 
         // Document calls (2026-09-24) — meta queries and edits.
-        if (action === 'meta' || action === 'set-documents' || action === 'present' || action === 'set-title') {
+        if (action === 'meta' || action === 'set-documents' || action === 'present' || action === 'set-title'
+            || action === 'mute-participant' || action === 'remove-participant' || action === 'transfer-host') {
             await this.handleDocumentCallAction(clientId, action, payload);
             return;
         }
@@ -2578,9 +2579,104 @@ export class CallService {
                 return;
             }
             await this.metaStore.patch(callId, { title });
+        } else if (action === 'mute-participant' || action === 'remove-participant' || action === 'transfer-host') {
+            const handled = await this.handleModeration(clientId, action, payload, meta, userId);
+            if (handled) return;
         }
         const fresh = await this.metaStore.get(callId);
         if (fresh) await this.broadcastCallMeta(fresh, [clientId]);
+    }
+
+
+    /**
+     * Host moderation: `mute-participant`, `remove-participant`,
+     * `transfer-host`. Host only; the target must be someone in the call
+     * (not the host themself). Works across replicas: the target's
+     * connections are found cluster-wide, the meta lives in the shared store,
+     * and other nodes drop removed connections from their caches through the
+     * cross-node departure topic. Returns true when it already answered (so
+     * the caller must not broadcast call-meta again).
+     */
+    private async handleModeration(
+        clientId: string,
+        action: 'mute-participant' | 'remove-participant' | 'transfer-host',
+        payload: CallInvite,
+        meta: DocumentCallMeta,
+        actorUserId: string,
+    ): Promise<boolean> {
+        const store = this.metaStore!;
+        const callId = meta.callId;
+        if (!actorUserId || actorUserId !== meta.hostUserId) {
+            this.sendError(clientId, `Only the host can ${action.replace('-', ' ')}`);
+            return true;
+        }
+        const target = typeof payload.userId === 'string' ? payload.userId : '';
+        if (!target) {
+            this.sendError(clientId, `userId is required on ${action}`);
+            return true;
+        }
+        if (target === actorUserId) {
+            this.sendError(clientId, `The host cannot ${action.replace('-', ' ')} themself`);
+            return true;
+        }
+        const members = await this.docCallMemberClientIds(callId);
+        const targetClients = members.filter((c) => meta.clients?.[c] === target);
+        const inCall = meta.invites[target]?.state === 'accepted' || targetClients.length > 0;
+        if (!inCall) {
+            this.sendError(clientId, `${target} is not in call ${callId}`);
+            return true;
+        }
+        const frame = (a: string): CallEvent => ({
+            type: 'call',
+            action: a,
+            data: { callId, userId: target, by: actorUserId },
+            timestamp: new Date().toISOString(),
+        });
+
+        if (action === 'mute-participant') {
+            // Every tab of theirs mutes; their participant-state follows.
+            await this.sendToUsers([target], frame('mute-participant'));
+            this.logger.info(`[CallService] host ${actorUserId} muted ${target} in ${callId}`);
+            return true;
+        }
+
+        if (action === 'transfer-host') {
+            await store.patch(callId, { hostUserId: target });
+            // The old host stays a participant in their own right.
+            const mine = meta.invites[actorUserId];
+            await store.markInvite(callId, actorUserId, { at: mine?.at ?? meta.startedAt, state: 'accepted', ...(mine?.by ? { by: mine.by } : {}) });
+            if (meta.invites[target] && meta.invites[target].state !== 'accepted') {
+                await store.markInvite(callId, target, { ...meta.invites[target], state: 'accepted' });
+            }
+            this.logger.info(`[CallService] host of ${callId} moved ${actorUserId} → ${target}`);
+            return false; // caller broadcasts the fresh call-meta
+        }
+
+        // remove-participant
+        const prev = meta.invites[target];
+        await store.markInvite(callId, target, { at: prev?.at ?? Date.now(), state: 'removed', by: actorUserId });
+        // Tell them first, while their connections are still on the roster.
+        await this.sendToUsers([target], frame('remove-participant'));
+        for (const cid of targetClients) {
+            this.removeClientFromCallEverywhere(callId, cid);
+            await store.markClient(callId, cid, null);
+            if (this.crossNodePubSub) {
+                try {
+                    const p: CrossNodeDepartedPayload = {
+                        callId, departedClientId: cid, callerId: meta.hostUserId, lobbyName: meta.documentId,
+                        callContinues: true, notified: true,
+                    };
+                    await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(p)));
+                } catch { /* best-effort */ }
+            }
+        }
+        this.clearDocLeaveTimer(callId, target);
+        this.dropInviteForUser(target, callId);
+        if (meta.presenting?.userId === target) await store.setPresenting(callId, null);
+        const rest = members.filter((c) => !targetClients.includes(c));
+        await this.sendToClients(rest, this.userStatusEnvelope(callId, meta, target, 'left', 'removed', { by: actorUserId }));
+        this.logger.info(`[CallService] host ${actorUserId} removed ${target} from ${callId}`);
+        return false;
     }
 
     /**
@@ -2609,6 +2705,12 @@ export class CallService {
                 return { handled: true };
             }
             await this.leaveDocumentCall(callId, meta, clientId, userId, 'left');
+            return { handled: true };
+        }
+
+        if (userId && meta.invites[userId]?.state === 'removed'
+            && (action === 'accepted' || action === 'participant-state')) {
+            this.sendError(clientId, `You were removed from call ${callId}`);
             return { handled: true };
         }
 

@@ -51,5 +51,9 @@ exports.ALLOWED_CALL_ACTIONS = new Set([
     'set-documents',
     'present',
     'set-title',
+    // Host moderation (2026-09-24).
+    'mute-participant',
+    'remove-participant',
+    'transfer-host',
 ]);
 //# sourceMappingURL=types.js.map

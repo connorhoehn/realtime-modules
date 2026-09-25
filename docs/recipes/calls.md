@@ -114,3 +114,12 @@ Client side (`./client/video`): `useDocumentCall` for the call,
 `useAudioVideoSettings` for the settings drawer. `useDocumentCall` mints the
 LVS stage token (`lvs`); mount `LVSHangoutSessionProvider` with it and pass
 the session back as `media` so toggles and members line up.
+
+Host moderation (0.97.0): `mute-participant`, `remove-participant` and
+`transfer-host` (`{ callId, userId }`, host only, target must be in the call).
+The target's own connections get `mute-participant` / `remove-participant`
+(`{ callId, userId, by }`) and their client mutes or leaves; everyone else gets
+`user-status: left` (reason `removed`) and `call-meta`. A removed person's
+invite reads `removed` and only a new invite lets them back. In the hook:
+`muteParticipant`, `removeParticipant`, `transferHost`, plus the local-only
+`setMutedForMe` (`participant.mutedForMe`) and `moderation` for a toast.

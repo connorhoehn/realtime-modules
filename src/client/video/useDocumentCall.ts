@@ -131,6 +131,16 @@ export interface UseDocumentCallResult {
   inviteLink: string;
   /** Re-read the record and live state (after a navigation, say). */
   refresh(): void;
+  /** Host only: ask this person to mute (their client mutes itself). */
+  muteParticipant(userId: string): void;
+  /** Host only: remove this person; they can come back only through a new invite. */
+  removeParticipant(userId: string): void;
+  /** Host only: hand the host role to this participant. */
+  transferHost(userId: string): void;
+  /** "Mute for me": silence this person locally only. Reflected as `participant.mutedForMe`. */
+  setMutedForMe(userId: string, muted: boolean): void;
+  /** The last thing the host did to you — for a toast ("Connor muted you"). */
+  moderation: { kind: 'muted' | 'removed'; by: string; at: number } | null;
 }
 
 const FOLLOW_KEY = (callId: string) => `doc-call:follow:${callId}`;
@@ -259,6 +269,19 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
   const [following, setFollowing] = useState<string | null>(null);
   const followingRef = useRef(following);
   followingRef.current = following;
+  const [moderation, setModeration] = useState<{ kind: 'muted' | 'removed'; by: string; at: number } | null>(null);
+  const [mutedForMe, setMutedForMeState] = useState<Record<string, true>>({});
+  const setMutedForMe = useCallback((userId: string, muted: boolean) => {
+    setMutedForMeState((m) => {
+      if (!!m[userId] === muted) return m;
+      const next = { ...m };
+      if (muted) next[userId] = true; else delete next[userId];
+      return next;
+    });
+  }, []);
+  // Set once the actions below exist; the frame handler reaches them through these.
+  const leaveRef = useRef<(mode: 'left' | 'everyone' | 'removed') => Promise<void>>(async () => undefined);
+  const muteSelfRef = useRef<() => void>(() => undefined);
   const [now, setNow] = useState(() => Date.now());
   const metaRef = useRef(meta);
   metaRef.current = meta;
@@ -456,6 +479,18 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
         });
         return;
       }
+      if (f.action === 'mute-participant' || f.action === 'remove-participant') {
+        if (str(d.userId) !== optsRef.current.identity.userId) return;
+        const by = str(d.by) ?? '';
+        if (f.action === 'mute-participant') {
+          setModeration({ kind: 'muted', by, at: Date.now() });
+          muteSelfRef.current();
+        } else {
+          setModeration({ kind: 'removed', by, at: Date.now() });
+          void leaveRef.current('removed');
+        }
+        return;
+      }
       if (f.action === 'ended') {
         const wasJoined = joinedRef.current === callId;
         const startedAt = metaRef.current?.startedAt ?? sessionRef.current?.createdAt ?? null;
@@ -567,6 +602,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     setJoinedCallId(callId);
     joinedRef.current = callId;
     setEnded(null);
+    setModeration(null);
   }, [api]);
 
   const inviteFrame = useCallback((userIds: string[], extra: { message?: string; ring?: boolean } = {}) => {
@@ -693,13 +729,15 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     }
   }, [discovered, enterCall, send, announceSelf, refresh]);
 
-  const leaveInternal = useCallback(async (forEveryone: boolean) => {
+  const leaveInternal = useCallback(async (mode: 'left' | 'everyone' | 'removed') => {
+    const forEveryone = mode === 'everyone';
     const callId = joinedRef.current;
     if (!callId) return;
     const c = callRef.current;
     const o = optsRef.current;
     const lobby = c?.documentId ?? o.documentId;
-    send({
+    // Removed by the host: the server already took us off the call.
+    if (mode !== 'removed') send({
       service: 'call',
       action: 'ended',
       callId,
@@ -714,7 +752,11 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     joinedRef.current = null;
     setLvs({ stageToken: null, participantId: null, sessionId: null });
     setRoster({});
-    setEnded({ at: Date.now(), durationMs: startedAt0 ? Date.now() - startedAt0 : null, reason: forEveryone ? 'ended-for-everyone' : 'left' });
+    setEnded({ at: Date.now(), durationMs: startedAt0 ? Date.now() - startedAt0 : null, reason: forEveryone ? 'ended-for-everyone' : mode });
+    if (mode === 'removed') {
+      setMeta(null);
+      setSession(null);
+    }
     let callOver = forEveryone;
     try {
       const r = await api(`/api/video/sessions/${encodeURIComponent(callId)}/end`, {
@@ -730,8 +772,18 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     }
   }, [api, send, writeActiveCall]);
 
-  const leave = useCallback(() => leaveInternal(false), [leaveInternal]);
-  const endForEveryone = useCallback(() => leaveInternal(true), [leaveInternal]);
+  const leave = useCallback(() => leaveInternal('left'), [leaveInternal]);
+  const endForEveryone = useCallback(() => leaveInternal('everyone'), [leaveInternal]);
+  leaveRef.current = leaveInternal;
+
+  const moderate = useCallback((action: 'mute-participant' | 'remove-participant' | 'transfer-host', userId: string) => {
+    const callId = joinedRef.current;
+    if (!callId || !userId || userId === optsRef.current.identity.userId) return;
+    send({ service: 'call', action, callId, userId });
+  }, [send]);
+  const muteParticipant = useCallback((userId: string) => moderate('mute-participant', userId), [moderate]);
+  const removeParticipant = useCallback((userId: string) => moderate('remove-participant', userId), [moderate]);
+  const transferHost = useCallback((userId: string) => moderate('transfer-host', userId), [moderate]);
 
   // Tab close: tell PA this participant is gone (keepalive; no async headers).
   useEffect(() => {
@@ -798,6 +850,12 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     setSelfAndAnnounce({ audioOn: on });
   }, [setSelfAndAnnounce]);
 
+  muteSelfRef.current = () => {
+    if (!selfRef.current.audioOn) return;
+    void optsRef.current.media?.setMicEnabled?.(false);
+    setSelfAndAnnounce({ audioOn: false });
+  };
+
   const toggleCamera = useCallback(() => {
     const on = !selfRef.current.cameraOn;
     void optsRef.current.media?.setCameraEnabled?.(on);
@@ -852,6 +910,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
         presenting: call.presenting?.userId === uid,
         isHost: call.hostUserId === uid,
         isSelf: uid === selfId,
+        mutedForMe: !!mutedForMe[uid],
       };
       const avatar = avatarOf(uid);
       if (avatar) p.avatarUrl = avatar;
@@ -865,7 +924,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     // Invites first (ringing / missed / declined / accepted).
     for (const [uid, inv] of Object.entries(call.invites ?? {})) {
       if (uid === selfId) continue;
-      if (inv.state === 'notified') continue;
+      if (inv.state === 'notified' || inv.state === 'removed') continue;
       if (inv.state === 'accepted') {
         const r = roster[uid];
         byUser.set(uid, base(uid, r ? r.status : 'in-call'));
@@ -897,7 +956,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [call, roster, media?.members, opts.awareness?.participants, opts.people, joined, self, selfId, identity.displayName, identity.avatarUrl]);
+  }, [call, roster, mutedForMe, media?.members, opts.awareness?.participants, opts.people, joined, self, selfId, identity.displayName, identity.avatarUrl]);
 
   const inCallCount = joined
     ? participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length
@@ -950,5 +1009,10 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     lvs,
     inviteLink,
     refresh,
+    muteParticipant,
+    removeParticipant,
+    transferHost,
+    setMutedForMe,
+    moderation,
   };
 }

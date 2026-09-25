@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.97.0 — 2026-09-24
+
+Document-call host moderation (mockup 06 person menu).
+
+- **call:** host-only actions `mute-participant`, `remove-participant`,
+  `transfer-host` (`{ callId, userId }`; refused for non-hosts, for the host
+  themself, and for people not in the call). Mute sends
+  `mute-participant { callId, userId, by }` to every connection of the target
+  only; their participant-state carries the change to the rest. Remove sends
+  `remove-participant` to the target, marks their invite `removed`, drops their
+  connections from the roster on every replica (store + cross-node departure),
+  clears their presentation, and sends everyone else `user-status: left`
+  (reason `removed`) and `call-meta`; `accepted` / `participant-state` from a
+  removed person are refused until a new invite. Transfer patches `hostUserId`
+  (the old host stays an accepted participant) and broadcasts `call-meta`.
+  `DocumentCallInviteState` gains `removed`.
+- **client/video:** `useDocumentCall` gains `muteParticipant(userId)`,
+  `removeParticipant(userId)`, `transferHost(userId)`, the local-only
+  `setMutedForMe(userId, muted)` (reflected as `participant.mutedForMe`), and
+  `moderation` (`{ kind: 'muted' | 'removed', by, at }`). When muted by the host
+  the hook turns the mic off through `media.setMicEnabled(false)`; when removed
+  it leaves without sending `ended` (phase `ended`, reason `removed`) and
+  releases its platform-api seat.
+- event-catalog 0.8.3 declares the frames (`document-calls@1.1.0`).
+
 ## 0.96.1 — 2026-09-24
 
 - **server (documents):** `DocumentMeta.editors?: string[]` — the user ids a

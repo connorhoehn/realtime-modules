@@ -209,4 +209,56 @@ describe('useDocumentCall', () => {
     expect(hook.result.current.inCallCount).toBe(3);
     expect(hook.result.current.call).toMatchObject({ title: 'Auth architecture review', hostUserId: 'u-alice' });
   });
+
+  it('host moderation: sends mute / remove / transfer frames; Mute for me stays local', async () => {
+    const { g, hook } = setup();
+    await act(async () => { await hook.result.current.start(startInput); });
+    act(() => { g.push('participant-state', { callId: 'sess-1', userId: 'u-alice', displayName: 'Alice Chen', status: 'in-call' }); });
+    g.sent.length = 0;
+    act(() => {
+      hook.result.current.muteParticipant('u-alice');
+      hook.result.current.removeParticipant('u-alice');
+      hook.result.current.transferHost('u-alice');
+      hook.result.current.muteParticipant('u-host'); // self — ignored
+    });
+    expect(g.callFrames().map((f) => [f.action, f.callId, f.userId])).toEqual([
+      ['mute-participant', 'sess-1', 'u-alice'],
+      ['remove-participant', 'sess-1', 'u-alice'],
+      ['transfer-host', 'sess-1', 'u-alice'],
+    ]);
+    g.sent.length = 0;
+    act(() => { hook.result.current.setMutedForMe('u-alice', true); });
+    expect(g.sent).toHaveLength(0);
+    expect(hook.result.current.participants.find((p) => p.userId === 'u-alice')!.mutedForMe).toBe(true);
+  });
+
+  it('muted by the host: mutes the mic through the media binding and announces it', async () => {
+    const setMicEnabled = jest.fn<(on: boolean) => void>();
+    const { g, hook } = setup({ identity: { userId: 'u-alice', displayName: 'Alice Chen' }, media: { connectionState: 'connected', setMicEnabled } });
+    act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantCount: 2 }); });
+    await act(async () => { await hook.result.current.join('sess-9', { micOn: true, cameraOn: true }); });
+    g.sent.length = 0; setMicEnabled.mockClear();
+    act(() => { g.push('mute-participant', { callId: 'sess-9', userId: 'u-alice', by: 'u-host' }); });
+    expect(setMicEnabled).toHaveBeenCalledWith(false);
+    expect(hook.result.current.self.audioOn).toBe(false);
+    expect(g.callFrames('participant-state')[0]).toMatchObject({ audioOn: false });
+    expect(hook.result.current.moderation).toMatchObject({ kind: 'muted', by: 'u-host' });
+    // A mute aimed at someone else is ignored.
+    act(() => { g.push('mute-participant', { callId: 'sess-9', userId: 'u-frank', by: 'u-host' }); });
+    expect(hook.result.current.moderation!.kind).toBe('muted');
+  });
+
+  it('removed by the host: leaves without sending ended, releases the PA seat', async () => {
+    const { g, pa, hook } = setup({ identity: { userId: 'u-alice', displayName: 'Alice Chen' } });
+    act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantCount: 2 }); });
+    await act(async () => { await hook.result.current.join('sess-9', { micOn: true, cameraOn: true }); });
+    g.sent.length = 0;
+    await act(async () => { g.push('remove-participant', { callId: 'sess-9', userId: 'u-alice', by: 'u-host' }); });
+    await waitFor(() => expect(pa.calls.some((c) => c.path === '/api/video/sessions/sess-9/end')).toBe(true));
+    expect(g.callFrames('ended')).toHaveLength(0);
+    expect(hook.result.current.joined).toBe(false);
+    expect(hook.result.current.phase).toBe('ended');
+    expect(hook.result.current.ended).toMatchObject({ reason: 'removed' });
+    expect(hook.result.current.moderation).toMatchObject({ kind: 'removed', by: 'u-host' });
+  });
 });

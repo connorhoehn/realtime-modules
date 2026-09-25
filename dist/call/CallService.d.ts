@@ -333,6 +333,16 @@ export declare class CallService {
     /** `meta` / `set-documents` / `present` / `set-title`. */
     private handleDocumentCallAction;
     /**
+     * Host moderation: `mute-participant`, `remove-participant`,
+     * `transfer-host`. Host only; the target must be someone in the call
+     * (not the host themself). Works across replicas: the target's
+     * connections are found cluster-wide, the meta lives in the shared store,
+     * and other nodes drop removed connections from their caches through the
+     * cross-node departure topic. Returns true when it already answered (so
+     * the caller must not broadcast call-meta again).
+     */
+    private handleModeration;
+    /**
      * Routing + bookkeeping for the signalling verbs of a document call.
      * Returns true when it fully handled the action (the generic path must
      * not run), or the recipients to use when the payload named none —

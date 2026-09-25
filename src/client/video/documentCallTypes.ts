@@ -104,6 +104,9 @@ export interface DocumentCallParticipant {
   presenting: boolean;
   isHost: boolean;
   isSelf: boolean;
+  /** Silenced locally with "Mute for me" (never sent anywhere). The consumer
+   *  applies it to the person's audio element. */
+  mutedForMe: boolean;
   /** Media member from the consumer's LVS session, when joined. */
   media?: DocumentCallMediaMember;
   /** Where they are in the document, from Y awareness (same document only). */

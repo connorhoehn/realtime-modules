@@ -76,7 +76,21 @@ export type CallAction =
     | 'call-meta'
     /** Document calls — server → client, to the inviter's clients: one
      *  target's ring timed out. data: { callId, userId }. Server-only. */
-    | 'invite-expired';
+    | 'invite-expired'
+    /** Document calls, host moderation (2026-09-24) — client → server, host
+     *  only: ask one participant to mute. data: { callId, userId }. The
+     *  target's clients receive the same action with { callId, userId, by }
+     *  and mute themselves; their participant-state tells everyone else. */
+    | 'mute-participant'
+    /** Host only: remove one person from the call. data: { callId, userId }.
+     *  Their clients receive the same action and leave; everyone else gets
+     *  `user-status: left` (reason 'removed') and `call-meta`. They can come
+     *  back only through a new invite. */
+    | 'remove-participant'
+    /** Host only: hand the host role to another participant.
+     *  data: { callId, userId }. Everyone gets `call-meta` with the new
+     *  hostUserId. */
+    | 'transfer-host';
 
 /** Vocabulary of the `status` field on `user-status`. `reconnecting` is
  *  sent for document calls while a dropped participant is inside the
@@ -90,7 +104,8 @@ export type CallUserStatus = 'in-call' | 'left' | 'on-hold' | 'reconnecting';
 
 /** Ring state of one invited person. `notified` = they had no connected
  *  client, so they got a notification (and the invite link) instead. */
-export type DocumentCallInviteState = 'ringing' | 'accepted' | 'declined' | 'missed' | 'notified';
+/** `removed` = the host removed them; only a new invite lets them back in. */
+export type DocumentCallInviteState = 'ringing' | 'accepted' | 'declined' | 'missed' | 'notified' | 'removed';
 
 /** One invited person, keyed by userId in DocumentCallMeta.invites. */
 export interface DocumentCallInvite {
@@ -587,4 +602,8 @@ export const ALLOWED_CALL_ACTIONS: ReadonlySet<CallAction> = new Set<CallAction>
     'set-documents',
     'present',
     'set-title',
+    // Host moderation (2026-09-24).
+    'mute-participant',
+    'remove-participant',
+    'transfer-host',
 ]);
