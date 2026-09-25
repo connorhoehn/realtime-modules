@@ -33,7 +33,7 @@ function makeService() {
         unsubscribeFromChannel: jest.fn(async () => {}),
         broadcastToAll: jest.fn(async () => {}),
     };
-    const store = {
+    const store: any = {
         putMessage: jest.fn(async (m: any) => { stored.push(m); }),
         listMessages: jest.fn(async () => []),
     };
@@ -94,5 +94,37 @@ describe('postSystemMessage', () => {
         store.putMessage = jest.fn(async () => { throw new Error('table gone'); }) as any;
         await service.postSystemMessage('general', 'x');
         expect(broadcasts).toHaveLength(1);
+    });
+});
+
+// The thing a system message describes can move on — a call that was live
+// ends — and the card has to follow it in place: persisted, then the same
+// `messageUpdated` frame an author's edit produces, so no client learns a
+// second protocol.
+describe('updateSystemMessage', () => {
+    it('merges the metadata, persists the patch, and tells the channel', async () => {
+        const { service, broadcasts, store } = makeService();
+        store.updateMessage = jest.fn(async () => null);
+        const posted = await service.postSystemMessage('general', 'Alice started a call', {
+            kind: 'call', callId: 'c1', live: true, startedAt: 't0',
+        });
+        broadcasts.length = 0;
+        const updated = await service.updateSystemMessage('general', posted.id, {
+            metadata: { live: false, durationMs: 24_000, startedAt: undefined },
+        });
+        expect(updated.metadata).toMatchObject({ kind: 'call', callId: 'c1', live: false, durationMs: 24_000, system: true });
+        expect('startedAt' in updated.metadata).toBe(false);
+        expect(updated.editedAt).toBeUndefined();
+        expect(store.updateMessage).toHaveBeenCalledWith('general', posted.id, expect.objectContaining({ metadata: updated.metadata }));
+        expect(broadcasts).toHaveLength(1);
+        expect(broadcasts[0].message).toMatchObject({ type: 'chat', action: 'messageUpdated', channel: 'general' });
+        expect(broadcasts[0].message.message.id).toBe(posted.id);
+    });
+
+    it('answers null for a message that is not there, and sends nothing', async () => {
+        const { service, broadcasts, store } = makeService();
+        store.updateMessage = jest.fn(async () => null);
+        expect(await service.updateSystemMessage('general', 'nope', { metadata: { live: false } })).toBeNull();
+        expect(broadcasts).toHaveLength(0);
     });
 });

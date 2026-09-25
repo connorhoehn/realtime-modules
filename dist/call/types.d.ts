@@ -356,12 +356,45 @@ export interface CallConfig {
         callerId: string;
         /** Display name captured at invite time, when the caller sent one. */
         callerName?: string;
-        /** Epoch ms of the invite. Absent on a call restored without it. */
+        /** Epoch ms of the first accept (the invite time on a call restored without one). */
         startedAt?: number;
         endedAt: number;
         /** Absent when `startedAt` is, rather than reported as zero. */
         durationMs?: number;
         participantClientIds: string[];
+    }) => Promise<void> | void;
+    /**
+     * Fired once when a call BECOMES a call: the first `accepted` on a DM or
+     * group invite, or the first member into a room. The counterpart of
+     * `onCallEnded` — a conversation can show a live card the moment there is
+     * something to join, and `onCallEnded` then turns that card into the
+     * record. `participantClientIds` are connections, as on `onCallEnded`.
+     * Best-effort: a throwing consumer is logged and swallowed.
+     */
+    onCallStarted?: (summary: {
+        callId: string;
+        lobbyName: string;
+        callerId: string;
+        callerName?: string;
+        /** Epoch ms of the accept (or the room's first join). */
+        startedAt: number;
+        participantClientIds: string[];
+    }) => Promise<void> | void;
+    /**
+     * Fired once for an invite that never became a call: the caller hung up
+     * before anyone answered (`cancelled`), a target said no (`declined`), or
+     * the ring ran out (`no-answer`). Never fired for an accepted call — that
+     * is `onCallEnded`'s. Document calls mark their targets missed per
+     * person instead and do not fire this.
+     */
+    onCallMissed?: (summary: {
+        callId: string;
+        lobbyName: string;
+        callerId: string;
+        callerName?: string;
+        invitedAt?: number;
+        endedAt: number;
+        reason: 'cancelled' | 'declined' | 'no-answer';
     }) => Promise<void> | void;
 }
 /**
@@ -504,6 +537,10 @@ export interface ActiveCallState {
     everParticipated?: Set<string>;
     invitedAt?: number;
     inviteExpiresAt?: number;
+    /** Epoch ms of the first `accepted` — when the call became a call. */
+    acceptedAt?: number;
+    /** A target said no. Read when the caller then hangs up, so the record says "declined", not "cancelled". */
+    declined?: boolean;
     originalCallerName?: string;
     originalLobbyName?: string;
     originalTargetUserIds?: string[];

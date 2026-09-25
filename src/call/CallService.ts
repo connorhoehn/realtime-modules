@@ -161,6 +161,8 @@ export class CallService {
     private recordCallActionHook: ((action: CallAction, targetKind: 'targeted' | 'broadcast') => void) | null;
     private persistBindingHook: NonNullable<CallConfig['persistCallBinding']> | null;
     private callEndedHook: NonNullable<CallConfig['onCallEnded']> | null;
+    private callStartedHook: NonNullable<CallConfig['onCallStarted']> | null;
+    private callMissedHook: NonNullable<CallConfig['onCallMissed']> | null;
     /** Fast local cache of active calls. PR-W2.1: still maintained
      *  per-node so handleDisconnect can find calls this client was in
      *  without a Redis SMEMBERS roundtrip. Authoritative state lives in
@@ -289,6 +291,8 @@ export class CallService {
         this.recordCallActionHook = config.recordCallAction ?? null;
         this.persistBindingHook = config.persistCallBinding ?? null;
         this.callEndedHook = config.onCallEnded ?? null;
+        this.callStartedHook = config.onCallStarted ?? null;
+        this.callMissedHook = config.onCallMissed ?? null;
 
         this.inviteSweepTimer = setInterval(() => {
             // PR-W2.4 — leader gate.  When ownership is enabled and a
@@ -648,12 +652,47 @@ export class CallService {
      * here means a second terminal event for the same call finds nothing to
      * announce.
      */
-    private _announceCallEnded(callId: string, state: ActiveCallState): void {
-        if (!this.callEndedHook || !this.acceptedCallIds.has(callId)) return;
+    private _announceCallEnded(
+        callId: string,
+        state: ActiveCallState,
+        missedReason: 'cancelled' | 'declined' | 'no-answer' = 'cancelled',
+    ): void {
+        if (!this.acceptedCallIds.has(callId)) {
+            // Never accepted HERE. That is a missed call when this node also
+            // rang it (the invite registry is per node, so the ringing node is
+            // the one that knows nobody picked up); a call accepted on a peer
+            // node is that peer's to record, and saying "missed" about it
+            // would be false.
+            if (this.callMissedHook && typeof state.invitedAt === 'number') {
+                const summary = {
+                    callId,
+                    lobbyName: state.lobbyName,
+                    callerId: state.callerId,
+                    callerName: state.originalCallerName,
+                    invitedAt: state.invitedAt,
+                    endedAt: Date.now(),
+                    reason: state.declined ? 'declined' as const : missedReason,
+                };
+                const participants = state.participantClientIds.size;
+                void this.callHasAcceptedParticipant(callId, { ...state, participantClientIds: new Set() })
+                    .then((accepted) => {
+                        if (accepted || participants > 1) return;
+                        return Promise.resolve(this.callMissedHook?.(summary));
+                    })
+                    .catch((e: any) => this.logger.warn(`[CallService] onCallMissed failed for ${callId}: ${e?.message ?? e}`));
+            }
+            return;
+        }
         this.acceptedCallIds.delete(callId);
+        if (!this.callEndedHook) return;
 
         const endedAt = Date.now();
-        const startedAt = typeof state.invitedAt === 'number' ? state.invitedAt : undefined;
+        // The call's clock starts when someone picks up; the ring before that
+        // is not time anyone spent in the call. The invite time is the
+        // fallback for a call restored without its accept.
+        const startedAt = typeof state.acceptedAt === 'number'
+            ? state.acceptedAt
+            : typeof state.invitedAt === 'number' ? state.invitedAt : undefined;
         this._emitCallEnded({
             callId,
             lobbyName: state.lobbyName,
@@ -677,6 +716,28 @@ export class CallService {
      * synchronous and must not wait on whatever the consumer does with this.
      * A broken recorder cannot break a hang-up.
      */
+    private _emitCallStarted(summary: {
+        callId: string;
+        lobbyName: string;
+        callerId: string;
+        callerName?: string;
+        startedAt: number;
+        participantClientIds: string[];
+    }): void {
+        if (!this.callStartedHook) return;
+        try {
+            void Promise.resolve(this.callStartedHook(summary)).catch((e: any) =>
+                this.logger.warn(
+                    `[CallService] onCallStarted failed for ${summary.callId}: ${e?.message ?? e}`,
+                ),
+            );
+        } catch (e: any) {
+            this.logger.warn(
+                `[CallService] onCallStarted threw for ${summary.callId}: ${e?.message ?? e}`,
+            );
+        }
+    }
+
     private _emitCallEnded(summary: {
         callId: string;
         lobbyName: string;
@@ -701,12 +762,12 @@ export class CallService {
         }
     }
 
-    private forgetCall(callId: string): void {
+    private forgetCall(callId: string, missedReason: 'cancelled' | 'declined' | 'no-answer' = 'cancelled'): void {
         const state = this.activeCalls.get(callId);
         if (!state) return;
         const departedParticipants = Array.from(state.participantClientIds);
 
-        this._announceCallEnded(callId, state);
+        this._announceCallEnded(callId, state, missedReason);
         for (const cid of departedParticipants) {
             const calls = this.clientToCalls.get(cid);
             if (calls) {
@@ -1438,6 +1499,14 @@ export class CallService {
                             present: new Set(),
                         };
                         this.roomCalls.set(slug, roomCall);
+                        this._emitCallStarted({
+                            callId: roomCall.callId,
+                            lobbyName,
+                            callerId: userId,
+                            callerName: roomCall.starterName,
+                            startedAt: roomCall.startedAt,
+                            participantClientIds: [clientId],
+                        });
                     }
                     roomCall.everParticipated.add(clientId);
                     roomCall.present.add(clientId);
@@ -1674,6 +1743,19 @@ export class CallService {
         // ringers + replay registry stuck after a successful accept.
         if (action === 'accepted' && callId && wasFirstAccepted) {
             this.acceptedCallIds.add(callId);
+            const acceptedState = this.activeCalls.get(callId);
+            const acceptedAt = Date.now();
+            if (acceptedState) acceptedState.acceptedAt = acceptedAt;
+            this._emitCallStarted({
+                callId,
+                lobbyName: acceptedState?.lobbyName || resolvedLobbyName,
+                callerId: acceptedState?.callerId || callerId,
+                callerName: acceptedState?.originalCallerName,
+                startedAt: acceptedAt,
+                participantClientIds: Array.from(
+                    acceptedState?.everParticipated ?? acceptedState?.participantClientIds ?? [clientId],
+                ),
+            });
             // A document call keeps ringing the others: only the accepter's
             // entry was dropped (handleDocumentCallVerb).
             if (!docMeta) {
@@ -1717,6 +1799,10 @@ export class CallService {
             // participant, forget the call entirely.
             const state = this.activeCalls.get(callId);
             if (state) {
+                // A decline does not end the call (the caller may still be
+                // ringing others); it is remembered so the caller's hang-up
+                // then records "declined" rather than "cancelled".
+                if (action === 'declined') state.declined = true;
                 state.participantClientIds.delete(clientId);
                 const cs = this.clientToCalls.get(clientId);
                 if (cs) {
@@ -2300,7 +2386,7 @@ export class CallService {
                 expiredCallIds.add(callId);
             }
         }
-        for (const callId of expiredCallIds) this.forgetCall(callId);
+        for (const callId of expiredCallIds) this.forgetCall(callId, 'no-answer');
         for (const [userId, callIds] of this.activeInvitesByUserId) {
             if (callIds.size === 0) this.activeInvitesByUserId.delete(userId);
         }

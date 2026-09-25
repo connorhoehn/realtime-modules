@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.97.10 — 2026-09-25
+
+- **call: `onCallStarted` and `onCallMissed` hooks** beside `onCallEnded`.
+  `onCallStarted` fires once when a call becomes a call — the first
+  `accepted` on a DM/group invite, or the first member into a room — so a
+  conversation can show a LIVE card while there is something to join.
+  `onCallMissed` fires once for an invite that never became a call
+  (`cancelled` / `declined` / `no-answer`). `onCallEnded.startedAt` (and so
+  `durationMs`) now measures from the accept, not the invite.
+- **chat: `ChatService.updateSystemMessage(channel, messageId, patch)`** —
+  changes a server-posted message in place (text and merged metadata),
+  persists the patch, and sends the channel the same `messageUpdated` frame
+  an author's edit produces. No `editedAt`.
+
 ## 0.97.8 — 2026-09-25
 
 - **client/video (fix): `useDocumentCall` status echo.** An `active-call`

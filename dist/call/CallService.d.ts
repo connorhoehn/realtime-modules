@@ -22,6 +22,8 @@ export declare class CallService {
     private recordCallActionHook;
     private persistBindingHook;
     private callEndedHook;
+    private callStartedHook;
+    private callMissedHook;
     /** Fast local cache of active calls. PR-W2.1: still maintained
      *  per-node so handleDisconnect can find calls this client was in
      *  without a Redis SMEMBERS roundtrip. Authoritative state lives in
@@ -200,6 +202,7 @@ export declare class CallService {
      * synchronous and must not wait on whatever the consumer does with this.
      * A broken recorder cannot break a hang-up.
      */
+    private _emitCallStarted;
     private _emitCallEnded;
     private forgetCall;
     /** UX audit 2026-08-24 — reap a call that exists only in the durable

@@ -432,6 +432,55 @@ class ChatService {
         await this.broadcastMessage(channel, messageData);
         return messageData;
     }
+    /**
+     * Change a message the server posted — a call card going from live to
+     * ended, a run card getting its result. The text may change and the
+     * metadata is MERGED (a key set to `undefined` is dropped), because the
+     * caller usually knows the two fields that changed, not the whole record.
+     *
+     * Persisted first, then everyone on the channel gets `messageUpdated`
+     * with the whole record, the same frame an author's edit produces — so a
+     * client that already renders edits renders this without knowing the
+     * difference, and a reload reads the same state back from the store.
+     *
+     * No `editedAt`: nobody edited anything, the thing the message describes
+     * moved on. Returns the updated record, or null when the message is not
+     * on this channel (or the store refused the write).
+     */
+    async updateSystemMessage(channel, messageId, patch) {
+        if (!channel || !messageId)
+            return null;
+        const existing = await this._findMessage(channel, messageId);
+        if (!existing || existing.deletedAt)
+            return null;
+        const merged = { ...(existing.metadata ?? {}) };
+        for (const [k, v] of Object.entries(patch.metadata ?? {})) {
+            if (v === undefined)
+                delete merged[k];
+            else
+                merged[k] = v;
+        }
+        const fields = { metadata: merged };
+        if (typeof patch.message === 'string' && patch.message.length > 0)
+            fields.message = patch.message;
+        let updated;
+        try {
+            updated = await this._applyMessagePatch(channel, existing, fields);
+        }
+        catch (err) {
+            this.logger.error('Failed to persist a system message update:', err && err.message);
+            return null;
+        }
+        await this._broadcastFrame(channel, {
+            type: 'chat',
+            action: 'messageUpdated',
+            channel,
+            message: updated,
+            timestamp: new Date().toISOString(),
+        });
+        this._noteMessageChanged(channel, 'edited', updated);
+        return updated;
+    }
     async handleSendMessage(clientId, { channel, message, metadata = {} }) {
         if (!channel) {
             this.sendError(clientId, 'Channel is required');

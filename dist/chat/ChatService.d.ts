@@ -263,6 +263,25 @@ export declare class ChatService {
      * Returns the stored message, or null when the channel or text is missing.
      */
     postSystemMessage(channel: string, message: string, metadata?: Record<string, any>): Promise<ChatMessage | null>;
+    /**
+     * Change a message the server posted — a call card going from live to
+     * ended, a run card getting its result. The text may change and the
+     * metadata is MERGED (a key set to `undefined` is dropped), because the
+     * caller usually knows the two fields that changed, not the whole record.
+     *
+     * Persisted first, then everyone on the channel gets `messageUpdated`
+     * with the whole record, the same frame an author's edit produces — so a
+     * client that already renders edits renders this without knowing the
+     * difference, and a reload reads the same state back from the store.
+     *
+     * No `editedAt`: nobody edited anything, the thing the message describes
+     * moved on. Returns the updated record, or null when the message is not
+     * on this channel (or the store refused the write).
+     */
+    updateSystemMessage(channel: string, messageId: string, patch: {
+        message?: string;
+        metadata?: Record<string, unknown>;
+    }): Promise<ChatMessage | null>;
     handleSendMessage(clientId: string, { channel, message, metadata }: {
         channel: string;
         message: string;
