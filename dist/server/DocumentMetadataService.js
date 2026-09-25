@@ -256,6 +256,9 @@ class DocumentMetadataService {
             // rename. `parentId: null` is a real value (a root) and is kept.
             ...(wire.parentId !== undefined ? { parentId: wire.parentId } : {}),
             ...(wire.position !== undefined ? { position: wire.position } : {}),
+            // The sharing list, from the stored row only (never the payload):
+            // dropping it here un-shared the document on every rename.
+            ...(Array.isArray(existing.editors) ? { editors: existing.editors } : {}),
             createdAt: existing.createdAt,
             updatedAt: nowEpoch,
         });
@@ -293,6 +296,7 @@ class DocumentMetadataService {
             icon: sidecar.icon || config_1.TYPE_ICONS[docType] || '',
             description: stored.description || '',
             ...(stored.channel ? { channel: stored.channel } : {}),
+            ...(Array.isArray(stored.editors) && stored.editors.length ? { editors: [...stored.editors] } : {}),
             ...(sidecar.activeCallSessionId !== undefined ? { activeCallSessionId: sidecar.activeCallSessionId } : {}),
         };
     }

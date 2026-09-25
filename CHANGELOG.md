@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.96.1 — 2026-09-24
+
+- **server (documents):** `DocumentMeta.editors?: string[]` — the user ids a
+  document is shared with. `_toWire` passes it on `documentList` /
+  `documentUpdated` / single reads when non-empty, so readers can show who a
+  document is shared with ("Document collaborators" in the document-call start
+  panel). `handleUpdateDocumentMeta` now carries it through its whole-row
+  `putDocument`; before, a rename un-shared the document in any store that
+  persists it. Never taken from a client payload.
+
 ## 0.96.0 — 2026-09-24
 
 Document calls: a call that belongs to a document review (realtime-examples

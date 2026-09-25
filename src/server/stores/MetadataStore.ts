@@ -78,6 +78,15 @@ export interface DocumentMeta {
      * a document is bound only when its creator was in a channel.
      */
     channel?: string;
+    /**
+     * User ids the document is shared with for editing (the `editors` list
+     * the platform's `document:read` / `document:edit` checks already use).
+     * Read-only on this contract: it is shown to readers ("Document
+     * collaborators" in a call's start panel) and carried through every
+     * whole-row write so a rename never un-shares a document. Nothing here
+     * sets it from a client payload.
+     */
+    editors?: string[];
     createdAt: number;
     updatedAt: number;
 }
