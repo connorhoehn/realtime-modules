@@ -256,6 +256,32 @@ describe('useDocumentFolders', () => {
     expect(sentOf(t.send, 'subscribe')).toHaveLength(2);
   });
 
+  it('waits for the first session: nothing is sent at epoch 0, the subscribe goes out when the session opens', async () => {
+    const t = makeTransport();
+    const { result, rerender } = renderHook(({ epoch }) => useDocumentFolders({ transport: t.transport, sessionEpoch: epoch }), { initialProps: { epoch: 0 } });
+    expect(sentOf(t.send, 'subscribe')).toHaveLength(0);
+    expect(result.current.loading).toBe(true);
+    rerender({ epoch: 1 });
+    expect(sentOf(t.send, 'subscribe')).toHaveLength(1);
+    t.emit(LIST);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+
+  it('a remount (reload / navigate away and back) subscribes again and loads again', async () => {
+    const t = makeTransport();
+    const first = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));
+    t.emit(LIST);
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    first.unmount();
+    expect(sentOf(t.send, 'unsubscribe')).toHaveLength(1);
+    const second = renderHook(() => useDocumentFolders({ transport: t.transport, sessionEpoch: 1 }));
+    expect(sentOf(t.send, 'subscribe')).toHaveLength(2);
+    expect(second.result.current.loading).toBe(true);
+    t.emit(LIST);
+    await waitFor(() => expect(second.result.current.loading).toBe(false));
+    expect(second.result.current.totalCount).toBe(4);
+  });
+
   it('pure helpers: positions between neighbours, derivation, merge', () => {
     expect(positionBetween(1, 2)).toBe(1.5);
     expect(positionBetween(undefined, 2)).toBe(1);

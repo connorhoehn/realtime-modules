@@ -254,10 +254,19 @@ function useDocumentFolders(options = {}) {
         });
     }, [active, onMessage, flushReread]);
     // Subscribe once per session (a reconnect is a new epoch → a fresh picture).
+    //
+    // Epoch 0 means the socket has no session yet: a frame sent now is dropped
+    // on the floor (the socket's send is a silent no-op until it is open), and
+    // nothing would ever send it again — the explorer sat on "Loading folders…"
+    // on every page load that mounted this before the socket opened. Wait for
+    // the first session instead; its epoch bump runs this again. An unknown
+    // epoch (undefined) keeps the old subscribe-now behaviour.
     (0, react_1.useEffect)(() => {
         if (!active || !send)
             return undefined;
         setLoading(true);
+        if (epoch === 0)
+            return undefined;
         send({ service: SERVICE, action: 'subscribe', requestId: newRequestId() });
         return () => { try {
             send({ service: SERVICE, action: 'unsubscribe' });
