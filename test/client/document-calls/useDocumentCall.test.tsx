@@ -143,6 +143,8 @@ describe('useDocumentCall', () => {
     act(() => { g.push('active-call', { lobbyName: 'doc-auth', active: true, callId: 'sess-9', participantCount: 3 }); });
     await act(async () => { await hook.result.current.join('sess-9', { micOn: true, cameraOn: false }); });
     expect(g.callFrames('accepted')[0]).toMatchObject({ callId: 'sess-9', userId: 'u-frank' });
+    // Gateways refuse a callerId that is not the sender's own user.
+    expect(g.callFrames('accepted')[0].callerId).toBeUndefined();
     expect(g.callFrames('meta')[0]).toMatchObject({ callId: 'sess-9' });
     const meta = (presenting: unknown) => ({
       callId: 'sess-9', documentId: 'doc-auth', title: 'T', documentIds: ['doc-auth', 'doc-migration'], hostUserId: 'u-host',
@@ -184,6 +186,7 @@ describe('useDocumentCall', () => {
     await act(async () => { await hook.result.current.leave(); });
     expect(g.callFrames('ended')[0]).toMatchObject({ callId: 'sess-1' });
     expect(g.callFrames('ended')[0].forEveryone).toBeUndefined();
+    expect(g.callFrames('ended')[0].callerId).toBeUndefined();
     expect(hook.result.current.joined).toBe(false);
     expect(hook.result.current.phase).toBe('ended');
     expect(updateDocumentMeta).toHaveBeenLastCalledWith({ activeCallSessionId: '' });

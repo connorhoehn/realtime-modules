@@ -754,7 +754,10 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
         action: 'accepted',
         callId,
         lobbyName: lobby,
-        ...(host ? { callerId: host, targetUserIds: [host] } : {}),
+        // No `callerId` here: gateways refuse a frame whose callerId is not
+        // the sender's own user (anti-spoofing), and this sender is not the
+        // host. The server fills the host in from the call meta.
+        ...(host ? { targetUserIds: [host] } : {}),
         userId: o.identity.userId,
         displayName: o.identity.displayName,
       });
@@ -782,7 +785,6 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
       action: 'ended',
       callId,
       lobbyName: lobby,
-      ...(c?.hostUserId ? { callerId: c.hostUserId } : {}),
       userId: o.identity.userId,
       ...(forEveryone ? { forEveryone: true } : {}),
     });

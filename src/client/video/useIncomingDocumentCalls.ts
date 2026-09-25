@@ -189,7 +189,8 @@ export function useIncomingDocumentCalls(opts: UseIncomingDocumentCallsOptions):
       action: 'declined',
       callId: head.callId,
       lobbyName: head.lobbyName,
-      callerId: head.callerId,
+      // Not `callerId: head.callerId` — a gateway refuses a callerId that is
+      // not the sender's own user. The caller is the target.
       targetUserIds: [head.callerId],
       ...(localUserId ? { userId: localUserId } : {}),
       reason,

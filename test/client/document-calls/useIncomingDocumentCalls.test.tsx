@@ -43,6 +43,7 @@ describe('useIncomingDocumentCalls', () => {
     act(() => { g.push('invite', inviteData('c1')); g.push('invite', inviteData('c2')); });
     act(() => { result.current.decline('not-now'); });
     expect(g.callFrames('declined')[0]).toMatchObject({ callId: 'c1', reason: 'not-now', targetUserIds: ['u-host'], userId: 'u-bob' });
+    expect(g.callFrames('declined')[0].callerId).toBeUndefined();
     expect(result.current.current!.callId).toBe('c2');
     act(() => { result.current.accept({ micOn: true, cameraOn: false }); });
     expect(onAccept).toHaveBeenCalledWith(expect.objectContaining({ callId: 'c2' }), { micOn: true, cameraOn: false });

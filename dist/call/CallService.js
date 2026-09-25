@@ -1430,7 +1430,11 @@ class CallService {
         }
         // Track participation so handleDisconnect can fire synthetic
         // `ended` to peers if this client drops uncleanly.
-        const callerId = typeof payload.callerId === 'string' ? payload.callerId : '';
+        // A document call's non-invite verbs do not carry the host as
+        // callerId (gateways reject a callerId that is not the sender), so the
+        // meta supplies it; likewise the lobby is the host document, whatever
+        // page the sender happens to be on.
+        const callerId = (typeof payload.callerId === 'string' && payload.callerId) || docMeta?.hostUserId || '';
         const wasFirstAccepted = action === 'accepted' && !!callId && !this.acceptedCallIds.has(callId);
         // PR-W2.1 (completion) — relax the historical
         // `callId && lobbyName` gate for `accepted`. Real FE accept
@@ -1442,7 +1446,7 @@ class CallService {
         // now hydrate lobbyName from local cache / stateStore on
         // accept, falling back to '' when neither is available. `invite`
         // still requires lobbyName (enforced earlier via sendError).
-        let resolvedLobbyName = lobbyName ?? '';
+        let resolvedLobbyName = docMeta?.documentId || lobbyName || '';
         if (action === 'accepted' && callId && !resolvedLobbyName) {
             const local = this.activeCalls.get(callId);
             if (local?.lobbyName) {

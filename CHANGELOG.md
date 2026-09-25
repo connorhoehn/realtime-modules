@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.97.3 — 2026-09-25
+
+- **client/video (fix): accepted participants were missing from the call
+  roster.** `useDocumentCall.join()` sent `accepted` with the HOST as
+  `callerId`, and a non-host's `leave()` sent `ended` the same way;
+  `useIncomingDocumentCalls.decline()` sent the caller as `callerId`. A gateway
+  that refuses a `callerId` other than the sender's own user (the
+  realtime-examples anti-spoofing `authorize`) dropped all three with only an
+  error frame. So a joiner had a dock (platform-api let them in) but never
+  reached the call's roster, and `status` listed only the host. These frames no
+  longer carry a foreign `callerId`.
+- **call:** for document calls, non-invite verbs take the host from the meta
+  when `callerId` is absent, and register under the host document's lobby
+  (not whatever page the sender was on).
+
 ## 0.97.2 — 2026-09-25
 
 - **call (fix): `status` no longer answers with a call whose state is gone.**
