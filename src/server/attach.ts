@@ -221,17 +221,33 @@ export function calls(opts: {
      * Runs after `config.authorize` (both must pass).
      */
     lobbyGuard?: (auth: import('../server-ws/types').WsAuthContext, lobbyName: string) => boolean;
+    /**
+     * How long a call waits for someone whose socket dropped before it ends
+     * (the rejoin grace). Default 30 s; 0 ends it at the drop.
+     */
+    rejoinGraceMs?: number;
+    /**
+     * Let an `invite` with no `targetUserIds` through. Default false: such an
+     * invite is broadcast to every connected socket (every tenant's), so it
+     * is refused with `{ type: 'error', service: 'call', code:
+     * 'untargeted-invite', … }`. Room walk-ins (`room:` / `<tenant>:room:`
+     * lobbies) and document-call invites are never refused.
+     */
+    allowUntargetedInvites?: boolean;
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../call/manifest').CallManifest,
         create: ({ router, logger }) => {
             const { CallService } = require('../call/CallService') as typeof import('../call/CallService');
             const { lobbyGuard } = opts;
-            let config = opts.config;
+            let config: import('../call/types').CallConfig = {
+                ...(opts.config ?? {}),
+                allowUntargetedInvites: opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false,
+            };
             if (lobbyGuard) {
                 const inner = config?.authorize;
                 config = {
-                    ...(config ?? {}),
+                    ...config,
                     authorize: (clientId, action, data) => {
                         if (inner && !inner(clientId, action, data)) return false;
                         // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
@@ -249,6 +265,7 @@ export function calls(opts: {
                 logger: logger as any,
                 stateStore: opts.stateStore,
                 config,
+                ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
             });
         },
     });

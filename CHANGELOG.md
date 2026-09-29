@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.98.4 — 2026-09-29
+
+- **call: no ghost participant after both sockets close under
+  attachRealtime.** A DM where one person hung up and then both sockets closed
+  still answered `status` with `active: true, participantCount: 1`. Two holes:
+  the socket close never reached CallService (attachRealtime's socket handler
+  calls `onClientDisconnect`; CallService only had `handleDisconnect`, which
+  the realtime-examples gateway calls itself), and "a DM ends when either
+  party hangs up" matched only a bare `dm:` lobby, never a tenant-prefixed
+  `acme:dm:…` one (`dmLobbyName(ids, { prefix })`). CallService now has
+  `onClientDisconnect`, the DM rule reads past a prefix (new
+  `lobbyConversationKind`: `dm` / `room` / null), and `LocalRealtimeRouter`
+  answers `isClientLive`, so `status` never counts a closed socket. Same code
+  path for the in-memory and Redis stores (tested against both, and a real
+  Redis when one answers).
+- **call: `status` lists who the call is waiting for.** While a dropped
+  person is in the rejoin grace, `active-call` carries `reconnecting: [{
+  userId, graceUntil }]` beside the live `participantUserIds` /
+  `participantCount` (from the replica that saw the drop). After the grace:
+  `{ lobbyName, active: false }`, `onCallEnded` once.
+- **call: a departure under attachRealtime is named.** The router forgets a
+  closed socket before the service hears of it, so the survivor's `user-status
+  left` said `userId: null`; CallService now remembers each participant's
+  user from registration.
+- **server: `calls({ allowUntargetedInvites })`, default false.** An `invite`
+  with no `targetUserIds` was broadcast to every connected socket, every
+  tenant's. It is now refused with `{ type: 'error', service: 'call', code:
+  'untargeted-invite', action, callId, lobbyName, message }`. Room walk-ins
+  (`room:` / `<tenant>:room:`) and document-call invites are never refused. A
+  directly-built `CallService` keeps the old default (`config.allowUntargetedInvites`).
+- **server: `calls({ rejoinGraceMs })`** passes the rejoin grace through.
+
 ## 0.98.3 — 2026-09-29
 
 - **call: the caller's replica never ends an answered call as unanswered.**

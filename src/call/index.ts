@@ -59,6 +59,7 @@ export {
   lobbyForChannel,
   channelForLobby,
   isDmLobby,
+  lobbyConversationKind,
   dmLobbyMembers,
   shouldKnockToJoin,
 } from './lobbyChannel';

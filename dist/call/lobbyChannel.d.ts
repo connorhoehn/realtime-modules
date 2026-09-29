@@ -18,6 +18,19 @@ export declare function channelForLobby(lobby: string | null | undefined): strin
  */
 export declare function isDmLobby(lobby: string | null | undefined): boolean;
 /**
+ * What kind of conversation a lobby is, reading past a host's tenant prefix:
+ * `dm:a:b`, `dmg:<hash>`, `acme:dm:a:b` and `acme:eu:dmg:<hash>` are `'dm'`;
+ * `room:design` and `acme:room:design` are `'room'`; anything else is null.
+ * The first `dm` / `dmg` / `room` segment decides, so `acme:room:dm-sync`
+ * is a room.
+ *
+ * The server's lobby rules use this, not `isDmLobby`: `dmLobbyName(ids,
+ * { prefix: 'acme:' })` puts the tenant first, and a `startsWith('dm:')` test
+ * never matched it — so "a DM ends when one party hangs up" silently did not
+ * apply to any tenant-prefixed DM.
+ */
+export declare function lobbyConversationKind(lobby: string | null | undefined): 'dm' | 'room' | null;
+/**
  * Member userIds of a dm lobby, or null when they are not derivable.
  *
  * Null is an ANSWER, not a failure, and it means two different things that

@@ -92,6 +92,10 @@ export interface RealtimeRouter {
     getUserIdForClient?(clientId: string): string | undefined;
     /** User-targeted routing (call). */
     getClientsByUserId?(userIds: string[], excludeClientId?: string): { clientId: string; userId: string }[];
+    /** true = connected here, false = not connected here, null = unknown
+     *  (another replica may hold it). Services use it to tell a live
+     *  participant from one whose socket is gone. */
+    isClientLive?(clientId: string): boolean | null;
     /** Broadcast to every connected client (call's no-target fallback). */
     broadcastToAll?(message: unknown, excludeClientId?: string): Promise<void> | void;
     /** Remove a client from all channels (disconnect path). */
@@ -176,6 +180,12 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             if (uid && wanted.has(uid)) out.push({ clientId, userId: uid });
         }
         return out;
+    }
+
+    /** Single process: a client not connected here is not connected. */
+    isClientLive(clientId: string): boolean | null {
+        if (!this.handleRef) return null;
+        return this.handleRef.getClientContext(clientId) != null;
     }
 
     // ---- sends -----------------------------------------------------------

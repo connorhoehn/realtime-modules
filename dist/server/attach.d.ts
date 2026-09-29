@@ -48,6 +48,19 @@ export declare function calls(opts?: {
      * Runs after `config.authorize` (both must pass).
      */
     lobbyGuard?: (auth: import('../server-ws/types').WsAuthContext, lobbyName: string) => boolean;
+    /**
+     * How long a call waits for someone whose socket dropped before it ends
+     * (the rejoin grace). Default 30 s; 0 ends it at the drop.
+     */
+    rejoinGraceMs?: number;
+    /**
+     * Let an `invite` with no `targetUserIds` through. Default false: such an
+     * invite is broadcast to every connected socket (every tenant's), so it
+     * is refused with `{ type: 'error', service: 'call', code:
+     * 'untargeted-invite', … }`. Room walk-ins (`room:` / `<tenant>:room:`
+     * lobbies) and document-call invites are never refused.
+     */
+    allowUntargetedInvites?: boolean;
 }): RealtimeFeature;
 export declare function ingest(opts?: import('../ingest/types').IngestConfig): RealtimeFeature;
 export declare function pipeline(opts?: import('../pipeline/types').PipelineConfig): RealtimeFeature;

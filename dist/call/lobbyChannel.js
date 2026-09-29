@@ -27,6 +27,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.lobbyForChannel = lobbyForChannel;
 exports.channelForLobby = channelForLobby;
 exports.isDmLobby = isDmLobby;
+exports.lobbyConversationKind = lobbyConversationKind;
 exports.dmLobbyMembers = dmLobbyMembers;
 exports.shouldKnockToJoin = shouldKnockToJoin;
 /** `chat:dm:alice:bob` → `dm:alice:bob`; `chat:dmg:<hash>` → `dmg:<hash>`;
@@ -74,6 +75,32 @@ function isDmLobby(lobby) {
     if (!lobby)
         return false;
     return lobby.startsWith('dm:') || lobby.startsWith('dmg:');
+}
+/**
+ * What kind of conversation a lobby is, reading past a host's tenant prefix:
+ * `dm:a:b`, `dmg:<hash>`, `acme:dm:a:b` and `acme:eu:dmg:<hash>` are `'dm'`;
+ * `room:design` and `acme:room:design` are `'room'`; anything else is null.
+ * The first `dm` / `dmg` / `room` segment decides, so `acme:room:dm-sync`
+ * is a room.
+ *
+ * The server's lobby rules use this, not `isDmLobby`: `dmLobbyName(ids,
+ * { prefix: 'acme:' })` puts the tenant first, and a `startsWith('dm:')` test
+ * never matched it — so "a DM ends when one party hangs up" silently did not
+ * apply to any tenant-prefixed DM.
+ */
+function lobbyConversationKind(lobby) {
+    if (!lobby)
+        return null;
+    const segments = lobby.split(':');
+    // The last segment is a name (a user id, a slug, a hash), never a kind.
+    for (let i = 0; i < segments.length - 1; i++) {
+        const seg = segments[i];
+        if (seg === 'dm' || seg === 'dmg')
+            return 'dm';
+        if (seg === 'room')
+            return 'room';
+    }
+    return null;
 }
 /**
  * Member userIds of a dm lobby, or null when they are not derivable.

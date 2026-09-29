@@ -172,11 +172,14 @@ function calls(opts = {}) {
         create: ({ router, logger }) => {
             const { CallService } = require('../call/CallService');
             const { lobbyGuard } = opts;
-            let config = opts.config;
+            let config = {
+                ...(opts.config ?? {}),
+                allowUntargetedInvites: opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false,
+            };
             if (lobbyGuard) {
                 const inner = config?.authorize;
                 config = {
-                    ...(config ?? {}),
+                    ...config,
                     authorize: (clientId, action, data) => {
                         if (inner && !inner(clientId, action, data))
                             return false;
@@ -201,6 +204,7 @@ function calls(opts = {}) {
                 logger: logger,
                 stateStore: opts.stateStore,
                 config,
+                ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
             });
         },
     });

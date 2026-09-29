@@ -16,6 +16,10 @@ const realtime = attachRealtime(httpServer, {
         // Optional: refuse lobbies this connection may not use. `auth` is what
         // your resolver below returned; `lobbyName` is the frame's, verbatim.
         lobbyGuard: (auth, lobbyName) => lobbyName.startsWith(`${auth.org}:`),
+        // Optional: default false — an invite with no targetUserIds is refused.
+        // allowUntargetedInvites: true,
+        // Optional: how long a call waits for a dropped socket (default 30 s).
+        // rejoinGraceMs: 30_000,
     })],
     // Rings route by the userId this returns (`getClientsByUserId`).
     auth: async (req) => {
@@ -33,6 +37,37 @@ Add more capabilities by adding entries to `features` — nothing else changes.
 `config.authorize`; return false and the frame is refused with an error before
 any routing. Frames that carry only a `callId` (a late `accepted`) are not
 guarded — a call id is unguessable, and the invite that minted it was.
+
+`allowUntargetedInvites` (default **false**) refuses an `invite` with no
+`targetUserIds`: the server would broadcast it to every connected socket —
+every tenant's. The sender gets a structured error and nothing is registered
+or sent:
+
+```json
+{ "type": "error", "service": "call", "code": "untargeted-invite",
+  "action": "invite", "callId": "…", "lobbyName": "acme:dm:alice:bob",
+  "message": "invite needs targetUserIds: …" }
+```
+
+Room walk-ins (`room:design`, `acme:room:design`) and document-call invites are
+never refused. Set it to `true` only on a single-tenant host that wants the
+broadcast ring. (A `CallService` built directly keeps the legacy default,
+`true`; pass `config.allowUntargetedInvites: false` there.)
+
+`status` answers `{ lobbyName, active: false }` once a call is over, and while
+it is live, only people whose socket is still connected count as participants.
+Someone who dropped is listed apart while the call waits for them (the rejoin
+grace), and the call ends if they are not back when it runs out:
+
+```json
+{ "lobbyName": "acme:dm:alice:bob", "active": true, "callId": "…",
+  "callerId": "alice", "participantUserIds": ["bob"], "participantCount": 1,
+  "reconnecting": [{ "userId": "alice", "graceUntil": "2026-09-29T12:00:30.000Z" }] }
+```
+
+`reconnecting` comes from the replica that saw the drop; another replica
+answers without it. A DM (`dm:`, `dmg:`, or tenant-prefixed `acme:dm:…`) ends
+when either party hangs up; a room keeps going with one person.
 
 ## 2 — Client (React hooks)
 

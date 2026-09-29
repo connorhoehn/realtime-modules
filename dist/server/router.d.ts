@@ -82,6 +82,10 @@ export interface RealtimeRouter {
         clientId: string;
         userId: string;
     }[];
+    /** true = connected here, false = not connected here, null = unknown
+     *  (another replica may hold it). Services use it to tell a live
+     *  participant from one whose socket is gone. */
+    isClientLive?(clientId: string): boolean | null;
     /** Broadcast to every connected client (call's no-target fallback). */
     broadcastToAll?(message: unknown, excludeClientId?: string): Promise<void> | void;
     /** Remove a client from all channels (disconnect path). */
@@ -122,6 +126,8 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
         clientId: string;
         userId: string;
     }[];
+    /** Single process: a client not connected here is not connected. */
+    isClientLive(clientId: string): boolean | null;
     sendToClient(clientId: string, message: unknown): void;
     sendToLocalClient(clientId: string, message: unknown): void;
     broadcastToAll(message: unknown, excludeClientId?: string): Promise<void>;

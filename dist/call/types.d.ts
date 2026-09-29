@@ -317,6 +317,17 @@ export interface CallConfig {
      */
     recordCallAction?: (action: CallAction, targetKind: 'targeted' | 'broadcast') => void;
     /**
+     * Whether an `invite` with no `targetUserIds` may go out. An untargeted
+     * invite is broadcast to every connected client — on a multi-tenant host,
+     * every tenant's. When false it is refused: the sender gets
+     * `{ type: 'error', service: 'call', code: 'untargeted-invite', action,
+     * callId, lobbyName, message }` and nothing is registered or sent.
+     * Room walk-ins (`room:` / `<tenant>:room:` lobbies) and document-call
+     * invites are never refused. Default here: true (the legacy behaviour);
+     * `calls()` under attachRealtime defaults it to false.
+     */
+    allowUntargetedInvites?: boolean;
+    /**
      * Optional persistence hook for the call→session binding. Called on
      * `invite` (with caller's data) and `accepted` (with accepter's
      * data). The recording-completed webhook later uses this to map
@@ -513,6 +524,13 @@ export interface CallErrorFrame {
     type: 'error';
     service: 'call';
     message: string;
+    /** Machine-readable reason, when the refusal has one
+     *  (`'untargeted-invite'`). */
+    code?: string;
+    /** The refused frame's verb / call / lobby, when known. */
+    action?: string;
+    callId?: string;
+    lobbyName?: string;
     timestamp: string;
 }
 /**

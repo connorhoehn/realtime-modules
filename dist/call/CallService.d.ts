@@ -1,4 +1,4 @@
-import { type CallAction, type CallInvite, type CallLogger, type CallMessageRouter, type CallServiceOptions } from './types';
+import { type CallAction, type CallErrorFrame, type CallInvite, type CallLogger, type CallMessageRouter, type CallServiceOptions } from './types';
 /** Dedup identity for an invite: the call PLUS who is being rung.
  *  Broadcast invites (no targets) collapse to the callId, which is the
  *  old behaviour and correct for them — a broadcast re-fired within the
@@ -93,7 +93,18 @@ export declare class CallService {
      *  window (disconnect left <=1 participants; teardown deferred so a
      *  refreshing peer can come back). callId → timer. */
     private rejoinGraceTimers;
+    /** Who the pending grace is waiting for, for `status` (callId → the
+     *  dropped person and when the grace runs out). Read only while the
+     *  call's timer is pending. */
+    private rejoinGraceInfo;
     private rejoinGraceMs;
+    /** clientId → userId, captured while the socket is still mapped. Under
+     *  attachRealtime the router has already forgotten a closed socket by
+     *  the time `onClientDisconnect` runs, so the departure would be
+     *  anonymous (`user-status {userId: null}`, no name in `status`). */
+    private participantUserIds;
+    /** See CallConfig.allowUntargetedInvites. */
+    private allowUntargetedInvites;
     private onSweepSkipped;
     private readonly _withSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
@@ -283,6 +294,14 @@ export declare class CallService {
      */
     handleDisconnect(clientId: string): Promise<void>;
     /**
+     * The name attachRealtime's socket handler calls on close (the
+     * realtime-examples gateway calls `handleDisconnect || onClientDisconnect`,
+     * so it reaches the same code either way). Without it a socket that
+     * closed under attachRealtime never left its call: the roster kept it and
+     * `status` answered with a participant nobody could reach.
+     */
+    onClientDisconnect(clientId: string): Promise<void>;
+    /**
      * F2 — deferred end-of-call. Fires rejoinGraceMs after a departure
      * left the call with <=1 participants and nobody re-registered.
      * Sends the synthetic `ended` to whoever is still around, fans the
@@ -393,7 +412,7 @@ export declare class CallService {
     private scheduleDocLeave;
     private clearDocLeaveTimer;
     private clearDocLeaveTimerKey;
-    sendError(clientId: string, message: string): void;
+    sendError(clientId: string, message: string, detail?: Pick<CallErrorFrame, 'code' | 'action' | 'callId' | 'lobbyName'>): void;
     getStats(): {
         stateful: true;
         activeCalls: number;

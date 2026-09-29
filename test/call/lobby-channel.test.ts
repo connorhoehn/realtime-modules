@@ -6,6 +6,7 @@ import {
   lobbyForChannel,
   channelForLobby,
   isDmLobby,
+  lobbyConversationKind,
   dmLobbyMembers,
   shouldKnockToJoin,
 } from '../../src/call/lobbyChannel';
@@ -142,5 +143,26 @@ describe('shouldKnockToJoin', () => {
 
   it('makes an unidentified caller knock at a private door', () => {
     expect(shouldKnockToJoin('dm:alice:bob', null)).toBe(true);
+  });
+});
+
+describe('lobbyConversationKind', () => {
+  it('reads a DM past a tenant prefix', () => {
+    expect(lobbyConversationKind('dm:alice:bob')).toBe('dm');
+    expect(lobbyConversationKind('dmg:abc123')).toBe('dm');
+    expect(lobbyConversationKind('acme:dm:alice:bob')).toBe('dm');
+    expect(lobbyConversationKind('acme:eu:dmg:abc123')).toBe('dm');
+  });
+  it('reads a room past a tenant prefix; the first kind segment decides', () => {
+    expect(lobbyConversationKind('room:design')).toBe('room');
+    expect(lobbyConversationKind('acme:room:design')).toBe('room');
+    expect(lobbyConversationKind('acme:room:dm')).toBe('room');
+  });
+  it('is null for anything else, including a name that merely ends in a kind', () => {
+    expect(lobbyConversationKind('global-hangout')).toBeNull();
+    expect(lobbyConversationKind('acme:dm')).toBeNull();
+    expect(lobbyConversationKind('acme:dmroom:x')).toBeNull();
+    expect(lobbyConversationKind('')).toBeNull();
+    expect(lobbyConversationKind(null)).toBeNull();
   });
 });

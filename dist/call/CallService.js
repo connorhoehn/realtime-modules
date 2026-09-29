@@ -40,6 +40,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CallService = void 0;
 exports.inviteDedupKey = inviteDedupKey;
 const types_1 = require("./types");
+const lobbyChannel_1 = require("./lobbyChannel");
 // Tracing is an injected seam (CallServiceOptions.withSpan) rather than a
 // require('distributed-core') — this library does not depend on
 // distributed-core, and the gateway supplies its real withSpan at
@@ -187,7 +188,18 @@ class CallService {
      *  window (disconnect left <=1 participants; teardown deferred so a
      *  refreshing peer can come back). callId → timer. */
     rejoinGraceTimers = new Map();
+    /** Who the pending grace is waiting for, for `status` (callId → the
+     *  dropped person and when the grace runs out). Read only while the
+     *  call's timer is pending. */
+    rejoinGraceInfo = new Map();
     rejoinGraceMs = 30_000;
+    /** clientId → userId, captured while the socket is still mapped. Under
+     *  attachRealtime the router has already forgotten a closed socket by
+     *  the time `onClientDisconnect` runs, so the departure would be
+     *  anonymous (`user-status {userId: null}`, no name in `status`). */
+    participantUserIds = new Map();
+    /** See CallConfig.allowUntargetedInvites. */
+    allowUntargetedInvites = true;
     onSweepSkipped = null;
     _withSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
@@ -233,6 +245,8 @@ class CallService {
         this.callEndedHook = config.onCallEnded ?? null;
         this.callStartedHook = config.onCallStarted ?? null;
         this.callMissedHook = config.onCallMissed ?? null;
+        if (config.allowUntargetedInvites === false)
+            this.allowUntargetedInvites = false;
         this.inviteSweepTimer = setInterval(() => {
             // PR-W2.4 — leader gate.  When ownership is enabled and a
             // peer node owns the `__leader:call-sweep` sentinel, that
@@ -471,6 +485,7 @@ class CallService {
         for (const t of this.rejoinGraceTimers.values())
             clearTimeout(t);
         this.rejoinGraceTimers.clear();
+        this.rejoinGraceInfo.clear();
         for (const t of this.docLeaveTimers.values())
             clearTimeout(t);
         this.docLeaveTimers.clear();
@@ -531,6 +546,7 @@ class CallService {
         if (pendingEnd) {
             clearTimeout(pendingEnd);
             this.rejoinGraceTimers.delete(callId);
+            this.rejoinGraceInfo.delete(callId);
             this.logger.info(`[CallService] rejoin within grace — cancelled deferred end for ${callId}`);
         }
         let state = this.activeCalls.get(callId);
@@ -722,6 +738,7 @@ class CallService {
             clearTimeout(pendingGrace);
             this.rejoinGraceTimers.delete(callId);
         }
+        this.rejoinGraceInfo.delete(callId);
         this.clearInviteRegistryForCall(callId);
         void this.clearInviteRegistryForCallStore(callId);
         if (this.metaStore) {
@@ -1267,6 +1284,15 @@ class CallService {
             data.participantUserIds = Array.from(userIds);
             // People, not connections: two tabs of one person count once.
             data.participantCount = docMeta ? userIds.size : participantClientIds.length;
+            // Someone whose socket dropped is not a participant (above); while
+            // this replica waits for them to come back they are listed here.
+            const grace = this.rejoinGraceTimers.has(foundCallId) ? this.rejoinGraceInfo.get(foundCallId) : undefined;
+            if (grace && grace.until > now && !participantClientIds.includes(grace.clientId)) {
+                data.reconnecting = [{
+                        userId: grace.userId,
+                        graceUntil: new Date(grace.until).toISOString(),
+                    }];
+            }
         }
         return data;
     }
@@ -1338,6 +1364,24 @@ class CallService {
         const targetUserIds = this.normalizeTargetUserIds(payload);
         if (action === 'invite' && (!callId || !lobbyName)) {
             this.sendError(clientId, 'callId and lobbyName are required on invite');
+            return;
+        }
+        // An invite with no targets is broadcast to every connected socket —
+        // every tenant's. Refused unless the host allows it, except where an
+        // untargeted invite is the normal shape: a room walk-in (`room:` /
+        // `<tenant>:room:` lobby) and a document call (which never broadcasts).
+        if (action === 'invite'
+            && !this.allowUntargetedInvites
+            && targetUserIds.length === 0
+            && (0, lobbyChannel_1.lobbyConversationKind)(lobbyName) !== 'room'
+            && !(payload.kind === 'document-review' && this.metaStore)) {
+            this.logger.warn(`[CallService] refused untargeted invite from ${clientId} (callId=${callId} lobby=${lobbyName})`);
+            this.sendError(clientId, 'invite needs targetUserIds: an untargeted invite would ring every connected client', {
+                code: 'untargeted-invite',
+                action,
+                callId,
+                lobbyName,
+            });
             return;
         }
         // F3 (2026-08-21) — `status` is a query, not a signaling verb:
@@ -1590,6 +1634,14 @@ class CallService {
             || action === 'accepted');
         if (shouldRegister) {
             this.registerParticipant(callId, clientId, callerId, resolvedLobbyName, targetUserIds);
+            if (typeof this.messageRouter.getUserIdForClient === 'function') {
+                try {
+                    const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));
+                    if (uid)
+                        this.participantUserIds.set(clientId, uid);
+                }
+                catch { /* best-effort */ }
+            }
             // F2/F3 — durable discovery indexes, fire-and-forget. The
             // userId index is what survives a page refresh (new tab =
             // new clientId, so the clientId reverse-index misses); the
@@ -1740,6 +1792,7 @@ class CallService {
             if (pendingGrace) {
                 clearTimeout(pendingGrace);
                 this.rejoinGraceTimers.delete(callId);
+                this.rejoinGraceInfo.delete(callId);
                 this.logger.info(`[CallService] ${action} cancelled the rejoin grace for ${callId}`);
             }
             this.clearInviteRegistryForCall(callId);
@@ -1768,7 +1821,7 @@ class CallService {
                     this.storeMirrored.delete(callId);
                 }
                 else if (state.participantClientIds.size === 1
-                    && state.lobbyName.startsWith('dm:')
+                    && (0, lobbyChannel_1.lobbyConversationKind)(state.lobbyName) === 'dm'
                     && (this.acceptedCallIds.has(callId) || (state.everParticipated?.size ?? 0) > 1)) {
                     // A DM has two parties, so when one of them hangs up on a
                     // call both were in, the call is over — the other side's
@@ -2013,8 +2066,10 @@ class CallService {
                 this.logger.warn(`[CallService] handleDisconnect getCallsForClient failed for ${clientId}: ${e?.message ?? e}`);
             }
         }
-        if (callIdSet.size === 0)
+        if (callIdSet.size === 0) {
+            this.participantUserIds.delete(clientId);
             return;
+        }
         for (const callId of callIdSet) {
             const docMeta = await this.getDocumentMeta(callId);
             if (docMeta) {
@@ -2031,7 +2086,7 @@ class CallService {
             // Asked while the router still maps the socket to its user.
             const departedUserId = (typeof this.messageRouter.getUserIdForClient === 'function'
                 ? this.messageRouter.getUserIdForClient(clientId)
-                : null) ?? null;
+                : null) ?? this.participantUserIds.get(clientId) ?? null;
             const notifiedClientIds = [];
             // F1 (2026-08-21) — participant-grain departure. The previous
             // implementation unconditionally broadcast a synthetic `ended`
@@ -2174,6 +2229,11 @@ class CallService {
             }
             if (graceDeferred) {
                 this.scheduleGraceEnd(callId, clientId);
+                this.rejoinGraceInfo.set(callId, {
+                    userId: departedUserId,
+                    clientId,
+                    until: Date.now() + this.rejoinGraceMs,
+                });
             }
             if (callContinues || graceDeferred) {
                 // F1 — participant-grain removal: drop ONLY the departed
@@ -2216,6 +2276,17 @@ class CallService {
             }
         }
         this.clientToCalls.delete(clientId);
+        this.participantUserIds.delete(clientId);
+    }
+    /**
+     * The name attachRealtime's socket handler calls on close (the
+     * realtime-examples gateway calls `handleDisconnect || onClientDisconnect`,
+     * so it reaches the same code either way). Without it a socket that
+     * closed under attachRealtime never left its call: the roster kept it and
+     * `status` answered with a participant nobody could reach.
+     */
+    async onClientDisconnect(clientId) {
+        return this.handleDisconnect(clientId);
     }
     /**
      * F2 — deferred end-of-call. Fires rejoinGraceMs after a departure
@@ -2233,6 +2304,7 @@ class CallService {
         const departedAt = Date.now();
         const timer = setTimeout(() => {
             this.rejoinGraceTimers.delete(callId);
+            this.rejoinGraceInfo.delete(callId);
             void (async () => {
                 const state = this.activeCalls.get(callId);
                 // Re-check: a rejoin that raced the timer (or a clean
@@ -3206,13 +3278,14 @@ class CallService {
             this.docLeaveTimers.delete(key);
         }
     }
-    sendError(clientId, message) {
+    sendError(clientId, message, detail) {
         if (!this.messageRouter)
             return;
         const frame = {
             type: 'error',
             service: 'call',
             message,
+            ...(detail ?? {}),
             timestamp: new Date().toISOString(),
         };
         this.messageRouter.sendToClient(clientId, frame);

@@ -86,6 +86,12 @@ class LocalRealtimeRouter {
         }
         return out;
     }
+    /** Single process: a client not connected here is not connected. */
+    isClientLive(clientId) {
+        if (!this.handleRef)
+            return null;
+        return this.handleRef.getClientContext(clientId) != null;
+    }
     // ---- sends -----------------------------------------------------------
     sendToClient(clientId, message) {
         if (!this.handleRef)
