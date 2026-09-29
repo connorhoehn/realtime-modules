@@ -120,6 +120,10 @@ interface CrossNodeDepartedPayload {
     /** Clients the origin already told directly (sendToClient reaches every
      *  replica); receivers skip them, so nobody hears one drop twice. */
     notifiedClientIds?: string[];
+    /** The call's roster as the origin read it. The grace-expiry end is
+     *  published just before the origin forgets the call (store included),
+     *  so a receiver that reads the store after that finds nobody to tell. */
+    participantClientIds?: string[];
 }
 
 type UserClientMatchLike = { clientId: string };
@@ -424,7 +428,7 @@ export class CallService {
         fallbackLobbyName: string,
         callContinues = false,
         alreadyNotified = false,
-        evt: Pick<CrossNodeDepartedPayload, 'departedUserId' | 'rejoinGraceMs' | 'reason' | 'notifiedClientIds'> = {},
+        evt: Pick<CrossNodeDepartedPayload, 'departedUserId' | 'rejoinGraceMs' | 'reason' | 'notifiedClientIds' | 'participantClientIds'> = {},
     ): Promise<number> {
         if (alreadyNotified) {
             // Document call: the origin replica told everyone cluster-wide.
@@ -461,6 +465,9 @@ export class CallService {
             }
         }
 
+        for (const cid of evt.participantClientIds ?? []) {
+            if (!participantClientIds.includes(cid)) participantClientIds.push(cid);
+        }
         const localState = this.activeCalls.get(callId);
         if (localState) {
             for (const cid of localState.participantClientIds) {
@@ -2342,10 +2349,14 @@ export class CallService {
                 // Re-check: a rejoin that raced the timer (or a clean
                 // ended) may have already resolved the call.
                 let remaining = state ? state.participantClientIds.size : 0;
+                const roster = new Set<string>(state ? state.participantClientIds : []);
                 if (this.stateStore) {
                     try {
                         const view = await this.stateStore.getCall(callId);
-                        if (view) remaining = Math.max(remaining, view.participantClientIds.length);
+                        if (view) {
+                            remaining = Math.max(remaining, view.participantClientIds.length);
+                            for (const cid of view.participantClientIds) roster.add(cid);
+                        }
                     } catch { /* local view stands */ }
                 }
                 if (remaining >= 2) return; // rejoined — call lives
@@ -2379,6 +2390,7 @@ export class CallService {
                             callContinues: false,
                             reason: 'rejoin-grace-expired',
                             notifiedClientIds,
+                            participantClientIds: Array.from(roster).filter((cid) => cid !== departedClientId),
                         };
                         await Promise.resolve(
                             this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)),

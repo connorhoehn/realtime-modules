@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.98.2 — 2026-09-29
+
+- **call: the grace-expiry end of a DM reaches a survivor on another replica
+  every time.** The end is published just before the origin forgets the call
+  (store included); a receiver whose replica held no local copy read the store
+  after that, found nobody, and sent no `ended` — 1 run in 2 on two gateway
+  pods. The publish now carries the roster the origin read at expiry.
+
 ## 0.98.1 — 2026-09-29
 
 - **call: a DM drop on another replica is told once, by name.** When the

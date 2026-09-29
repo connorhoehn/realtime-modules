@@ -23,11 +23,14 @@ export const flush = async (n = 6) => {
 };
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export function makeBus() {
+export function makeBus(delayMs?: number) {
   const handlers = new Map<string, Set<(p: string) => void>>();
   return {
     publish(topic: string, payload: string) {
-      for (const h of handlers.get(topic) ?? []) h(payload);
+      // `delayMs`: deliver later, as Redis pub/sub does — a publisher's own
+      // follow-up work (forgetting the call) can land before a receiver runs.
+      const deliver = () => { for (const h of handlers.get(topic) ?? []) h(payload); };
+      if (delayMs === undefined) deliver(); else setTimeout(deliver, delayMs);
     },
     subscribe(topic: string, h: (p: string) => void) {
       let s = handlers.get(topic);
@@ -70,9 +73,9 @@ export function makeNodeRouter(node: string, dir: Directory, wire: Sent[]) {
   return router;
 }
 
-export function makeCluster(opts: Partial<CallServiceOptions> & { leader?: 'A' | 'B' | 'both' } = {}) {
+export function makeCluster(opts: Partial<CallServiceOptions> & { leader?: 'A' | 'B' | 'both'; busDelayMs?: number } = {}) {
   const redis = new FakeRedis();
-  const bus = makeBus();
+  const bus = makeBus(opts.busDelayMs);
   const dir: Directory = new Map();
   const wire: Sent[] = [];
   const leader = opts.leader ?? 'both';

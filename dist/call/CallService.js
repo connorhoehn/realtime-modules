@@ -377,6 +377,10 @@ class CallService {
                 this.logger.warn(`[CallService] cross-node getCall lookup failed for ${callId}: ${e?.message ?? e}`);
             }
         }
+        for (const cid of evt.participantClientIds ?? []) {
+            if (!participantClientIds.includes(cid))
+                participantClientIds.push(cid);
+        }
         const localState = this.activeCalls.get(callId);
         if (localState) {
             for (const cid of localState.participantClientIds) {
@@ -2234,11 +2238,15 @@ class CallService {
                 // Re-check: a rejoin that raced the timer (or a clean
                 // ended) may have already resolved the call.
                 let remaining = state ? state.participantClientIds.size : 0;
+                const roster = new Set(state ? state.participantClientIds : []);
                 if (this.stateStore) {
                     try {
                         const view = await this.stateStore.getCall(callId);
-                        if (view)
+                        if (view) {
                             remaining = Math.max(remaining, view.participantClientIds.length);
+                            for (const cid of view.participantClientIds)
+                                roster.add(cid);
+                        }
                     }
                     catch { /* local view stands */ }
                 }
@@ -2276,6 +2284,7 @@ class CallService {
                             callContinues: false,
                             reason: 'rejoin-grace-expired',
                             notifiedClientIds,
+                            participantClientIds: Array.from(roster).filter((cid) => cid !== departedClientId),
                         };
                         await Promise.resolve(this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)));
                     }
