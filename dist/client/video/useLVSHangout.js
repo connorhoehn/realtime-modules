@@ -276,6 +276,9 @@ function useLVSHangout(opts) {
         if (!channelArn || !participantId)
             return;
         let cancelled = false;
+        // A new session in the same hook instance (a second call from one
+        // conversation, or a rejoin after leave()): leave() must work again.
+        leftRef.current = false;
         setError(null);
         const constraints = media ?? DEFAULT_MEDIA;
         const adopt = (stream) => {

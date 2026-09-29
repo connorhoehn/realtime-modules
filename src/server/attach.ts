@@ -211,16 +211,44 @@ export function social(
 export function calls(opts: {
     stateStore?: import('../call/CallStateStore').CallStateStore;
     config?: import('../call/types').CallConfig;
+    /**
+     * Refuse a lobby this connection may not use. Called with the gateway
+     * `auth` result of the sender (`{ userId, …whatever your resolver
+     * returned }`) and the frame's `lobbyName`, for every call frame that
+     * names one. Return false and the frame is refused with an error, before
+     * any routing. A tenant-scoped host checks the prefix:
+     * `(auth, lobby) => lobby.startsWith(`${auth.org}:`)`. Default: allow.
+     * Runs after `config.authorize` (both must pass).
+     */
+    lobbyGuard?: (auth: import('../server-ws/types').WsAuthContext, lobbyName: string) => boolean;
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../call/manifest').CallManifest,
         create: ({ router, logger }) => {
             const { CallService } = require('../call/CallService') as typeof import('../call/CallService');
+            const { lobbyGuard } = opts;
+            let config = opts.config;
+            if (lobbyGuard) {
+                const inner = config?.authorize;
+                config = {
+                    ...(config ?? {}),
+                    authorize: (clientId, action, data) => {
+                        if (inner && !inner(clientId, action, data)) return false;
+                        // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
+                        const nested = data && typeof data.data === 'object' && data.data ? data.data as { lobbyName?: unknown } : null;
+                        const raw = data?.lobbyName ?? nested?.lobbyName;
+                        const lobby = typeof raw === 'string' ? raw : '';
+                        if (!lobby) return true;
+                        const auth = router.getClientData?.(clientId)?.userContext ?? {};
+                        try { return lobbyGuard(auth, lobby) !== false; } catch { return false; }
+                    },
+                };
+            }
             return new CallService({
                 messageRouter: router as any,
                 logger: logger as any,
                 stateStore: opts.stateStore,
-                config: opts.config,
+                config,
             });
         },
     });

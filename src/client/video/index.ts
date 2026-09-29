@@ -124,6 +124,53 @@ export {
 
 export type { DocumentCallGateway } from './documentCallGateway';
 
+// Conversation calls (0.98.0): the DM / room call docked above a chat
+// composer — ring, accept, live tiles, leave — against the gateway's `call`
+// service and platform-api, with a pure mapping onto ui-components' CallDock.
+// docs/design/conversation-call-port.md.
+export {
+  useConversationCall,
+  callingLabel,
+  type UseConversationCallOptions,
+  type ConversationCallResult,
+} from './useConversationCall';
+
+export {
+  useIncomingConversationCalls,
+  parseConversationInvite,
+  type UseIncomingConversationCallsOptions,
+  type UseIncomingConversationCallsResult,
+} from './useIncomingConversationCalls';
+
+export {
+  conversationCallDockProps,
+  DOCK_PHASE,
+  type ConversationCallDockState,
+  type ConversationCallDockUi,
+  type ConversationCallDockProps,
+  type ConversationCallDockParticipant,
+} from './conversationCallDockProps';
+
+export {
+  useDevicePreferences,
+  readDevicePreferences,
+  deviceConstraints,
+  DEVICE_PREFERENCES_KEY,
+} from './useDevicePreferences';
+
+export { dmLobbyName, channelForLobby, lobbyForChannel, isDmLobby } from './conversationLobby';
+
+export type {
+  ConversationCall,
+  ConversationCallDeclineReason,
+  ConversationCallEvent,
+  ConversationCallGateway,
+  ConversationCallParticipant,
+  ConversationCallPhase,
+  DevicePreferences,
+  IncomingConversationCall,
+} from './conversationCallTypes';
+
 export {
   DEFAULT_AUDIO_VIDEO_SETTINGS,
   type AudioVideoSettings,

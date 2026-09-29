@@ -171,11 +171,36 @@ function calls(opts = {}) {
         manifest: require('../call/manifest').CallManifest,
         create: ({ router, logger }) => {
             const { CallService } = require('../call/CallService');
+            const { lobbyGuard } = opts;
+            let config = opts.config;
+            if (lobbyGuard) {
+                const inner = config?.authorize;
+                config = {
+                    ...(config ?? {}),
+                    authorize: (clientId, action, data) => {
+                        if (inner && !inner(clientId, action, data))
+                            return false;
+                        // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
+                        const nested = data && typeof data.data === 'object' && data.data ? data.data : null;
+                        const raw = data?.lobbyName ?? nested?.lobbyName;
+                        const lobby = typeof raw === 'string' ? raw : '';
+                        if (!lobby)
+                            return true;
+                        const auth = router.getClientData?.(clientId)?.userContext ?? {};
+                        try {
+                            return lobbyGuard(auth, lobby) !== false;
+                        }
+                        catch {
+                            return false;
+                        }
+                    },
+                };
+            }
             return new CallService({
                 messageRouter: router,
                 logger: logger,
                 stateStore: opts.stateStore,
-                config: opts.config,
+                config,
             });
         },
     });

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.98.0 — 2026-09-28
+
+- **client/video: conversation calls.** The DM / room call docked above a chat
+  composer, until now app code in realtime-examples, is library:
+  - `useConversationCall({ lobbyName, channel?, self, platformApi: { baseUrl,
+    getIdToken }, gateway?, devices?, onCallStarted?, onCallEnded?,
+    onCallMissed? })` — ring (`start`), `accept(ring?)`, `decline`, `leave`,
+    `rejoin`, with `phase` (`idle · calling · ringing · connecting · live ·
+    reconnecting · ended · failed`), `call` (participants merged from the
+    gateway roster and the media members, `participantCount`), `incoming`,
+    `callingTo`, `self` + `toggleMic / toggleCamera / toggleScreenShare`,
+    `media` (useLVSHangout), `devices`, `elapsedMs`. platform-api is reached
+    through props (`getIdToken` per request, never env); the lobby name is used
+    verbatim (tenant prefixes are the host's). Every frame it sends is
+    targeted — never the server's broadcast fallback.
+  - `useIncomingConversationCalls({ gateway?, self })` — every ring addressed
+    to you (FIFO, TTL as missed, replay-anchored, knock admissions), for the
+    app-wide toast; answering in one hook clears the ring in the others on the
+    page.
+  - `conversationCallDockProps(state, ui)` — the pure mapping onto
+    ui-components' `CallDock` (realtime-examples' HangoutShelfDock), typed as a
+    structural mirror since RM does not depend on ui-components.
+  - `useDevicePreferences`, `readDevicePreferences`, `deviceConstraints`
+    (`call-device-preferences`), `dmLobbyName(userIds, { prefix })`, and
+    `channelForLobby` / `lobbyForChannel` / `isDmLobby` re-exported here.
+- **server: `calls({ lobbyGuard: (auth, lobbyName) => boolean })`** refuses a
+  call frame whose lobby the sender may not use (e.g. not their `org`'s
+  prefix), from the gateway `auth` result, before any routing. Default: allow.
+- **client/video (fix): `useLVSHangout` can leave twice.** `leave()` was
+  once per hook instance, so a second call from the same surface could never
+  be left and kept its camera. A new session (the token or participant id
+  changes, including through null) resets it.
+- docs/recipes/calls.md rewritten around the hooks.
+
 ## 0.97.12 — 2026-09-25
 
 - **call (fix): ghost DM calls.** A disconnect that deferred teardown (rejoin

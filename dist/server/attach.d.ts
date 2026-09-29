@@ -38,6 +38,16 @@ export declare function social(opts?: import('../social/types').SocialConfig): R
 export declare function calls(opts?: {
     stateStore?: import('../call/CallStateStore').CallStateStore;
     config?: import('../call/types').CallConfig;
+    /**
+     * Refuse a lobby this connection may not use. Called with the gateway
+     * `auth` result of the sender (`{ userId, …whatever your resolver
+     * returned }`) and the frame's `lobbyName`, for every call frame that
+     * names one. Return false and the frame is refused with an error, before
+     * any routing. A tenant-scoped host checks the prefix:
+     * `(auth, lobby) => lobby.startsWith(`${auth.org}:`)`. Default: allow.
+     * Runs after `config.authorize` (both must pass).
+     */
+    lobbyGuard?: (auth: import('../server-ws/types').WsAuthContext, lobbyName: string) => boolean;
 }): RealtimeFeature;
 export declare function ingest(opts?: import('../ingest/types').IngestConfig): RealtimeFeature;
 export declare function pipeline(opts?: import('../pipeline/types').PipelineConfig): RealtimeFeature;
