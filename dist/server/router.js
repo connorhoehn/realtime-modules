@@ -145,6 +145,9 @@ class LocalRealtimeRouter {
             return false;
         }
     }
+    hasChannelAuthorize() {
+        return this.authorize !== null;
+    }
     /**
      * The check every service runs before acting on a channel. On refusal
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
@@ -153,6 +156,8 @@ class LocalRealtimeRouter {
         if (this.allows(kind, clientId, channel))
             return true;
         this.logger.info(`[realtime] ${kind} to ${channel} denied for ${clientId}`);
+        if (opts.silent)
+            return false;
         this.sendToClient(clientId, (0, channelAccess_1.channelDeniedFrame)({
             kind,
             channel: opts.clientChannel ?? channel,

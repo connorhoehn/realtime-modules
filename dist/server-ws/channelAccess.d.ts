@@ -23,10 +23,22 @@ export interface ChannelAccessOpts {
     service?: string;
     /** The channel as the client named it (the refusal echoes it). */
     clientChannel?: string;
+    /**
+     * Ask without telling the client on refusal (no AUTHZ_CHANNEL_DENIED
+     * frame). For checks whose refusal must not be observable — a presence
+     * `get` by `targetClientId` answers an unreadable target exactly like an
+     * unknown one, so a refusal frame would leak that the target exists.
+     */
+    silent?: boolean;
 }
 /** The router slice a service needs to ask. Optional on every router. */
 export interface ChannelAccessRouter {
     checkChannel?(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
+    /**
+     * Whether a channel authz hook is configured at all. A router with
+     * `checkChannel` but without this is assumed to enforce.
+     */
+    hasChannelAuthorize?(): boolean;
     subscribeToChannel?(clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean | void> | boolean | void;
 }
 /**
@@ -35,6 +47,11 @@ export interface ChannelAccessRouter {
  * A throwing check refuses.
  */
 export declare function routerPermits(router: ChannelAccessRouter | null | undefined, kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
+/**
+ * Whether `router` may refuse a channel at all: false only for a router with
+ * no `checkChannel`, or one that says it has no `authorize` configured.
+ */
+export declare function routerEnforcesChannelAccess(router: ChannelAccessRouter | null | undefined): boolean;
 /** The refusal frame — the gateway's `{ type: 'error', error: { code } }` shape plus flat fields. */
 export declare function channelDeniedFrame(args: {
     kind: ChannelAccessKind;

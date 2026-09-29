@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.98.7 — 2026-09-29
+
+- **Security — presence `get` by `targetClientId` is scoped by channel
+  authz.** 0.98.6 checked `authorize` per channel, but a targeted `get`
+  names no channel, so any client that knew another tenant's clientId read
+  its whole entry (status, identity, metadata, channel list). Now the entry
+  comes back only if the caller passes `authorize({ kind: 'subscribe' })` on
+  `presence:<channel>` — and `presence({ authorizeChannel })`, if set — for
+  at least one channel the target is in, and it lists only those channels. A
+  target in no readable channel (or in none at all) gets the same `Client not
+  found` reply as an unknown clientId, and the checks send no
+  `AUTHZ_CHANNEL_DENIED` frame, so the reply does not reveal that the target
+  exists. Reading yourself, and deployments with no `authorize` and no
+  `authorizeChannel`, are unchanged.
+- **`ChannelAccessOpts.silent`** — `router.checkChannel(…, { silent: true })`
+  refuses without sending the error frame. **`router.hasChannelAuthorize()`**
+  (optional on custom routers) says whether channel authz is configured; a
+  router with `checkChannel` and without it is treated as enforcing.
+- Cursor and reactions have no by-id reads (`get` / `getAvailable` are
+  channel-scoped or static); no change there.
+
 ## 0.98.6 — 2026-09-29
 
 - **Security / behaviour change — `attachRealtime({ authorize })` is enforced

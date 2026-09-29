@@ -16,6 +16,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SERVICE_CHANNEL_PREFIXES = void 0;
 exports.splitServiceChannel = splitServiceChannel;
 exports.routerPermits = routerPermits;
+exports.routerEnforcesChannelAccess = routerEnforcesChannelAccess;
 exports.channelDeniedFrame = channelDeniedFrame;
 /**
  * Services that wrap the consumer's channel name in a prefix of their own
@@ -53,6 +54,22 @@ async function routerPermits(router, kind, clientId, channel, opts) {
     }
     catch {
         return false;
+    }
+}
+/**
+ * Whether `router` may refuse a channel at all: false only for a router with
+ * no `checkChannel`, or one that says it has no `authorize` configured.
+ */
+function routerEnforcesChannelAccess(router) {
+    if (!router || typeof router.checkChannel !== 'function')
+        return false;
+    if (typeof router.hasChannelAuthorize !== 'function')
+        return true;
+    try {
+        return router.hasChannelAuthorize() !== false;
+    }
+    catch {
+        return true;
     }
 }
 /** The refusal frame — the gateway's `{ type: 'error', error: { code } }` shape plus flat fields. */

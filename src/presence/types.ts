@@ -116,6 +116,8 @@ export interface PresenceMessageRouter {
     ): void | boolean | Promise<void | boolean>;
     /** The router's channel authz, asked before a `set` or `get`. Optional. */
     checkChannel?: import('../server-ws/channelAccess').ChannelAccessRouter['checkChannel'];
+    /** Whether the router has a channel authz hook; scopes `get` by `targetClientId`. Optional. */
+    hasChannelAuthorize?: import('../server-ws/channelAccess').ChannelAccessRouter['hasChannelAuthorize'];
     unsubscribeFromChannel(clientId: string, channel: string): void | Promise<void>;
     /** Auth context accessor; when present, presence entries carry the auth identity. */
     getClientData?(clientId: string): { userContext?: import('../server-ws/types').WsAuthContext } | null;

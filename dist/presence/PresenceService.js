@@ -75,6 +75,7 @@ class PresenceService {
     messageRouter;
     logger;
     authorizeChannel;
+    hasAuthorizeChannel;
     // Tunables resolved from PresenceConfig overrides → env vars → defaults.
     heartbeatIntervalMs;
     presenceTimeoutMs;
@@ -100,6 +101,7 @@ class PresenceService {
         this.messageRouter = messageRouter;
         this.logger = logger;
         this.authorizeChannel = config.authorizeChannel || (() => true);
+        this.hasAuthorizeChannel = typeof config.authorizeChannel === 'function';
         this.resolveSender = config.resolveSender ?? null;
         this.trustFrameSender = config.trustFrameSender === true;
         this.heartbeatIntervalMs = config.heartbeatIntervalMs
@@ -216,7 +218,10 @@ class PresenceService {
         try {
             let presenceData;
             if (targetClientId) {
-                presenceData = this.clientPresence.get(targetClientId);
+                // A by-id read is scoped to the channels the target is in: an
+                // entry the caller may not read answers exactly like an
+                // unknown clientId, so it cannot probe other tenants.
+                presenceData = await this.readableEntry(clientId, targetClientId);
                 if (!presenceData) {
                     this.sendError(clientId, 'Client not found');
                     return;
@@ -360,6 +365,45 @@ class PresenceService {
             out.push(channel);
         }
         return out;
+    }
+    /**
+     * The target's entry as `clientId` may see it: only the channels it
+     * passes both authz layers for (subscribe), and undefined when there is
+     * none — the same answer as for a clientId that does not exist. The
+     * checks are silent, so no refusal frame gives the target away. Without
+     * any channel authz configured, and for a client reading itself, the
+     * entry comes back whole.
+     */
+    async readableEntry(clientId, targetClientId) {
+        const entry = this.clientPresence.get(targetClientId);
+        if (!entry)
+            return undefined;
+        if (targetClientId === clientId)
+            return entry;
+        if (!this.hasAuthorizeChannel && !(0, channelAccess_1.routerEnforcesChannelAccess)(this.messageRouter))
+            return entry;
+        const readable = [];
+        for (const channel of entry.channels ?? []) {
+            let ok;
+            try {
+                ok = this.authorizeChannel(clientId, channel);
+            }
+            catch {
+                ok = false;
+            }
+            if (!ok)
+                continue;
+            if (!(await (0, channelAccess_1.routerPermits)(this.messageRouter, 'subscribe', clientId, `presence:${channel}`, {
+                service: 'presence',
+                clientChannel: channel,
+                silent: true,
+            })))
+                continue;
+            readable.push(channel);
+        }
+        if (readable.length === 0)
+            return undefined;
+        return { ...entry, channels: readable };
     }
     /** A roster read: the same checks as a subscribe. */
     async mayRead(clientId, channel) {

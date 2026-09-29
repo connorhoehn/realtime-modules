@@ -145,6 +145,8 @@ export interface RealtimeRouter {
         channel: string,
         opts?: ChannelAccessOpts,
     ): boolean | Promise<boolean>;
+    /** Whether an `authorize` hook is configured (services skip by-id read scoping without one). */
+    hasChannelAuthorize?(): boolean;
     /** Auth context accessor — `{ userContext }` shape services expect. */
     getClientData?(clientId: string): { userContext?: WsAuthContext } | null;
     /** Uploader/identity attribution (fileupload). */
@@ -308,6 +310,10 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         }
     }
 
+    hasChannelAuthorize(): boolean {
+        return this.authorize !== null;
+    }
+
     /**
      * The check every service runs before acting on a channel. On refusal
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
@@ -315,6 +321,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts: ChannelAccessOpts = {}): boolean {
         if (this.allows(kind, clientId, channel)) return true;
         this.logger.info(`[realtime] ${kind} to ${channel} denied for ${clientId}`);
+        if (opts.silent) return false;
         this.sendToClient(clientId, channelDeniedFrame({
             kind,
             channel: opts.clientChannel ?? channel,

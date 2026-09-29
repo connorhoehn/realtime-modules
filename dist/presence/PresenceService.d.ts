@@ -4,6 +4,7 @@ declare class PresenceService {
     private messageRouter;
     private logger;
     private authorizeChannel;
+    private readonly hasAuthorizeChannel;
     private readonly heartbeatIntervalMs;
     private readonly presenceTimeoutMs;
     private readonly staleThresholdMs;
@@ -41,6 +42,15 @@ declare class PresenceService {
      * `authorizeChannel` and the router's channel authz must both pass.
      */
     private permittedSetChannels;
+    /**
+     * The target's entry as `clientId` may see it: only the channels it
+     * passes both authz layers for (subscribe), and undefined when there is
+     * none — the same answer as for a clientId that does not exist. The
+     * checks are silent, so no refusal frame gives the target away. Without
+     * any channel authz configured, and for a client reading itself, the
+     * entry comes back whole.
+     */
+    private readableEntry;
     /** A roster read: the same checks as a subscribe. */
     private mayRead;
     /**

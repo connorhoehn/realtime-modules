@@ -200,6 +200,171 @@ describe('authorize: presence', () => {
     });
 });
 
+describe('authorize: presence get by targetClientId', () => {
+    // `alice` alone may read `…:vip` rosters; everything else is the tenant rule.
+    const t = harness({
+        authorize: (args) => tenantRule(args)
+            && (!splitServiceChannel(args.channel).channel.endsWith(':vip') || args.ctx?.userId === 'alice'),
+    });
+    /** The frames one `get` produces, timestamps dropped. */
+    const replyTo = async (c: Conn, frame: Record<string, unknown>) => {
+        const from = c.frames.length;
+        t.send(c, frame);
+        await t.waitFrame(c, (f) => c.frames.indexOf(f) >= from);
+        await t.settle();
+        return c.frames.slice(from).map(({ timestamp: _ts, ...rest }) => rest);
+    };
+
+    test('an outsider gets the same reply as for a made-up clientId, and no refusal frame', async () => {
+        const X = acmeChan();
+        const alice = await t.connect('alice', 'acme');
+        const bob = await t.connect('bob', 'evil');
+        t.send(alice, { service: 'presence', action: 'set', status: 'online', channels: [X] });
+        await t.waitFrame(alice, (f) => f.type === 'presence' && f.action === 'set' && f.presence.channels.length === 1);
+
+        const real = await replyTo(bob, { service: 'presence', action: 'get', targetClientId: alice.clientId });
+        const madeUp = await replyTo(bob, { service: 'presence', action: 'get', targetClientId: 'no-such-client' });
+        expect(real).toEqual(madeUp);
+        expect(real).toEqual([{ type: 'error', service: 'presence', message: 'Client not found' }]);
+        expect(bob.frames.find((f) => f.code === 'AUTHZ_CHANNEL_DENIED')).toBeUndefined();
+        expect(JSON.stringify(bob.frames)).not.toContain(X);
+
+        // A channel-less entry is not readable by another tenant either.
+        t.send(alice, { service: 'presence', action: 'set', status: 'away', channels: [] });
+        await t.waitFrame(alice, (f) => f.type === 'presence' && f.action === 'set' && f.presence.status === 'away');
+        expect(await replyTo(bob, { service: 'presence', action: 'get', targetClientId: alice.clientId })).toEqual(madeUp);
+
+        // Reading yourself is always allowed.
+        t.send(bob, { service: 'presence', action: 'set', status: 'busy', channels: [] });
+        await t.waitFrame(bob, (f) => f.type === 'presence' && f.action === 'set' && f.presence.status === 'busy');
+        const self = await replyTo(bob, { service: 'presence', action: 'get', targetClientId: bob.clientId });
+        expect(self).toEqual([expect.objectContaining({ type: 'presence', action: 'presence', data: expect.objectContaining({ clientId: bob.clientId, status: 'busy' }) })]);
+    });
+
+    test('an insider gets the entry with only the channels it may read', async () => {
+        const X = acmeChan();
+        const vip = `${X}:vip`;
+        const alice = await t.connect('alice', 'acme');
+        const carol = await t.connect('carol', 'acme');
+        t.send(alice, { service: 'presence', action: 'set', status: 'online', channels: [X, vip] });
+        const ack = await t.waitFrame(alice, (f) => f.type === 'presence' && f.action === 'set' && f.presence.channels.length > 0);
+        expect(ack.presence.channels).toEqual([X, vip]);
+
+        const [reply] = await replyTo(carol, { service: 'presence', action: 'get', targetClientId: alice.clientId });
+        expect(reply).toMatchObject({ type: 'presence', action: 'presence', data: { clientId: alice.clientId, userId: 'alice', status: 'online', channels: [X] } });
+        expect(JSON.stringify(reply)).not.toContain(vip);
+        expect(carol.frames.find((f) => f.code === 'AUTHZ_CHANNEL_DENIED')).toBeUndefined();
+        // The stored entry is untouched.
+        expect((t.h.handle.services.presence as any).clientPresence.get(alice.clientId).channels).toEqual([X, vip]);
+    });
+});
+
+describe('presence get by targetClientId: per-service authorizeChannel alone', () => {
+    const seen: string[] = [];
+    let server: http.Server;
+    let handle: RealtimeHandle;
+    let port = 0;
+    const open: WebSocket[] = [];
+    beforeAll(async () => {
+        server = http.createServer();
+        handle = attachRealtime(server, {
+            features: [presence({
+                heartbeatIntervalMs: 60_000,
+                cleanupIntervalMs: 60_000,
+                authorizeChannel: (_clientId, channel) => { seen.push(channel); return !channel.endsWith(':vip'); },
+            })],
+            path: '/realtime',
+        });
+        await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+        port = (server.address() as AddressInfo).port;
+    });
+    afterAll(async () => {
+        for (const ws of open) try { ws.terminate(); } catch { /* */ }
+        await handle.dispose();
+        await new Promise<void>((r) => server.close(() => r()));
+    });
+
+    test('a target only in channels authorizeChannel refuses reads as unknown', async () => {
+        const connect = () => new Promise<Conn>((resolve, reject) => {
+            const before = new Set(handle.listClients());
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/realtime`);
+            const conn: Conn = { ws, frames: [] };
+            ws.on('message', (raw) => conn.frames.push(JSON.parse(String(raw))));
+            ws.on('open', async () => {
+                open.push(ws);
+                for (let i = 0; i < 50 && !conn.clientId; i++) {
+                    conn.clientId = handle.listClients().find((id) => !before.has(id));
+                    if (!conn.clientId) await sleep(5);
+                }
+                resolve(conn);
+            });
+            ws.on('error', reject);
+        });
+        const a = await connect();
+        const b = await connect();
+        // Written directly: a `set` into a refused channel never stores it.
+        const svc: any = handle.services.presence;
+        svc.clientPresence.set(a.clientId, { clientId: a.clientId, status: 'online', metadata: {}, channels: ['room:vip'], nodeId: 'local', timestamp: '', lastSeen: '', lastHeartbeat: Date.now() });
+        await sleep(100);
+        b.frames.length = 0;
+        b.ws.send(JSON.stringify({ service: 'presence', action: 'get', targetClientId: a.clientId }));
+        await sleep(250);
+        expect(b.frames.map(({ timestamp: _ts, ...rest }) => rest)).toEqual([{ type: 'error', service: 'presence', message: 'Client not found' }]);
+        expect(seen).toContain('room:vip');
+    });
+});
+
+describe('presence get by targetClientId: no auth, no authorize', () => {
+    let server: http.Server;
+    let handle: RealtimeHandle;
+    let port = 0;
+    const open: WebSocket[] = [];
+    beforeAll(async () => {
+        server = http.createServer();
+        handle = attachRealtime(server, {
+            features: [presence({ heartbeatIntervalMs: 60_000, cleanupIntervalMs: 60_000 })],
+            path: '/realtime',
+        });
+        await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+        port = (server.address() as AddressInfo).port;
+    });
+    afterAll(async () => {
+        for (const ws of open) try { ws.terminate(); } catch { /* */ }
+        await handle.dispose();
+        await new Promise<void>((r) => server.close(() => r()));
+    });
+
+    test('any client reads any entry whole, channel-less ones included', async () => {
+        const connect = () => new Promise<Conn>((resolve, reject) => {
+            const before = new Set(handle.listClients());
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/realtime`);
+            const conn: Conn = { ws, frames: [] };
+            ws.on('message', (raw) => conn.frames.push(JSON.parse(String(raw))));
+            ws.on('open', async () => {
+                open.push(ws);
+                for (let i = 0; i < 50 && !conn.clientId; i++) {
+                    conn.clientId = handle.listClients().find((id) => !before.has(id));
+                    if (!conn.clientId) await sleep(5);
+                }
+                resolve(conn);
+            });
+            ws.on('error', reject);
+        });
+        const a = await connect();
+        const b = await connect();
+        const get = async (status: string, channels: string[]) => {
+            a.ws.send(JSON.stringify({ service: 'presence', action: 'set', status, channels }));
+            for (let i = 0; i < 100 && !a.frames.some((f) => f.action === 'set' && f.presence.status === status); i++) await sleep(10);
+            b.frames.length = 0;
+            b.ws.send(JSON.stringify({ service: 'presence', action: 'get', targetClientId: a.clientId }));
+            for (let i = 0; i < 100 && !b.frames.some((f) => f.action === 'presence'); i++) await sleep(10);
+            return b.frames.find((f) => f.action === 'presence');
+        };
+        expect((await get('online', ['x:room', 'y:room'])).data).toMatchObject({ clientId: a.clientId, channels: ['x:room', 'y:room'] });
+        expect((await get('away', [])).data).toMatchObject({ clientId: a.clientId, status: 'away', channels: [] });
+    });
+});
+
 describe('authorize: presence({ authorizeChannel }) composes with authorize', () => {
     const seen: string[] = [];
     const t = harness({

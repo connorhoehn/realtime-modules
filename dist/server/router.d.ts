@@ -121,6 +121,8 @@ export interface RealtimeRouter {
      * leaves enforcement to its `sendToChannel`.
      */
     checkChannel?(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
+    /** Whether an `authorize` hook is configured (services skip by-id read scoping without one). */
+    hasChannelAuthorize?(): boolean;
     /** Auth context accessor — `{ userContext }` shape services expect. */
     getClientData?(clientId: string): {
         userContext?: WsAuthContext;
@@ -187,6 +189,7 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     }): Promise<void>;
     /** Run `authorize`; absent → allow, throwing → refuse. */
     private allows;
+    hasChannelAuthorize(): boolean;
     /**
      * The check every service runs before acting on a channel. On refusal
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
