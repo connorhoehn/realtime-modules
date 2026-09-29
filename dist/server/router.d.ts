@@ -1,4 +1,5 @@
 import type { WsHandlerHandle, WsAuthContext } from '../server-ws/types';
+import { type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 /**
  * Logger contract shared by the router and every feature. All four methods
  * are required — services declare their own narrower logger types and some
@@ -12,16 +13,56 @@ export interface RouterLogger {
     error: (...args: any[]) => void;
 }
 /**
- * Channel authorization hook for the local router.
+ * Channel authorization hook for the local router — the one place channel
+ * access is decided for every built-in service.
  *
- * `kind` distinguishes a subscribe attempt from a publish attempt so a
- * single hook can express read/write asymmetry (e.g. announcement channels:
- * anyone subscribes, only moderators publish). Returning `false`:
- *   - on 'subscribe' → subscribeToChannel returns false, which M3-aware
- *     services (ChatService) honour by suppressing the local subscription
- *     and the joined ack;
- *   - on 'publish' → the frame is dropped before fan-out.
- * When the hook is absent everything is allowed — single-tenant default.
+ * `kind` distinguishes reading a channel from writing to it, so a single
+ * hook can express read/write asymmetry (announcement channels: anyone
+ * subscribes, only moderators publish).
+ *
+ *   - 'subscribe' — joining a channel's fan-out, and every read that hands
+ *     the channel's state back without a subscription: presence `subscribe` /
+ *     `get`, reaction `subscribe`, cursor `subscribe` / `get`, chat `join` /
+ *     `history` / `members` / `receipts`, and the generic `subscribe` service.
+ *   - 'publish' — every write that changes channel state or fans out:
+ *     presence `set` (once per channel it names), reaction `send` / `remove`,
+ *     cursor `update`, chat `send` / `edit` / `delete` / `typing` / `read` /
+ *     `addMembers` / `removeMember`, and the router's own `sendToChannel`
+ *     backstop whenever a publisher is named.
+ *
+ * On `false` the service does nothing: no subscription, no ack, no state
+ * returned, no stored write, no fan-out. The refused client receives
+ * `{ type: 'error', service, code: 'AUTHZ_CHANNEL_DENIED', kind, channel,
+ * message, error: { code, message, timestamp } }` (the router's
+ * `sendToChannel` backstop drops silently).
+ *
+ * Channel names. Presence, reactions and cursor wrap the client's channel in
+ * a prefix of their own, so the hook sees:
+ *
+ *   presence  → `presence:<channel>`
+ *   reactions → `reactions:<channel>`
+ *   cursor    → `cursor:<channel>`
+ *
+ * Chat, activity, social and crdt pass the client's channel unchanged;
+ * typed-documents subscribes `doc:<documentId>` and `doc-comments:<documentId>`;
+ * ingest (`ingest:…`) and pipeline (`pipeline:…`) channels are named that way
+ * by the client. `splitServiceChannel` strips the service prefix, so a
+ * tenant rule reads:
+ *
+ * ```ts
+ * import { attachRealtime, splitServiceChannel } from '@connorhoehn/realtime-modules/server';
+ *
+ * attachRealtime(server, {
+ *     features: [chat(), presence(), reactions(), cursor()],
+ *     auth,
+ *     authorize: ({ channel, ctx }) =>
+ *         !!ctx && splitServiceChannel(channel).channel.startsWith(`${ctx.org}:`),
+ * });
+ * ```
+ *
+ * The per-service `authorizeChannel` hooks (`presence({ authorizeChannel })`
+ * and friends) are an additional layer: both must pass. When `authorize` is
+ * absent everything is allowed — the single-tenant default.
  */
 export type ChannelAuthorize = (args: {
     kind: 'subscribe' | 'publish';
@@ -69,8 +110,17 @@ export interface RealtimeRouter {
      * Subscribe a client to a channel. Returns `false` when authz denies —
      * M3-aware services suppress their local subscription and success ack.
      */
-    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
+    subscribeToChannel?(clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
+    /**
+     * Ask the channel authz without subscribing or publishing — services run
+     * it before a write (presence `set`, reaction `send`, chat `send`) or a
+     * read that hands channel state back (presence `get`, chat `history`).
+     * Returns false on refusal and tells the client (AUTHZ_CHANNEL_DENIED).
+     * A router without it is treated as allow-all by the services, which
+     * leaves enforcement to its `sendToChannel`.
+     */
+    checkChannel?(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     /** Auth context accessor — `{ userContext }` shape services expect. */
     getClientData?(clientId: string): {
         userContext?: WsAuthContext;
@@ -135,7 +185,14 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
     }): Promise<void>;
-    subscribeToChannel(clientId: string, channel: string): boolean;
+    /** Run `authorize`; absent → allow, throwing → refuse. */
+    private allows;
+    /**
+     * The check every service runs before acting on a channel. On refusal
+     * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
+     */
+    checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean;
+    subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean;
     unsubscribeFromChannel(clientId: string, channel: string): void;
     removeClient(clientId: string): void;
 }

@@ -90,7 +90,7 @@ export declare function collabDocs(opts?: {
 export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services' | 'server'> {
     /** The capabilities to attach. Built-ins and defineFeature() results mix freely. */
     features: RealtimeFeature[];
-    /** Channel authz for the local router (subscribe + publish). */
+    /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
     authorize?: ChannelAuthorize;
     /** Lifecycle plugins (connect/disconnect/message observers). */
     plugins?: FeaturePlugin[];

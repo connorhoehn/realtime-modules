@@ -107,9 +107,11 @@ export interface ReactionConfig {
      */
     availableReactions?: Record<string, AvailableReaction>;
     /**
-     * Authorization hook. Called before honouring a subscribe action.
-     * Return false to deny (the service emits an error frame and the
-     * client is NOT added to the subscriber set). Default: allow all.
+     * Authorization hook. Called before honouring a `subscribe`, `send` or
+     * `remove` on a channel. Return false to deny (the service emits an
+     * error frame; a subscriber is NOT added to the subscriber set, a
+     * send/remove changes nothing). Default: allow all. Runs in addition to
+     * `attachRealtime({ authorize })` — both must pass.
      *
      * Replaces gateway's authz-interceptor coupling: consumers wire any
      * policy they like (RBAC, OAuth scopes, room ownership, etc.).
@@ -168,9 +170,21 @@ export interface ReactionConfig {
  */
 export interface ReactionMessageRouter {
     sendToLocalClient?(clientId: string, message: unknown): void;
-    sendToChannel(channel: string, message: unknown): void | Promise<void>;
-    subscribeToChannel(clientId: string, channel: string): void | Promise<void>;
+    sendToChannel(
+        channel: string,
+        message: unknown,
+        excludeClientId?: string | null,
+        opts?: { publisherClientId?: string | null },
+    ): void | Promise<void>;
+    /** `false` = the router's channel authz refused (and told the client). */
+    subscribeToChannel(
+        clientId: string,
+        channel: string,
+        opts?: import('../server-ws/channelAccess').ChannelAccessOpts,
+    ): void | boolean | Promise<void | boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void | Promise<void>;
+    /** The router's channel authz, asked before a write or a read. Optional. */
+    checkChannel?: import('../server-ws/channelAccess').ChannelAccessRouter['checkChannel'];
     /** Auth context accessor; when present, reactions carry the auth identity. */
     getClientData?(clientId: string): { userContext?: import('../server-ws/types').WsAuthContext } | null;
 }

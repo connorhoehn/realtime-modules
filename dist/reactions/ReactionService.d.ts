@@ -69,6 +69,12 @@ export declare class ReactionService {
         emoji: string;
         targetId?: unknown;
     }): Promise<void>;
+    /**
+     * A send or remove writes to the channel: the service's own
+     * `authorizeChannel` and the router's channel authz must both pass,
+     * before the store or the fan-out is touched.
+     */
+    _mayPublish(clientId: string, channel: string): Promise<boolean>;
     /** A reaction is durable when it names what it is attached to. */
     _isTargeted(reaction: Reaction): boolean;
     _toStored(reaction: Reaction): StoredReaction;

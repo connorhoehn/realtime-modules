@@ -41,6 +41,7 @@ import {
     type StoredReaction,
 } from './types';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
+import { routerPermits } from '../server-ws/channelAccess';
 
 const DEFAULT_MAX_HISTORY = 50;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
@@ -205,11 +206,19 @@ export class ReactionService {
                 return;
             }
 
-            this.clientChannels.addSubscription(clientId, channel);
-
+            // The router's channel authz decides the subscription, before
+            // any local tracking: on refusal it has told the client, and
+            // there is no ack and no history replay.
             if (this.isDistributed && this.messageRouter) {
-                await this.messageRouter.subscribeToChannel(clientId, `reactions:${channel}`);
+                const subscribed = await this.messageRouter.subscribeToChannel(
+                    clientId,
+                    `reactions:${channel}`,
+                    { service: 'reaction', clientChannel: channel },
+                );
+                if (subscribed === false) return;
             }
+
+            this.clientChannels.addSubscription(clientId, channel);
 
             this.sendSuccess(clientId, 'reaction_subscribed', {
                 channel,
@@ -271,6 +280,8 @@ export class ReactionService {
             this.sendError(clientId, 'Invalid emoji reaction');
             return;
         }
+
+        if (!(await this._mayPublish(clientId, channel))) return;
 
         // Sender identity is resolved at send time (never trusted from the
         // frame). A throwing resolver is logged and treated as "no identity".
@@ -337,7 +348,7 @@ export class ReactionService {
         };
 
         if (this.isDistributed && this.messageRouter) {
-            await this.messageRouter.sendToChannel(`reactions:${channel}`, reactionMessage);
+            await this.messageRouter.sendToChannel(`reactions:${channel}`, reactionMessage, null, { publisherClientId: clientId });
         } else {
             this.broadcastToLocalChannel(channel, reactionMessage);
         }
@@ -380,6 +391,7 @@ export class ReactionService {
             this.sendError(clientId, 'Reactions are not removable on this server');
             return;
         }
+        if (!(await this._mayPublish(clientId, channel))) return;
 
         const identity = this._resolveIdentity(clientId);
         if (!identity?.userId) {
@@ -418,7 +430,7 @@ export class ReactionService {
         };
 
         if (this.isDistributed && this.messageRouter) {
-            await this.messageRouter.sendToChannel(`reactions:${channel}`, removal);
+            await this.messageRouter.sendToChannel(`reactions:${channel}`, removal, null, { publisherClientId: clientId });
         } else {
             this.broadcastToLocalChannel(channel, removal);
         }
@@ -429,6 +441,22 @@ export class ReactionService {
         this.sendSuccess(clientId, 'reaction_unsent', { channel, targetId, emoji });
 
         this.logger.info(`Client ${clientId} removed reaction ${emoji} on ${targetId} in channel: ${channel}`);
+    }
+
+    /**
+     * A send or remove writes to the channel: the service's own
+     * `authorizeChannel` and the router's channel authz must both pass,
+     * before the store or the fan-out is touched.
+     */
+    async _mayPublish(clientId: string, channel: string): Promise<boolean> {
+        if (!this.authorizeChannel(clientId, channel)) {
+            this.sendError(clientId, `Not authorized for channel: ${channel}`);
+            return false;
+        }
+        return routerPermits(this.messageRouter, 'publish', clientId, `reactions:${channel}`, {
+            service: 'reaction',
+            clientChannel: channel,
+        });
     }
 
     /** A reaction is durable when it names what it is attached to. */

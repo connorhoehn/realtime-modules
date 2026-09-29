@@ -136,7 +136,10 @@ class ActivityService {
             return;
         }
         if (this.messageRouter && this.messageRouter.subscribeToChannel) {
-            await this.messageRouter.subscribeToChannel(clientId, channelId);
+            // `false` is the router's channel authz refusing (it told the client).
+            const subscribed = await this.messageRouter.subscribeToChannel(clientId, channelId);
+            if (subscribed === false)
+                return;
         }
         this.clientChannels.addSubscription(clientId, channelId);
         this.sendToClient(clientId, {

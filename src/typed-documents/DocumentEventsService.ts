@@ -151,8 +151,16 @@ export class DocumentEventsService {
         const channels = [`doc-comments:${documentId}`, `doc:${documentId}`];
 
         if (this.messageRouter) {
+            // `false` is the router's channel authz refusing (it told the
+            // client). Both channels or neither.
+            const joined: string[] = [];
             for (const channel of channels) {
-                await this.messageRouter.subscribeToChannel(clientId, channel);
+                const subscribed: unknown = await this.messageRouter.subscribeToChannel(clientId, channel);
+                if (subscribed === false) {
+                    for (const ch of joined) await this.messageRouter.unsubscribeFromChannel(clientId, ch);
+                    return;
+                }
+                joined.push(channel);
             }
         }
 

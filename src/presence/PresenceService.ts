@@ -32,6 +32,7 @@
 
 import { EvictionTimer, PeriodicSweep } from 'distributed-core';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
+import { routerPermits } from '../server-ws/channelAccess';
 import type {
     PresenceConfig,
     PresenceEntry,
@@ -203,7 +204,7 @@ class PresenceService {
     }
 
     async handleSetPresence(clientId: string, payload: PresenceUpdate): Promise<void> {
-        const { status, metadata = {}, channels = [] } = payload || ({} as PresenceUpdate);
+        const { status, metadata = {}, channels: requested = [] } = payload || ({} as PresenceUpdate);
 
         if (!status) {
             this.sendError(clientId, 'Status is required');
@@ -213,6 +214,11 @@ class PresenceService {
             this.sendError(clientId, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
             return;
         }
+
+        // Each channel is a publish into that channel's roster: a channel the
+        // consumer's authz refuses is left out — never stored, never fanned
+        // out — and the router tells the client which one.
+        const channels = await this.permittedSetChannels(clientId, requested);
 
         let validated = validateMetadata(metadata, this.maxMetadataKeys, this.maxMetadataSize, this.logger);
         // An authenticated connection is named by its auth context, not by
@@ -239,7 +245,7 @@ class PresenceService {
 
         await this.updateChannelPresence(clientId, presenceData, channels);
 
-        await this.broadcastPresenceUpdate(presenceData);
+        await this.broadcastPresenceUpdate(presenceData, clientId);
 
         this.sendToClient(clientId, {
             type: 'presence',
@@ -265,6 +271,7 @@ class PresenceService {
                     return;
                 }
             } else if (channel) {
+                if (!(await this.mayRead(clientId, channel))) return;
                 presenceData = this.getChannelPresence(channel);
             } else {
                 this.sendError(clientId, 'Either targetClientId or channel is required');
@@ -298,7 +305,14 @@ class PresenceService {
                 return;
             }
 
-            await this.messageRouter.subscribeToChannel(clientId, `presence:${channel}`);
+            // The router's channel authz decides the subscription. On
+            // refusal it has told the client; no roster, no ack.
+            const subscribed = await this.messageRouter.subscribeToChannel(
+                clientId,
+                `presence:${channel}`,
+                { service: 'presence', clientChannel: channel },
+            );
+            if (subscribed === false) return;
 
             const channelPresence = this.getChannelPresence(channel);
             this.sendToClient(clientId, {
@@ -393,7 +407,41 @@ class PresenceService {
         return Array.from(channelPresenceMap.values());
     }
 
-    async broadcastPresenceUpdate(presenceData: PresenceEntry): Promise<void> {
+    /**
+     * The channels of a `set` this client may publish to: the service's own
+     * `authorizeChannel` and the router's channel authz must both pass.
+     */
+    private async permittedSetChannels(clientId: string, requested: unknown): Promise<string[]> {
+        if (!Array.isArray(requested)) return [];
+        const out: string[] = [];
+        for (const channel of requested) {
+            if (typeof channel !== 'string' || channel.length === 0 || out.includes(channel)) continue;
+            if (!this.authorizeChannel(clientId, channel)) continue;
+            if (!(await routerPermits(this.messageRouter, 'publish', clientId, `presence:${channel}`, {
+                service: 'presence',
+                clientChannel: channel,
+            }))) continue;
+            out.push(channel);
+        }
+        return out;
+    }
+
+    /** A roster read: the same checks as a subscribe. */
+    private async mayRead(clientId: string, channel: string): Promise<boolean> {
+        if (!this.authorizeChannel(clientId, channel)) return false;
+        return routerPermits(this.messageRouter, 'subscribe', clientId, `presence:${channel}`, {
+            service: 'presence',
+            clientChannel: channel,
+        });
+    }
+
+    /**
+     * `publisherClientId` is named only for a live client's own `set`, so a
+     * router that enforces publish authz at fan-out runs it there too. The
+     * offline broadcasts (sweep, disconnect) name none: the socket may be
+     * gone, and its auth context with it.
+     */
+    async broadcastPresenceUpdate(presenceData: PresenceEntry, publisherClientId?: string): Promise<void> {
         const { channels, clientId } = presenceData;
 
         const message = {
@@ -410,6 +458,7 @@ class PresenceService {
                 `presence:${channel}`,
                 message,
                 clientId,
+                ...(publisherClientId ? [{ publisherClientId }] as const : []),
             );
         }
 

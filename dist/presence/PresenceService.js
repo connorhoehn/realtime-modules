@@ -32,6 +32,7 @@
 //   weren't using the registry shadow-write path.
 const distributed_core_1 = require("distributed-core");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
+const channelAccess_1 = require("../server-ws/channelAccess");
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_PRESENCE_TIMEOUT_MS = 60_000;
 const DEFAULT_STALE_THRESHOLD_MS = 90_000;
@@ -169,7 +170,7 @@ class PresenceService {
         }
     }
     async handleSetPresence(clientId, payload) {
-        const { status, metadata = {}, channels = [] } = payload || {};
+        const { status, metadata = {}, channels: requested = [] } = payload || {};
         if (!status) {
             this.sendError(clientId, 'Status is required');
             return;
@@ -178,6 +179,10 @@ class PresenceService {
             this.sendError(clientId, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
             return;
         }
+        // Each channel is a publish into that channel's roster: a channel the
+        // consumer's authz refuses is left out — never stored, never fanned
+        // out — and the router tells the client which one.
+        const channels = await this.permittedSetChannels(clientId, requested);
         let validated = validateMetadata(metadata, this.maxMetadataKeys, this.maxMetadataSize, this.logger);
         // An authenticated connection is named by its auth context, not by
         // the frame — otherwise anyone could appear online as anyone.
@@ -198,7 +203,7 @@ class PresenceService {
         };
         this.clientPresence.set(clientId, presenceData);
         await this.updateChannelPresence(clientId, presenceData, channels);
-        await this.broadcastPresenceUpdate(presenceData);
+        await this.broadcastPresenceUpdate(presenceData, clientId);
         this.sendToClient(clientId, {
             type: 'presence',
             action: 'set',
@@ -218,6 +223,8 @@ class PresenceService {
                 }
             }
             else if (channel) {
+                if (!(await this.mayRead(clientId, channel)))
+                    return;
                 presenceData = this.getChannelPresence(channel);
             }
             else {
@@ -248,7 +255,11 @@ class PresenceService {
             if (!this.authorizeChannel(clientId, channel)) {
                 return;
             }
-            await this.messageRouter.subscribeToChannel(clientId, `presence:${channel}`);
+            // The router's channel authz decides the subscription. On
+            // refusal it has told the client; no roster, no ack.
+            const subscribed = await this.messageRouter.subscribeToChannel(clientId, `presence:${channel}`, { service: 'presence', clientChannel: channel });
+            if (subscribed === false)
+                return;
             const channelPresence = this.getChannelPresence(channel);
             this.sendToClient(clientId, {
                 type: 'presence',
@@ -328,7 +339,44 @@ class PresenceService {
             return [];
         return Array.from(channelPresenceMap.values());
     }
-    async broadcastPresenceUpdate(presenceData) {
+    /**
+     * The channels of a `set` this client may publish to: the service's own
+     * `authorizeChannel` and the router's channel authz must both pass.
+     */
+    async permittedSetChannels(clientId, requested) {
+        if (!Array.isArray(requested))
+            return [];
+        const out = [];
+        for (const channel of requested) {
+            if (typeof channel !== 'string' || channel.length === 0 || out.includes(channel))
+                continue;
+            if (!this.authorizeChannel(clientId, channel))
+                continue;
+            if (!(await (0, channelAccess_1.routerPermits)(this.messageRouter, 'publish', clientId, `presence:${channel}`, {
+                service: 'presence',
+                clientChannel: channel,
+            })))
+                continue;
+            out.push(channel);
+        }
+        return out;
+    }
+    /** A roster read: the same checks as a subscribe. */
+    async mayRead(clientId, channel) {
+        if (!this.authorizeChannel(clientId, channel))
+            return false;
+        return (0, channelAccess_1.routerPermits)(this.messageRouter, 'subscribe', clientId, `presence:${channel}`, {
+            service: 'presence',
+            clientChannel: channel,
+        });
+    }
+    /**
+     * `publisherClientId` is named only for a live client's own `set`, so a
+     * router that enforces publish authz at fan-out runs it there too. The
+     * offline broadcasts (sweep, disconnect) name none: the socket may be
+     * gone, and its auth context with it.
+     */
+    async broadcastPresenceUpdate(presenceData, publisherClientId) {
         const { channels, clientId } = presenceData;
         const message = {
             type: 'presence',
@@ -338,7 +386,7 @@ class PresenceService {
         };
         const redisAvailable = this.messageRouter.redisAvailable !== false;
         for (const channel of channels) {
-            await this.messageRouter.sendToChannel(`presence:${channel}`, message, clientId);
+            await this.messageRouter.sendToChannel(`presence:${channel}`, message, clientId, ...(publisherClientId ? [{ publisherClientId }] : []));
         }
         if (!redisAvailable && channels.length > 0) {
             this.logger.debug('Redis unavailable, presence update local only');

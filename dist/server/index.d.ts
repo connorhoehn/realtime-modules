@@ -22,6 +22,8 @@ export { LocalRealtimeRouter, } from './router';
 export type { RealtimeRouter, RouterLogger, ChannelAuthorize, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
 export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
+export { splitServiceChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
+export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';
 export * from "./documentGrant";
 export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";
 //# sourceMappingURL=index.d.ts.map

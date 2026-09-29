@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.98.6 — 2026-09-29
+
+- **Security / behaviour change — `attachRealtime({ authorize })` is enforced
+  by every feature, not only at the router's fan-out.** Reported by
+  aws-agentcore against 0.98.5 with a tenant-scoping `authorize`: a refused
+  presence subscribe still got the channel's roster (PresenceService ignored
+  `subscribeToChannel`'s `false` and sent `subscribed` + roster); a presence
+  `set` naming another tenant's channel wrote the sender into that roster and
+  fanned out (the broadcast named no publisher, so the publish check never
+  ran); presence `get` read any roster. Reactions tracked the subscriber
+  locally before asking the router and replayed stored reactions regardless;
+  `send` / `remove` wrote the store and fanned out unchecked. Cursor sent
+  `subscribed` + cursors regardless, and `update` / `get` were unchecked.
+  Chat's `history`, `members` and `receipts` never asked, and a `send` by a
+  subscriber without publish rights was stored and acked before the fan-out
+  dropped it. Now the router is the one enforcement point:
+  `subscribeToChannel` runs `authorize({ kind: 'subscribe' })` and every
+  service honours `false`; the new `router.checkChannel(kind, clientId,
+  channel)` runs the same hook before each read (`subscribe`) and each write
+  (`publish`: presence `set` per channel, reaction `send`/`remove`, cursor
+  `update`, chat `send`/`edit`/`delete`/`typing`/`read`/`addMembers`/
+  `removeMember`) — before any state changes. A refusal changes nothing and
+  sends the client `{ type: 'error', service, code: 'AUTHZ_CHANNEL_DENIED',
+  kind, channel, message, error: { code, message, timestamp } }` (also on a
+  refused generic `subscribe`, which still gets no ack). A presence `set`
+  keeps the sender's own status and leaves the refused channels out.
+- **activity, social, ingest, pipeline, typed-documents** honour a refused
+  subscribe too (no `subscribed` ack, no local tracking).
+- **`presence|reactions|cursor({ authorizeChannel })`** now also gate the
+  writes and reads (presence `set`/`get`, reaction `send`/`remove`, cursor
+  `update`/`get`), and compose with `authorize` — both must pass.
+- **`splitServiceChannel(name) → { service, channel }`** (from `/server` and
+  `/server-ws`) strips the prefix presence, reactions and cursor wrap
+  channels in (`presence:<channel>`, `reactions:<channel>`,
+  `cursor:<channel>`); chat channels arrive unprefixed. `ChannelAuthorize`'s
+  JSDoc and `docs/recipes/channel-authorization.md` list every kind, action
+  and prefix, with a tenant rule.
+- **repo:** 0.98.5 committed a `node_modules` symlink (a worktree's link to
+  the main checkout, not matched by the `node_modules/` ignore rule); checking
+  it out replaced the real directory with a self-referencing link. Removed,
+  and `.gitignore` now ignores `node_modules` as a file or a directory.
+
 ## 0.98.5 — 2026-09-29
 
 - **Behaviour change — chat: the server names the sender, not the frame.**

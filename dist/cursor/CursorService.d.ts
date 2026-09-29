@@ -46,7 +46,7 @@ export declare class CursorService {
     shouldUpdateCursor(clientId: string): boolean;
     getChannelCursors(channel: string): Promise<CursorData[]>;
     getLocalChannelCursors(channel: string): CursorData[];
-    broadcastCursorUpdate(channel: string, cursorData: CursorData, excludeClientId: string): Promise<void>;
+    broadcastCursorUpdate(channel: string, cursorData: CursorData, excludeClientId: string, publisherClientId?: string): Promise<void>;
     sendToClient(clientId: string, message: unknown): void;
     sendError(clientId: string, message: string, errorCode?: string): void;
     onClientConnect(clientId: string): Promise<void>;

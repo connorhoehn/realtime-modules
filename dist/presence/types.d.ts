@@ -50,8 +50,11 @@ export interface PresenceConfig {
     /** Max metadata serialized size before truncation (bytes). Default 4096. */
     maxMetadataSize?: number;
     /**
-     * Authorization hook. Called before honouring a subscribe-presence
-     * action. Return false to silently drop. Default: allow all.
+     * Authorization hook. Called before honouring a presence `subscribe`
+     * or `get` on a channel, and for each channel a `set` names (a refused
+     * channel is left out of the entry). Return false to silently drop.
+     * Default: allow all. Runs in addition to `attachRealtime({ authorize })`
+     * — both must pass.
      *
      * Replaces gateway's authz-interceptor coupling: consumers wire any
      * policy they like (e.g. presence registry, RBAC, OAuth scopes).
@@ -81,8 +84,13 @@ export interface PresenceConfig {
  */
 export interface PresenceMessageRouter {
     sendToClient(clientId: string, message: unknown): void;
-    sendToChannel(channel: string, message: unknown, excludeClientId?: string): void | Promise<void>;
-    subscribeToChannel(clientId: string, channel: string): void | Promise<void>;
+    sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
+        publisherClientId?: string | null;
+    }): void | Promise<void>;
+    /** `false` = the router's channel authz refused (and told the client). */
+    subscribeToChannel(clientId: string, channel: string, opts?: import('../server-ws/channelAccess').ChannelAccessOpts): void | boolean | Promise<void | boolean>;
+    /** The router's channel authz, asked before a `set` or `get`. Optional. */
+    checkChannel?: import('../server-ws/channelAccess').ChannelAccessRouter['checkChannel'];
     unsubscribeFromChannel(clientId: string, channel: string): void | Promise<void>;
     /** Auth context accessor; when present, presence entries carry the auth identity. */
     getClientData?(clientId: string): {

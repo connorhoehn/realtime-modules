@@ -129,7 +129,10 @@ class SocialService {
         }
         // Subscribe to channel via message router (registers node in Redis SET)
         if (this.messageRouter) {
-            await this.messageRouter.subscribeToChannel(clientId, channelId);
+            // `false` is the router's channel authz refusing (it told the client).
+            const subscribed = await this.messageRouter.subscribeToChannel(clientId, channelId);
+            if (subscribed === false)
+                return;
         }
         // Track locally for cleanup on disconnect
         this.clientChannels.addSubscription(clientId, channelId);

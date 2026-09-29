@@ -64,6 +64,7 @@ import {
 } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
+import { routerPermits, type ChannelAccessKind, type ChannelAccessRouter } from '../server-ws/channelAccess';
 
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 
@@ -123,6 +124,24 @@ function createErrorResponse(
     return { error: { code, message, ...context } };
 }
 
+/**
+ * What each chat action asks of the router's channel authz. Reads that hand
+ * channel state back are `subscribe`; anything that stores or fans out is
+ * `publish`. `join` (asked through subscribeToChannel) and `leave` are absent.
+ */
+const CHAT_ACTION_ACCESS: Record<string, ChannelAccessKind> = {
+    history: 'subscribe',
+    members: 'subscribe',
+    receipts: 'subscribe',
+    send: 'publish',
+    edit: 'publish',
+    delete: 'publish',
+    typing: 'publish',
+    read: 'publish',
+    addMembers: 'publish',
+    removeMember: 'publish',
+};
+
 // ---- Options bag ----------------------------------------------------------
 
 export interface ChatLogger {
@@ -150,8 +169,14 @@ export interface ChatMessageRouter {
      * AUTHZ_CHANNEL_DENIED). `void`/`true` ⇒ subscribed. handleJoinChannel
      * (M3 gap #10) honours a `false` return: no joined ack, no local sub.
      */
-    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
+    subscribeToChannel?(
+        clientId: string,
+        channel: string,
+        opts?: import('../server-ws/channelAccess').ChannelAccessOpts,
+    ): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
+    /** The router's channel authz, asked before every channel read or write. Optional. */
+    checkChannel?: ChannelAccessRouter['checkChannel'];
     getClientData?(clientId: string): any;
     /** Optional flag — when explicitly `false`, broadcast warns about Redis. */
     redisAvailable?: boolean;
@@ -501,6 +526,15 @@ export class ChatService {
     async handleAction(clientId: string, action: string, data: any): Promise<void> {
         const startTime = Date.now();
         try {
+            // The router's channel authz, for every action that reads or
+            // writes a named channel. `join` asks through subscribeToChannel;
+            // `leave` needs no permission. A refusal has told the client.
+            const kind = Object.prototype.hasOwnProperty.call(CHAT_ACTION_ACCESS, action) ? CHAT_ACTION_ACCESS[action] : undefined;
+            const channel = data?.channel;
+            if (kind && typeof channel === 'string' && channel.length > 0
+                && !(await routerPermits(this.messageRouter, kind, clientId, channel, { service: 'chat', clientChannel: channel }))) {
+                return;
+            }
             switch (action) {
                 case 'join':
                     await this.handleJoinChannel(clientId, data);
@@ -598,7 +632,7 @@ export class ChatService {
             // had joined a channel the gateway refused. On denial: register no
             // local subscription, send no joined ack, skip history.
             if (this.isDistributed && this.messageRouter.subscribeToChannel) {
-                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel);
+                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel, { service: 'chat', clientChannel: channel });
                 if (subscribed === false) {
                     this.logger.info(`Client ${clientId} subscribe to chat channel ${channel} denied by router authz`);
                     return;

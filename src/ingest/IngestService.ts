@@ -172,7 +172,9 @@ export class IngestService {
         }
 
         if (this.messageRouter) {
-            await this.messageRouter.subscribeToChannel(clientId, channel);
+            // `false` is the router's channel authz refusing (it told the client).
+            const subscribed: unknown = await this.messageRouter.subscribeToChannel(clientId, channel);
+            if (subscribed === false) return;
         }
 
         this.clientChannels.addSubscription(clientId, channel);

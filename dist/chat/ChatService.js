@@ -52,6 +52,7 @@ const ChatReadReceiptStore_1 = require("./ChatReadReceiptStore");
 const dmChannels_1 = require("./dmChannels");
 const ChatMembershipStore_1 = require("./ChatMembershipStore");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
+const channelAccess_1 = require("../server-ws/channelAccess");
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 const DEFAULT_MAX_METADATA_KEYS = 20;
 const DEFAULT_MAX_METADATA_SIZE = 4096;
@@ -101,6 +102,23 @@ const ErrorCodes = {
 function createErrorResponse(code, message, context = {}) {
     return { error: { code, message, ...context } };
 }
+/**
+ * What each chat action asks of the router's channel authz. Reads that hand
+ * channel state back are `subscribe`; anything that stores or fans out is
+ * `publish`. `join` (asked through subscribeToChannel) and `leave` are absent.
+ */
+const CHAT_ACTION_ACCESS = {
+    history: 'subscribe',
+    members: 'subscribe',
+    receipts: 'subscribe',
+    send: 'publish',
+    edit: 'publish',
+    delete: 'publish',
+    typing: 'publish',
+    read: 'publish',
+    addMembers: 'publish',
+    removeMember: 'publish',
+};
 // ---- Helpers --------------------------------------------------------------
 function validateMetadata(metadata, logger, maxKeys, maxSize) {
     if (!metadata || typeof metadata !== 'object')
@@ -258,6 +276,15 @@ class ChatService {
     async handleAction(clientId, action, data) {
         const startTime = Date.now();
         try {
+            // The router's channel authz, for every action that reads or
+            // writes a named channel. `join` asks through subscribeToChannel;
+            // `leave` needs no permission. A refusal has told the client.
+            const kind = Object.prototype.hasOwnProperty.call(CHAT_ACTION_ACCESS, action) ? CHAT_ACTION_ACCESS[action] : undefined;
+            const channel = data?.channel;
+            if (kind && typeof channel === 'string' && channel.length > 0
+                && !(await (0, channelAccess_1.routerPermits)(this.messageRouter, kind, clientId, channel, { service: 'chat', clientChannel: channel }))) {
+                return;
+            }
             switch (action) {
                 case 'join':
                     await this.handleJoinChannel(clientId, data);
@@ -346,7 +373,7 @@ class ChatService {
             // had joined a channel the gateway refused. On denial: register no
             // local subscription, send no joined ack, skip history.
             if (this.isDistributed && this.messageRouter.subscribeToChannel) {
-                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel);
+                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel, { service: 'chat', clientChannel: channel });
                 if (subscribed === false) {
                     this.logger.info(`Client ${clientId} subscribe to chat channel ${channel} denied by router authz`);
                     return;

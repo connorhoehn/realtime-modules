@@ -36,7 +36,20 @@ declare class PresenceService {
     updateChannelPresence(clientId: string, presenceData: PresenceEntry, newChannels: string[]): Promise<void>;
     removeClientFromAllChannels(clientId: string): void;
     getChannelPresence(channel: string): PresenceEntry[];
-    broadcastPresenceUpdate(presenceData: PresenceEntry): Promise<void>;
+    /**
+     * The channels of a `set` this client may publish to: the service's own
+     * `authorizeChannel` and the router's channel authz must both pass.
+     */
+    private permittedSetChannels;
+    /** A roster read: the same checks as a subscribe. */
+    private mayRead;
+    /**
+     * `publisherClientId` is named only for a live client's own `set`, so a
+     * router that enforces publish authz at fan-out runs it there too. The
+     * offline broadcasts (sweep, disconnect) name none: the socket may be
+     * gone, and its auth context with it.
+     */
+    broadcastPresenceUpdate(presenceData: PresenceEntry, publisherClientId?: string): Promise<void>;
     cleanupStalePresence(): void;
     cleanupStaleClients(): void;
     setClientOffline(clientId: string): Promise<void>;

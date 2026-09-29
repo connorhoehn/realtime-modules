@@ -29,6 +29,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CursorService = void 0;
 const distributed_core_1 = require("distributed-core");
+const channelAccess_1 = require("../server-ws/channelAccess");
 const types_1 = require("./types");
 class CursorService {
     messageRouter;
@@ -152,6 +153,17 @@ class CursorService {
             this.sendError(clientId, `Invalid position for mode ${effectiveMode}. Required fields: ${modeConfig.requiredFields.join(', ')}`);
             return;
         }
+        // A cursor update writes into the channel's cursor map and fans out:
+        // both authz layers first, before the throttle spends its slot.
+        if (!this.authorizeChannel(clientId, channel)) {
+            this.sendError(clientId, `Not authorized for channel: ${channel}`);
+            return;
+        }
+        if (!(await (0, channelAccess_1.routerPermits)(this.messageRouter, 'publish', clientId, `cursor:${channel}`, {
+            service: 'cursor',
+            clientChannel: channel,
+        })))
+            return;
         if (!this.shouldUpdateCursor(clientId)) {
             return;
         }
@@ -168,7 +180,7 @@ class CursorService {
             timestamp: new Date().toISOString(),
         };
         await this.storeCursorData(clientId, channel, cursorData);
-        await this.broadcastCursorUpdate(channel, cursorData, clientId);
+        await this.broadcastCursorUpdate(channel, cursorData, clientId, clientId);
         this.logger.info(`Cursor updated for client ${clientId} in channel ${channel} (mode: ${effectiveMode})`);
     }
     async storeCursorData(clientId, channel, cursorData) {
@@ -239,7 +251,11 @@ class CursorService {
                 this.sendError(clientId, `Not authorized for channel: ${channel}`);
                 return;
             }
-            await this.messageRouter.subscribeToChannel(clientId, `cursor:${channel}`);
+            // The router's channel authz decides the subscription. On
+            // refusal it has told the client; no cursors, no ack.
+            const subscribed = await this.messageRouter.subscribeToChannel(clientId, `cursor:${channel}`, { service: 'cursor', clientChannel: channel });
+            if (subscribed === false)
+                return;
             const channelCursors = await this.getChannelCursors(channel);
             this.sendToClient(clientId, {
                 type: 'cursor',
@@ -274,6 +290,15 @@ class CursorService {
             this.sendError(clientId, 'Channel is required');
             return;
         }
+        if (!this.authorizeChannel(clientId, channel)) {
+            this.sendError(clientId, `Not authorized for channel: ${channel}`);
+            return;
+        }
+        if (!(await (0, channelAccess_1.routerPermits)(this.messageRouter, 'subscribe', clientId, `cursor:${channel}`, {
+            service: 'cursor',
+            clientChannel: channel,
+        })))
+            return;
         const channelCursors = await this.getChannelCursors(channel);
         this.sendToClient(clientId, {
             type: 'cursor',
@@ -302,7 +327,7 @@ class CursorService {
             return [];
         return Array.from(channelCursorMap.values());
     }
-    async broadcastCursorUpdate(channel, cursorData, excludeClientId) {
+    async broadcastCursorUpdate(channel, cursorData, excludeClientId, publisherClientId) {
         const message = {
             type: 'cursor',
             action: 'update',
@@ -310,7 +335,7 @@ class CursorService {
             cursor: cursorData,
             timestamp: new Date().toISOString(),
         };
-        await this.messageRouter.sendToChannel(`cursor:${channel}`, message, excludeClientId);
+        await this.messageRouter.sendToChannel(`cursor:${channel}`, message, excludeClientId, ...(publisherClientId ? [{ publisherClientId }] : []));
     }
     sendToClient(clientId, message) {
         this.messageRouter.sendToClient(clientId, message);

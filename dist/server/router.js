@@ -19,6 +19,7 @@
 // http.Server with zero infrastructure.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalRealtimeRouter = void 0;
+const channelAccess_1 = require("../server-ws/channelAccess");
 function firePlugin(name, fn) {
     try {
         const r = fn();
@@ -113,17 +114,9 @@ class LocalRealtimeRouter {
         // M3 publish authz: runs whenever a publisher is named, independent
         // of echo exclusion.
         const publisher = opts?.publisherClientId ?? null;
-        if (publisher && this.authorize) {
-            const allowed = this.authorize({
-                kind: 'publish',
-                clientId: publisher,
-                channel,
-                ctx: this.ctxOf(publisher),
-            });
-            if (!allowed) {
-                this.logger.info(`[realtime] publish to ${channel} denied for ${publisher}`);
-                return;
-            }
+        if (publisher && !this.allows('publish', publisher, channel)) {
+            this.logger.info(`[realtime] publish to ${channel} denied for ${publisher}`);
+            return;
         }
         const senderId = publisher ?? excludeClientId ?? 'server';
         for (const plugin of this.plugins) {
@@ -139,20 +132,39 @@ class LocalRealtimeRouter {
                 this.sendToClient(clientId, message);
         }
     }
-    // ---- membership ------------------------------------------------------
-    subscribeToChannel(clientId, channel) {
-        if (this.authorize) {
-            const allowed = this.authorize({
-                kind: 'subscribe',
-                clientId,
-                channel,
-                ctx: this.ctxOf(clientId),
-            });
-            if (!allowed) {
-                this.logger.info(`[realtime] subscribe to ${channel} denied for ${clientId}`);
-                return false; // M3: services suppress local sub + joined ack
-            }
+    // ---- authz -----------------------------------------------------------
+    /** Run `authorize`; absent → allow, throwing → refuse. */
+    allows(kind, clientId, channel) {
+        if (!this.authorize)
+            return true;
+        try {
+            return !!this.authorize({ kind, clientId, channel, ctx: this.ctxOf(clientId) });
         }
+        catch (err) {
+            this.logger.warn(`[realtime] authorize threw for ${kind} ${channel}; refusing`, err);
+            return false;
+        }
+    }
+    /**
+     * The check every service runs before acting on a channel. On refusal
+     * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
+     */
+    checkChannel(kind, clientId, channel, opts = {}) {
+        if (this.allows(kind, clientId, channel))
+            return true;
+        this.logger.info(`[realtime] ${kind} to ${channel} denied for ${clientId}`);
+        this.sendToClient(clientId, (0, channelAccess_1.channelDeniedFrame)({
+            kind,
+            channel: opts.clientChannel ?? channel,
+            service: opts.service,
+        }));
+        return false;
+    }
+    // ---- membership ------------------------------------------------------
+    subscribeToChannel(clientId, channel, opts) {
+        // M3: on false, services suppress the local subscription and the ack.
+        if (!this.checkChannel('subscribe', clientId, channel, opts))
+            return false;
         let members = this.channelMembers.get(channel);
         if (!members) {
             members = new Set();

@@ -27,6 +27,7 @@
 // semantics, getStats, mode catalog) is byte-faithful to the original.
 
 import { PeriodicSweep } from 'distributed-core';
+import { routerPermits } from '../server-ws/channelAccess';
 
 import {
     DEFAULT_CLEANUP_INTERVAL_MS,
@@ -189,6 +190,17 @@ export class CursorService {
             return;
         }
 
+        // A cursor update writes into the channel's cursor map and fans out:
+        // both authz layers first, before the throttle spends its slot.
+        if (!this.authorizeChannel(clientId, channel)) {
+            this.sendError(clientId, `Not authorized for channel: ${channel}`);
+            return;
+        }
+        if (!(await routerPermits(this.messageRouter, 'publish', clientId, `cursor:${channel}`, {
+            service: 'cursor',
+            clientChannel: channel,
+        }))) return;
+
         if (!this.shouldUpdateCursor(clientId)) {
             return;
         }
@@ -207,7 +219,7 @@ export class CursorService {
         };
 
         await this.storeCursorData(clientId, channel, cursorData);
-        await this.broadcastCursorUpdate(channel, cursorData, clientId);
+        await this.broadcastCursorUpdate(channel, cursorData, clientId, clientId);
 
         this.logger.info(`Cursor updated for client ${clientId} in channel ${channel} (mode: ${effectiveMode})`);
     }
@@ -292,7 +304,14 @@ export class CursorService {
                 return;
             }
 
-            await this.messageRouter.subscribeToChannel(clientId, `cursor:${channel}`);
+            // The router's channel authz decides the subscription. On
+            // refusal it has told the client; no cursors, no ack.
+            const subscribed = await this.messageRouter.subscribeToChannel(
+                clientId,
+                `cursor:${channel}`,
+                { service: 'cursor', clientChannel: channel },
+            );
+            if (subscribed === false) return;
 
             const channelCursors = await this.getChannelCursors(channel);
             this.sendToClient(clientId, {
@@ -334,6 +353,15 @@ export class CursorService {
             return;
         }
 
+        if (!this.authorizeChannel(clientId, channel)) {
+            this.sendError(clientId, `Not authorized for channel: ${channel}`);
+            return;
+        }
+        if (!(await routerPermits(this.messageRouter, 'subscribe', clientId, `cursor:${channel}`, {
+            service: 'cursor',
+            clientChannel: channel,
+        }))) return;
+
         const channelCursors = await this.getChannelCursors(channel);
         this.sendToClient(clientId, {
             type: 'cursor',
@@ -368,7 +396,12 @@ export class CursorService {
         return Array.from(channelCursorMap.values());
     }
 
-    async broadcastCursorUpdate(channel: string, cursorData: CursorData, excludeClientId: string): Promise<void> {
+    async broadcastCursorUpdate(
+        channel: string,
+        cursorData: CursorData,
+        excludeClientId: string,
+        publisherClientId?: string,
+    ): Promise<void> {
         const message = {
             type: 'cursor',
             action: 'update',
@@ -377,7 +410,12 @@ export class CursorService {
             timestamp: new Date().toISOString(),
         };
 
-        await this.messageRouter.sendToChannel(`cursor:${channel}`, message, excludeClientId);
+        await this.messageRouter.sendToChannel(
+            `cursor:${channel}`,
+            message,
+            excludeClientId,
+            ...(publisherClientId ? [{ publisherClientId }] as const : []),
+        );
     }
 
     sendToClient(clientId: string, message: unknown): void {

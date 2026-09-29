@@ -34,5 +34,10 @@ are easy to get wrong from outside: which conversations can have calls at all,
 watching a channel instead of joining it (an audience of any size, for a few
 seconds of latency), and the events that post themselves into a thread.
 
+**Multi-tenant:** [channel-authorization](./channel-authorization.md) — the
+one `authorize` hook every feature asks before a subscribe, a read or a write,
+and the channel names it sees (`presence:<channel>`, `reactions:<channel>`,
+`cursor:<channel>`, chat's unprefixed).
+
 Authoring your own capability: `defineFeature({ manifest, create })` — it
 plugs in identically to the built-ins. See `src/server/attach.ts`.

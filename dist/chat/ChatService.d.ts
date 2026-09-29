@@ -5,6 +5,7 @@ import { type ChatReadReceipt, type ChatReadReceiptStore } from './ChatReadRecei
 import { type ChatMember, type ChatMemberView, type ChatMembershipStore } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
 import { type ResolveSender } from '../server-ws/senderIdentity';
+import { type ChannelAccessRouter } from '../server-ws/channelAccess';
 export interface ChatLogger {
     debug(...args: any[]): void;
     info(...args: any[]): void;
@@ -29,8 +30,10 @@ export interface ChatMessageRouter {
      * AUTHZ_CHANNEL_DENIED). `void`/`true` ⇒ subscribed. handleJoinChannel
      * (M3 gap #10) honours a `false` return: no joined ack, no local sub.
      */
-    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
+    subscribeToChannel?(clientId: string, channel: string, opts?: import('../server-ws/channelAccess').ChannelAccessOpts): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
+    /** The router's channel authz, asked before every channel read or write. Optional. */
+    checkChannel?: ChannelAccessRouter['checkChannel'];
     getClientData?(clientId: string): any;
     /** Optional flag — when explicitly `false`, broadcast warns about Redis. */
     redisAvailable?: boolean;
