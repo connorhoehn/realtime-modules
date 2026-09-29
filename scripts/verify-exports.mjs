@@ -30,6 +30,20 @@ for (const [subpath, target] of Object.entries(pkg.exports ?? {})) {
     }
 }
 
+// 1b. node10 resolution (`moduleResolution: "node"` — ts-jest and most
+// CommonJS consumers) ignores `exports` and reads `typesVersions`. A subpath
+// missing there resolves to nothing, and a consumer that masks TS2307 gets
+// `any` for every type it imports from it (0.98.5: ChannelAuthorize).
+const typesMap = pkg.typesVersions?.['*'] ?? {};
+for (const [subpath, target] of Object.entries(pkg.exports ?? {})) {
+    if (subpath === '.' || subpath === './package.json' || typeof target === 'string' || !target.types) continue;
+    const want = target.types.replace(/^\.\//, '');
+    const got = typesMap[subpath.slice(2)];
+    if (!Array.isArray(got) || got[0] !== want) {
+        errors.push(`typesVersions['*']['${subpath.slice(2)}'] should be ["${want}"] (node10 resolution cannot see exports['${subpath}'])`);
+    }
+}
+
 const SRC_EXEMPT = new Set(['esm']); // no esm build here today; placeholder
 for (const entry of readdirSync(new URL('../dist', import.meta.url))) {
     const distPath = new URL(`../dist/${entry}`, import.meta.url);

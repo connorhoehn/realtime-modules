@@ -123,6 +123,20 @@ export interface ReactionConfig {
      */
     identityResolver?: (clientId: string) => { userId?: string; displayName?: string } | null | undefined;
     /**
+     * Map the connection's auth context (the router's
+     * `getClientData(clientId).userContext`) to the sender. Default:
+     * `userId`, `displayName ?? name` off the context, filling whatever
+     * `identityResolver` left out. Runs only for a context with a userId.
+     */
+    resolveSender?: import('../server-ws/senderIdentity').ResolveSender;
+    /**
+     * Let the frame's `metadata.userId` / `displayName` / `avatarUrl` stand.
+     * Default false: for an identified sender they are replaced by the
+     * server's identity. `reaction.userId` / `displayName` are always the
+     * server's.
+     */
+    trustFrameSender?: boolean;
+    /**
      * Post-broadcast tap. Invoked AFTER the reaction has been fanned out,
      * fire-and-forget: sync throws are caught and logged, rejected promises
      * are .catch-ed and logged — a failing hook can never block or fail the
@@ -157,6 +171,8 @@ export interface ReactionMessageRouter {
     sendToChannel(channel: string, message: unknown): void | Promise<void>;
     subscribeToChannel(clientId: string, channel: string): void | Promise<void>;
     unsubscribeFromChannel(clientId: string, channel: string): void | Promise<void>;
+    /** Auth context accessor; when present, reactions carry the auth identity. */
+    getClientData?(clientId: string): { userContext?: import('../server-ws/types').WsAuthContext } | null;
 }
 
 /**

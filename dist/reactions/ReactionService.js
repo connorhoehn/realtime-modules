@@ -29,6 +29,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReactionService = void 0;
 const types_1 = require("./types");
+const senderIdentity_1 = require("../server-ws/senderIdentity");
 const DEFAULT_MAX_HISTORY = 50;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
 const DEFAULT_MAX_HISTORY_REPLAY = 500;
@@ -87,6 +88,8 @@ class ReactionService {
     availableReactions;
     authorizeChannel;
     identityResolver;
+    resolveSender;
+    trustFrameSender;
     onReaction;
     store;
     maxHistoryReplay;
@@ -105,6 +108,8 @@ class ReactionService {
             : { ...types_1.DEFAULT_AVAILABLE_REACTIONS };
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.identityResolver = config.identityResolver ?? null;
+        this.resolveSender = config.resolveSender ?? null;
+        this.trustFrameSender = config.trustFrameSender === true;
         this.onReaction = config.onReaction ?? null;
         this.store = config.store ?? null;
         this.maxHistoryReplay = config.maxHistoryReplay ?? DEFAULT_MAX_HISTORY_REPLAY;
@@ -206,7 +211,9 @@ class ReactionService {
         });
         this.logger.info(`Client ${clientId} unsubscribed from reactions in channel: ${channel}`);
     }
-    async handleSendReaction(clientId, { channel, emoji, position = null, metadata = {}, targetId, }) {
+    async handleSendReaction(clientId, frame) {
+        const { channel, emoji, position = null, targetId } = frame;
+        let { metadata = {} } = frame;
         if (!channel || !emoji) {
             this.sendError(clientId, 'Channel and emoji are required');
             return;
@@ -217,7 +224,11 @@ class ReactionService {
         }
         // Sender identity is resolved at send time (never trusted from the
         // frame). A throwing resolver is logged and treated as "no identity".
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
+        if (identity?.userId && !this.trustFrameSender) {
+            // The frame's copies of the sender fields are advisory.
+            metadata = (0, senderIdentity_1.stampSender)(metadata, identity);
+        }
         const reaction = {
             id: this.generateReactionId(),
             clientId,
@@ -408,16 +419,25 @@ class ReactionService {
      * resolver is logged and treated as "no identity" (mirrors
      * ChatService._resolveIdentity semantics).
      */
-    _resolveIdentity(clientId) {
-        if (!this.identityResolver)
-            return null;
-        try {
-            return this.identityResolver(clientId) ?? null;
+    _resolveIdentity(clientId, frame) {
+        let base = null;
+        if (this.identityResolver) {
+            try {
+                base = this.identityResolver(clientId) ?? null;
+            }
+            catch (err) {
+                this.logger.error(`identityResolver threw for client ${clientId}:`, err);
+                base = null;
+            }
         }
-        catch (err) {
-            this.logger.error(`identityResolver threw for client ${clientId}:`, err);
-            return null;
+        const auth = (0, senderIdentity_1.resolveAuthSender)(this.messageRouter, clientId, frame, this.resolveSender, (err) => this.logger.error(`resolveSender threw for client ${clientId}:`, err));
+        if (!auth)
+            return base;
+        if (this.resolveSender) {
+            return { userId: auth.userId, ...(auth.displayName ? { displayName: auth.displayName } : {}) };
         }
+        const displayName = base?.displayName ?? auth.displayName;
+        return { userId: base?.userId ?? auth.userId, ...(displayName !== undefined ? { displayName } : {}) };
     }
     /**
      * Invoke the configured `onReaction` tap. Sync throws are caught and

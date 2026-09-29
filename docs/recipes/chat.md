@@ -21,6 +21,43 @@ httpServer.listen(3000);
 
 Add more capabilities by adding entries to `features` — nothing else changes.
 
+### Who sent it: the server says, not the frame
+
+Since 0.98.5 a message's sender comes from the connection's auth context —
+whatever your `auth` returned — never from the frame. For an authenticated
+connection (a context with a `userId`) the service stamps `message.userId`
+and `metadata.displayName` / `metadata.avatarUrl` itself and drops the
+frame's copies of `userId`, `displayName` and `avatarUrl`, on `send` and on
+`edit`. Typing and read receipts carry the same identity; edit and delete
+are allowed only for the message's own `userId`. The frame's sender fields
+are advisory: a socket cannot post under someone else's name.
+
+Return the name from `auth` and it shows up everywhere:
+
+```ts
+auth: async (req) => {
+    const claims = await verifyToken(req);
+    return { userId: claims.sub, displayName: claims.name, org: claims.org };
+},
+```
+
+The default mapping reads `userId`, `displayName` (or `name`) and `avatarUrl`
+(or `picture`). If your context is shaped differently, map it:
+
+```ts
+chat({
+    // Runs only for a context with a userId; return null to treat the
+    // connection as unidentified. `frame` is untrusted input.
+    resolveSender: (ctx, frame) => ({ userId: `${ctx.org}/${ctx.userId}`, displayName: String(ctx.fullName) }),
+})
+```
+
+`chat({ trustFrameSender: true })` restores the old rule (the frame's
+`metadata.displayName` / `avatarUrl` win and the server only fills gaps) for
+a deployment that sets names client-side on purpose; `message.userId` is the
+server's either way. A connection with no auth context (no `auth`, dev mode)
+behaves as before: no `userId`, the frame's metadata kept.
+
 ## 2 — Client (React hook)
 
 ```tsx

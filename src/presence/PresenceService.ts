@@ -31,6 +31,7 @@
 //   weren't using the registry shadow-write path.
 
 import { EvictionTimer, PeriodicSweep } from 'distributed-core';
+import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
 import type {
     PresenceConfig,
     PresenceEntry,
@@ -98,6 +99,8 @@ class PresenceService {
     private readonly heartbeatIntervalMs: number;
     private readonly presenceTimeoutMs: number;
     private readonly staleThresholdMs: number;
+    private readonly resolveSender: ResolveSender | null;
+    private readonly trustFrameSender: boolean;
     private readonly cleanupIntervalMs: number;
     private readonly disconnectDelayMs: number;
     private readonly maxMetadataKeys: number;
@@ -125,6 +128,8 @@ class PresenceService {
         this.messageRouter = messageRouter;
         this.logger = logger;
         this.authorizeChannel = config.authorizeChannel || (() => true);
+        this.resolveSender = config.resolveSender ?? null;
+        this.trustFrameSender = config.trustFrameSender === true;
 
         this.heartbeatIntervalMs = config.heartbeatIntervalMs
             ?? readEnvInt('PRESENCE_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
@@ -209,10 +214,18 @@ class PresenceService {
             return;
         }
 
-        const validated = validateMetadata(metadata, this.maxMetadataKeys, this.maxMetadataSize, this.logger);
+        let validated = validateMetadata(metadata, this.maxMetadataKeys, this.maxMetadataSize, this.logger);
+        // An authenticated connection is named by its auth context, not by
+        // the frame — otherwise anyone could appear online as anyone.
+        const sender = resolveAuthSender(this.messageRouter, clientId, payload, this.resolveSender, (err) =>
+            this.logger.error(`resolveSender threw for client ${clientId}:`, err));
+        if (sender && !this.trustFrameSender) {
+            validated = stampSender(validated, sender, { withUserId: true });
+        }
 
         const presenceData: PresenceEntry = {
             clientId,
+            ...(sender ? { userId: sender.userId } : {}),
             status,
             metadata: validated,
             channels,

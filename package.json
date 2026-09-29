@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.98.4",
+  "version": "0.98.5",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -8,6 +8,100 @@
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "agent-streaming": [
+        "dist/agent-streaming/index.d.ts"
+      ],
+      "agent-streaming/client": [
+        "dist/agent-streaming/client.d.ts"
+      ],
+      "client": [
+        "dist/client/index.d.ts"
+      ],
+      "client/ws": [
+        "dist/client/ws.d.ts"
+      ],
+      "client/video": [
+        "dist/client/video/index.d.ts"
+      ],
+      "client/voice": [
+        "dist/client/voice/index.d.ts"
+      ],
+      "client/media-effects": [
+        "dist/client/media-effects/index.d.ts"
+      ],
+      "client/hangout-rooms": [
+        "dist/client/hangout-rooms/index.d.ts"
+      ],
+      "client/pipelines": [
+        "dist/client/pipelines/index.d.ts"
+      ],
+      "client/documents": [
+        "dist/client/documents/index.d.ts"
+      ],
+      "adapters/tiptap": [
+        "dist/adapters/tiptap/index.d.ts"
+      ],
+      "adapters/excalidraw": [
+        "dist/adapters/excalidraw/index.d.ts"
+      ],
+      "proxy-client": [
+        "dist/proxy-client/index.d.ts"
+      ],
+      "server-ws": [
+        "dist/server-ws/index.d.ts"
+      ],
+      "server": [
+        "dist/server/index.d.ts"
+      ],
+      "chat": [
+        "dist/chat/index.d.ts"
+      ],
+      "presence": [
+        "dist/presence/index.d.ts"
+      ],
+      "activity": [
+        "dist/activity/index.d.ts"
+      ],
+      "cursor": [
+        "dist/cursor/index.d.ts"
+      ],
+      "ingest": [
+        "dist/ingest/index.d.ts"
+      ],
+      "pipeline": [
+        "dist/pipeline/index.d.ts"
+      ],
+      "reactions": [
+        "dist/reactions/index.d.ts"
+      ],
+      "social": [
+        "dist/social/index.d.ts"
+      ],
+      "call": [
+        "dist/call/index.d.ts"
+      ],
+      "room": [
+        "dist/room/index.d.ts"
+      ],
+      "notification": [
+        "dist/notification/index.d.ts"
+      ],
+      "fileupload": [
+        "dist/fileupload/index.d.ts"
+      ],
+      "typed-documents": [
+        "dist/typed-documents/index.d.ts"
+      ],
+      "work-graph": [
+        "dist/work-graph/index.d.ts"
+      ],
+      "work-graph/server": [
+        "dist/work-graph/server.d.ts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

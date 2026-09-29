@@ -40,6 +40,7 @@ import {
     type ReactionStore,
     type StoredReaction,
 } from './types';
+import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
 
 const DEFAULT_MAX_HISTORY = 50;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
@@ -105,6 +106,8 @@ export class ReactionService {
     private identityResolver:
         | ((clientId: string) => { userId?: string; displayName?: string } | null | undefined)
         | null;
+    private resolveSender: ResolveSender | null;
+    private trustFrameSender: boolean;
     private onReaction: ((reaction: Reaction) => void | Promise<void>) | null;
     private store: ReactionStore | null;
     private maxHistoryReplay: number;
@@ -125,6 +128,8 @@ export class ReactionService {
             : { ...DEFAULT_AVAILABLE_REACTIONS };
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.identityResolver = config.identityResolver ?? null;
+        this.resolveSender = config.resolveSender ?? null;
+        this.trustFrameSender = config.trustFrameSender === true;
         this.onReaction = config.onReaction ?? null;
         this.store = config.store ?? null;
         this.maxHistoryReplay = config.maxHistoryReplay ?? DEFAULT_MAX_HISTORY_REPLAY;
@@ -247,13 +252,7 @@ export class ReactionService {
 
     async handleSendReaction(
         clientId: string,
-        {
-            channel,
-            emoji,
-            position = null,
-            metadata = {},
-            targetId,
-        }: {
+        frame: {
             channel: string;
             emoji: string;
             position?: unknown;
@@ -261,6 +260,8 @@ export class ReactionService {
             targetId?: unknown;
         },
     ): Promise<void> {
+        const { channel, emoji, position = null, targetId } = frame;
+        let { metadata = {} } = frame;
         if (!channel || !emoji) {
             this.sendError(clientId, 'Channel and emoji are required');
             return;
@@ -273,7 +274,11 @@ export class ReactionService {
 
         // Sender identity is resolved at send time (never trusted from the
         // frame). A throwing resolver is logged and treated as "no identity".
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
+        if (identity?.userId && !this.trustFrameSender) {
+            // The frame's copies of the sender fields are advisory.
+            metadata = stampSender(metadata, identity);
+        }
 
         const reaction: Reaction = {
             id: this.generateReactionId(),
@@ -484,14 +489,24 @@ export class ReactionService {
      * resolver is logged and treated as "no identity" (mirrors
      * ChatService._resolveIdentity semantics).
      */
-    _resolveIdentity(clientId: string): { userId?: string; displayName?: string } | null {
-        if (!this.identityResolver) return null;
-        try {
-            return this.identityResolver(clientId) ?? null;
-        } catch (err) {
-            this.logger.error(`identityResolver threw for client ${clientId}:`, err);
-            return null;
+    _resolveIdentity(clientId: string, frame?: unknown): { userId?: string; displayName?: string } | null {
+        let base: { userId?: string; displayName?: string } | null = null;
+        if (this.identityResolver) {
+            try {
+                base = this.identityResolver(clientId) ?? null;
+            } catch (err) {
+                this.logger.error(`identityResolver threw for client ${clientId}:`, err);
+                base = null;
+            }
         }
+        const auth = resolveAuthSender(this.messageRouter, clientId, frame, this.resolveSender, (err) =>
+            this.logger.error(`resolveSender threw for client ${clientId}:`, err));
+        if (!auth) return base;
+        if (this.resolveSender) {
+            return { userId: auth.userId, ...(auth.displayName ? { displayName: auth.displayName } : {}) };
+        }
+        const displayName = base?.displayName ?? auth.displayName;
+        return { userId: base?.userId ?? auth.userId, ...(displayName !== undefined ? { displayName } : {}) };
     }
 
     /**

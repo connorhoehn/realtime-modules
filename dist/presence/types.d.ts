@@ -5,6 +5,11 @@
  */
 export interface PresenceEntry {
     clientId: string;
+    /**
+     * The authenticated user behind the connection (0.98.5), from the
+     * gateway auth context. Absent for an anonymous connection.
+     */
+    userId?: string;
     status: PresenceStatus;
     metadata: Record<string, unknown>;
     channels: string[];
@@ -52,6 +57,20 @@ export interface PresenceConfig {
      * policy they like (e.g. presence registry, RBAC, OAuth scopes).
      */
     authorizeChannel?: (clientId: string, channel: string) => boolean;
+    /**
+     * Map the connection's auth context to the identity stamped on its
+     * presence entry. Default: `userId`, `displayName ?? name`,
+     * `avatarUrl ?? picture` off the context. Runs only for a context with a
+     * userId; return null to treat the connection as anonymous.
+     */
+    resolveSender?: import('../server-ws/senderIdentity').ResolveSender;
+    /**
+     * Let the `set` frame's `metadata.userId` / `displayName` / `avatarUrl`
+     * stand. Default false: for an authenticated connection they are
+     * replaced by the auth identity, so nobody can appear online as
+     * somebody else. Anonymous connections are unaffected either way.
+     */
+    trustFrameSender?: boolean;
 }
 /**
  * The MessageRouter slice this service needs. Identical to the contract
@@ -65,6 +84,10 @@ export interface PresenceMessageRouter {
     sendToChannel(channel: string, message: unknown, excludeClientId?: string): void | Promise<void>;
     subscribeToChannel(clientId: string, channel: string): void | Promise<void>;
     unsubscribeFromChannel(clientId: string, channel: string): void | Promise<void>;
+    /** Auth context accessor; when present, presence entries carry the auth identity. */
+    getClientData?(clientId: string): {
+        userContext?: import('../server-ws/types').WsAuthContext;
+    } | null;
     /**
      * Optional: when undefined the service treats itself as "single node"
      * and falls back to 'local' for the `nodeId` field on PresenceEntry.

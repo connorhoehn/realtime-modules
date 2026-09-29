@@ -21,6 +21,15 @@ httpServer.listen(3000);
 
 Add more capabilities by adding entries to `features` — nothing else changes.
 
+### Identity comes from the auth context
+
+Since 0.98.5, for an authenticated connection the presence entry carries
+`userId` and its `metadata.userId` / `displayName` / `avatarUrl` come from
+the auth context; the `set` frame's copies are dropped, so nobody can appear
+online as somebody else. `presence({ resolveSender })` maps a differently
+shaped context, and `presence({ trustFrameSender: true })` lets the frame's
+metadata stand. Anonymous connections are unaffected.
+
 ## 2 — Client (React hook)
 
 ```tsx

@@ -4,6 +4,7 @@ import { type ChatStore } from './ChatStore';
 import { type ChatReadReceipt, type ChatReadReceiptStore } from './ChatReadReceiptStore';
 import { type ChatMember, type ChatMemberView, type ChatMembershipStore } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
+import { type ResolveSender } from '../server-ws/senderIdentity';
 export interface ChatLogger {
     debug(...args: any[]): void;
     info(...args: any[]): void;
@@ -89,10 +90,11 @@ export interface ChatServiceOpts {
     /**
      * Maps a CONNECTION id to the authenticated sender identity. When it
      * yields a `userId`, every sent message is stamped with
-     * `message.userId`, and `displayName` / `avatarUrl` are merged into
-     * `message.metadata` ONLY for keys the sender didn't already provide
-     * (sender-provided metadata wins). Absent resolver ⇒ send behavior is
-     * identical to pre-v0.23.0 (no userId stamped).
+     * `message.userId`, and `displayName` / `avatarUrl` are written into
+     * `message.metadata` in place of the frame's copies (see
+     * `trustFrameSender`). The router's auth context
+     * (`getClientData(clientId).userContext`) fills whatever this leaves
+     * out. Neither ⇒ no userId stamped and the frame's metadata kept.
      *
      * Also the identity source for dm-membership enforcement — see
      * `enforceDmMembership`.
@@ -116,6 +118,23 @@ export interface ChatServiceOpts {
      * Default: true when `identityResolver` is provided, else false.
      */
     enforceDmMembership?: boolean;
+    /**
+     * Map the connection's auth context (the gateway `auth` result, read
+     * through `messageRouter.getClientData(clientId).userContext`) to the
+     * sender. Default: `{ userId, displayName ?? name, avatarUrl ?? picture }`
+     * straight off the context. Runs only for a connection whose context has
+     * a `userId`; return null to treat it as unidentified.
+     */
+    resolveSender?: ResolveSender;
+    /**
+     * Let the frame name the sender. Default false: once a connection is
+     * identified (auth context with a userId, or an `identityResolver`
+     * userId), the frame's `metadata.userId` / `displayName` / `avatarUrl`
+     * are dropped and the server's identity stamped instead, on send and on
+     * edit. True restores the pre-0.98.5 rule (frame metadata wins, the
+     * server fills gaps). `message.userId` is always the server's.
+     */
+    trustFrameSender?: boolean;
     /**
      * Fire-and-forget observer invoked AFTER a successful send on a dm
      * chat channel (both `chat:dm:` and `chat:dmg:` forms). Exceptions
@@ -198,6 +217,8 @@ export declare class ChatService {
     chatStore: ChatStore;
     authz: (clientId: string, channel: string, service: ChatService) => boolean;
     identityResolver: ChatIdentityResolver | null;
+    resolveSender: ResolveSender | null;
+    readonly trustFrameSender: boolean;
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
@@ -282,7 +303,7 @@ export declare class ChatService {
         message?: string;
         metadata?: Record<string, unknown>;
     }): Promise<ChatMessage | null>;
-    handleSendMessage(clientId: string, { channel, message, metadata }: {
+    handleSendMessage(clientId: string, frame: {
         channel: string;
         message: string;
         metadata?: any;
@@ -317,7 +338,7 @@ export declare class ChatService {
      * changes the text (and may merge metadata: mentions, html); everyone on
      * the channel gets `messageUpdated` with the whole updated record.
      */
-    handleEditMessage(clientId: string, { channel, messageId, message, metadata }: {
+    handleEditMessage(clientId: string, frame: {
         channel: string;
         messageId?: unknown;
         message?: unknown;
@@ -328,7 +349,7 @@ export declare class ChatService {
      * keeps its id, author and time; the text goes, the metadata becomes
      * {deleted:true}. Everyone on the channel gets `messageDeleted`.
      */
-    handleDeleteMessage(clientId: string, { channel, messageId }: {
+    handleDeleteMessage(clientId: string, frame: {
         channel: string;
         messageId?: unknown;
     }): Promise<void>;
@@ -507,7 +528,7 @@ export declare class ChatService {
      * connection that has not joined the channel is not in it, and may not
      * announce itself there.
      */
-    handleTyping(clientId: string, { channel, typing }: {
+    handleTyping(clientId: string, frame: {
         channel: string;
         typing?: unknown;
     }): Promise<void>;
@@ -517,7 +538,7 @@ export declare class ChatService {
      * resolver is logged and treated as "no identity" — which the dm gate
      * below turns into a fail-closed rejection.
      */
-    _resolveIdentity(clientId: string): ChatSenderIdentity | null;
+    _resolveIdentity(clientId: string, frame?: unknown): ChatSenderIdentity | null;
     /**
      * DM membership gate. Returns true when the operation may proceed.
      * Only member-addressed dm channels (`chat:dm:` with parseable member

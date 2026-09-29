@@ -7,6 +7,8 @@ declare class PresenceService {
     private readonly heartbeatIntervalMs;
     private readonly presenceTimeoutMs;
     private readonly staleThresholdMs;
+    private readonly resolveSender;
+    private readonly trustFrameSender;
     private readonly cleanupIntervalMs;
     private readonly disconnectDelayMs;
     private readonly maxMetadataKeys;

@@ -94,9 +94,25 @@ describe('ChatService identityResolver — userId stamping', () => {
         expect(msg.metadata.avatarUrl).toBe('https://a/hank.png');
     });
 
-    it('sender-provided metadata wins over resolver hints', async () => {
+    it('resolver identity wins over sender-provided metadata (0.98.5: frame sender fields are advisory)', async () => {
         const { router, sendToChannelCalls } = makeRouter();
         const svc = makeService(router, { identityResolver: resolver });
+        await svc.handleJoinChannel('conn-hank', { channel: 'chat:general' });
+        await svc.handleSendMessage('conn-hank', {
+            channel: 'chat:general',
+            message: 'hi',
+            metadata: { displayName: 'The Hankster', userId: 'dev-alice' },
+        });
+
+        const msg = sendToChannelCalls[0].message.message;
+        expect(msg.metadata.displayName).toBe('Hank');
+        expect(msg.metadata.userId).toBeUndefined();
+        expect(msg.metadata.avatarUrl).toBe('https://a/hank.png');
+    });
+
+    it('trustFrameSender: sender-provided metadata wins over resolver hints', async () => {
+        const { router, sendToChannelCalls } = makeRouter();
+        const svc = makeService(router, { identityResolver: resolver, trustFrameSender: true });
         await svc.handleJoinChannel('conn-hank', { channel: 'chat:general' });
         await svc.handleSendMessage('conn-hank', {
             channel: 'chat:general',

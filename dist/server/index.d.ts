@@ -20,6 +20,8 @@ export { attachRealtime, defineFeature, chat, presence, cursor, reactions, activ
 export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHandle, } from './attach';
 export { LocalRealtimeRouter, } from './router';
 export type { RealtimeRouter, RouterLogger, ChannelAuthorize, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
+export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
+export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 export * from "./documentGrant";
 export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";
 //# sourceMappingURL=index.d.ts.map

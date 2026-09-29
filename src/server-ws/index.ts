@@ -15,3 +15,4 @@ export type {
     WsHandlerHandle,
     WsHttpServer,
 } from './types';
+export type { AuthSender, ResolveSender } from './senderIdentity';

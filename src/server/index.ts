@@ -104,6 +104,10 @@ export type {
     ChannelAuthorize,
     FeaturePlugin as RealtimeFeaturePlugin,
 } from './router';
+// The auth context `auth` returns and `authorize` / `lobbyGuard` /
+// `resolveSender` receive — so a consumer types its callbacks from this entry.
+export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
+export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 
 export * from "./documentGrant";
 

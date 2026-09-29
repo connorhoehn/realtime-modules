@@ -51,6 +51,7 @@ const ChatStore_1 = require("./ChatStore");
 const ChatReadReceiptStore_1 = require("./ChatReadReceiptStore");
 const dmChannels_1 = require("./dmChannels");
 const ChatMembershipStore_1 = require("./ChatMembershipStore");
+const senderIdentity_1 = require("../server-ws/senderIdentity");
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 const DEFAULT_MAX_METADATA_KEYS = 20;
 const DEFAULT_MAX_METADATA_SIZE = 4096;
@@ -172,6 +173,8 @@ class ChatService {
     chatStore;
     authz;
     identityResolver;
+    resolveSender;
+    trustFrameSender;
     membershipStore;
     readReceiptStore;
     enforceDmMembership;
@@ -213,6 +216,8 @@ class ChatService {
             : opts.readReceiptStore;
         this.authz = opts.authz ?? (() => true);
         this.identityResolver = opts.identityResolver ?? null;
+        this.resolveSender = opts.resolveSender ?? null;
+        this.trustFrameSender = opts.trustFrameSender === true;
         // DM enforcement defaults ON exactly when an identity source exists;
         // consumers can force it either way explicitly.
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
@@ -481,7 +486,9 @@ class ChatService {
         this._noteMessageChanged(channel, 'edited', updated);
         return updated;
     }
-    async handleSendMessage(clientId, { channel, message, metadata = {} }) {
+    async handleSendMessage(clientId, frame) {
+        const { channel, message } = frame;
+        let { metadata = {} } = frame;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
             return;
@@ -511,7 +518,7 @@ class ChatService {
         metadata = validateMetadata(metadata, this.logger, this.maxMetadataKeys, this.maxMetadataSize);
         // Resolve identity ONCE — feeds both the dm-membership gate and
         // the userId stamp below.
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         // Membership before subscription: a person the owner just removed
         // was also unsubscribed, and "you must join first" would send them
         // off to join — which is refused — when the true answer is that they
@@ -529,10 +536,15 @@ class ChatService {
             return;
         }
         try {
-            if (identity && identity.userId) {
-                // Merge resolver-provided presentation hints into metadata
-                // ONLY where the sender didn't already provide them —
-                // sender-provided metadata always wins.
+            if (identity && identity.userId && !this.trustFrameSender) {
+                // An identified sender is named by the server. The frame's
+                // copies of the sender fields are advisory and dropped —
+                // otherwise any socket could post under anybody's name.
+                metadata = (0, senderIdentity_1.stampSender)(metadata, identity);
+            }
+            else if (identity && identity.userId) {
+                // trustFrameSender: the pre-0.98.5 rule — merge the server's
+                // presentation hints ONLY where the frame left them out.
                 if (identity.displayName !== undefined && metadata.displayName === undefined) {
                     metadata.displayName = identity.displayName;
                 }
@@ -696,7 +708,8 @@ class ChatService {
      * changes the text (and may merge metadata: mentions, html); everyone on
      * the channel gets `messageUpdated` with the whole updated record.
      */
-    async handleEditMessage(clientId, { channel, messageId, message, metadata }) {
+    async handleEditMessage(clientId, frame) {
+        const { channel, messageId, message, metadata } = frame;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
@@ -709,7 +722,7 @@ class ChatService {
             this.sendError(clientId, `Message must be between 1 and ${this.maxMessageLength} characters`, ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         if (!this._checkDmMembership(clientId, channel, identity))
             return;
         if (!(await this._checkMembership(clientId, channel, identity)))
@@ -721,8 +734,16 @@ class ChatService {
             this.sendError(clientId, 'That message was deleted', ErrorCodes.CHAT_GONE, channel);
             return;
         }
-        const merged = metadata && typeof metadata === 'object'
-            ? validateMetadata({ ...(existing.metadata ?? {}), ...metadata }, this.logger, this.maxMetadataKeys, this.maxMetadataSize)
+        let patchMeta = metadata && typeof metadata === 'object' ? { ...metadata } : null;
+        if (patchMeta && !this.trustFrameSender) {
+            // An edit may change what was said, never who said it: the
+            // stored sender fields stay, the frame's copies are dropped.
+            delete patchMeta.userId;
+            delete patchMeta.displayName;
+            delete patchMeta.avatarUrl;
+        }
+        const merged = patchMeta
+            ? validateMetadata({ ...(existing.metadata ?? {}), ...patchMeta }, this.logger, this.maxMetadataKeys, this.maxMetadataSize)
             : existing.metadata;
         const editedAt = new Date().toISOString();
         let updated;
@@ -743,12 +764,13 @@ class ChatService {
      * keeps its id, author and time; the text goes, the metadata becomes
      * {deleted:true}. Everyone on the channel gets `messageDeleted`.
      */
-    async handleDeleteMessage(clientId, { channel, messageId }) {
+    async handleDeleteMessage(clientId, frame) {
+        const { channel, messageId } = frame;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         if (!this._checkDmMembership(clientId, channel, identity))
             return;
         if (!(await this._checkMembership(clientId, channel, identity)))
@@ -1532,7 +1554,8 @@ class ChatService {
      * connection that has not joined the channel is not in it, and may not
      * announce itself there.
      */
-    async handleTyping(clientId, { channel, typing }) {
+    async handleTyping(clientId, frame) {
+        const { channel, typing } = frame;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
             return;
@@ -1541,8 +1564,8 @@ class ChatService {
             this.sendError(clientId, 'You must join the channel before typing in it');
             return;
         }
-        const identity = this._resolveIdentity(clientId);
-        const frame = {
+        const identity = this._resolveIdentity(clientId, frame);
+        const out = {
             type: 'chat',
             action: 'typing',
             channel,
@@ -1552,7 +1575,7 @@ class ChatService {
             typing: typing === true,
             timestamp: new Date().toISOString(),
         };
-        await this.messageRouter.sendToChannel(channel, frame, clientId);
+        await this.messageRouter.sendToChannel(channel, out, clientId);
     }
     async broadcastMessage(channel, messageData, publisherClientId) {
         const broadcastMessage = {
@@ -1582,16 +1605,35 @@ class ChatService {
      * resolver is logged and treated as "no identity" — which the dm gate
      * below turns into a fail-closed rejection.
      */
-    _resolveIdentity(clientId) {
-        if (!this.identityResolver)
-            return null;
-        try {
-            return this.identityResolver(clientId) ?? null;
+    _resolveIdentity(clientId, frame) {
+        let base = null;
+        if (this.identityResolver) {
+            try {
+                base = this.identityResolver(clientId) ?? null;
+            }
+            catch (err) {
+                this.logger.error(`identityResolver threw for client ${clientId}:`, err);
+                base = null;
+            }
         }
-        catch (err) {
-            this.logger.error(`identityResolver threw for client ${clientId}:`, err);
-            return null;
+        // The connection's auth context (attachRealtime's `auth` result):
+        // an explicit `resolveSender` decides outright; otherwise it fills
+        // whatever the identityResolver left out (attach's default resolver
+        // yields only a userId, so this is where the name comes from).
+        const auth = (0, senderIdentity_1.resolveAuthSender)(this.messageRouter, clientId, frame, this.resolveSender, (err) => this.logger.error(`resolveSender threw for client ${clientId}:`, err));
+        if (!auth)
+            return base;
+        if (this.resolveSender) {
+            return { userId: auth.userId, displayName: auth.displayName, avatarUrl: auth.avatarUrl };
         }
+        const out = { userId: base?.userId ?? auth.userId };
+        const displayName = base?.displayName ?? auth.displayName;
+        const avatarUrl = base?.avatarUrl ?? auth.avatarUrl;
+        if (displayName !== undefined)
+            out.displayName = displayName;
+        if (avatarUrl !== undefined)
+            out.avatarUrl = avatarUrl;
+        return out;
     }
     /**
      * DM membership gate. Returns true when the operation may proceed.

@@ -63,6 +63,7 @@ import {
     type ChatMembershipStore,
 } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
+import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
 
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 
@@ -216,10 +217,11 @@ export interface ChatServiceOpts {
     /**
      * Maps a CONNECTION id to the authenticated sender identity. When it
      * yields a `userId`, every sent message is stamped with
-     * `message.userId`, and `displayName` / `avatarUrl` are merged into
-     * `message.metadata` ONLY for keys the sender didn't already provide
-     * (sender-provided metadata wins). Absent resolver ⇒ send behavior is
-     * identical to pre-v0.23.0 (no userId stamped).
+     * `message.userId`, and `displayName` / `avatarUrl` are written into
+     * `message.metadata` in place of the frame's copies (see
+     * `trustFrameSender`). The router's auth context
+     * (`getClientData(clientId).userContext`) fills whatever this leaves
+     * out. Neither ⇒ no userId stamped and the frame's metadata kept.
      *
      * Also the identity source for dm-membership enforcement — see
      * `enforceDmMembership`.
@@ -240,6 +242,25 @@ export interface ChatServiceOpts {
      * Default: true when `identityResolver` is provided, else false.
      */
     enforceDmMembership?: boolean;
+
+    /**
+     * Map the connection's auth context (the gateway `auth` result, read
+     * through `messageRouter.getClientData(clientId).userContext`) to the
+     * sender. Default: `{ userId, displayName ?? name, avatarUrl ?? picture }`
+     * straight off the context. Runs only for a connection whose context has
+     * a `userId`; return null to treat it as unidentified.
+     */
+    resolveSender?: ResolveSender;
+
+    /**
+     * Let the frame name the sender. Default false: once a connection is
+     * identified (auth context with a userId, or an `identityResolver`
+     * userId), the frame's `metadata.userId` / `displayName` / `avatarUrl`
+     * are dropped and the server's identity stamped instead, on send and on
+     * edit. True restores the pre-0.98.5 rule (frame metadata wins, the
+     * server fills gaps). `message.userId` is always the server's.
+     */
+    trustFrameSender?: boolean;
 
     /**
      * Fire-and-forget observer invoked AFTER a successful send on a dm
@@ -385,6 +406,8 @@ export class ChatService {
     chatStore: ChatStore;
     authz: (clientId: string, channel: string, service: ChatService) => boolean;
     identityResolver: ChatIdentityResolver | null;
+    resolveSender: ResolveSender | null;
+    readonly trustFrameSender: boolean;
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
@@ -431,6 +454,8 @@ export class ChatService {
             : opts.readReceiptStore;
         this.authz = opts.authz ?? (() => true);
         this.identityResolver = opts.identityResolver ?? null;
+        this.resolveSender = opts.resolveSender ?? null;
+        this.trustFrameSender = opts.trustFrameSender === true;
         // DM enforcement defaults ON exactly when an identity source exists;
         // consumers can force it either way explicitly.
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
@@ -733,8 +758,10 @@ export class ChatService {
 
     async handleSendMessage(
         clientId: string,
-        { channel, message, metadata = {} }: { channel: string; message: string; metadata?: any }
+        frame: { channel: string; message: string; metadata?: any }
     ): Promise<void> {
+        const { channel, message } = frame;
+        let { metadata = {} } = frame;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
             return;
@@ -772,7 +799,7 @@ export class ChatService {
 
         // Resolve identity ONCE — feeds both the dm-membership gate and
         // the userId stamp below.
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
 
         // Membership before subscription: a person the owner just removed
         // was also unsubscribed, and "you must join first" would send them
@@ -793,10 +820,14 @@ export class ChatService {
         }
 
         try {
-            if (identity && identity.userId) {
-                // Merge resolver-provided presentation hints into metadata
-                // ONLY where the sender didn't already provide them —
-                // sender-provided metadata always wins.
+            if (identity && identity.userId && !this.trustFrameSender) {
+                // An identified sender is named by the server. The frame's
+                // copies of the sender fields are advisory and dropped —
+                // otherwise any socket could post under anybody's name.
+                metadata = stampSender(metadata, identity);
+            } else if (identity && identity.userId) {
+                // trustFrameSender: the pre-0.98.5 rule — merge the server's
+                // presentation hints ONLY where the frame left them out.
                 if (identity.displayName !== undefined && metadata.displayName === undefined) {
                     metadata.displayName = identity.displayName;
                 }
@@ -972,8 +1003,9 @@ export class ChatService {
      */
     async handleEditMessage(
         clientId: string,
-        { channel, messageId, message, metadata }: { channel: string; messageId?: unknown; message?: unknown; metadata?: unknown }
+        frame: { channel: string; messageId?: unknown; message?: unknown; metadata?: unknown }
     ): Promise<void> {
+        const { channel, messageId, message, metadata } = frame;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
@@ -986,7 +1018,7 @@ export class ChatService {
             this.sendError(clientId, `Message must be between 1 and ${this.maxMessageLength} characters`, ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         if (!this._checkDmMembership(clientId, channel, identity)) return;
         if (!(await this._checkMembership(clientId, channel, identity))) return;
         const existing = await this._ownMessage(clientId, channel, messageId, identity);
@@ -995,8 +1027,16 @@ export class ChatService {
             this.sendError(clientId, 'That message was deleted', ErrorCodes.CHAT_GONE, channel);
             return;
         }
-        const merged = metadata && typeof metadata === 'object'
-            ? validateMetadata({ ...(existing.metadata ?? {}), ...(metadata as Record<string, unknown>) }, this.logger, this.maxMetadataKeys, this.maxMetadataSize)
+        let patchMeta = metadata && typeof metadata === 'object' ? { ...(metadata as Record<string, unknown>) } : null;
+        if (patchMeta && !this.trustFrameSender) {
+            // An edit may change what was said, never who said it: the
+            // stored sender fields stay, the frame's copies are dropped.
+            delete patchMeta.userId;
+            delete patchMeta.displayName;
+            delete patchMeta.avatarUrl;
+        }
+        const merged = patchMeta
+            ? validateMetadata({ ...(existing.metadata ?? {}), ...patchMeta }, this.logger, this.maxMetadataKeys, this.maxMetadataSize)
             : existing.metadata;
         const editedAt = new Date().toISOString();
         let updated: ChatMessage;
@@ -1025,13 +1065,14 @@ export class ChatService {
      */
     async handleDeleteMessage(
         clientId: string,
-        { channel, messageId }: { channel: string; messageId?: unknown }
+        frame: { channel: string; messageId?: unknown }
     ): Promise<void> {
+        const { channel, messageId } = frame;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         if (!this._checkDmMembership(clientId, channel, identity)) return;
         if (!(await this._checkMembership(clientId, channel, identity))) return;
         const existing = await this._ownMessage(clientId, channel, messageId, identity);
@@ -1818,7 +1859,8 @@ export class ChatService {
      * connection that has not joined the channel is not in it, and may not
      * announce itself there.
      */
-    async handleTyping(clientId: string, { channel, typing }: { channel: string; typing?: unknown }): Promise<void> {
+    async handleTyping(clientId: string, frame: { channel: string; typing?: unknown }): Promise<void> {
+        const { channel, typing } = frame;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
             return;
@@ -1827,8 +1869,8 @@ export class ChatService {
             this.sendError(clientId, 'You must join the channel before typing in it');
             return;
         }
-        const identity = this._resolveIdentity(clientId);
-        const frame = {
+        const identity = this._resolveIdentity(clientId, frame);
+        const out = {
             type: 'chat',
             action: 'typing',
             channel,
@@ -1838,7 +1880,7 @@ export class ChatService {
             typing: typing === true,
             timestamp: new Date().toISOString(),
         };
-        await this.messageRouter.sendToChannel(channel, frame, clientId);
+        await this.messageRouter.sendToChannel(channel, out, clientId);
     }
 
     async broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string): Promise<void> {
@@ -1871,14 +1913,32 @@ export class ChatService {
      * resolver is logged and treated as "no identity" — which the dm gate
      * below turns into a fail-closed rejection.
      */
-    _resolveIdentity(clientId: string): ChatSenderIdentity | null {
-        if (!this.identityResolver) return null;
-        try {
-            return this.identityResolver(clientId) ?? null;
-        } catch (err) {
-            this.logger.error(`identityResolver threw for client ${clientId}:`, err);
-            return null;
+    _resolveIdentity(clientId: string, frame?: unknown): ChatSenderIdentity | null {
+        let base: ChatSenderIdentity | null = null;
+        if (this.identityResolver) {
+            try {
+                base = this.identityResolver(clientId) ?? null;
+            } catch (err) {
+                this.logger.error(`identityResolver threw for client ${clientId}:`, err);
+                base = null;
+            }
         }
+        // The connection's auth context (attachRealtime's `auth` result):
+        // an explicit `resolveSender` decides outright; otherwise it fills
+        // whatever the identityResolver left out (attach's default resolver
+        // yields only a userId, so this is where the name comes from).
+        const auth = resolveAuthSender(this.messageRouter, clientId, frame, this.resolveSender, (err) =>
+            this.logger.error(`resolveSender threw for client ${clientId}:`, err));
+        if (!auth) return base;
+        if (this.resolveSender) {
+            return { userId: auth.userId, displayName: auth.displayName, avatarUrl: auth.avatarUrl };
+        }
+        const out: ChatSenderIdentity = { userId: base?.userId ?? auth.userId };
+        const displayName = base?.displayName ?? auth.displayName;
+        const avatarUrl = base?.avatarUrl ?? auth.avatarUrl;
+        if (displayName !== undefined) out.displayName = displayName;
+        if (avatarUrl !== undefined) out.avatarUrl = avatarUrl;
+        return out;
     }
 
     /**

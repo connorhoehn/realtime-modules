@@ -31,6 +31,7 @@
 //   The result is byte-identical at the WS layer for consumers that
 //   weren't using the registry shadow-write path.
 const distributed_core_1 = require("distributed-core");
+const senderIdentity_1 = require("../server-ws/senderIdentity");
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_PRESENCE_TIMEOUT_MS = 60_000;
 const DEFAULT_STALE_THRESHOLD_MS = 90_000;
@@ -77,6 +78,8 @@ class PresenceService {
     heartbeatIntervalMs;
     presenceTimeoutMs;
     staleThresholdMs;
+    resolveSender;
+    trustFrameSender;
     cleanupIntervalMs;
     disconnectDelayMs;
     maxMetadataKeys;
@@ -96,6 +99,8 @@ class PresenceService {
         this.messageRouter = messageRouter;
         this.logger = logger;
         this.authorizeChannel = config.authorizeChannel || (() => true);
+        this.resolveSender = config.resolveSender ?? null;
+        this.trustFrameSender = config.trustFrameSender === true;
         this.heartbeatIntervalMs = config.heartbeatIntervalMs
             ?? readEnvInt('PRESENCE_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
         this.presenceTimeoutMs = config.presenceTimeoutMs
@@ -173,9 +178,16 @@ class PresenceService {
             this.sendError(clientId, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
             return;
         }
-        const validated = validateMetadata(metadata, this.maxMetadataKeys, this.maxMetadataSize, this.logger);
+        let validated = validateMetadata(metadata, this.maxMetadataKeys, this.maxMetadataSize, this.logger);
+        // An authenticated connection is named by its auth context, not by
+        // the frame — otherwise anyone could appear online as anyone.
+        const sender = (0, senderIdentity_1.resolveAuthSender)(this.messageRouter, clientId, payload, this.resolveSender, (err) => this.logger.error(`resolveSender threw for client ${clientId}:`, err));
+        if (sender && !this.trustFrameSender) {
+            validated = (0, senderIdentity_1.stampSender)(validated, sender, { withUserId: true });
+        }
         const presenceData = {
             clientId,
+            ...(sender ? { userId: sender.userId } : {}),
             status,
             metadata: validated,
             channels,

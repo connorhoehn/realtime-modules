@@ -25,6 +25,8 @@ export declare class ReactionService {
     availableReactions: Record<string, AvailableReaction>;
     private authorizeChannel;
     private identityResolver;
+    private resolveSender;
+    private trustFrameSender;
     private onReaction;
     private store;
     private maxHistoryReplay;
@@ -47,7 +49,7 @@ export declare class ReactionService {
     handleUnsubscribeFromReactions(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
-    handleSendReaction(clientId: string, { channel, emoji, position, metadata, targetId, }: {
+    handleSendReaction(clientId: string, frame: {
         channel: string;
         emoji: string;
         position?: unknown;
@@ -82,7 +84,7 @@ export declare class ReactionService {
      * resolver is logged and treated as "no identity" (mirrors
      * ChatService._resolveIdentity semantics).
      */
-    _resolveIdentity(clientId: string): {
+    _resolveIdentity(clientId: string, frame?: unknown): {
         userId?: string;
         displayName?: string;
     } | null;

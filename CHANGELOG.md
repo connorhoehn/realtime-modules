@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.98.5 — 2026-09-29
+
+- **Behaviour change — chat: the server names the sender, not the frame.**
+  ChatService merged its identity into `metadata` only where the frame left
+  a key out ("sender-provided metadata wins"), and attachRealtime's default
+  resolver supplied only a `userId` — so any socket could post, or edit its
+  own message into, somebody else's `displayName` / `avatarUrl`, while the
+  gateway's auth context already knew who the connection was. For an
+  authenticated connection (auth context with a `userId`, or an
+  `identityResolver` userId) `send` and `edit` now drop the frame's
+  `metadata.userId` / `displayName` / `avatarUrl` and stamp the server's;
+  `message.userId`, typing and read receipts carry the same identity, and the
+  name now comes from the auth context (`displayName` or `name`, `avatarUrl`
+  or `picture`). Frames' sender fields are advisory. Edit/delete were already
+  limited to the message's own server-side `userId`; tests now pin that a
+  frame naming the author does not change it. Connections with no auth
+  context (no `auth`, dev mode) keep today's behaviour.
+- **chat: `resolveSender(ctx, frame)`** maps the auth context to `{ userId,
+  displayName?, avatarUrl? }` for consumers whose identity is shaped
+  differently; **`trustFrameSender`** (default false) restores the old
+  frame-wins rule for names.
+- **presence: same fix.** A `set` frame's metadata was stored and broadcast
+  verbatim, so a socket could appear online as anyone. For an authenticated
+  connection the entry now carries `userId` and its metadata's
+  `userId` / `displayName` / `avatarUrl` come from the auth context.
+  `presence({ resolveSender, trustFrameSender })`.
+- **reactions: same fix.** `reaction.userId` / `displayName` were already
+  server-side (from `identityResolver`), but the frame's `metadata` rode
+  through verbatim and attachRealtime supplied no `displayName`. Both are now
+  from the auth context. `reactions({ resolveSender, trustFrameSender })`.
+- **types: `/server` (and every subpath) resolves under `moduleResolution:
+  "node"`.** node10 resolution ignores `exports`, so
+  `@connorhoehn/realtime-modules/server` resolved to nothing and a consumer
+  that masks TS2307 (ts-jest `ignoreCodes`) got `any` for `ChannelAuthorize`
+  and everything else. package.json now carries `typesVersions` mirroring
+  `exports` (checked by `verify:exports`), and `/server` also exports
+  `WsAuthContext`, `WsAuthFn`, `ResolveSender` and `AuthSender`. A type test
+  compiles a consumer against the built package under node10 and node16 and
+  asserts the imports are not `any`.
+
 ## 0.98.4 — 2026-09-29
 
 - **call: no ghost participant after both sockets close under

@@ -21,6 +21,14 @@ httpServer.listen(3000);
 
 Add more capabilities by adding entries to `features` — nothing else changes.
 
+### Identity comes from the auth context
+
+Since 0.98.5 a reaction's `userId` / `displayName` come from the connection's
+auth context (or `identityResolver`), and for an identified sender the
+frame's `metadata.userId` / `displayName` / `avatarUrl` are replaced with the
+server's. `reactions({ resolveSender })` maps a differently shaped context;
+`reactions({ trustFrameSender: true })` lets the frame's metadata stand.
+
 ## 2 — Client (React hook)
 
 ```tsx
