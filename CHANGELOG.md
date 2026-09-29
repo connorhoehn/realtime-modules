@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.98.1 — 2026-09-29
+
+- **call: a DM drop on another replica is told once, by name.** When the
+  dropped person's replica held no local state for the call, the survivor's
+  replica sent `user-status {status: 'left', userId: null}` without
+  `rejoinGraceMs` (a client can do nothing with an anonymous departure), and
+  the grace-expiry end arrived as `ended {reason: 'peer-disconnected'}`. On one
+  replica the survivor got the named notice AND an anonymous copy (the origin
+  heard its own cross-node publish). The cross-node departure now carries
+  `departedUserId`, `rejoinGraceMs`, the terminal `reason` and the clients the
+  origin already told; receivers name the person, keep the grace, end with
+  `rejoin-grace-expired`, and skip anyone already told. Found live by the
+  realtime-examples chat call shelf audit (C3, two gateway pods).
+
 ## 0.98.0 — 2026-09-28
 
 - **client/video: conversation calls.** The DM / room call docked above a chat

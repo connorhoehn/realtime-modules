@@ -109,6 +109,17 @@ interface CrossNodeDepartedPayload {
      *  person dropping no longer tears down a group call everywhere.
      *  Absent (legacy senders) => treat as call-over. */
     callContinues?: boolean;
+    /** Who dropped, when the origin knows. A receiver's `user-status: left`
+     *  names them — an anonymous departure is one no client can act on. */
+    departedUserId?: string | null;
+    /** The origin put the call into its rejoin grace: receivers say so. */
+    rejoinGraceMs?: number;
+    /** A terminal (`callContinues: false`) departure's reason for the
+     *  receivers' `ended` — `rejoin-grace-expired` from the grace timer. */
+    reason?: string;
+    /** Clients the origin already told directly (sendToClient reaches every
+     *  replica); receivers skip them, so nobody hears one drop twice. */
+    notifiedClientIds?: string[];
 }
 
 type UserClientMatchLike = { clientId: string };
@@ -389,7 +400,7 @@ export class CallService {
         //    lobbies) doesn't drop the second.
         let totalNotified = 0;
         for (const callId of candidateCallIds) {
-            await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName, evt.callContinues === true, evt.notified === true)
+            await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName, evt.callContinues === true, evt.notified === true, evt)
                 .then((n) => { totalNotified += n; })
                 .catch((e: any) => this.logger.warn(
                     `[CallService] cross-node notify loop failed for ${callId}: ${e?.message ?? e}`,
@@ -413,6 +424,7 @@ export class CallService {
         fallbackLobbyName: string,
         callContinues = false,
         alreadyNotified = false,
+        evt: Pick<CrossNodeDepartedPayload, 'departedUserId' | 'rejoinGraceMs' | 'reason' | 'notifiedClientIds'> = {},
     ): Promise<number> {
         if (alreadyNotified) {
             // Document call: the origin replica told everyone cluster-wide.
@@ -464,8 +476,12 @@ export class CallService {
             ? this.messageRouter.isClientLive.bind(this.messageRouter)
             : null;
         const localPeers: string[] = [];
+        const told = new Set(evt.notifiedClientIds ?? []);
         for (const cid of participantClientIds) {
             if (cid === departedClientId) continue;
+            // The origin already told this one (possibly this very node,
+            // hearing its own publish).
+            if (told.has(cid)) continue;
             if (isLive) {
                 const live = isLive(cid);
                 if (live === true) localPeers.push(cid);
@@ -491,8 +507,9 @@ export class CallService {
                     callerId,
                     lobbyName,
                     status: 'left',
-                    userId: null,
+                    userId: evt.departedUserId ?? null,
                     reason: 'peer-disconnected',
+                    ...(evt.rejoinGraceMs ? { rejoinGraceMs: evt.rejoinGraceMs } : {}),
                 },
                 timestamp: new Date().toISOString(),
             }
@@ -503,7 +520,7 @@ export class CallService {
                     callId,
                     callerId,
                     lobbyName,
-                    reason: 'peer-disconnected',
+                    reason: evt.reason ?? 'peer-disconnected',
                 },
                 timestamp: new Date().toISOString(),
             };
@@ -2116,6 +2133,11 @@ export class CallService {
             // handleCrossNodeDeparted will notify its own local peers.
             let callerIdForPayload = '';
             let lobbyNameForPayload = '';
+            // Asked while the router still maps the socket to its user.
+            const departedUserId = (typeof this.messageRouter.getUserIdForClient === 'function'
+                ? this.messageRouter.getUserIdForClient(clientId)
+                : null) ?? null;
+            const notifiedClientIds: string[] = [];
             // F1 (2026-08-21) — participant-grain departure. The previous
             // implementation unconditionally broadcast a synthetic `ended`
             // and forgetCall()'d the whole call for EVERY disconnect: in a
@@ -2156,9 +2178,6 @@ export class CallService {
             if (state) {
                 callerIdForPayload = state.callerId;
                 lobbyNameForPayload = state.lobbyName;
-                const departedUserId = (typeof this.messageRouter.getUserIdForClient === 'function'
-                    ? this.messageRouter.getUserIdForClient(clientId)
-                    : null) ?? null;
                 const envelope: CallEvent = (callContinues || graceDeferred)
                     ? {
                         type: 'call',
@@ -2188,7 +2207,8 @@ export class CallService {
                 for (const peerClientId of state.participantClientIds) {
                     if (peerClientId === clientId) continue;
                     try {
-                        await Promise.resolve(this.messageRouter.sendToClient(peerClientId, envelope));
+                        const delivered = await Promise.resolve(this.messageRouter.sendToClient(peerClientId, envelope));
+                        if (delivered !== false) notifiedClientIds.push(peerClientId);
                     } catch (e: any) {
                         this.logger.warn(
                             `CallService.handleDisconnect: failed to notify peer ${peerClientId} of ${clientId}'s exit from ${callId}: ${e?.message ?? e}`,
@@ -2228,6 +2248,9 @@ export class CallService {
                         // they prune the departed client; the final ended
                         // (if the grace expires) fans out from this node.
                         callContinues: callContinues || graceDeferred,
+                        departedUserId,
+                        ...(graceDeferred ? { rejoinGraceMs: this.rejoinGraceMs } : {}),
+                        notifiedClientIds,
                     };
                     await Promise.resolve(
                         this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)),
@@ -2337,10 +2360,12 @@ export class CallService {
                     },
                     timestamp: new Date().toISOString(),
                 };
+                const notifiedClientIds: string[] = [];
                 if (state) {
                     for (const peerClientId of state.participantClientIds) {
                         try {
-                            await Promise.resolve(this.messageRouter.sendToClient(peerClientId, envelope));
+                            const delivered = await Promise.resolve(this.messageRouter.sendToClient(peerClientId, envelope));
+                            if (delivered !== false) notifiedClientIds.push(peerClientId);
                         } catch { /* best-effort */ }
                     }
                 }
@@ -2352,6 +2377,8 @@ export class CallService {
                             callerId: state?.callerId ?? '',
                             lobbyName: state?.lobbyName ?? '',
                             callContinues: false,
+                            reason: 'rejoin-grace-expired',
+                            notifiedClientIds,
                         };
                         await Promise.resolve(
                             this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify(payload)),
