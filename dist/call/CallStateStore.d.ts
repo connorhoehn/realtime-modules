@@ -66,6 +66,9 @@ export interface CallStateStore {
      * acceptance (matches the invite TTL so a re-invite after expiry can
      * also be accepted). */
     markAccepted?(callId: string, ttlSeconds: number): Promise<boolean>;
+    /** Whether anyone accepted this call, on any replica (the marker
+     *  `markAccepted` set and a terminal verb has not cleared). */
+    isAccepted?(callId: string): Promise<boolean>;
     /** Clear the accept marker — used on terminal `ended/declined/cancelled`. */
     clearAccepted?(callId: string): Promise<void>;
     /**
@@ -167,6 +170,7 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     clearInviteForCall(callId: string): Promise<void>;
     getActiveInvitesForUser(userId: string): Promise<string[]>;
     markAccepted(callId: string, ttlSeconds: number): Promise<boolean>;
+    isAccepted(callId: string): Promise<boolean>;
     clearAccepted(callId: string): Promise<void>;
     takeAccepted(callId: string): Promise<boolean>;
     markRecentInvite(callId: string, windowSeconds: number): Promise<boolean>;
@@ -241,6 +245,7 @@ export declare class RedisCallStateStore implements CallStateStore {
     clearInviteForCall(callId: string): Promise<void>;
     getActiveInvitesForUser(userId: string): Promise<string[]>;
     markAccepted(callId: string, ttlSeconds: number): Promise<boolean>;
+    isAccepted(callId: string): Promise<boolean>;
     clearAccepted(callId: string): Promise<void>;
     takeAccepted(callId: string): Promise<boolean>;
     markRecentInvite(callId: string, windowSeconds: number): Promise<boolean>;

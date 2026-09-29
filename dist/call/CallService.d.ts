@@ -313,7 +313,9 @@ export declare class CallService {
     private sweepLegacyInvites;
     /** True when anyone besides the caller is (or was) in the call — checked
      *  locally and in the cluster store, because the accept may have landed on
-     *  another replica. */
+     *  another replica. The store's accept marker comes first: while the
+     *  callee is away in the rejoin grace the roster holds only the caller,
+     *  and an answered call must not be ended as unanswered then. */
     private callHasAcceptedParticipant;
     /** Drop one person's invite-replay entry for one call (local + store). */
     private dropInviteForUser;

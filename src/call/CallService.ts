@@ -2486,10 +2486,15 @@ export class CallService {
 
     /** True when anyone besides the caller is (or was) in the call — checked
      *  locally and in the cluster store, because the accept may have landed on
-     *  another replica. */
+     *  another replica. The store's accept marker comes first: while the
+     *  callee is away in the rejoin grace the roster holds only the caller,
+     *  and an answered call must not be ended as unanswered then. */
     private async callHasAcceptedParticipant(callId: string, state?: ActiveCallState): Promise<boolean> {
         if (this.acceptedCallIds.has(callId)) return true;
         if (state && state.participantClientIds.size > 1) return true;
+        if (this.stateStore && typeof this.stateStore.isAccepted === 'function') {
+            try { if (await this.stateStore.isAccepted(callId)) return true; } catch { /* roster check below */ }
+        }
         if (this.stateStore) {
             try {
                 const view = await this.stateStore.getCall(callId);

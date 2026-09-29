@@ -97,6 +97,9 @@ export interface CallStateStore {
      * acceptance (matches the invite TTL so a re-invite after expiry can
      * also be accepted). */
     markAccepted?(callId: string, ttlSeconds: number): Promise<boolean>;
+    /** Whether anyone accepted this call, on any replica (the marker
+     *  `markAccepted` set and a terminal verb has not cleared). */
+    isAccepted?(callId: string): Promise<boolean>;
     /** Clear the accept marker — used on terminal `ended/declined/cancelled`. */
     clearAccepted?(callId: string): Promise<void>;
     /**
@@ -386,6 +389,11 @@ export class InMemoryCallStateStore implements CallStateStore {
         if (typeof existing === 'number' && existing > now) return false;
         this.acceptedCalls.set(callId, now + ttlSeconds * 1000);
         return true;
+    }
+
+    async isAccepted(callId: string): Promise<boolean> {
+        const existing = this.acceptedCalls.get(callId);
+        return typeof existing === 'number' && existing > Date.now();
     }
 
     async clearAccepted(callId: string): Promise<void> {
@@ -874,6 +882,12 @@ export class RedisCallStateStore implements CallStateStore {
 
     async markAccepted(callId: string, ttlSeconds: number): Promise<boolean> {
         return this.setNxEx(this.acceptedKey(callId), '1', ttlSeconds);
+    }
+
+    async isAccepted(callId: string): Promise<boolean> {
+        const r: any = this.redis as any;
+        if (typeof r.get !== 'function') return false;
+        try { return (await r.get(this.acceptedKey(callId))) != null; } catch { return false; }
     }
 
     async clearAccepted(callId: string): Promise<void> {

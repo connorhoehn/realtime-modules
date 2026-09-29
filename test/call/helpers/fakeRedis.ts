@@ -64,6 +64,9 @@ export class FakeRedis {
     this.ttls.set(key, seconds);
     return 1;
   }
+  async get(key: string) {
+    return this.strings.get(key) ?? null;
+  }
   async set(key: string, value: string, ...args: unknown[]) {
     const opts = args[0];
     const nx = (opts && typeof opts === 'object' && (opts as { NX?: boolean }).NX) || args.includes('NX');

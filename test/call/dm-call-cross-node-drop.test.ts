@@ -94,11 +94,10 @@ describe.each([
   });
 });
 
-// Live (two pods, 2026-09-29): the survivor's replica held no local state for
-// the call — it answered from the shared store — and the grace-expiry end is
-// published just before the origin forgets the call, store included. A
-// receiver that read the store after that found nobody to tell: no `ended`
-// at all, 1 run in 2. The origin now sends the roster it read.
+// The grace-expiry end is published just before the origin forgets the call,
+// store included. A receiver whose replica holds no local copy and reads the
+// store after that finds nobody to tell — so the origin sends the roster it
+// read (0.98.2).
 test('grace-expiry end reaches a survivor whose replica has no local copy of the call', async () => {
   const c = makeCluster({ rejoinGraceMs: GRACE, busDelayMs: 5 });
   const carolSvc = await dmCall(c, 'B');
@@ -113,5 +112,26 @@ test('grace-expiry end reaches a survivor whose replica has no local copy of the
   const ended = c.frames('a-hank', 'ended');
   expect(ended).toHaveLength(1);
   expect(ended[0].data).toMatchObject({ callId: 'dm1', reason: 'rejoin-grace-expired' });
+  await c.dispose();
+});
+
+// Live (two pods, 2026-09-29): the caller's replica never hears a cross-node
+// accept in its own memory. Its invite sweep, 60 s after the ring, asked "did
+// anyone answer?" of its local state and the store roster — and while the
+// callee was away in the rejoin grace the roster held only the caller, so the
+// ANSWERED call was forgotten as `no-answer`: its record deleted, the grace
+// end with nobody to tell, the survivor never got `ended`.
+test("the caller's replica does not end an answered call as unanswered while the callee is in the grace", async () => {
+  const c = makeCluster({ rejoinGraceMs: 5_000, leader: 'A' });
+  const carolSvc = await dmCall(c, 'B');
+  await carolSvc.handleDisconnect('x-carol');
+  c.drop('x-carol');
+  await flush(12);
+  await c.A.svc.runInviteSweep(Date.now() + 61_000);
+  await flush(12);
+  // Still one call, answered, with the caller in it.
+  const view = await (c.A.svc as any).stateStore.getCall('dm1');
+  expect(view?.participantClientIds).toContain('a-hank');
+  expect(c.frames('a-hank', 'ended')).toHaveLength(0);
   await c.dispose();
 });

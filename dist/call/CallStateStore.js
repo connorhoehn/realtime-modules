@@ -205,6 +205,10 @@ class InMemoryCallStateStore {
         this.acceptedCalls.set(callId, now + ttlSeconds * 1000);
         return true;
     }
+    async isAccepted(callId) {
+        const existing = this.acceptedCalls.get(callId);
+        return typeof existing === 'number' && existing > Date.now();
+    }
     async clearAccepted(callId) {
         this.acceptedCalls.delete(callId);
     }
@@ -705,6 +709,17 @@ class RedisCallStateStore {
     }
     async markAccepted(callId, ttlSeconds) {
         return this.setNxEx(this.acceptedKey(callId), '1', ttlSeconds);
+    }
+    async isAccepted(callId) {
+        const r = this.redis;
+        if (typeof r.get !== 'function')
+            return false;
+        try {
+            return (await r.get(this.acceptedKey(callId))) != null;
+        }
+        catch {
+            return false;
+        }
     }
     async clearAccepted(callId) {
         try {

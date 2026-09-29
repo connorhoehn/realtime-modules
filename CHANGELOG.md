@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.98.3 — 2026-09-29
+
+- **call: the caller's replica never ends an answered call as unanswered.**
+  Its invite sweep, 60 s after the ring, asked "did anyone answer?" of its own
+  memory and the store roster; an accept on another replica never reaches that
+  memory, and while the callee is away in the rejoin grace the roster holds
+  only the caller — so the answered call was forgotten as `no-answer` (record
+  deleted, the survivor never told). The sweep now reads the cluster's accept
+  marker first (`CallStateStore.isAccepted`, in-memory and Redis). This, not
+  the store race 0.98.2 describes, is why the survivor on another replica got
+  no `ended` in the live two-pod check; 0.98.2's roster on the terminal
+  publish stays as a guard against that race.
+
 ## 0.98.2 — 2026-09-29
 
 - **call: the grace-expiry end of a DM reaches a survivor on another replica
