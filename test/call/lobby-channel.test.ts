@@ -166,3 +166,55 @@ describe('lobbyConversationKind', () => {
     expect(lobbyConversationKind(null)).toBeNull();
   });
 });
+
+// A10 join/knock: `dmLobbyName(ids, { prefix: 'acme:' })` puts the tenant
+// first, and `shouldKnockToJoin` answered false for it — an outsider walked
+// into a private DM call. The dm predicates read past the prefix exactly as
+// `lobbyConversationKind` does.
+describe('tenant-prefixed lobbies', () => {
+  it('a tenant-prefixed DM is private: a non-member knocks, a member walks in', () => {
+    expect(shouldKnockToJoin('acme:dm:alice:bob', 'eve')).toBe(true);
+    expect(shouldKnockToJoin('acme:dm:alice:bob', 'alice')).toBe(false);
+    expect(shouldKnockToJoin('acme:dmg:abc', 'alice')).toBe(true);
+    expect(shouldKnockToJoin('acme:eu:dm:alice:bob', 'bob')).toBe(false);
+    expect(shouldKnockToJoin('acme:dm:alice:bob', null)).toBe(true);
+  });
+
+  it('a tenant-prefixed group DM: members walk in, outsiders knock', () => {
+    expect(dmLobbyMembers('acme:dm:alice:bob:carol')).toEqual(['alice', 'bob', 'carol']);
+    expect(shouldKnockToJoin('acme:dm:alice:bob:carol', 'carol')).toBe(false);
+    expect(shouldKnockToJoin('acme:dm:alice:bob:carol', 'eve')).toBe(true);
+  });
+
+  it('isDmLobby and dmLobbyMembers read past the prefix', () => {
+    expect(isDmLobby('acme:dm:alice:bob')).toBe(true);
+    expect(isDmLobby('acme:eu:dmg:abc')).toBe(true);
+    expect(dmLobbyMembers('acme:dm:alice:bob')).toEqual(['alice', 'bob']);
+    expect(dmLobbyMembers('acme:dmg:abc')).toBeNull();
+    expect(dmLobbyMembers('acme:dm:alice')).toBeNull();
+  });
+
+  it('the unprefixed forms are unchanged', () => {
+    expect(shouldKnockToJoin('dm:alice:bob', 'eve')).toBe(true);
+    expect(shouldKnockToJoin('dm:alice:bob', 'alice')).toBe(false);
+    expect(shouldKnockToJoin('dmg:abc', 'alice')).toBe(true);
+    expect(isDmLobby('dm:alice')).toBe(true);
+    expect(dmLobbyMembers('dm:alice:bob')).toEqual(['alice', 'bob']);
+  });
+
+  it('an open room never knocks, prefixed or not — even one whose slug says dm', () => {
+    for (const lobby of ['room:design', 'acme:room:design', 'acme:room:dm', 'acme:room:dm:x']) {
+      expect(isDmLobby(lobby)).toBe(false);
+      expect(dmLobbyMembers(lobby)).toBeNull();
+      expect(shouldKnockToJoin(lobby, 'eve')).toBe(false);
+    }
+  });
+
+  it('a tenant-prefixed document lobby is not a DM and never knocks', () => {
+    for (const lobby of ['acme:doc:roadmap-2026', 'acme:documents:dm-notes', 'acme:dm']) {
+      expect(isDmLobby(lobby)).toBe(false);
+      expect(dmLobbyMembers(lobby)).toBeNull();
+      expect(shouldKnockToJoin(lobby, 'eve')).toBe(false);
+    }
+  });
+});

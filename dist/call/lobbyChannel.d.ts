@@ -6,7 +6,7 @@ export declare function lobbyForChannel(channel: string | null | undefined): str
 export declare function channelForLobby(lobby: string | null | undefined): string | null;
 /**
  * True for BOTH dm lobby forms — member-addressed (`dm:alice:bob`) and hashed
- * group (`dmg:<hash>`). The lobby-side twin of `isDmChatChannel`.
+ * group (`dmg:<hash>`) — with or without a tenant prefix (`acme:dm:alice:bob`). The lobby-side twin of `isDmChatChannel`.
  *
  * It exists because five call sites across the app each wrote
  * `lobby.startsWith('dm:')` and each one silently excluded hashed groups. The

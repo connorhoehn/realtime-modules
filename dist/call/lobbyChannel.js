@@ -61,7 +61,7 @@ function channelForLobby(lobby) {
 }
 /**
  * True for BOTH dm lobby forms — member-addressed (`dm:alice:bob`) and hashed
- * group (`dmg:<hash>`). The lobby-side twin of `isDmChatChannel`.
+ * group (`dmg:<hash>`) — with or without a tenant prefix (`acme:dm:alice:bob`). The lobby-side twin of `isDmChatChannel`.
  *
  * It exists because five call sites across the app each wrote
  * `lobby.startsWith('dm:')` and each one silently excluded hashed groups. The
@@ -72,9 +72,26 @@ function channelForLobby(lobby) {
  * every such check needs both prefixes or it has a size-dependent hole.
  */
 function isDmLobby(lobby) {
+    // Reads past a tenant prefix (`acme:dm:a:b`, `acme:eu:dmg:<hash>`), the
+    // same rule as `lobbyConversationKind`. A bare `startsWith('dm:')` let an
+    // outsider walk into a tenant-prefixed DM call instead of knocking.
+    return lobbyConversationKind(lobby) === 'dm';
+}
+/**
+ * Index and value of the segment that names a lobby's kind — the first
+ * `dm` / `dmg` / `room` segment that is not the last one (the last segment is
+ * a name: a user id, a slug, a hash). Everything before it is a tenant prefix.
+ */
+function lobbyKindSegment(lobby) {
     if (!lobby)
-        return false;
-    return lobby.startsWith('dm:') || lobby.startsWith('dmg:');
+        return null;
+    const segments = lobby.split(':');
+    for (let i = 0; i < segments.length - 1; i++) {
+        const seg = segments[i];
+        if (seg === 'dm' || seg === 'dmg' || seg === 'room')
+            return { index: i, kind: seg, segments };
+    }
+    return null;
 }
 /**
  * What kind of conversation a lobby is, reading past a host's tenant prefix:
@@ -89,18 +106,10 @@ function isDmLobby(lobby) {
  * apply to any tenant-prefixed DM.
  */
 function lobbyConversationKind(lobby) {
-    if (!lobby)
+    const found = lobbyKindSegment(lobby);
+    if (!found)
         return null;
-    const segments = lobby.split(':');
-    // The last segment is a name (a user id, a slug, a hash), never a kind.
-    for (let i = 0; i < segments.length - 1; i++) {
-        const seg = segments[i];
-        if (seg === 'dm' || seg === 'dmg')
-            return 'dm';
-        if (seg === 'room')
-            return 'room';
-    }
-    return null;
+    return found.kind === 'room' ? 'room' : 'dm';
 }
 /**
  * Member userIds of a dm lobby, or null when they are not derivable.
@@ -113,9 +122,11 @@ function lobbyConversationKind(lobby) {
  * private, membership unknown ⇒ ask to be let in.
  */
 function dmLobbyMembers(lobby) {
-    if (!lobby || !lobby.startsWith('dm:'))
+    // Tenant prefix allowed: `acme:dm:alice:bob` → ['alice', 'bob'].
+    const found = lobbyKindSegment(lobby);
+    if (!found || found.kind !== 'dm')
         return null;
-    const members = lobby.slice('dm:'.length).split(':').filter(Boolean);
+    const members = found.segments.slice(found.index + 1).filter(Boolean);
     return members.length >= 2 ? members : null;
 }
 /**
