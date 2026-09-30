@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.98.8 — 2026-09-29
+
+- **`useDocumentCall` with no document makes no document reads.** A host
+  that mounts the hook app-wide before any document is open passes
+  `documentId: ''`; the hook still read `GET /api/video/sessions/document/`
+  (a 400 from platform-api on every page load of realtime-examples'
+  `/documents` and inbox) and sent `call` `status` with an empty
+  `lobbyName`. Now an empty id means none yet: no listing read, no call
+  read without a lobby, no `status` (mount, `refresh()`, the discovery poll,
+  or reconnect — reconnect still re-announces a joined call's own lobby)
+  until an id arrives, and then the usual read + `status` go out.
+- Tests: `useDocumentCall.test.tsx` (no document → no PA read and no
+  `status`, including after `refresh()`; the id arriving sends both).
+
 ## 0.98.7 — 2026-09-29
 
 - **Security — presence `get` by `targetClientId` is scoped by channel

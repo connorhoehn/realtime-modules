@@ -13,7 +13,13 @@ export interface DocumentCallMediaBinding {
     stopScreenShare?(): void | Promise<void>;
 }
 export interface UseDocumentCallOptions {
-    /** The document this page shows. */
+    /**
+     * The document this page shows. `''` means none yet (a host that mounts the
+     * hook app-wide before any document is open): the hook then makes no
+     * document read and sends no `status` — no `GET /sessions/document/` or
+     * `status` with an empty lobby — until an id arrives. A call already joined
+     * keeps its own lobby.
+     */
     documentId: string;
     /** From useGateway() / the app socket. Defaults to the surrounding GatewayContext. */
     gateway?: DocumentCallGateway | null;

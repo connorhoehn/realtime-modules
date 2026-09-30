@@ -338,4 +338,21 @@ describe('useDocumentCall', () => {
     act(() => { g.push('invite-expired', { callId: 'sess-1', userId: 'u-host' }); });
     expect(row('u-host')?.state).toBe('in-call');
   });
+
+  it('no document yet: no document read and no status with an empty lobby, until an id arrives', async () => {
+    const { g, pa, hook } = setup({ documentId: '' });
+    // Let the mount effect and any async read settle.
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(pa.calls.filter((c) => c.path.startsWith('/api/video/sessions'))).toEqual([]);
+    expect(g.callFrames('status')).toHaveLength(0);
+    act(() => { hook.result.current.refresh(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(pa.calls.some((c) => c.path === '/api/video/sessions/document/')).toBe(false);
+    expect(g.callFrames('status')).toHaveLength(0);
+
+    hook.rerender({ documentId: 'doc-auth' });
+    await waitFor(() => expect(g.callFrames('status')).toHaveLength(1));
+    expect(g.callFrames('status')[0].lobbyName).toBe('doc-auth');
+    await waitFor(() => expect(pa.calls.some((c) => c.path === '/api/video/sessions/document/doc-auth')).toBe(true));
+  });
 });

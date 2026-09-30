@@ -47,7 +47,13 @@ export interface DocumentCallMediaBinding {
 }
 
 export interface UseDocumentCallOptions {
-  /** The document this page shows. */
+  /**
+   * The document this page shows. `''` means none yet (a host that mounts the
+   * hook app-wide before any document is open): the hook then makes no
+   * document read and sends no `status` — no `GET /sessions/document/` or
+   * `status` with an empty lobby — until an id arrives. A call already joined
+   * keeps its own lobby.
+   */
   documentId: string;
   /** From useGateway() / the app socket. Defaults to the surrounding GatewayContext. */
   gateway?: DocumentCallGateway | null;
@@ -419,13 +425,16 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
           // the ringing call fell through to the document listing.
           const known = callRef.current && callRef.current.callId === wanted ? callRef.current : null;
           const lobbyName = lobby || known?.lobbyName || known?.documentId || docId;
+          // No lobby, no read: the row cannot be addressed without it.
+          if (!lobbyName) throw new Error('no lobby');
           const body = await api(`/api/video/sessions/${encodeURIComponent(wanted)}?lobbyName=${encodeURIComponent(lobbyName)}`);
           const row = ((body.session as Record<string, unknown>) ?? body);
           const s = toDocumentCallSession(row);
           if (s && isLive(s, row)) found = s;
         } catch { /* fall back to the document listing */ }
       }
-      if (!found) {
+      // No document yet: nothing to list (the empty id is a 400).
+      if (!found && docId) {
         const body = await api(`/api/video/sessions/document/${encodeURIComponent(docId)}`);
         const rows = Array.isArray(body.sessions) ? (body.sessions as Record<string, unknown>[]) : [];
         const live = rows
@@ -456,7 +465,9 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
   }, [readPlatformSession]);
 
   const sendStatus = useCallback(() => {
-    send({ service: 'call', action: 'status', lobbyName: optsRef.current.documentId });
+    const lobby = optsRef.current.documentId;
+    if (!lobby) return;
+    send({ service: 'call', action: 'status', lobbyName: lobby });
   }, [send]);
 
   /** Consumer-requested re-read (after a navigation, say): record + one `status`. */
@@ -480,11 +491,9 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
   const watchingCallId = !joinedCallId ? discovered?.callId ?? null : null;
   useEffect(() => {
     if (!watchingCallId || discoveryPollMs <= 0) return;
-    const t = setInterval(() => {
-      send({ service: 'call', action: 'status', lobbyName: optsRef.current.documentId });
-    }, discoveryPollMs);
+    const t = setInterval(sendStatus, discoveryPollMs);
     return () => clearInterval(t);
-  }, [watchingCallId, discoveryPollMs, send]);
+  }, [watchingCallId, discoveryPollMs, sendStatus]);
 
   // ---- follow target (per tab) ----------------------------------------
   const callIdForFollow = joinedCallId ?? call?.callId ?? null;
@@ -632,7 +641,7 @@ export function useDocumentCall(opts: UseDocumentCallOptions): UseDocumentCallRe
     if (!(epochBumped || cameBack)) return;
     const callId = joinedRef.current;
     const lobby = callRef.current?.documentId ?? optsRef.current.documentId;
-    send({ service: 'call', action: 'status', lobbyName: lobby });
+    if (lobby) send({ service: 'call', action: 'status', lobbyName: lobby });
     if (!callId) return;
     send({ service: 'call', action: 'meta', callId });
     announceSelf(true);
