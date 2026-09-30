@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.99.2 — 2026-09-30
+
+Four findings from a live walk of room calls against the local SFU
+(live-video-streaming :3901) and platform-api.
+
+- **Video: leaving a call no longer DELETEs against the page's origin.** The
+  SFU answers WHIP/WHEP with a relative `Location`; `whipPublish` /
+  `whepPublish` returned it as-is, so `whipTeardown` / `whepTeardown` sent
+  `DELETE /api/channels/<arn>/whip|whep/<id>` to the app (404, two console
+  errors per Leave) and the SFU kept the legs until it timed them out. The
+  `location` they return is now resolved against the endpoint that answered
+  (`new URL(location, responseUrl || endpointUrl)`); an absolute `Location`
+  is kept, and a same-origin endpoint (no `baseUrl`) keeps a relative one,
+  which was already correct. New export `resolveResourceLocation`.
+  lvs-client already resolved it (`resolveResourceUrl`).
+- **Video: a second participant appears in ~0.15 s, not ~3 s.**
+  `fetchIceServers` replaced the SFU's explicit `{ iceServers: [] }` with
+  Google STUN, and every WHIP/WHEP offer waits for ICE gathering (no trickle)
+  capped at 3 s. In a headed Chrome with VPN/virtual interfaces STUN
+  gathering never completes, so each leg paid the full cap. Measured through
+  the library's own path (fetchIceServers → offer → waitForIceGather) against
+  the SFU: 3016–3224 ms before, 135–150 ms after. The SFU's answer is now
+  authoritative, empty list included; public STUN is only the fallback when
+  the endpoint is unreachable or answers no config. Discovery itself was
+  already push (the stage WS `producer.added`); there was no poll to replace.
+- **Video: remote tiles carry the person's name.** `useLVSHangout` dropped
+  the `displayName` and `userId` the SFU stamps on `producer.added` (live and
+  replayed) and on the `subscribed` snapshot, and labelled every remote with
+  its SFU participant id. Remotes now carry `displayName` from the token
+  (falling back to the id when the SFU sends none) and a new `appUserId`.
+  `useConversationCall` uses `appUserId` to pair a media tile with a person
+  the call already knows (roster, accepted, invited, discovered), so a room
+  call — which rings and broadcasts to nobody — names its tiles.
+- **Rooms: `archiveRoom` calls the served route.** It sent
+  `DELETE /api/rooms/:slug`, which platform-api does not serve (404); it now
+  sends `POST /api/rooms/:slug/archive` (owner or admin).
+
 ## 0.99.1 — 2026-09-29
 
 - **Calls: one person, one seat — the first of a callee's sockets to accept

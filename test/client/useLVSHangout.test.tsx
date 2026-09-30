@@ -889,3 +889,60 @@ describe('useLVSHangout — all-tracks-ended auto-recovery', () => {
     }
   });
 });
+
+describe('useLVSHangout — remote tiles carry the SFU-stamped name', () => {
+  // The SFU threads the stage token's displayName + sub onto producer.added
+  // (live and replayed) and the `subscribed` snapshot. The hook used to drop
+  // both and label every remote tile with the raw SFU participant id.
+  async function joinWith(frame: Record<string, unknown>) {
+    const handle: HarnessHandle = { result: null };
+    await act(async () => { render(<Harness token={TOKEN} pid={PID} handle={handle} />); });
+    const ws = wsInstances[wsInstances.length - 1]!;
+    await act(async () => { ws.triggerOpen(); ws.triggerMessage(frame); await flush(); });
+    const pc = whepPcs()[whepPcs().length - 1]!;
+    await act(async () => {
+      pc.emitTrack('audio', 'a-1', 'stream-1');
+      pc.emitTrack('video', 'v-1', 'stream-1');
+      await flush();
+    });
+    return { handle, ws };
+  }
+
+  it('producer.added: displayName labels the tile and userId rides as appUserId', async () => {
+    const { handle } = await joinWith({
+      type: 'producer.added', participantId: REMOTE_PID, kind: 'video', producerId: 'p-v',
+      displayName: 'Hank Anderson', userId: 'u-hank',
+    });
+    const remote = handle.result!.participants.find((p) => !p.isLocal)!;
+    expect(remote.displayName).toBe('Hank Anderson');
+    expect(remote.appUserId).toBe('u-hank');
+    expect(remote.participantId).toBe(REMOTE_PID);
+  });
+
+  it('subscribed snapshot: a peer already in the call is named too', async () => {
+    const { handle } = await joinWith({
+      type: 'subscribed', channelArn: 'arn:test:channel/abc', isOwner: true,
+      producers: [{ producerId: 'p-h-v', participantId: REMOTE_PID, kind: 'video', displayName: 'Hank Anderson', userId: 'u-hank' }],
+    });
+    const remote = handle.result!.participants.find((p) => !p.isLocal)!;
+    expect(remote.displayName).toBe('Hank Anderson');
+    expect(remote.appUserId).toBe('u-hank');
+  });
+
+  it('a name arriving on a later producer relabels the existing tile', async () => {
+    const { handle, ws } = await joinWith({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video', producerId: 'p-v' });
+    expect(handle.result!.participants.find((p) => !p.isLocal)!.displayName).toBe(REMOTE_PID);
+    await act(async () => {
+      ws.triggerMessage({ type: 'producer.added', participantId: `${REMOTE_PID}:screen`, kind: 'video', producerId: 'p-s', displayName: 'Hank Anderson' });
+      await flush();
+    });
+    expect(handle.result!.participants.find((p) => !p.isLocal)!.displayName).toBe('Hank Anderson');
+  });
+
+  it('an SFU that sends no name still falls back to the participant id', async () => {
+    const { handle } = await joinWith({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video', producerId: 'p-v' });
+    const remote = handle.result!.participants.find((p) => !p.isLocal)!;
+    expect(remote.displayName).toBe(REMOTE_PID);
+    expect(remote.appUserId).toBeUndefined();
+  });
+});

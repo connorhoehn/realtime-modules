@@ -197,9 +197,11 @@ export async function updateRoom(
   return request<Room>(opts, 'PATCH', `/api/rooms/${encodeURIComponent(slug)}`, patch);
 }
 
-/** Archive a room (soft-delete). `DELETE /api/rooms/:slug`. */
+/** Archive a room (soft-delete). `POST /api/rooms/:slug/archive` — the
+ *  route platform-api serves (owner or admin only). There is no
+ *  `DELETE /api/rooms/:slug`; the library used to send one and got a 404. */
 export async function archiveRoom(opts: RoomApiOptions, slug: string): Promise<void> {
-  await request<void>(opts, 'DELETE', `/api/rooms/${encodeURIComponent(slug)}`);
+  await request<void>(opts, 'POST', `/api/rooms/${encodeURIComponent(slug)}/archive`);
 }
 
 /**

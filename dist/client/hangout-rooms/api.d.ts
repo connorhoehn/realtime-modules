@@ -43,7 +43,9 @@ export declare function getRoom(opts: RoomApiOptions, slug: string): Promise<Roo
 export declare function createRoom(opts: RoomApiOptions, input: CreateRoomInput): Promise<Room>;
 /** Update mutable fields on an existing room. `PATCH /api/rooms/:slug`. */
 export declare function updateRoom(opts: RoomApiOptions, slug: string, patch: UpdateRoomInput): Promise<Room>;
-/** Archive a room (soft-delete). `DELETE /api/rooms/:slug`. */
+/** Archive a room (soft-delete). `POST /api/rooms/:slug/archive` — the
+ *  route platform-api serves (owner or admin only). There is no
+ *  `DELETE /api/rooms/:slug`; the library used to send one and got a 404. */
 export declare function archiveRoom(opts: RoomApiOptions, slug: string): Promise<void>;
 /**
  * Join a room — provisions an SFU session and returns the participant

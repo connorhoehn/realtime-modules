@@ -826,6 +826,15 @@ function useConversationCall(opts) {
         for (const [uid, r] of Object.entries(roster))
             if (r.participantId)
                 byPid.set(r.participantId, uid);
+        // The SFU stamps each producer with the stage token's `sub`: when that is
+        // someone this call already knows (roster, accepted, invited, discovered),
+        // the tile is them — no broadcast needed. A room call rings nobody and
+        // broadcasts to nobody, so this is how its tiles find their people.
+        const known = new Set([...Object.keys(roster), ...accepted, ...(active?.targets ?? []).map((t) => t.userId), ...(discovered?.userIds ?? [])]);
+        for (const m of remoteMedia) {
+            if (!byPid.has(m.participantId) && m.appUserId && known.has(m.appUserId))
+                byPid.set(m.participantId, m.appUserId);
+        }
         const unmatchedMedia = remoteMedia.filter((m) => !byPid.has(m.participantId));
         const unmatchedPeople = Object.keys(roster).filter((u) => !roster[u].participantId)
             .concat(accepted.filter((u) => !roster[u]));

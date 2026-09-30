@@ -18,6 +18,7 @@ import {
   parseRetryAfter,
   computeTooEarlyBackoffMs,
   LVSApiError,
+  fetchIceServers,
 } from '../../src/client/video/lib/transport';
 
 // ---------------------------------------------------------------------------
@@ -150,7 +151,7 @@ describe('whepPublish 425 Too Early retry', () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(res.answerSdp).toBe('v=0\r\nanswer\r\n');
-    expect(res.location).toBe('/whep/r-1');
+    expect(res.location).toBe('http://sfu/whep/r-1');
     expect(logLines.some((l) => /425 Too Early/.test(l) && /attempt=1\/5/.test(l))).toBe(true);
   });
 
@@ -293,7 +294,7 @@ describe('whipPublish 425 Too Early retry (consistency with WHEP)', () => {
       __tooEarlyDeps: { sleep: fastSleep },
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(res.location).toBe('/whip/r-1');
+    expect(res.location).toBe('http://sfu/whip/r-1');
     expect(logLines.some((l) => /\[lvs:whip\]/.test(l) && /425 Too Early/.test(l))).toBe(true);
   });
 
@@ -307,5 +308,87 @@ describe('whipPublish 425 Too Early retry (consistency with WHEP)', () => {
       __tooEarlyDeps: { sleep: fastSleep },
     })).rejects.toMatchObject({ name: 'LVSApiError', status: 409 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Location resolution — the SFU answers with a RELATIVE Location. Handed to
+// fetch as-is, the teardown DELETE resolved against the page's origin (404
+// on every Leave) instead of the SFU.
+// ---------------------------------------------------------------------------
+
+describe('WHIP/WHEP Location is resolved against the SFU endpoint', () => {
+  const args = {
+    channelArn: 'arn:local:ivs:channel/test',
+    offerSdp: 'v=0\r\n',
+    authToken: 'tok',
+    baseUrl: 'http://localhost:3901',
+  } as const;
+
+  it.each([
+    ['whip', whipPublish],
+    ['whep', whepPublish],
+  ] as const)('%s: a relative Location becomes an absolute SFU URL', async (kind, fn) => {
+    const fetchImpl = scriptedFetch([
+      { status: 201, body: 'ans', headers: { Location: `/api/channels/c/${kind}/res-1` } },
+    ]);
+    const res = await fn({ ...args, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.location).toBe(`http://localhost:3901/api/channels/c/${kind}/res-1`);
+  });
+
+  it.each([
+    ['whip', whipPublish],
+    ['whep', whepPublish],
+  ] as const)('%s: an absolute Location is kept as-is', async (kind, fn) => {
+    const abs = `https://sfu-2.example.com/api/channels/c/${kind}/res-2`;
+    const fetchImpl = scriptedFetch([{ status: 201, body: 'ans', headers: { Location: abs } }]);
+    const res = await fn({ ...args, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.location).toBe(abs);
+  });
+
+  it('same-origin (no baseUrl) keeps a relative Location relative, which is already correct', async () => {
+    const fetchImpl = scriptedFetch([{ status: 201, body: 'ans', headers: { Location: '/api/channels/c/whip/r' } }]);
+    const res = await whipPublish({ ...args, baseUrl: undefined, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.location).toBe('/api/channels/c/whip/r');
+  });
+
+  it('a missing Location stays null', async () => {
+    const fetchImpl = scriptedFetch([{ status: 201, body: 'ans' }]);
+    const res = await whepPublish({ ...args, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.location).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ICE servers — the SFU's answer is authoritative, including an empty list.
+// Replacing `[]` with public STUN made every WHIP/WHEP wait out the 3 s
+// gather cap in browsers whose STUN gathering never completes (headed Chrome
+// with VPN/virtual interfaces: still `gathering` at 10 s vs ~120 ms without
+// servers) — the ~3 s second-arrival in room calls.
+// ---------------------------------------------------------------------------
+
+describe('fetchIceServers', () => {
+  const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const respond = (status: number, body: string) => jest.fn(async (_url: string) => new Response(body, { status }));
+
+  it('honours an explicit empty list from the SFU (host candidates only)', async () => {
+    const f = respond(200, JSON.stringify({ iceServers: [], iceTransportPolicy: 'all' }));
+    await expect(fetchIceServers('http://sfu', f as unknown as typeof fetch)).resolves.toEqual([]);
+    expect(f).toHaveBeenCalledWith('http://sfu/api/ice-servers');
+  });
+
+  it('returns the SFU list when it has servers', async () => {
+    const turn = [{ urls: 'turn:t.example:3478', username: 'u', credential: 'c' }];
+    const f = respond(200, JSON.stringify({ iceServers: turn }));
+    await expect(fetchIceServers('http://sfu', f as unknown as typeof fetch)).resolves.toEqual(turn);
+  });
+
+  it.each([
+    ['a non-2xx answer', respond(503, 'down')],
+    ['a body without iceServers', respond(200, '{}')],
+    ['a non-JSON body', respond(200, '<html>')],
+    ['a network error', jest.fn(async (_url: string): Promise<Response> => { throw new TypeError('fetch failed'); })],
+  ])('falls back to public STUN on %s', async (_label, f) => {
+    await expect(fetchIceServers('http://sfu', f as unknown as typeof fetch)).resolves.toEqual(STUN);
   });
 });

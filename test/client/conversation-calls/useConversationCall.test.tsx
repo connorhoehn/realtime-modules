@@ -313,3 +313,46 @@ describe('useConversationCall — discovery', () => {
     expect(g.callFrames('participant-state').length).toBeGreaterThan(before);
   });
 });
+
+describe('useConversationCall — room calls name tiles from the SFU', () => {
+  // A room call rings nobody and broadcasts to nobody, so no call frame ever
+  // carries a peer's name. The SFU does: useLVSHangout surfaces the stage
+  // token's displayName + sub (appUserId). Before, the dock read raw SFU ids.
+  const named = (m: ReturnType<typeof makeFakeMedia>, pid: string, displayName: string, appUserId: string) =>
+    ({ ...m.remote(pid), displayName, appUserId });
+
+  it('a walk-in with no ring is labelled with their name, not the SFU participant id', async () => {
+    const { m, hook } = setup({ lobbyName: 'social:room:standup', channel: 'room:standup' });
+    await act(async () => { await hook.result.current.start([]); });
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    act(() => { m.set({ remotes: [named(m, 'u-sana-munmjc0n', 'Sana Iqbal', 'u-sana')] }); });
+    const people = hook.result.current.call!.participants;
+    expect(people.map((p) => [p.id, p.displayName])).toEqual([
+      ['p-self-1', 'Alice Chen'],
+      ['u-sana-munmjc0n', 'Sana Iqbal'],
+    ]);
+    expect(hook.result.current.call!.participantCount).toBe(2);
+    const dock = conversationCallDockProps(hook.result.current, ui)!;
+    expect(dock.participants[1]).toMatchObject({ id: 'u-sana-munmjc0n', displayName: 'Sana Iqbal' });
+  });
+
+  it('the SFU user id matches a person the call already knows — one tile, not two', async () => {
+    const { g, m, hook } = setup();
+    await act(async () => { await hook.result.current.start([{ userId: 'u-bob', displayName: 'Bob Stone' }, { userId: 'u-cara', displayName: 'Cara Diaz' }]); });
+    const callId = hook.result.current.call!.callId;
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    act(() => {
+      g.push('accepted', { callId, userId: 'u-bob', displayName: 'Bob Stone', lobbyName: LOBBY });
+      g.push('accepted', { callId, userId: 'u-cara', displayName: 'Cara Diaz', lobbyName: LOBBY });
+    });
+    // Two tiles, two people, no participant-state yet: the one-and-one
+    // heuristic cannot pair them; the SFU user id does.
+    act(() => { m.set({ remotes: [named(m, 'p-cara', 'Cara D.', 'u-cara'), named(m, 'p-bob', 'Bob S.', 'u-bob')] }); });
+    const people = hook.result.current.call!.participants;
+    expect(people.map((p) => [p.id, p.userId, p.displayName])).toEqual([
+      ['p-self-1', 'u-alice', 'Alice Chen'],
+      ['p-cara', 'u-cara', 'Cara Diaz'],
+      ['p-bob', 'u-bob', 'Bob Stone'],
+    ]);
+  });
+});

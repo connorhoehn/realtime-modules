@@ -193,6 +193,7 @@ export {
   whipPublish,
   whepPublish,
   fetchIceServers,
+  resolveResourceLocation,
   LVSApiError,
 } from './lib/transport';
 export type { TransportLog } from './lib/transport';

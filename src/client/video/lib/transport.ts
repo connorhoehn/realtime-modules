@@ -198,6 +198,26 @@ async function postSdpWith425Retry(
   }
 }
 
+/** Resolve a WHIP/WHEP `Location` header against the URL that answered
+ *  it. The SFU answers with a RELATIVE Location (`/api/.../whip/<id>`);
+ *  handed to fetch as-is that resolves against the page's origin, so the
+ *  teardown DELETE went to the app (404) instead of the SFU. Uses the
+ *  response's final URL when a redirect was followed. A relative endpoint
+ *  (same-origin baseUrl '') leaves a relative Location relative, which is
+ *  already correct. */
+export function resolveResourceLocation(
+  location: string | null,
+  endpointUrl: string,
+  responseUrl?: string | null,
+): string | null {
+  if (!location) return location;
+  for (const base of [responseUrl, endpointUrl]) {
+    if (!base) continue;
+    try { return new URL(location, base).toString(); } catch { /* relative base — try next */ }
+  }
+  return location;
+}
+
 export async function whipPublish(opts: WhipPublishOptions): Promise<WhipPublishResult> {
   const base = opts.baseUrl ?? '';
   let url = `${base}/api/channels/${encodeURIComponent(opts.channelArn)}/whip`;
@@ -225,7 +245,7 @@ export async function whipPublish(opts: WhipPublishOptions): Promise<WhipPublish
   }
   return {
     answerSdp: await r.text(),
-    location: r.headers.get('Location'),
+    location: resolveResourceLocation(r.headers.get('Location'), url, r.url),
     sfuNode: r.headers.get('X-SFU-Node'),
   };
 }
@@ -320,7 +340,7 @@ export async function whepPublish(opts: WhepPublishOptions): Promise<WhepPublish
   }
   return {
     answerSdp: await r.text(),
-    location: r.headers.get('Location'),
+    location: resolveResourceLocation(r.headers.get('Location'), url, r.url),
     sfuNode: r.headers.get('X-SFU-Node'),
   };
 }
@@ -352,8 +372,20 @@ export interface IceServerConfig {
   credential?: string;
 }
 
-/** Fetch ICE-server config from the SFU. Falls back to public STUN if
- *  the endpoint isn't reachable (matches LVS demo behavior). */
+/** Fetch ICE-server config from the SFU. The SFU's answer is authoritative,
+ *  INCLUDING an empty list: `{ iceServers: [] }` means "host candidates are
+ *  enough" (the local stack answers exactly that). Public STUN is only the
+ *  fallback when the endpoint can't be reached or answers something that is
+ *  not a config.
+ *
+ *  Why an empty list must be honoured: every WHIP/WHEP offer waits for ICE
+ *  gathering to complete (no trickle), capped at 3 s. With STUN configured,
+ *  a browser with VPN / virtual interfaces often never reaches `complete`
+ *  (measured in headed Chrome: still `gathering` after 10 s, versus ~120 ms
+ *  with no servers), so replacing the SFU's `[]` with Google STUN put the
+ *  full 3 s cap on every publish and every subscribe — a second participant
+ *  showed up in a room call ~3 s after joining. lvs-react already honours
+ *  the empty list. */
 export async function fetchIceServers(baseUrl?: string, fetchImpl?: typeof fetch): Promise<IceServerConfig[]> {
   const base = baseUrl ?? '';
   const f = fetchImpl ?? fetch;
@@ -361,9 +393,7 @@ export async function fetchIceServers(baseUrl?: string, fetchImpl?: typeof fetch
     const r = await f(`${base}/api/ice-servers`);
     if (r.ok) {
       const json = (await r.json()) as { iceServers?: IceServerConfig[] };
-      if (Array.isArray(json.iceServers) && json.iceServers.length > 0) {
-        return json.iceServers;
-      }
+      if (Array.isArray(json.iceServers)) return json.iceServers;
     }
   } catch { /* fall through to public STUN */ }
   return [{ urls: 'stun:stun.l.google.com:19302' }];

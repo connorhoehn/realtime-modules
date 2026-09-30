@@ -57,6 +57,11 @@ export interface HangoutParticipant {
      *  own timer. Undefined for the local participant. Resolution: ~1s
      *  (don't use for sub-second decisions). */
     subscriberMs?: number;
+    /** Remotes only: the application user id the SFU stamped on this
+     *  participant's producers (the stage token's `sub`). Lets a consumer map
+     *  a media tile to a person without an app-level broadcast. Undefined
+     *  until the SFU sends one (older SFUs never do). */
+    appUserId?: string;
 }
 /** Convenience alias — every entry in `participants` where `isLocal=false`
  *  is structurally a `RemoteParticipant`. Same shape as `HangoutParticipant`;

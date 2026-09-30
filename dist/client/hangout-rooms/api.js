@@ -149,9 +149,11 @@ function unwrapRoom(data) {
 async function updateRoom(opts, slug, patch) {
     return request(opts, 'PATCH', `/api/rooms/${encodeURIComponent(slug)}`, patch);
 }
-/** Archive a room (soft-delete). `DELETE /api/rooms/:slug`. */
+/** Archive a room (soft-delete). `POST /api/rooms/:slug/archive` — the
+ *  route platform-api serves (owner or admin only). There is no
+ *  `DELETE /api/rooms/:slug`; the library used to send one and got a 404. */
 async function archiveRoom(opts, slug) {
-    await request(opts, 'DELETE', `/api/rooms/${encodeURIComponent(slug)}`);
+    await request(opts, 'POST', `/api/rooms/${encodeURIComponent(slug)}/archive`);
 }
 /**
  * Join a room — provisions an SFU session and returns the participant

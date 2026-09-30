@@ -114,6 +114,11 @@ export interface HangoutParticipant {
    *  own timer. Undefined for the local participant. Resolution: ~1s
    *  (don't use for sub-second decisions). */
   subscriberMs?: number;
+  /** Remotes only: the application user id the SFU stamped on this
+   *  participant's producers (the stage token's `sub`). Lets a consumer map
+   *  a media tile to a person without an app-level broadcast. Undefined
+   *  until the SFU sends one (older SFUs never do). */
+  appUserId?: string;
 }
 
 /** Convenience alias — every entry in `participants` where `isLocal=false`
@@ -409,6 +414,27 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // want a state update just to record it; the render-side `nowTick`
   // below drives recomputation of the derived `subscriberMs` field.
   const firstSeenAtRef = useRef<Map<string, number>>(new Map());
+  // Who each remote BASE pid is, as the SFU tells us on `producer.added`
+  // (live and replayed) and the `subscribed` snapshot: the stage token's
+  // displayName and `sub` claims. Before this, remote tiles were labelled
+  // with the raw SFU participant id — the SFU sent the name, the hook
+  // dropped it. State (not a ref) so a name arriving on a later producer
+  // re-renders the tile.
+  const [remoteIdentities, setRemoteIdentities] = useState<
+    Record<string, { displayName?: string; userId?: string }>
+  >({});
+  const noteRemoteIdentity = useCallback((rawPid: string, frame: { displayName?: unknown; userId?: unknown }) => {
+    const base = rawPid.endsWith(':screen') ? rawPid.slice(0, -':screen'.length) : rawPid;
+    const displayName = typeof frame.displayName === 'string' && frame.displayName.trim() ? frame.displayName.trim() : undefined;
+    const uid = typeof frame.userId === 'string' && frame.userId ? frame.userId : undefined;
+    if (!displayName && !uid) return;
+    setRemoteIdentities((prev) => {
+      const cur = prev[base];
+      const next = { ...cur, ...(displayName ? { displayName } : {}), ...(uid ? { userId: uid } : {}) };
+      if (cur && cur.displayName === next.displayName && cur.userId === next.userId) return prev;
+      return { ...prev, [base]: next };
+    });
+  }, []);
 
   // Live snapshot of producers the discovery WS has told us are alive on
   // the SFU. Keyed by fullPid → kind. Populated on `producer.added`,
@@ -1282,6 +1308,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
               if (ppid === participantId) continue;
               if (ppid === `${participantId}:screen`) continue;
               snapshotPids.add(ppid);
+              noteRemoteIdentity(ppid, p);
               const k: 'camera' | 'screen' =
                 ppid.endsWith(':screen') ? 'screen' : 'camera';
               knownProducersRef.current.set(ppid, k);
@@ -1362,6 +1389,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             ? msg.producerId
             : undefined;
           if (msg.type === 'producer.added') {
+            noteRemoteIdentity(pid, msg);
             // Persist in the discovery snapshot so the all-tracks-ended
             // auto-recovery path knows the producer is still live on the
             // SFU. Keyed by fullPid → kind (matches the openPcFor arg).
@@ -1952,10 +1980,13 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       // tiles on a missing-ref race).
       const firstSeenAt = firstSeenAtRef.current.get(pid) ?? nowTick;
       const subscriberMs = Math.max(0, nowTick - firstSeenAt);
+      // The SFU's name for this pid (from the stage token), else the pid.
+      const identity = remoteIdentities[pid];
       list.push({
         participantId: pid,
-        displayName: pid, // falls back to participantId — no name channel from SFU
+        displayName: identity?.displayName ?? pid,
         userId: pid,
+        ...(identity?.userId ? { appUserId: identity.userId } : {}),
         isLocal: false,
         streams: entry.streams,
         // Expose screenStream so consumers (HangoutOverlay spotlight)
@@ -1973,7 +2004,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // flag changes / screen-share toggles recompute. nowTick drives the
     // ghost-producer subscriberMs recomputation every 1s.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantId, userId, remoteParticipants, localStream, localScreenStream, localFlagsTick, nowTick]);
+  }, [participantId, userId, remoteParticipants, remoteIdentities, localStream, localScreenStream, localFlagsTick, nowTick]);
 
   // isJoined: publisher live is the primary signal — we've successfully
   // pushed bytes to the SFU. Parallel WHEPs may legitimately be absent
