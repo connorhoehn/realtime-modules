@@ -60,10 +60,14 @@ export type AdapterConfig = AdapterMap | PerFeatureAdapters;
 export interface FeaturePlugin {
     /** Optional name for logging / debugging. */
     name?: string;
-    /** Called when a client subscribes to a channel. */
+    /**
+     * Called when a client subscribes to a channel. `userId` is the
+     * connection's authenticated user (auth context), when it has one.
+     */
     onConnect?(ctx: {
         clientId: string;
         channelId: string;
+        userId?: string;
     }): void | Promise<void>;
     /**
      * Called when a client disconnects (unsubscribes from all channels).
@@ -76,12 +80,15 @@ export interface FeaturePlugin {
     /**
      * Called before a message is fanned out to a channel.
      * `clientId` is the sender; if the send originates from the server
-     * (no excludeClientId) it is set to `'server'`.
+     * (no excludeClientId) it is set to `'server'`. `userId` (0.99.0) is the
+     * sender connection's authenticated user from its auth context —
+     * `undefined` for a server send and an unauthenticated socket.
      */
     onMessage?(ctx: {
         clientId: string;
         channelId: string;
         message: unknown;
+        userId?: string;
     }): void | Promise<void>;
 }
 /**

@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.98.8",
+  "version": "0.99.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -54,6 +54,9 @@
       ],
       "server": [
         "dist/server/index.d.ts"
+      ],
+      "server/stores/dynamo": [
+        "dist/server/stores/dynamo/index.d.ts"
       ],
       "chat": [
         "dist/chat/index.d.ts"
@@ -168,6 +171,10 @@
       "types": "./dist/server/index.d.ts",
       "default": "./dist/server/index.js"
     },
+    "./server/stores/dynamo": {
+      "types": "./dist/server/stores/dynamo/index.d.ts",
+      "default": "./dist/server/stores/dynamo/index.js"
+    },
     "./chat": {
       "types": "./dist/chat/index.d.ts",
       "default": "./dist/chat/index.js"
@@ -256,6 +263,7 @@
     "yjs": "^13.0.0"
   },
   "peerDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
     "@connorhoehn/service-runtime": ">=0.2.0 <1",
     "@tiptap/extension-collaboration": "^3.0.0",
     "@tiptap/extension-placeholder": "^3.0.0",
@@ -270,6 +278,13 @@
     "y-protocols": "^1.0.0"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-dynamodb": {
+      "optional": true,
+      "_subpaths": [
+        "./server/stores/dynamo"
+      ],
+      "_note": "The DynamoDB chat stores import the low-level command classes from here; the consumer injects the client (a DynamoDBClient, or a DynamoDBDocumentClient from @aws-sdk/lib-dynamodb, which wraps one)."
+    },
     "@connorhoehn/service-runtime": {
       "optional": true,
       "_note": "Required only when using GatewayProxyClient with serviceAuthSecret. The client includes an inlined compatible implementation; install this package when you need server-side verify/require-service-auth utilities.",
@@ -351,6 +366,8 @@
     }
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1056.0",
+    "@aws-sdk/lib-dynamodb": "^3.1056.0",
     "@connorhoehn/event-catalog": "github:connorhoehnslalom/event-catalog#bdb8a609ea63fe3df1237bc0c8eb10630aedbfca",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",

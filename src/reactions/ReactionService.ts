@@ -361,8 +361,10 @@ export class ReactionService {
         });
 
         // Post-broadcast tap — fire-and-forget; a failing hook never blocks
-        // or fails the send path (ack is already on the wire above).
-        this._emitReaction(reaction);
+        // or fails the send path (ack is already on the wire above). The tap
+        // alone gets the sender's org: durable capture files by it, and
+        // subscribers have no business with it.
+        this._emitReaction(identity?.org ? { ...reaction, org: identity.org } : reaction);
 
         this.logger.info(`Client ${clientId} sent reaction ${emoji} in channel: ${channel}`);
     }
@@ -517,7 +519,7 @@ export class ReactionService {
      * resolver is logged and treated as "no identity" (mirrors
      * ChatService._resolveIdentity semantics).
      */
-    _resolveIdentity(clientId: string, frame?: unknown): { userId?: string; displayName?: string } | null {
+    _resolveIdentity(clientId: string, frame?: unknown): { userId?: string; displayName?: string; org?: string } | null {
         let base: { userId?: string; displayName?: string } | null = null;
         if (this.identityResolver) {
             try {
@@ -530,11 +532,12 @@ export class ReactionService {
         const auth = resolveAuthSender(this.messageRouter, clientId, frame, this.resolveSender, (err) =>
             this.logger.error(`resolveSender threw for client ${clientId}:`, err));
         if (!auth) return base;
+        const org = auth.org ? { org: auth.org } : {};
         if (this.resolveSender) {
-            return { userId: auth.userId, ...(auth.displayName ? { displayName: auth.displayName } : {}) };
+            return { userId: auth.userId, ...(auth.displayName ? { displayName: auth.displayName } : {}), ...org };
         }
         const displayName = base?.displayName ?? auth.displayName;
-        return { userId: base?.userId ?? auth.userId, ...(displayName !== undefined ? { displayName } : {}) };
+        return { userId: base?.userId ?? auth.userId, ...(displayName !== undefined ? { displayName } : {}), ...org };
     }
 
     /**

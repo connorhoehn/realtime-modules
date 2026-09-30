@@ -130,6 +130,11 @@ class LocalMessageRouter {
     _setHandle(handle) {
         this.handleRef = handle;
     }
+    /** The connection's authenticated userId, from its auth context. */
+    userIdOf(clientId) {
+        const uid = this.handleRef?.getClientContext?.(clientId)?.userId;
+        return typeof uid === 'string' && uid.length > 0 ? uid : undefined;
+    }
     sendToClient(clientId, message) {
         if (!this.handleRef)
             return; // pre-connection, no-op
@@ -141,9 +146,10 @@ class LocalMessageRouter {
     async sendToChannel(channel, message, excludeClientId) {
         // Fire onMessage for each plugin before fan-out.
         const senderId = excludeClientId ?? 'server';
+        const userId = excludeClientId ? this.userIdOf(excludeClientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onMessage) {
-                firePlugin(plugin.name, () => plugin.onMessage({ clientId: senderId, channelId: channel, message }));
+                firePlugin(plugin.name, () => plugin.onMessage({ clientId: senderId, channelId: channel, message, userId }));
             }
         }
         const members = this.channelMembers.get(channel);
@@ -171,9 +177,10 @@ class LocalMessageRouter {
         }
         channels.add(channel);
         // Fire onConnect for each plugin.
+        const userId = this.plugins.length > 0 ? this.userIdOf(clientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onConnect) {
-                firePlugin(plugin.name, () => plugin.onConnect({ clientId, channelId: channel }));
+                firePlugin(plugin.name, () => plugin.onConnect({ clientId, channelId: channel, userId }));
             }
         }
     }

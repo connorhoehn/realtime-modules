@@ -41,3 +41,32 @@ and the channel names it sees (`presence:<channel>`, `reactions:<channel>`,
 
 Authoring your own capability: `defineFeature({ manifest, create })` — it
 plugs in identically to the built-ins. See `src/server/attach.ts`.
+
+## Plugins — observe every publish
+
+`attachRealtime(server, { plugins })` takes lifecycle observers. They see
+traffic; they cannot change or stop it, and a plugin that throws never breaks
+a send.
+
+```ts
+attachRealtime(server, {
+    features: [chat(), presence(), reactions()],
+    plugins: [{
+        name: 'audit',
+        onConnect: ({ clientId, channelId, userId }) => { /* subscribed */ },
+        onDisconnect: ({ clientId, channels }) => { /* gone */ },
+        onMessage: ({ clientId, channelId, message, userId }) => {
+            // Before fan-out, for every feature's publish on `channelId`
+            // (chat's channel, `presence:<channel>`, `reactions:<channel>`, …).
+        },
+    }],
+});
+```
+
+`userId` (0.99.0) is the authenticated user behind the publishing
+connection — the `userId` your `auth` returned for it, the same context that
+names a chat message's sender. Read it rather than a `metadata.userId` in the
+payload, which is chat-shaped and absent from presence and reactions.
+`clientId` is `'server'` and `userId` is `undefined` for a server-originated
+publish (a system message); `userId` is also `undefined` for a connection
+with no authenticated user.

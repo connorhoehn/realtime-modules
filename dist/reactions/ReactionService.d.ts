@@ -93,6 +93,7 @@ export declare class ReactionService {
     _resolveIdentity(clientId: string, frame?: unknown): {
         userId?: string;
         displayName?: string;
+        org?: string;
     } | null;
     /**
      * Invoke the configured `onReaction` tap. Sync throws are caught and

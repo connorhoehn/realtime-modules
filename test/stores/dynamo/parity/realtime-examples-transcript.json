@@ -1,0 +1,2184 @@
+{
+ "_source": "realtime-examples 3c506c02 src/realtime-fanout/chat/adapters (DdbChatStore, DdbConversationsStore, DdbChatMembershipStore, DdbChatReadReceiptsStore, conversationIndexMembers) + the server.ts chat hooks, via parity/app-driver.js. Regenerate: node test/stores/dynamo/parity/app-driver.js ../realtime-examples > transcript, then wrap as { _source, transcript }.",
+ "transcript": [
+  {
+   "op": "messages.putMessage",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Item": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "msg-1"
+       },
+       "clientId": {
+        "S": "conn-1"
+       },
+       "message": {
+        "S": "hello"
+       },
+       "timestamp": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       "ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "messages.putMessage",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Item": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "msg-1"
+       },
+       "clientId": {
+        "S": "conn-1"
+       },
+       "message": {
+        "S": "hello"
+       },
+       "timestamp": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       "ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "messages.putMessage",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Item": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "msg-2"
+       },
+       "clientId": {
+        "S": "conn-1"
+       },
+       "message": {
+        "S": "hello"
+       },
+       "timestamp": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       "ttl": {
+        "N": "1798459200"
+       },
+       "metadata": {
+        "S": "{\"displayName\":\"Hank\",\"mentions\":[\"dev-eve\"]}"
+       },
+       "userId": {
+        "S": "dev-hank"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "messages.putMessage",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Item": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "msg-3"
+       },
+       "clientId": {
+        "S": "conn-1"
+       },
+       "message": {
+        "S": ""
+       },
+       "timestamp": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       "ttl": {
+        "N": "1798459200"
+       },
+       "metadata": {
+        "S": "{\"deleted\":true}"
+       },
+       "userId": {
+        "S": "dev-hank"
+       },
+       "editedAt": {
+        "S": "2026-09-29T12:00:01.000Z"
+       },
+       "deletedAt": {
+        "S": "2026-09-29T12:00:02.000Z"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "messages.putMessage",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Item": {
+       "channelId": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       },
+       "messageId": {
+        "S": "card-1"
+       },
+       "clientId": {
+        "S": "system"
+       },
+       "message": {
+        "S": "Dave created Plan"
+       },
+       "timestamp": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       "ttl": {
+        "N": "1798459200"
+       },
+       "metadata": {
+        "S": "{\"kind\":\"document\",\"documentId\":\"d1\",\"title\":\"Plan\",\"system\":true}"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "messages.listMessages",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "KeyConditionExpression": "channelId = :ch",
+      "ExpressionAttributeValues": {
+       ":ch": {
+        "S": "general"
+       }
+      },
+      "ScanIndexForward": false,
+      "Limit": 50
+     }
+    }
+   ],
+   "result": [
+    {
+     "id": "msg-1",
+     "clientId": "conn-1",
+     "channel": "general",
+     "message": "one",
+     "metadata": {},
+     "timestamp": "t1"
+    },
+    {
+     "id": "msg-2",
+     "clientId": "conn-2",
+     "userId": "dev-hank",
+     "channel": "general",
+     "message": "two",
+     "metadata": {
+      "a": 1
+     },
+     "timestamp": "t2",
+     "editedAt": "e2"
+    }
+   ]
+  },
+  {
+   "op": "messages.listMessages",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "KeyConditionExpression": "channelId = :ch",
+      "ExpressionAttributeValues": {
+       ":ch": {
+        "S": "empty"
+       }
+      },
+      "ScanIndexForward": false,
+      "Limit": 10
+     }
+    }
+   ],
+   "result": []
+  },
+  {
+   "op": "messages.updateMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Key": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "msg-1"
+       }
+      },
+      "UpdateExpression": "SET #message = :message, #editedAt = :editedAt",
+      "ExpressionAttributeNames": {
+       "#message": "message",
+       "#editedAt": "editedAt"
+      },
+      "ExpressionAttributeValues": {
+       ":message": {
+        "S": "edited"
+       },
+       ":editedAt": {
+        "S": "e1"
+       }
+      },
+      "ConditionExpression": "attribute_exists(messageId)",
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "id": "msg-1",
+    "clientId": "conn-1",
+    "userId": "dev-hank",
+    "channel": "general",
+    "message": "edited",
+    "metadata": {},
+    "timestamp": "t1",
+    "editedAt": "e1"
+   }
+  },
+  {
+   "op": "messages.updateMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Key": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "msg-1"
+       }
+      },
+      "UpdateExpression": "SET #message = :message, #metadata = :metadata, #deletedAt = :deletedAt",
+      "ExpressionAttributeNames": {
+       "#message": "message",
+       "#metadata": "metadata",
+       "#deletedAt": "deletedAt"
+      },
+      "ExpressionAttributeValues": {
+       ":message": {
+        "S": ""
+       },
+       ":metadata": {
+        "S": "{\"deleted\":true}"
+       },
+       ":deletedAt": {
+        "S": "d1"
+       }
+      },
+      "ConditionExpression": "attribute_exists(messageId)",
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "id": "msg-1",
+    "clientId": "conn-1",
+    "channel": "general",
+    "message": "",
+    "metadata": {
+     "deleted": true
+    },
+    "timestamp": "t1",
+    "deletedAt": "d1"
+   }
+  },
+  {
+   "op": "messages.updateMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Key": {
+       "channelId": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       },
+       "messageId": {
+        "S": "card-1"
+       }
+      },
+      "UpdateExpression": "SET #message = :message, #metadata = :metadata",
+      "ExpressionAttributeNames": {
+       "#message": "message",
+       "#metadata": "metadata"
+      },
+      "ExpressionAttributeValues": {
+       ":message": {
+        "S": "Call ended"
+       },
+       ":metadata": {
+        "S": "{\"kind\":\"call\",\"live\":false,\"system\":true}"
+       }
+      },
+      "ConditionExpression": "attribute_exists(messageId)",
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "id": "card-1",
+    "clientId": "",
+    "channel": "chat:dm:dev-dave:dev-eve",
+    "message": "Call ended",
+    "metadata": {},
+    "timestamp": ""
+   }
+  },
+  {
+   "op": "messages.updateMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-messages",
+      "Key": {
+       "channelId": {
+        "S": "general"
+       },
+       "messageId": {
+        "S": "nope"
+       }
+      },
+      "UpdateExpression": "SET #message = :message",
+      "ExpressionAttributeNames": {
+       "#message": "message"
+      },
+      "ExpressionAttributeValues": {
+       ":message": {
+        "S": "x"
+       }
+      },
+      "ConditionExpression": "attribute_exists(messageId)",
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": null
+  },
+  {
+   "op": "messages.updateMessage",
+   "sent": [],
+   "result": null
+  },
+  {
+   "op": "conversations.recordMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-dave"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "conversations.recordMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-carol"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-carol\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "conversations.recordMessage",
+   "sent": [],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "conversations.recordMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "a"
+       },
+       "channel": {
+        "S": "g"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"a\",\"b\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "a"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "b"
+       },
+       "channel": {
+        "S": "g"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"a\",\"b\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "a"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "conversations.recordJoin",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), joinedAt = if_not_exists(joinedAt, :now), #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":now": {
+        "S": "2026-09-29T12:00:00.000Z"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "conversations.recordJoin",
+   "sent": [],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "conversations.setPinned",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl, pinned = :pinned",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":pinned": {
+        "BOOL": true
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [
+     "dev-eve"
+    ],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": true,
+    "mutedUntil": null,
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.setMuted",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl, mutedUntil = :mutedUntil",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":mutedUntil": {
+        "S": "2126-01-01T00:00:00.000Z"
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": false,
+    "mutedUntil": "2126-01-01T00:00:00.000Z",
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.setMuted",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl REMOVE mutedUntil",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": false,
+    "mutedUntil": null,
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.setUnreadFrom",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl, unreadFrom = :unreadFrom",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":unreadFrom": {
+        "S": "t1"
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": false,
+    "mutedUntil": null,
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.setUnreadFrom",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl REMOVE unreadFrom",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": false,
+    "mutedUntil": null,
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.setSection",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl, #section = :section",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl",
+       "#section": "section"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":section": {
+        "S": "Work — Q3"
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": false,
+    "mutedUntil": null,
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.setSection",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), #ttl = :ttl REMOVE #section",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl",
+       "#section": "section"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      },
+      "ReturnValues": "ALL_NEW"
+     }
+    }
+   ],
+   "result": {
+    "userId": "dev-eve",
+    "channel": "room:design",
+    "peers": [],
+    "lastMessageAt": "",
+    "lastMessagePreview": "",
+    "lastMessageUserId": null,
+    "pinned": false,
+    "mutedUntil": null,
+    "unreadFrom": null,
+    "section": null
+   }
+  },
+  {
+   "op": "conversations.mutedMembers",
+   "sent": [
+    {
+     "name": "BatchGetItemCommand",
+     "input": {
+      "RequestItems": {
+       "chat-conversations": {
+        "Keys": [
+         {
+          "userId": {
+           "S": "a"
+          },
+          "channel": {
+           "S": "room:design"
+          }
+         },
+         {
+          "userId": {
+           "S": "b"
+          },
+          "channel": {
+           "S": "room:design"
+          }
+         },
+         {
+          "userId": {
+           "S": "c"
+          },
+          "channel": {
+           "S": "room:design"
+          }
+         }
+        ],
+        "ProjectionExpression": "userId, mutedUntil"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "set": [
+     "a"
+    ]
+   }
+  },
+  {
+   "op": "conversations.mutedMembers",
+   "sent": [
+    {
+     "name": "BatchGetItemCommand",
+     "input": {
+      "RequestItems": {
+       "chat-conversations": {
+        "Keys": [
+         {
+          "userId": {
+           "S": "a"
+          },
+          "channel": {
+           "S": "room:design"
+          }
+         }
+        ],
+        "ProjectionExpression": "userId, mutedUntil"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "set": []
+   }
+  },
+  {
+   "op": "conversations.listUsersForChannel",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "IndexName": "channel-index",
+      "KeyConditionExpression": "channel = :c",
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "room:design"
+       }
+      },
+      "ProjectionExpression": "userId",
+      "Limit": 500
+     }
+    },
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "IndexName": "channel-index",
+      "KeyConditionExpression": "channel = :c",
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "room:design"
+       }
+      },
+      "ProjectionExpression": "userId",
+      "Limit": 500,
+      "ExclusiveStartKey": {
+       "userId": {
+        "S": "a"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      }
+     }
+    }
+   ],
+   "result": [
+    "a",
+    "b"
+   ]
+  },
+  {
+   "op": "conversations.listUsersForChannel",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "IndexName": "channel-index",
+      "KeyConditionExpression": "channel = :c",
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "room:design"
+       }
+      },
+      "ProjectionExpression": "userId",
+      "Limit": 500
+     }
+    }
+   ],
+   "result": []
+  },
+  {
+   "op": "conversations.listForUser",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "KeyConditionExpression": "userId = :u",
+      "ExpressionAttributeValues": {
+       ":u": {
+        "S": "dev-eve"
+       }
+      },
+      "Limit": 200
+     }
+    }
+   ],
+   "result": [
+    {
+     "userId": "dev-eve",
+     "channel": "new",
+     "peers": [
+      "dev-eve",
+      "dev-dave"
+     ],
+     "lastMessageAt": "2026-09-01",
+     "lastMessagePreview": "",
+     "lastMessageUserId": "dev-dave",
+     "pinned": false,
+     "mutedUntil": null,
+     "unreadFrom": "u",
+     "section": "Work"
+    },
+    {
+     "userId": "dev-eve",
+     "channel": "old",
+     "peers": [
+      "dev-eve"
+     ],
+     "lastMessageAt": "2026-01-01",
+     "lastMessagePreview": "o",
+     "lastMessageUserId": null,
+     "pinned": false,
+     "mutedUntil": null,
+     "unreadFrom": null,
+     "section": null
+    }
+   ]
+  },
+  {
+   "op": "members.putMember",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-members",
+      "Item": {
+       "channel": {
+        "S": "room:x"
+       },
+       "userId": {
+        "S": "a"
+       },
+       "role": {
+        "S": "owner"
+       },
+       "addedBy": {
+        "S": "a"
+       },
+       "addedAt": {
+        "S": "t"
+       },
+       "historyFrom": {
+        "S": "h"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "members.putMember",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-members",
+      "Item": {
+       "channel": {
+        "S": "room:x"
+       },
+       "userId": {
+        "S": "b"
+       },
+       "role": {
+        "S": "member"
+       },
+       "addedBy": {
+        "S": "a"
+       },
+       "addedAt": {
+        "S": "t"
+       },
+       "removedAt": {
+        "S": "r"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "members.getMember",
+   "sent": [
+    {
+     "name": "GetItemCommand",
+     "input": {
+      "TableName": "chat-members",
+      "Key": {
+       "channel": {
+        "S": "room:x"
+       },
+       "userId": {
+        "S": "a"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "channel": "room:x",
+    "userId": "a",
+    "role": "owner",
+    "addedBy": "a",
+    "addedAt": "t",
+    "historyFrom": null,
+    "removedAt": null
+   }
+  },
+  {
+   "op": "members.getMember",
+   "sent": [
+    {
+     "name": "GetItemCommand",
+     "input": {
+      "TableName": "chat-members",
+      "Key": {
+       "channel": {
+        "S": "room:x"
+       },
+       "userId": {
+        "S": "z"
+       }
+      }
+     }
+    }
+   ],
+   "result": null
+  },
+  {
+   "op": "members.listMembers",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-members",
+      "KeyConditionExpression": "#c = :c",
+      "ExpressionAttributeNames": {
+       "#c": "channel"
+      },
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "room:x"
+       }
+      }
+     }
+    },
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-members",
+      "KeyConditionExpression": "#c = :c",
+      "ExpressionAttributeNames": {
+       "#c": "channel"
+      },
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "room:x"
+       }
+      },
+      "ExclusiveStartKey": {
+       "channel": {
+        "S": "room:x"
+       },
+       "userId": {
+        "S": "a"
+       }
+      }
+     }
+    }
+   ],
+   "result": [
+    {
+     "channel": "room:x",
+     "userId": "a",
+     "role": "member",
+     "addedBy": "",
+     "addedAt": "",
+     "historyFrom": null,
+     "removedAt": null
+    },
+    {
+     "channel": "room:x",
+     "userId": "b",
+     "role": "member",
+     "addedBy": "",
+     "addedAt": "",
+     "historyFrom": null,
+     "removedAt": "r"
+    }
+   ]
+  },
+  {
+   "op": "reads.advance",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-reads",
+      "Item": {
+       "channel": {
+        "S": "g"
+       },
+       "userId": {
+        "S": "a"
+       },
+       "readAt": {
+        "S": "t2"
+       },
+       "updatedAt": {
+        "S": "u2"
+       },
+       "ttl": {
+        "N": "1798459200"
+       },
+       "displayName": {
+        "S": "Ada"
+       }
+      },
+      "ConditionExpression": "attribute_not_exists(readAt) OR readAt < :readAt",
+      "ExpressionAttributeValues": {
+       ":readAt": {
+        "S": "t2"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "channel": "g",
+    "userId": "a",
+    "readAt": "t2",
+    "updatedAt": "u2",
+    "displayName": "Ada"
+   }
+  },
+  {
+   "op": "reads.advance",
+   "sent": [
+    {
+     "name": "PutItemCommand",
+     "input": {
+      "TableName": "chat-reads",
+      "Item": {
+       "channel": {
+        "S": "g"
+       },
+       "userId": {
+        "S": "a"
+       },
+       "readAt": {
+        "S": "t1"
+       },
+       "updatedAt": {
+        "S": "u1"
+       },
+       "ttl": {
+        "N": "1798459200"
+       }
+      },
+      "ConditionExpression": "attribute_not_exists(readAt) OR readAt < :readAt",
+      "ExpressionAttributeValues": {
+       ":readAt": {
+        "S": "t1"
+       }
+      }
+     }
+    }
+   ],
+   "result": null
+  },
+  {
+   "op": "reads.listReceipts",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-reads",
+      "KeyConditionExpression": "#c = :c",
+      "ExpressionAttributeNames": {
+       "#c": "channel"
+      },
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "g"
+       }
+      }
+     }
+    }
+   ],
+   "result": [
+    {
+     "channel": "g",
+     "userId": "a",
+     "readAt": "t2",
+     "updatedAt": "t2"
+    },
+    {
+     "channel": "g",
+     "userId": "b",
+     "readAt": "t1",
+     "updatedAt": "u",
+     "displayName": "Bo"
+    }
+   ]
+  },
+  {
+   "op": "reads.deleteReceipt",
+   "sent": [
+    {
+     "name": "DeleteItemCommand",
+     "input": {
+      "TableName": "chat-reads",
+      "Key": {
+       "channel": {
+        "S": "g"
+       },
+       "userId": {
+        "S": "a"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "reads.deleteReceipt",
+   "sent": [
+    {
+     "name": "DeleteItemCommand",
+     "input": {
+      "TableName": "chat-reads",
+      "Key": {
+       "channel": {
+        "S": "g"
+       },
+       "userId": {
+        "S": "b"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onDmMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-dave"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onChannelMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-carol"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-carol\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-carol"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-carol\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "hello"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-carol"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onChannelMessage",
+   "sent": [],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onMessageChanged",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-dave"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "edited"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "edited"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onMessageChanged",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-dave"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "Message deleted"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "Message deleted"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-dave"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onMessageChanged",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-dave"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "Call ended"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "Call ended"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onMessageChanged",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-carol"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-carol\",\"dev-eve\",\"dev-zed\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "edited"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-carol"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-carol\",\"dev-eve\",\"dev-zed\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "edited"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-carol"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-zed"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl, lastMessageUserId = :sender",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-carol\",\"dev-eve\",\"dev-zed\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "edited"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       },
+       ":sender": {
+        "S": "dev-carol"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onMessageChanged",
+   "sent": [],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.onChannelJoin",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "room:design"
+       }
+      },
+      "UpdateExpression": "SET peers = if_not_exists(peers, :peers), joinedAt = if_not_exists(joinedAt, :now), #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-eve\"]"
+       },
+       ":now": {
+        "S": "2026-09-29T12:00:00.000Z"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.channelAudience",
+   "sent": [
+    {
+     "name": "QueryCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "IndexName": "channel-index",
+      "KeyConditionExpression": "channel = :c",
+      "ExpressionAttributeValues": {
+       ":c": {
+        "S": "room:design"
+       }
+      },
+      "ProjectionExpression": "userId",
+      "Limit": 500
+     }
+    }
+   ],
+   "result": [
+    "a"
+   ]
+  },
+  {
+   "op": "hooks.indexSystemMessage",
+   "sent": [
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-dave"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "Dave created Plan"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    },
+    {
+     "name": "UpdateItemCommand",
+     "input": {
+      "TableName": "chat-conversations",
+      "Key": {
+       "userId": {
+        "S": "dev-eve"
+       },
+       "channel": {
+        "S": "chat:dm:dev-dave:dev-eve"
+       }
+      },
+      "UpdateExpression": "SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl",
+      "ExpressionAttributeNames": {
+       "#ttl": "ttl"
+      },
+      "ExpressionAttributeValues": {
+       ":peers": {
+        "S": "[\"dev-dave\",\"dev-eve\"]"
+       },
+       ":at": {
+        "S": "2026-09-29T11:59:00.000Z"
+       },
+       ":preview": {
+        "S": "Dave created Plan"
+       },
+       ":ttl": {
+        "N": "1798459200"
+       }
+      }
+     }
+    }
+   ],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.indexSystemMessage",
+   "sent": [],
+   "result": {
+    "undefined": true
+   }
+  },
+  {
+   "op": "hooks.indexSystemMessage",
+   "sent": [],
+   "result": {
+    "undefined": true
+   }
+  }
+ ]
+}

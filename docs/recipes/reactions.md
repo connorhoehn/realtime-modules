@@ -68,8 +68,16 @@ if a composite is missing, add it to ui-components first.
 Zero-config uses in-memory state (single process, non-durable). To graduate:
 
 ```ts
-// ephemeral counters — persist externally via a FeaturePlugin onMessage observer if you need durability
+// ephemeral counters — persist externally if you need durability:
+reactions({
+    // After the broadcast, fire-and-forget. `reaction.org` (0.99.0) is the
+    // sender's auth-context org, on this copy only — never broadcast.
+    onReaction: (reaction) => record(reaction),
+})
 ```
+
+or observe every publish with a plugin (`onMessage` gets the sender's
+`userId` since 0.99.0 — see [plugins](./README.md#plugins--observe-every-publish)).
 
 Multi-node? Swap the transport, not the features: pass a Redis-backed
 `RealtimeRouter` via `attachRealtime(server, { router })` — the

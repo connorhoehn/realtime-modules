@@ -40,6 +40,15 @@ export interface Reaction {
      * The service never interprets it — clients filter on it.
      */
     targetId?: unknown;
+    /**
+     * The sender's organisation from the connection's auth context (`org`,
+     * or what `resolveSender` returned) — 0.99.0. Set ONLY on the reaction
+     * handed to `onReaction`, so a durable capture (the gateway's
+     * `call:reaction.recorded`) can file it under the sender's org; it is
+     * never broadcast to subscribers. Absent for an unauthenticated sender
+     * or a context without an org.
+     */
+    org?: string;
 }
 
 /**
@@ -144,6 +153,8 @@ export interface ReactionConfig {
      * are .catch-ed and logged — a failing hook can never block or fail the
      * send path (the success ack is already on the wire). Consumers use it
      * for durable capture (e.g. gateway publishing call:reaction.recorded).
+     * The reaction it receives carries `org` (the sender's auth-context org)
+     * when known — the broadcast copy does not.
      */
     onReaction?: (reaction: Reaction) => void | Promise<void>;
     /**

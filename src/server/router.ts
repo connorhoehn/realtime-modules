@@ -92,12 +92,22 @@ export type ChannelAuthorize = (args: {
     ctx: WsAuthContext | null;
 }) => boolean;
 
-/** Lifecycle plugin hooks (carried over from the v0.6 factory, unchanged). */
+/**
+ * Lifecycle plugin hooks (carried over from the v0.6 factory).
+ *
+ * `userId` (0.99.0) is the AUTHENTICATED user behind `clientId` — the
+ * `userId` of the connection's auth context, the same context 0.98.5's
+ * sender stamping reads — so a plugin never has to trust a chat-shaped
+ * `metadata.userId` in the payload, and presence / reaction publishes carry
+ * their sender too. `undefined` for a server-originated publish (a system
+ * message, an offline sweep with no publisher) and for an unauthenticated
+ * socket.
+ */
 export interface FeaturePlugin {
     name: string;
-    onConnect?: (info: { clientId: string; channelId: string }) => void | Promise<void>;
+    onConnect?: (info: { clientId: string; channelId: string; userId?: string }) => void | Promise<void>;
     onDisconnect?: (info: { clientId: string; channels: string[] }) => void | Promise<void>;
-    onMessage?: (info: { clientId: string; channelId: string; message: unknown }) => void | Promise<void>;
+    onMessage?: (info: { clientId: string; channelId: string; message: unknown; userId?: string }) => void | Promise<void>;
 }
 
 /**
@@ -281,12 +291,16 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             return;
         }
 
-        const senderId = publisher ?? excludeClientId ?? 'server';
-        for (const plugin of this.plugins) {
-            if (plugin.onMessage) {
-                firePlugin(plugin.name, () =>
-                    plugin.onMessage!({ clientId: senderId, channelId: channel, message }),
-                );
+        const senderClientId = publisher ?? excludeClientId ?? null;
+        const senderId = senderClientId ?? 'server';
+        if (this.plugins.length > 0) {
+            const userId = senderClientId ? this.getUserIdForClient(senderClientId) : undefined;
+            for (const plugin of this.plugins) {
+                if (plugin.onMessage) {
+                    firePlugin(plugin.name, () =>
+                        plugin.onMessage!({ clientId: senderId, channelId: channel, message, userId }),
+                    );
+                }
             }
         }
 
@@ -350,9 +364,10 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         }
         channels.add(channel);
 
+        const userId = this.plugins.length > 0 ? this.getUserIdForClient(clientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onConnect) {
-                firePlugin(plugin.name, () => plugin.onConnect!({ clientId, channelId: channel }));
+                firePlugin(plugin.name, () => plugin.onConnect!({ clientId, channelId: channel, userId }));
             }
         }
         return true;

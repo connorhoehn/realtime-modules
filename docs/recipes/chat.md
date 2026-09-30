@@ -107,8 +107,75 @@ if a composite is missing, add it to ui-components first.
 Zero-config uses in-memory state (single process, non-durable). To graduate:
 
 ```ts
-chat({ chatStore: myChatStore })  // implement ChatStore — the gateway's DdbChatStore is the reference
+chat({ chatStore: myChatStore })  // any ChatStore
 ```
+
+### DynamoDB: `DynamoChatStore`
+
+The library ships a durable store over DynamoDB — the tables, keys, item
+shapes and TTLs realtime-examples' gateway already writes, extracted from its
+repositories, so both can share one implementation and that app could switch
+with no data migration (`test/stores/dynamo/app-parity.test.ts` runs the same
+operations against both and requires identical DynamoDB commands).
+
+```ts
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { attachRealtime, chat } from '@connorhoehn/realtime-modules/server';
+import { DynamoChatStore } from '@connorhoehn/realtime-modules/server/stores/dynamo';
+
+const store = new DynamoChatStore({
+    client: new DynamoDBClient({}),  // or a DynamoDBDocumentClient — either works
+    tables: { messages: 'chat-messages' },  // optional; every name has a default
+    tablePrefix: process.env.DDB_TABLE_PREFIX,  // optional; prefixes every name
+});
+
+// Messages only:
+attachRealtime(httpServer, { features: [chat({ chatStore: store })] });
+
+// Messages + membership + read receipts + the conversations index a rail reads:
+attachRealtime(httpServer, { features: [chat(store.chatOptions())] });
+```
+
+`@aws-sdk/client-dynamodb` (v3) is an optional peer — install it yourself;
+the store only calls `client.send`. The tables it expects (create them in
+your IaC; nothing here creates tables):
+
+| Option (default) | Keys | Attributes | TTL |
+|---|---|---|---|
+| `tables.messages` (`chat-messages`) | PK `channelId`, SK `messageId` | `clientId`, `message`, `timestamp`, `metadata` (JSON string, omitted when empty), `userId`, `editedAt`, `deletedAt` | `ttl`, +90 days |
+| `tables.conversations` (`chat-conversations`) | PK `userId`, SK `channel`; GSI `channel-index` (PK `channel`, projection ALL) | `peers` (JSON array), `lastMessageAt`, `lastMessagePreview` (140 chars), `lastMessageUserId`, `joinedAt`, per-person `pinned` / `mutedUntil` / `unreadFrom` / `section` | `ttl`, +90 days, rolling |
+| `tables.members` (`chat-members`) | PK `channel`, SK `userId` | `role`, `addedBy`, `addedAt`, `historyFrom`, `removedAt` | none |
+| `tables.reads` (`chat-reads`) | PK `channel`, SK `userId` | `readAt`, `updatedAt`, `displayName` | `ttl`, +90 days |
+
+Enable DynamoDB TTL on the `ttl` attribute for the three tables that have
+one. Other options: `ttlSeconds` (default 90 days), `channelIndexName`
+(default `channel-index`), `logger` (index-write failures are logged, never
+thrown).
+
+`chatOptions()` returns `chatStore`, `membershipStore` (`store.members`),
+`readReceiptStore` (`store.reads`) and the ChatService hooks that keep the
+conversations index current: a DM send indexes both members; a channel send
+indexes the sender and the recipients; an edit, a delete (previewed as
+"Message deleted") or a server card patched in place with
+`updateSystemMessage` moves the row's preview — a DM always re-indexes both
+members with the pair as `peers`, never just the sender; a join seeds the
+joiner's row; and `channelAudience` reads the GSI. Pass your own hooks to run
+beside them — notifications, say:
+
+```ts
+chat(store.chatOptions({
+    onDmMessage: (info) => notifyOthers(info),
+    onChannelMessage: (info) => notifyOthers(info),
+}))
+```
+
+Two things it cannot see: a card posted with `postSystemMessage` (a
+document created in a DM, a call card) fires no hook, so index it yourself —
+`await store.conversations.recordSystemMessage(channel, posted)` — and the
+rail's reads and per-person state are yours to expose over HTTP:
+`store.conversations.listForUser(userId)`, `setPinned` / `setMuted` /
+`setUnreadFrom` / `setSection`, and `mutedMembers(channel, userIds)` for a
+notification fan-out that respects mutes.
 
 (`store` is the old spelling of that option and still works, but `chatStore`
 is the one to write.)

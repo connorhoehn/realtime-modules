@@ -70,12 +70,23 @@ export type ChannelAuthorize = (args: {
     channel: string;
     ctx: WsAuthContext | null;
 }) => boolean;
-/** Lifecycle plugin hooks (carried over from the v0.6 factory, unchanged). */
+/**
+ * Lifecycle plugin hooks (carried over from the v0.6 factory).
+ *
+ * `userId` (0.99.0) is the AUTHENTICATED user behind `clientId` — the
+ * `userId` of the connection's auth context, the same context 0.98.5's
+ * sender stamping reads — so a plugin never has to trust a chat-shaped
+ * `metadata.userId` in the payload, and presence / reaction publishes carry
+ * their sender too. `undefined` for a server-originated publish (a system
+ * message, an offline sweep with no publisher) and for an unauthenticated
+ * socket.
+ */
 export interface FeaturePlugin {
     name: string;
     onConnect?: (info: {
         clientId: string;
         channelId: string;
+        userId?: string;
     }) => void | Promise<void>;
     onDisconnect?: (info: {
         clientId: string;
@@ -85,6 +96,7 @@ export interface FeaturePlugin {
         clientId: string;
         channelId: string;
         message: unknown;
+        userId?: string;
     }) => void | Promise<void>;
 }
 /**

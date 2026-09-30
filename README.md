@@ -211,6 +211,7 @@ is the same as an unpublished one.
 |---|---|---|
 | `./server-ws` | Generic WS handler factory (`createWsHandler`) | Service-side WS routing / test fixtures |
 | `./server` | CRDT/document stack — `CRDTService`, snapshots, awareness, `attachRealtime` | Hosting collaborative documents |
+| `./server/stores/dynamo` | `DynamoChatStore` — durable chat over DynamoDB (messages, conversations index, membership, read receipts); optional peer `@aws-sdk/client-dynamodb` | Production chat: `chat({ chatStore })` or `chat(store.chatOptions())` |
 | `./agent-streaming` | AG-UI v0.1.x SSE emitter (`agentStreamMiddleware`) | Backends streaming AI responses |
 | `./proxy-client` | `GatewayProxyClient` — typed REST shim with optional HMAC signing | Server-to-server / Lambda |
 | `./work-graph` | Dependency-free work-event, sharing, viewer, cursor, reference, and collaboration contracts | Producers, API hosts, gateways, and clients composing the Active now work graph |

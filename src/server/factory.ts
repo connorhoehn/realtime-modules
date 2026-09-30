@@ -144,8 +144,11 @@ export interface FeaturePlugin {
     /** Optional name for logging / debugging. */
     name?: string;
 
-    /** Called when a client subscribes to a channel. */
-    onConnect?(ctx: { clientId: string; channelId: string }): void | Promise<void>;
+    /**
+     * Called when a client subscribes to a channel. `userId` is the
+     * connection's authenticated user (auth context), when it has one.
+     */
+    onConnect?(ctx: { clientId: string; channelId: string; userId?: string }): void | Promise<void>;
 
     /**
      * Called when a client disconnects (unsubscribes from all channels).
@@ -156,9 +159,11 @@ export interface FeaturePlugin {
     /**
      * Called before a message is fanned out to a channel.
      * `clientId` is the sender; if the send originates from the server
-     * (no excludeClientId) it is set to `'server'`.
+     * (no excludeClientId) it is set to `'server'`. `userId` (0.99.0) is the
+     * sender connection's authenticated user from its auth context —
+     * `undefined` for a server send and an unauthenticated socket.
      */
-    onMessage?(ctx: { clientId: string; channelId: string; message: unknown }): void | Promise<void>;
+    onMessage?(ctx: { clientId: string; channelId: string; message: unknown; userId?: string }): void | Promise<void>;
 }
 
 // ---- inMemoryAdapters ---------------------------------------------------------
@@ -227,6 +232,12 @@ class LocalMessageRouter {
         this.handleRef = handle;
     }
 
+    /** The connection's authenticated userId, from its auth context. */
+    private userIdOf(clientId: string): string | undefined {
+        const uid = this.handleRef?.getClientContext?.(clientId)?.userId;
+        return typeof uid === 'string' && uid.length > 0 ? uid : undefined;
+    }
+
     sendToClient(clientId: string, message: unknown): void {
         if (!this.handleRef) return; // pre-connection, no-op
         this.handleRef.sendToClient(clientId, message as Record<string, unknown>);
@@ -243,10 +254,11 @@ class LocalMessageRouter {
     ): Promise<void> {
         // Fire onMessage for each plugin before fan-out.
         const senderId = excludeClientId ?? 'server';
+        const userId = excludeClientId ? this.userIdOf(excludeClientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onMessage) {
                 firePlugin(plugin.name, () =>
-                    plugin.onMessage!({ clientId: senderId, channelId: channel, message }),
+                    plugin.onMessage!({ clientId: senderId, channelId: channel, message, userId }),
                 );
             }
         }
@@ -278,10 +290,11 @@ class LocalMessageRouter {
         channels.add(channel);
 
         // Fire onConnect for each plugin.
+        const userId = this.plugins.length > 0 ? this.userIdOf(clientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onConnect) {
                 firePlugin(plugin.name, () =>
-                    plugin.onConnect!({ clientId, channelId: channel }),
+                    plugin.onConnect!({ clientId, channelId: channel, userId }),
                 );
             }
         }

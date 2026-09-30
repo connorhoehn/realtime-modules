@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.99.0 — 2026-09-29
+
+- **New export `@connorhoehn/realtime-modules/server/stores/dynamo` —
+  `DynamoChatStore`, durable chat over DynamoDB.** A faithful extraction of
+  realtime-examples' chat persistence (`DdbChatStore`,
+  `DdbConversationsStore`, `DdbChatMembershipStore`,
+  `DdbChatReadReceiptsStore` and the conversations-index maintenance its
+  `server.ts` wires on ChatService), so that gateway and aws-agentcore's
+  middleware share one implementation. Same tables (`chat-messages`,
+  `chat-conversations` + GSI `channel-index`, `chat-members`, `chat-reads`;
+  names configurable, `tablePrefix` like `DDB_TABLE_PREFIX`), same keys, same
+  item shapes, same 90-day `ttl` — realtime-examples can switch with no data
+  migration. `new DynamoChatStore({ client, tables?, tablePrefix?,
+  channelIndexName?, ttlSeconds?, logger? })` is a `ChatStore`
+  (`chat({ chatStore: store })`); `store.chatOptions(extra?)` adds
+  `membershipStore` / `readReceiptStore` and the hooks that keep the
+  conversations index current — a DM edit, delete or a card patched with
+  `updateSystemMessage` re-indexes BOTH members with the pair as `peers` (the
+  0.98.x rule), a delete previews "Message deleted", joins seed the audience,
+  `channelAudience` reads the GSI. `store.conversations` also has
+  `recordSystemMessage` (for `postSystemMessage` cards, which fire no hook),
+  `listForUser`, the per-person `setPinned` / `setMuted` / `setUnreadFrom` /
+  `setSection`, and `mutedMembers`. The AWS SDK v3 is an optional peer
+  (`@aws-sdk/client-dynamodb`); the consumer injects a `DynamoDBClient` or a
+  `DynamoDBDocumentClient`. Documented in `docs/recipes/chat.md`, with
+  `typesVersions` for node10 resolution.
+- **`FeaturePlugin.onMessage` and `onConnect` carry `userId`** — the
+  authenticated user behind the publishing (or subscribing) connection, from
+  its auth context, on `attachRealtime`'s router and `createRealtimeServer`'s.
+  Plugins no longer read a chat-shaped `metadata.userId`, and presence and
+  reaction publishes name their sender too. `undefined` for a
+  server-originated publish (`clientId: 'server'`) and for a connection
+  without an authenticated user. Documented under Plugins in
+  `docs/recipes/README.md`.
+- **`reactions({ onReaction })` receives the sender's `org`** from the auth
+  context (or `resolveSender`), so a durable capture can file a call reaction
+  under the sender's org rather than the reader's. Only the tap's copy
+  carries it; the broadcast reaction does not. (realtime-examples'
+  `call:reaction.recorded` payload is built in its own `server.ts` and has to
+  forward `reaction.org` to use it.)
+- Tests: `test/stores/dynamo/` — the stores against a DynamoDB double
+  (commands, TTL, round trips, index maintenance on a real ChatService), a
+  parity test that runs one scenario against realtime-examples' repositories
+  (a committed transcript, plus live when the sibling checkout exists) and
+  requires identical commands and results, and an integration test against
+  DynamoDB Local (`localhost:18000`, skipped when down; throwaway tables,
+  both client kinds); `test/server/plugin-sender.test.ts`.
+
 ## 0.98.8 — 2026-09-29
 
 - **`useDocumentCall` with no document makes no document reads.** A host

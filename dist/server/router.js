@@ -118,10 +118,14 @@ class LocalRealtimeRouter {
             this.logger.info(`[realtime] publish to ${channel} denied for ${publisher}`);
             return;
         }
-        const senderId = publisher ?? excludeClientId ?? 'server';
-        for (const plugin of this.plugins) {
-            if (plugin.onMessage) {
-                firePlugin(plugin.name, () => plugin.onMessage({ clientId: senderId, channelId: channel, message }));
+        const senderClientId = publisher ?? excludeClientId ?? null;
+        const senderId = senderClientId ?? 'server';
+        if (this.plugins.length > 0) {
+            const userId = senderClientId ? this.getUserIdForClient(senderClientId) : undefined;
+            for (const plugin of this.plugins) {
+                if (plugin.onMessage) {
+                    firePlugin(plugin.name, () => plugin.onMessage({ clientId: senderId, channelId: channel, message, userId }));
+                }
             }
         }
         const members = this.channelMembers.get(channel);
@@ -182,9 +186,10 @@ class LocalRealtimeRouter {
             this.clientChannels.set(clientId, channels);
         }
         channels.add(channel);
+        const userId = this.plugins.length > 0 ? this.getUserIdForClient(clientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onConnect) {
-                firePlugin(plugin.name, () => plugin.onConnect({ clientId, channelId: channel }));
+                firePlugin(plugin.name, () => plugin.onConnect({ clientId, channelId: channel, userId }));
             }
         }
         return true;

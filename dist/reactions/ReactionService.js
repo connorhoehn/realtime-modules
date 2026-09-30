@@ -301,8 +301,10 @@ class ReactionService {
             timestamp: reaction.timestamp,
         });
         // Post-broadcast tap — fire-and-forget; a failing hook never blocks
-        // or fails the send path (ack is already on the wire above).
-        this._emitReaction(reaction);
+        // or fails the send path (ack is already on the wire above). The tap
+        // alone gets the sender's org: durable capture files by it, and
+        // subscribers have no business with it.
+        this._emitReaction(identity?.org ? { ...reaction, org: identity.org } : reaction);
         this.logger.info(`Client ${clientId} sent reaction ${emoji} in channel: ${channel}`);
     }
     /**
@@ -458,11 +460,12 @@ class ReactionService {
         const auth = (0, senderIdentity_1.resolveAuthSender)(this.messageRouter, clientId, frame, this.resolveSender, (err) => this.logger.error(`resolveSender threw for client ${clientId}:`, err));
         if (!auth)
             return base;
+        const org = auth.org ? { org: auth.org } : {};
         if (this.resolveSender) {
-            return { userId: auth.userId, ...(auth.displayName ? { displayName: auth.displayName } : {}) };
+            return { userId: auth.userId, ...(auth.displayName ? { displayName: auth.displayName } : {}), ...org };
         }
         const displayName = base?.displayName ?? auth.displayName;
-        return { userId: base?.userId ?? auth.userId, ...(displayName !== undefined ? { displayName } : {}) };
+        return { userId: base?.userId ?? auth.userId, ...(displayName !== undefined ? { displayName } : {}), ...org };
     }
     /**
      * Invoke the configured `onReaction` tap. Sync throws are caught and
