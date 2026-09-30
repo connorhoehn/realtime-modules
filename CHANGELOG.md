@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.99.1 — 2026-09-29
+
+- **Calls: one person, one seat — the first of a callee's sockets to accept
+  takes the call.** Every socket of the callee rings; until now each of them
+  could also accept, so two tabs answering at once (or one answering after
+  the other had) put the callee in the DM twice, the caller got two
+  `accepted` frames and `status` counted three participants. An `accepted`
+  from a socket whose person already has a live socket in the call is now
+  refused: that socket alone gets `ended { callId, reason:
+  'answered-elsewhere', userId, lobbyName }` (useConversationCall clears the
+  ring or tears down its half-joined call on it), nothing reaches the caller,
+  and the call is not registered for it. The check and the registration run
+  with no await between them, so two accepts racing on one node cannot both
+  pass. A socket the router reports closed (`isClientLive` false) does not
+  count, so a refresh whose old socket is still closing rejoins as before.
+  Document calls keep their own bookkeeping.
+- **Reported, not reproduced: a DM ring that did not reach the callee while
+  the caller had a second socket open.** Over attachRealtime sockets and a
+  CallService built directly on a gateway-shaped router (async
+  `getClientsByUserId` returning `{ clientId, userId, nodeId }`, optional
+  `excludeClientId`, sync `getUserIdForClient`, three-state `isClientLive`,
+  the gateway's callerId `authorize`), with the in-memory store and
+  RedisCallStateStore, the callee rings whether the caller's other socket
+  opened before or after the ringing one, asked for `status` or sat idle, or
+  closed mid-ring; the caller's other socket is not rung and gets `accepted`
+  and `ended`. Nothing in CallService keys ringing on the caller's other
+  sockets.
+- Docs: `docs/recipes/calls.md` states the multi-socket rule for both sides.
+- Tests: `test/server/calls-multi-socket.test.ts` (both harnesses × both
+  stores: caller with a second socket, before/after, idle/closing; callee
+  with two sockets — both ring, first accept wins, a late accept and a
+  simultaneous accept are refused, the refused socket does not keep the call
+  alive, a refresh still rejoins).
+
 ## 0.99.0 — 2026-09-29
 
 - **New export `@connorhoehn/realtime-modules/server/stores/dynamo` —

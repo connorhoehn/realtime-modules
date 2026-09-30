@@ -269,6 +269,13 @@ export declare class CallService {
     handleAction(clientId: string, action: string, data: CallInvite | null | undefined): Promise<void>;
     handleCallEvent(clientId: string, action: CallAction, data: CallInvite | null | undefined): Promise<void>;
     /**
+     * The live socket of the sender's own user that is already a participant
+     * of `callId`, other than the sender — or null. A socket this node knows
+     * to be closed (isClientLive false) does not count, so a refresh whose
+     * old socket has not finished closing still gets back in.
+     */
+    private sameUserSeatedElsewhere;
+    /**
      * Pull the target user-id list out of a call payload. Returns a deduped
      * array — empty means the call should be broadcast.
      */

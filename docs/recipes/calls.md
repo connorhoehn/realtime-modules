@@ -146,6 +146,15 @@ connected client, which a multi-tenant host must never do; the hooks never
 rely on it. The only untargeted frame is the `status` query, which the server
 answers to the sender alone.
 
+A person may have several sockets (tabs, devices). The caller's other sockets
+are not rung; they get the callee's `accepted` and the call's `ended`, and have
+no say in whether the callee rings. Every socket of the callee rings; the first
+`accepted` takes the call and the others get that `accepted` (the ring
+dismisses). An `accepted` from a second socket of someone already in the call
+is refused with `ended { reason: 'answered-elsewhere' }` to that socket alone —
+the caller sees one answer and the call holds each person once. A socket the
+server already knows is closed does not count, so a refresh still rejoins.
+
 `conversationCallDockProps(call, ui)` is the pure mapping onto ui-components'
 `CallDock` props (null while idle or ringing); `ConversationCallDock` draws it
 with `StreamVideo` tiles and measures the active speaker.

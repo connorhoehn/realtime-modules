@@ -1630,6 +1630,47 @@ class CallService {
                 catch { /* */ }
             }
         }
+        // One person, one seat: when a callee has several sockets they all
+        // ring, and the first to accept takes the call. A later accept from
+        // another socket of the same person (two tabs answering at once) is
+        // refused — the call would otherwise hold that person twice and the
+        // caller would see two answers. The refused socket is told the call
+        // was answered elsewhere; it has already been sent the winner's
+        // `accepted` by the sibling fan-out. Document calls keep their own
+        // bookkeeping.
+        if (action === 'accepted' && callId && !docMeta) {
+            let storeMembers = null;
+            if (this.stateStore) {
+                try {
+                    storeMembers = await this.stateStore.getCall(callId);
+                }
+                catch { /* local view stands */ }
+            }
+            // Synchronous from here to registerParticipant below, so two
+            // accepts racing on this node cannot both pass.
+            const winner = this.sameUserSeatedElsewhere(clientId, callId, storeMembers);
+            if (winner) {
+                this.logger.info(`[CallService] refused second accept of ${callId} from ${clientId}: ${winner.userId} is already in the call on ${winner.clientId}`);
+                const envelope = {
+                    type: 'call',
+                    action: 'ended',
+                    data: {
+                        callId,
+                        callerId: winner.callerId || callerId,
+                        lobbyName: resolvedLobbyName,
+                        userId: winner.userId,
+                        reason: 'answered-elsewhere',
+                    },
+                    timestamp: new Date().toISOString(),
+                };
+                try {
+                    await Promise.resolve(this.messageRouter.sendToClient(clientId, envelope));
+                }
+                catch { /* socket gone */ }
+                this.recordCallActionMetric(action, 'targeted');
+                return;
+            }
+        }
         const shouldRegister = !!callId && ((action === 'invite' && !!lobbyName)
             || action === 'accepted');
         if (shouldRegister) {
@@ -1954,6 +1995,48 @@ class CallService {
         await this.messageRouter.broadcastToAll(envelope, clientId);
         this.logger.info(`Client ${clientId} broadcast call event '${action}' (callId=${callId ?? '-'} lobby=${lobbyName ?? '-'})`);
         this.recordCallActionMetric(action, 'broadcast');
+    }
+    /**
+     * The live socket of the sender's own user that is already a participant
+     * of `callId`, other than the sender — or null. A socket this node knows
+     * to be closed (isClientLive false) does not count, so a refresh whose
+     * old socket has not finished closing still gets back in.
+     */
+    sameUserSeatedElsewhere(clientId, callId, storeView) {
+        const lookup = (cid) => {
+            if (typeof this.messageRouter.getUserIdForClient === 'function') {
+                try {
+                    const uid = this.messageRouter.getUserIdForClient(cid);
+                    if (typeof uid === 'string' && uid)
+                        return uid;
+                }
+                catch { /* fall through */ }
+            }
+            return this.participantUserIds.get(cid) ?? null;
+        };
+        const userId = lookup(clientId);
+        if (!userId)
+            return null;
+        const members = new Set(storeView?.participantClientIds ?? []);
+        const local = this.activeCalls.get(callId);
+        if (local)
+            for (const cid of local.participantClientIds)
+                members.add(cid);
+        const callerId = local?.callerId || storeView?.callerId || '';
+        members.delete(clientId);
+        for (const cid of members) {
+            if (lookup(cid) !== userId)
+                continue;
+            if (typeof this.messageRouter.isClientLive === 'function') {
+                try {
+                    if (this.messageRouter.isClientLive(cid) === false)
+                        continue;
+                }
+                catch { /* treat as live */ }
+            }
+            return { clientId: cid, userId, callerId };
+        }
+        return null;
     }
     /**
      * Pull the target user-id list out of a call payload. Returns a deduped
