@@ -33,3 +33,17 @@ For a resettable mock, construct `MemoryChatPinsStore({ rows: () => fixture.rows
 now: () => clock.now().getTime() })`. The row getter is evaluated on each
 operation, so replacing the fixture also removes old pins. Both stores accept
 an injected clock for deterministic checks.
+
+## Validate the original message
+
+The pin store preserves a snapshot; it cannot authenticate the excerpt or
+apply a member’s history permission. Hosts must resolve the original message
+before accepting a pin and derive its text, author and send time from server
+state. `ChatStore.getMessage(channel, messageId)` is an optional direct lookup
+implemented by `InMemoryChatStore` and `DynamoChatStore`. Dynamo reads are
+consistent and return null for expired originals. If a host adapter lacks the
+lookup, fail closed instead of searching only a recent history window.
+
+For reads, omit pins whose original message is missing, deleted or outside the
+caller’s history floor. A retained pin row may still be unpinned after its
+original expires. Pin retention therefore does not grant extra message access.

@@ -36,11 +36,15 @@ function usePins(channel) {
     const [readError, setReadError] = (0, react_1.useState)(undefined);
     const [writeError, setWriteError] = (0, react_1.useState)(undefined);
     const [tick, setTick] = (0, react_1.useState)(0);
+    const channelRef = (0, react_1.useRef)(channel);
+    const channelVersion = (0, react_1.useRef)(0);
     const refresh = (0, react_1.useCallback)(() => setTick((n) => n + 1), []);
     // Channel change is its own effect. Folding it into the read below meant
     // the reconciling read that FOLLOWS a failed write also cleared the write's
     // error — so the pin rolled back and the panel said nothing about why.
     (0, react_1.useEffect)(() => {
+        channelRef.current = channel;
+        channelVersion.current += 1;
         // The previous channel's marker sitting on this channel's messages is
         // worse than no marker at all.
         setPins([]);
@@ -75,12 +79,12 @@ function usePins(channel) {
         })();
         return () => { cancelled = true; };
     }, [channel, listPins, tick]);
-    const channelRef = (0, react_1.useRef)(channel);
-    (0, react_1.useEffect)(() => { channelRef.current = channel; }, [channel]);
     const pin = (0, react_1.useCallback)(async (input) => {
         const ch = channelRef.current;
         if (!ch || !pinFn)
             return;
+        const version = channelVersion.current;
+        const current = () => channelVersion.current === version && channelRef.current === ch;
         // The key is left off when the caller gave nothing, rather than sent as
         // undefined: absent is the state the gateway stores and the panel falls
         // back on, and a present-but-empty field is a second one to handle.
@@ -111,31 +115,39 @@ function usePins(channel) {
                 author: input.author,
                 ...sentAt,
             });
-            setWriteError(undefined);
+            if (current())
+                setWriteError(undefined);
         }
         catch (err) {
-            setWriteError(err instanceof Error ? err : new Error(String(err)));
+            if (current())
+                setWriteError(err instanceof Error ? err : new Error(String(err)));
         }
         finally {
             // Either way: the server's list is the one everyone else sees, so a
             // failed write is rolled back by the same read that confirms a good one.
-            refresh();
+            if (current())
+                refresh();
         }
     }, [pinFn, refresh]);
     const unpin = (0, react_1.useCallback)(async (messageId) => {
         const ch = channelRef.current;
         if (!ch || !unpinFn)
             return;
+        const version = channelVersion.current;
+        const current = () => channelVersion.current === version && channelRef.current === ch;
         setPins((prev) => prev.filter((p) => p.messageId !== messageId));
         try {
             await unpinFn(ch, messageId);
-            setWriteError(undefined);
+            if (current())
+                setWriteError(undefined);
         }
         catch (err) {
-            setWriteError(err instanceof Error ? err : new Error(String(err)));
+            if (current())
+                setWriteError(err instanceof Error ? err : new Error(String(err)));
         }
         finally {
-            refresh();
+            if (current())
+                refresh();
         }
     }, [unpinFn, refresh]);
     const pinnedIds = (0, react_1.useMemo)(() => new Set(pins.map((p) => p.messageId)), [pins]);

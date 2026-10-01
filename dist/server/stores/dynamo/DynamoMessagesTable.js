@@ -68,6 +68,19 @@ class DynamoMessagesTable {
         // Query returned newest-first; reverse to chronological (oldest first).
         return items.reverse();
     }
+    async getMessage(channel, messageId) {
+        const result = await this.client.send(new client_dynamodb_1.GetItemCommand({
+            TableName: this.tableName,
+            Key: { channelId: { S: channel }, messageId: { S: messageId } },
+            ConsistentRead: true,
+        }));
+        const item = result?.Item;
+        // TTL deletion is asynchronous; an expired message must already be
+        // unavailable to a caller deciding whether its content may be pinned.
+        if (!item || (item.ttl?.N && Number(item.ttl.N) <= Math.floor(this.now() / 1000)))
+            return null;
+        return messageFromItem(item);
+    }
     /**
      * An edit or a soft delete, in place on the existing row. Resolves null
      * for an unknown (channel, messageId) — the condition refuses to create a

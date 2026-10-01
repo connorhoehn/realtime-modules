@@ -70,6 +70,9 @@ class DynamoChatStore {
     listMessages(channel, limit) {
         return this.messages.listMessages(channel, limit);
     }
+    getMessage(channel, messageId) {
+        return this.messages.getMessage(channel, messageId);
+    }
     updateMessage(channel, messageId, patch) {
         return this.messages.updateMessage(channel, messageId, patch);
     }

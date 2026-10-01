@@ -81,6 +81,10 @@ class InMemoryChatStore {
         bucket[i] = next;
         return { ...next, metadata: next.metadata ? { ...next.metadata } : undefined };
     }
+    async getMessage(channel, messageId) {
+        const message = this.messages.get(channel)?.find((m) => m.id === messageId);
+        return message ? { ...message, metadata: message.metadata ? { ...message.metadata } : undefined } : null;
+    }
     /** Test helper — clears every channel. Not part of ChatStore. */
     _reset() {
         this.messages.clear();

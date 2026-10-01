@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.100.1 — 2026-10-01
+
+- Add optional `ChatStore.getMessage(channel, messageId)` with direct lookups
+  in the memory and Dynamo adapters. Dynamo uses a consistent keyed read and
+  hides expired rows before asynchronous TTL deletion, so hosts can validate
+  a pin against its actual message without a recent-history limit.
+- Ignore pin/unpin settlements from a conversation the reader has left; an
+  older success cannot clear a newer write error, even after returning to the
+  original channel.
+
 ## 0.100.0 — 2026-10-01
 
 - Add `ChatPinsStore` and `MemoryChatPinsStore` under `/chat`, plus

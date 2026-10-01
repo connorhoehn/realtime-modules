@@ -325,4 +325,55 @@ describe('what the error survives', () => {
     rerender({ ch: 'ch-2' });
     expect(result.current.error).toBeUndefined();
   });
+
+  it.each(['pin', 'unpin'] as const)('ignores a late failed %s after switching conversations', async (operation) => {
+    let reject!: (cause: Error) => void;
+    const delayed = new Promise<void>((_resolve, fail) => { reject = fail; });
+    const other = pinRow({ channelId: 'ch-2', messageId: 'other' });
+    const rest = {
+      ...makeRest(),
+      listPins: jest.fn(async (ch: string) => ch === 'ch-2' ? [other] : []),
+      pin: jest.fn(() => delayed),
+      unpin: jest.fn(() => delayed),
+    };
+    const { result, rerender } = renderHook(({ ch }: { ch: string }) => usePins(ch), {
+      wrapper: wrapperFor(makeGateway(rest)), initialProps: { ch: 'ch-1' },
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let write!: Promise<void>;
+    act(() => { write = operation === 'pin' ? result.current.pin({ messageId: 'old', text: 'old', author: 'H' }) : result.current.unpin('old'); });
+    rerender({ ch: 'ch-2' });
+    await waitFor(() => expect(result.current.pins).toEqual([other]));
+    const reads = rest.listPins.mock.calls.length;
+    await act(async () => { reject(new Error('Old conversation failed')); await write; });
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.pins).toEqual([other]);
+    expect(rest.listPins.mock.calls).toHaveLength(reads);
+  });
+
+  it('an old successful write cannot clear a new conversation failure, even after returning to the old channel', async () => {
+    let resolve!: () => void;
+    const delayed = new Promise<void>((done) => { resolve = done; });
+    let first = true;
+    const rest = { ...makeRest(), pin: jest.fn(async () => {
+      if (first) { first = false; return delayed; }
+      throw new Error('Current write failed');
+    }) };
+    const { result, rerender } = renderHook(({ ch }: { ch: string }) => usePins(ch), {
+      wrapper: wrapperFor(makeGateway(rest)), initialProps: { ch: 'ch-1' },
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let oldWrite!: Promise<void>;
+    act(() => { oldWrite = result.current.pin({ messageId: 'old', text: 'old', author: 'H' }); });
+    rerender({ ch: 'ch-2' });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    rerender({ ch: 'ch-1' });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await act(async () => { await result.current.pin({ messageId: 'new', text: 'new', author: 'H' }); });
+    await waitFor(() => expect(result.current.error?.message).toBe('Current write failed'));
+    const reads = rest.listPins.mock.calls.length;
+    await act(async () => { resolve(); await oldWrite; });
+    expect(result.current.error?.message).toBe('Current write failed');
+    expect(rest.listPins.mock.calls).toHaveLength(reads);
+  });
 });

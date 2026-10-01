@@ -66,6 +66,8 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
   const [readError, setReadError] = useState<Error | undefined>(undefined);
   const [writeError, setWriteError] = useState<Error | undefined>(undefined);
   const [tick, setTick] = useState(0);
+  const channelRef = useRef(channel);
+  const channelVersion = useRef(0);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
@@ -73,6 +75,8 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
   // the reconciling read that FOLLOWS a failed write also cleared the write's
   // error — so the pin rolled back and the panel said nothing about why.
   useEffect(() => {
+    channelRef.current = channel;
+    channelVersion.current += 1;
     // The previous channel's marker sitting on this channel's messages is
     // worse than no marker at all.
     setPins([]);
@@ -104,13 +108,12 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
     return () => { cancelled = true; };
   }, [channel, listPins, tick]);
 
-  const channelRef = useRef(channel);
-  useEffect(() => { channelRef.current = channel; }, [channel]);
-
   const pin = useCallback(
     async (input: { messageId: string; text: string; author: string; sentAt?: string }) => {
       const ch = channelRef.current;
       if (!ch || !pinFn) return;
+      const version = channelVersion.current;
+      const current = () => channelVersion.current === version && channelRef.current === ch;
       // The key is left off when the caller gave nothing, rather than sent as
       // undefined: absent is the state the gateway stores and the panel falls
       // back on, and a present-but-empty field is a second one to handle.
@@ -141,13 +144,13 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
           author: input.author,
           ...sentAt,
         });
-        setWriteError(undefined);
+        if (current()) setWriteError(undefined);
       } catch (err) {
-        setWriteError(err instanceof Error ? err : new Error(String(err)));
+        if (current()) setWriteError(err instanceof Error ? err : new Error(String(err)));
       } finally {
         // Either way: the server's list is the one everyone else sees, so a
         // failed write is rolled back by the same read that confirms a good one.
-        refresh();
+        if (current()) refresh();
       }
     },
     [pinFn, refresh],
@@ -157,14 +160,16 @@ export function usePins(channel: string | null | undefined): UsePinsResult {
     async (messageId: string) => {
       const ch = channelRef.current;
       if (!ch || !unpinFn) return;
+      const version = channelVersion.current;
+      const current = () => channelVersion.current === version && channelRef.current === ch;
       setPins((prev) => prev.filter((p) => p.messageId !== messageId));
       try {
         await unpinFn(ch, messageId);
-        setWriteError(undefined);
+        if (current()) setWriteError(undefined);
       } catch (err) {
-        setWriteError(err instanceof Error ? err : new Error(String(err)));
+        if (current()) setWriteError(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        refresh();
+        if (current()) refresh();
       }
     },
     [unpinFn, refresh],

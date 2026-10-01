@@ -128,6 +128,10 @@ export class DynamoChatStore implements ChatStore {
         return this.messages.listMessages(channel, limit);
     }
 
+    getMessage(channel: string, messageId: string): Promise<ChatMessage | null> {
+        return this.messages.getMessage(channel, messageId);
+    }
+
     updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null> {
         return this.messages.updateMessage(channel, messageId, patch);
     }

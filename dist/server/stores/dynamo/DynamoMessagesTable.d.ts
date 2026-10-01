@@ -13,6 +13,7 @@ export declare class DynamoMessagesTable implements ChatStore {
     constructor(opts: DynamoMessagesTableOpts);
     putMessage(message: ChatMessage): Promise<void>;
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
+    getMessage(channel: string, messageId: string): Promise<ChatMessage | null>;
     /**
      * An edit or a soft delete, in place on the existing row. Resolves null
      * for an unknown (channel, messageId) — the condition refuses to create a

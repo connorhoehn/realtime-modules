@@ -76,6 +76,7 @@ export declare class DynamoChatStore implements ChatStore {
     constructor(opts: DynamoChatStoreOpts);
     putMessage(message: ChatMessage): Promise<void>;
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
+    getMessage(channel: string, messageId: string): Promise<ChatMessage | null>;
     updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null>;
     /**
      * Everything ChatService needs for durable chat with a conversations

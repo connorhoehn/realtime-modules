@@ -18,7 +18,7 @@
 // listMessages queries newest-first then reverses, so the result is
 // chronological (the ChatStore contract).
 
-import { PutItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand, PutItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import type { ChatMessage, ChatMessagePatch } from '../../../chat/types';
 import type { ChatStore } from '../../../chat/ChatStore';
 import {
@@ -79,6 +79,19 @@ export class DynamoMessagesTable implements ChatStore {
         const items = ((result?.Items || []) as any[]).map(messageFromItem);
         // Query returned newest-first; reverse to chronological (oldest first).
         return items.reverse();
+    }
+
+    async getMessage(channel: string, messageId: string): Promise<ChatMessage | null> {
+        const result = await this.client.send(new GetItemCommand({
+            TableName: this.tableName,
+            Key: { channelId: { S: channel }, messageId: { S: messageId } },
+            ConsistentRead: true,
+        }));
+        const item = result?.Item;
+        // TTL deletion is asynchronous; an expired message must already be
+        // unavailable to a caller deciding whether its content may be pinned.
+        if (!item || (item.ttl?.N && Number(item.ttl.N) <= Math.floor(this.now() / 1000))) return null;
+        return messageFromItem(item);
     }
 
     /**

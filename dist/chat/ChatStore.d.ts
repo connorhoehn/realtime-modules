@@ -12,6 +12,12 @@ export interface ChatStore {
      */
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
     /**
+     * Look up one message without a recent-history cap. Optional so existing
+     * host stores remain compatible; callers that require an authoritative
+     * lookup must fail closed when their adapter does not provide it.
+     */
+    getMessage?(channel: string, messageId: string): Promise<ChatMessage | null>;
+    /**
      * Change a stored message in place — an edit (text, metadata, editedAt)
      * or a soft delete (text '', metadata {deleted:true}, deletedAt). The
      * whole `metadata` replaces the stored one when given. Resolves the
@@ -41,6 +47,7 @@ export declare class InMemoryChatStore implements ChatStore {
     putMessage(message: ChatMessage): Promise<void>;
     listMessages(channel: string, limit: number): Promise<ChatMessage[]>;
     updateMessage(channel: string, messageId: string, patch: ChatMessagePatch): Promise<ChatMessage | null>;
+    getMessage(channel: string, messageId: string): Promise<ChatMessage | null>;
     /** Test helper — clears every channel. Not part of ChatStore. */
     _reset(): void;
 }
