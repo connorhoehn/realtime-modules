@@ -1428,6 +1428,17 @@ class CallService {
                 docRecipients = (await this.docCallMemberClientIds(callId)).filter((c) => c !== clientId);
             }
         }
+        // A dropped socket coming back. useConversationCall re-announces on
+        // every reconnect (`status`, then `participant-state`), never
+        // `accepted` again, so without this the fresh socket was never on the
+        // roster: a group call lost the person, and a two-party call ended
+        // with `rejoin-grace-expired` however soon they came back. Document
+        // calls re-seat in handleDocumentCallVerb.
+        if (action === 'participant-state' && callId && !docMeta
+            && payload.kind !== 'document-review'
+            && payload.status !== 'left' && payload.status !== 'reconnecting') {
+            await this.rejoinSeat(clientId, callId, payload);
+        }
         // W3 — RoomService bridge. participant-state + user-status are
         // the only call verbs that fire inside a live session (invite/
         // accepted/declined/cancelled/ended are signaling-edge events).
@@ -1678,8 +1689,13 @@ class CallService {
             if (typeof this.messageRouter.getUserIdForClient === 'function') {
                 try {
                     const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));
-                    if (uid)
+                    if (uid) {
                         this.participantUserIds.set(clientId, uid);
+                        // The seat a dropped socket can take back (rejoinSeat).
+                        const seated = this.activeCalls.get(callId);
+                        if (seated)
+                            (seated.seatedUserIds ??= new Set()).add(uid);
+                    }
                 }
                 catch { /* best-effort */ }
             }
@@ -1995,6 +2011,121 @@ class CallService {
         await this.messageRouter.broadcastToAll(envelope, clientId);
         this.logger.info(`Client ${clientId} broadcast call event '${action}' (callId=${callId ?? '-'} lobby=${lobbyName ?? '-'})`);
         this.recordCallActionMetric(action, 'broadcast');
+    }
+    /**
+     * Put a fresh socket back in the seat its person held, when it announces
+     * itself (`participant-state`) in a call it is not on the roster of.
+     *
+     * Admitted only when all of these hold — anything else is forwarded as
+     * before and seats nobody:
+     *   - the sender's identity comes from the router (an authenticated
+     *     socket), never from the frame;
+     *   - the frame names the call's own lobby, so the `authorize` hook /
+     *     `calls({ lobbyGuard })` that already passed this frame judged the
+     *     lobby the call is really in (a frame without a lobby is not judged
+     *     by the guard, so it cannot rejoin);
+     *   - the call is still live, here or in the shared store;
+     *   - that person took a seat in it before (`invite` as the caller or
+     *     `accepted`): this node's record, or the store's per-user index
+     *     when the seat was taken on another node or before a restart. Being
+     *     rung is not a seat.
+     * One person, one seat: a seat this person still holds on another socket
+     * moves to the new one (the old socket is half-open or about to close;
+     * the shipped client never announces from a tab that is not in the call).
+     * Registering cancels the rejoin grace (registerParticipant).
+     */
+    async rejoinSeat(clientId, callId, payload) {
+        const local = this.activeCalls.get(callId);
+        if (local?.participantClientIds.has(clientId))
+            return false; // already seated
+        if (typeof this.messageRouter.getUserIdForClient !== 'function')
+            return false;
+        let userId = null;
+        try {
+            userId = (await Promise.resolve(this.messageRouter.getUserIdForClient(clientId))) ?? null;
+        }
+        catch { /* */ }
+        if (!userId)
+            return false;
+        const lobbyName = typeof payload.lobbyName === 'string' ? payload.lobbyName : '';
+        if (!lobbyName)
+            return false;
+        let view = null;
+        if (!local && this.stateStore) {
+            try {
+                view = await this.stateStore.getCall(callId);
+            }
+            catch { /* treated as gone */ }
+        }
+        if (!local && !view)
+            return false;
+        const lobbies = new Set([local?.lobbyName, local?.originalLobbyName, view?.lobbyName].filter((l) => !!l));
+        if (!lobbies.has(lobbyName)) {
+            this.logger.warn(`[CallService] refused rejoin of ${callId} by ${userId} on ${clientId}: frame names lobby ${lobbyName}, the call is in ${Array.from(lobbies).join('|') || '<unknown>'}`);
+            return false;
+        }
+        let seated = !!local?.seatedUserIds?.has(userId);
+        if (!seated && this.stateStore && typeof this.stateStore.getCallIdsByUser === 'function') {
+            try {
+                seated = (await this.stateStore.getCallIdsByUser(userId)).includes(callId);
+            }
+            catch { /* not proven */ }
+        }
+        if (!seated) {
+            this.logger.warn(`[CallService] refused rejoin of ${callId} by ${userId} on ${clientId}: never seated in it`);
+            return false;
+        }
+        // Synchronous from here to registerParticipant: the call must not
+        // have ended (grace expiry, a hang-up) while the lookups above ran,
+        // or registering would resurrect it.
+        const now = this.activeCalls.get(callId);
+        if (local && now !== local)
+            return false;
+        if (now?.participantClientIds.has(clientId))
+            return false;
+        const callerId = now?.callerId || view?.callerId || '';
+        const targets = now ? (now.originalTargetUserIds ?? now.targetUserIds) : (view?.targetUserIds ?? []);
+        const previous = Array.from(now?.participantClientIds ?? view?.participantClientIds ?? [])
+            .filter((cid) => cid !== clientId
+            && (this.participantUserIds.get(cid) ?? this.messageRouter.getUserIdForClient?.(cid) ?? null) === userId);
+        this.registerParticipant(callId, clientId, callerId, lobbyName, targets.slice());
+        this.participantUserIds.set(clientId, userId);
+        const state = this.activeCalls.get(callId);
+        (state.seatedUserIds ??= new Set()).add(userId);
+        for (const old of previous) {
+            state.participantClientIds.delete(old);
+            const cs = this.clientToCalls.get(old);
+            if (cs) {
+                cs.delete(callId);
+                if (cs.size === 0)
+                    this.clientToCalls.delete(old);
+            }
+        }
+        this.logger.info(`[CallService] ${userId} rejoined ${callId} on ${clientId}${previous.length ? ` (seat moved from ${previous.join(', ')})` : ''}`);
+        if (this.stateStore) {
+            const store = this.stateStore;
+            try {
+                // Awaited, in order: the new seat lands before any old one is
+                // removed, so the store never sees the call empty.
+                await store.registerParticipant(callId, clientId, callerId, lobbyName, targets.slice());
+                this.storeMirrored.add(callId);
+                if (typeof store.addClientToCall === 'function') {
+                    await store.addClientToCall(clientId, callId, CallService.ACCEPTED_CALL_TTL_SEC);
+                }
+                if (typeof store.registerUserCall === 'function') {
+                    await store.registerUserCall(userId, callId, CallService.ACCEPTED_CALL_TTL_SEC);
+                }
+                for (const old of previous) {
+                    await store.removeParticipant(callId, old);
+                    if (typeof store.removeClientFromCall === 'function')
+                        await store.removeClientFromCall(old, callId);
+                }
+            }
+            catch (e) {
+                this.logger.warn(`[CallService] stateStore rejoin write failed for ${callId}/${clientId}: ${e?.message ?? e}`);
+            }
+        }
+        return true;
     }
     /**
      * The live socket of the sender's own user that is already a participant

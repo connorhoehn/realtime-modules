@@ -675,3 +675,50 @@ describe('createWsHandler', () => {
         expect(gotSession).toBe(false);
     });
 });
+
+// Capacity review (aws-agentcore, 2026-10-01, change #10): ws allows 100 MiB
+// frames by default, so one client could push the process toward OOM.
+describe('createWsHandler — maxPayload', () => {
+    let server: http.Server;
+    let port: number;
+    let handle: WsHandlerHandle | null = null;
+
+    beforeEach(async () => { ({ server, port } = await startHttpServer()); });
+    afterEach(async () => {
+        if (handle) await handle.dispose();
+        handle = null;
+        await new Promise<void>((r) => server.close(() => r()));
+    });
+
+    const connectAndSend = async (bytes: number) => {
+        const seen: string[] = [];
+        const svc: WsService = { handleAction: async (_c, action) => { seen.push(action); } };
+        handle = createWsHandler({ server, services: { echo: svc }, maxPayload: 1024, pingIntervalMs: 0 });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        await new Promise<void>((r, j) => { ws.on('open', () => r()); ws.on('error', j); });
+        const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
+        ws.send(JSON.stringify({ service: 'echo', action: 'big', pad: 'x'.repeat(bytes) }));
+        ws.send(JSON.stringify({ service: 'echo', action: 'small' }));
+        return { ws, seen, closed };
+    };
+
+    it('a frame over the limit closes that socket with 1009 and never reaches a service', async () => {
+        const { seen, closed } = await connectAndSend(4096);
+        expect(await closed).toBe(1009);
+        expect(seen).toEqual([]);
+    });
+
+    it('frames under the limit are handled as usual', async () => {
+        const { ws, seen } = await connectAndSend(100);
+        const start = Date.now();
+        while (seen.length < 2 && Date.now() - start < 2000) await new Promise((r) => setTimeout(r, 10));
+        expect(seen).toEqual(['big', 'small']);
+        ws.close();
+    });
+
+    it('defaults to 16 MiB and rejects a nonsense limit', () => {
+        handle = createWsHandler({ server, services: {}, pingIntervalMs: 0 });
+        expect(handle.wss.options.maxPayload).toBe(16 * 1024 * 1024);
+        expect(() => createWsHandler({ server, services: {}, maxPayload: 0 })).toThrow(/maxPayload/);
+    });
+});

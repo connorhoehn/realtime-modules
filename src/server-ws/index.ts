@@ -7,6 +7,7 @@
 // server-side code never pay the import cost.
 
 export { createWsHandler } from './createWsHandler';
+export { DEFAULT_WS_MAX_PAYLOAD } from './types';
 export type {
     WsService,
     WsAuthFn,

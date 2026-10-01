@@ -29,7 +29,9 @@
 //     preserving the old open-means-connected behavior for plain servers.
 //   - Captures `sessionToken` + `clientId` from the gateway's
 //     `{ type: 'session', ... }` handshake frame.
-//   - Reconnects with exponential backoff (capped at `maxReconnectMs`).
+//   - Reconnects with exponential backoff (capped at `maxReconnectMs`),
+//     jittered so the clients of a restarted gateway do not all come back
+//     in the same instant (`reconnectJitter`).
 //   - Optionally caps reconnect attempts at `maxRetries`; on exhaustion
 //     emits `RECONNECT_EXHAUSTED` and transitions to `disconnected`.
 //   - Optionally persists session across page reloads via `persist`.
@@ -48,6 +50,7 @@
 // Returns a superset of UseWebSocketReturn — so it drops into existing
 // hook plumbing (useYjsDoc / useCRDT / etc.) unchanged.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.reconnectDelayMs = reconnectDelayMs;
 exports.useWebSocket = useWebSocket;
 const react_1 = require("react");
 // -----------------------------------------------------------------------
@@ -55,6 +58,17 @@ const react_1 = require("react");
 // -----------------------------------------------------------------------
 const DEFAULT_RECONNECT_MS = 1000;
 const DEFAULT_MAX_RECONNECT_MS = 30_000;
+const DEFAULT_RECONNECT_JITTER = 0.5;
+/**
+ * The wait before reconnect attempt `attempt` (0-based): exponential from
+ * `baseMs`, capped at `maxMs`, then the top `jitter` fraction randomised
+ * downward — `[(1 - jitter) * d, d]`. Exported for tests.
+ */
+function reconnectDelayMs(attempt, baseMs, maxMs, jitter, random = Math.random) {
+    const d = Math.min(baseMs * Math.pow(2, attempt), maxMs);
+    const j = Number.isFinite(jitter) ? Math.min(1, Math.max(0, jitter)) : 0;
+    return Math.round(d * (1 - j * random()));
+}
 const DEFAULT_PERSIST_PREFIX = 'ws_';
 /** Fallback window for servers that never send a `{type:'session'}` frame. */
 const DEFAULT_SESSION_TIMEOUT_MS = 3000;
@@ -112,7 +126,7 @@ function safeStorageRemove(cfg, key) {
     }
 }
 function useWebSocket(opts) {
-    const { url, authToken, authProtocol = 'bearer-token-v1', reconnectMs = DEFAULT_RECONNECT_MS, maxReconnectMs = DEFAULT_MAX_RECONNECT_MS, maxRetries = Infinity, defaultChannel = '', persist, autoResubscribe = false, sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS, webSocketImpl, onMessage, onConnect, onDisconnect, } = opts;
+    const { url, authToken, authProtocol = 'bearer-token-v1', reconnectMs = DEFAULT_RECONNECT_MS, maxReconnectMs = DEFAULT_MAX_RECONNECT_MS, reconnectJitter = DEFAULT_RECONNECT_JITTER, maxRetries = Infinity, defaultChannel = '', persist, autoResubscribe = false, sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS, webSocketImpl, onMessage, onConnect, onDisconnect, } = opts;
     // Persisted session keys — recomputed if `persist` changes identity.
     const persistKeysRef = (0, react_1.useRef)(persist ? persistKeys(persist) : null);
     // Keep the persist config in a ref so callbacks (disconnect, message
@@ -141,6 +155,8 @@ function useWebSocket(opts) {
     // closure from going stale across reconnects.
     const wsRef = (0, react_1.useRef)(null);
     const reconnectTimerRef = (0, react_1.useRef)(null);
+    const reconnectJitterRef = (0, react_1.useRef)(reconnectJitter);
+    reconnectJitterRef.current = reconnectJitter;
     const reconnectAttemptRef = (0, react_1.useRef)(0);
     const authTokenRef = (0, react_1.useRef)(authToken);
     const channelsRef = (0, react_1.useRef)(new Set());
@@ -351,8 +367,8 @@ function useWebSocket(opts) {
                 });
                 return;
             }
-            // Exponential backoff: 1000, 2000, 4000, ... capped at max.
-            const delay = Math.min(reconnectMs * Math.pow(2, attempt), maxReconnectMs);
+            // Exponential backoff: 1000, 2000, 4000, ... capped at max, jittered.
+            const delay = reconnectDelayMs(attempt, reconnectMs, maxReconnectMs, reconnectJitterRef.current);
             reconnectAttemptRef.current = attempt + 1;
             setConnectionState('reconnecting');
             clearReconnectTimer();

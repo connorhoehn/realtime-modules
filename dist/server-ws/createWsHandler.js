@@ -28,6 +28,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createWsHandler = createWsHandler;
 const transport_1 = require("distributed-core/transport");
+const types_1 = require("./types");
 const DEFAULT_PING_INTERVAL_MS = 30_000;
 let _idCounter = 0;
 function defaultGenerateClientId() {
@@ -54,8 +55,11 @@ function createWsHandler(opts) {
     // Lazy-require ws so consumers without server-side code never load it.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { WebSocketServer } = require('ws');
-    const { server, services, auth, onConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, } = opts;
-    const wss = new WebSocketServer({ noServer: true });
+    const { server, services, auth, onConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, } = opts;
+    if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
+        throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
+    }
+    const wss = new WebSocketServer({ noServer: true, maxPayload });
     /** clientId -> { ws, ctx } */
     const clients = new Map();
     /** ws -> clientId — for lookups in the 'close' handler. */

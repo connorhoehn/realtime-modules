@@ -20,7 +20,12 @@ const realtime = attachRealtime(httpServer, {
         // allowUntargetedInvites: true,
         // Optional: how long a call waits for a dropped socket (default 30 s).
         // rejoinGraceMs: 30_000,
+        // Optional, multi-node only: relay socket departures between nodes.
+        // crossNodePubSub: { publish, subscribe },
     })],
+    // Optional: largest inbound frame in bytes (default 16 MiB; a bigger one
+    // closes that socket with 1009). Calls/chat/presence frames are a few KB.
+    // maxPayload: 256 * 1024,
     // Rings route by the userId this returns (`getClientsByUserId`).
     auth: async (req) => {
         const { sub, displayName, org } = await verifyJwt(req);
@@ -68,6 +73,22 @@ grace), and the call ends if they are not back when it runs out:
 `reconnecting` comes from the replica that saw the drop; another replica
 answers without it. A DM (`dm:`, `dmg:`, or tenant-prefixed `acme:dm:…`) ends
 when either party hangs up; a room keeps going with one person.
+
+**Coming back.** A reconnected socket re-announces itself with
+`participant-state` (useConversationCall does this on every reconnect, after
+`status`), and that takes the person's seat back: they are on the roster again,
+the rejoin grace is cancelled, and the others get the `participant-state` as
+usual. A `status` sent before the re-announce still answers without them —
+`status` is a query and never seats anyone. The seat is given back only to
+someone who held it — the caller, or a callee who sent `accepted` — on a frame
+naming the call's own lobby (so `lobbyGuard` judged it), while the call is live
+here or in the `stateStore`. Anyone else's `participant-state` is forwarded as
+before and seats nobody; being rung is not a seat. A seat the same person still
+holds on an older socket moves to the new one, so a half-open socket that
+closes later does not tell the others they left. On the client, a
+`user-status: left` carrying `rejoinGraceMs` marks that person `reconnecting`
+rather than ending a two-party call; the server's `ended` (`rejoin-grace-expired`)
+ends it if they do not come back.
 
 ## 2 — Client (React hooks)
 

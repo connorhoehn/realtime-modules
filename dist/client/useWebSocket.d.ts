@@ -22,6 +22,14 @@ export interface UseWebSocketOptions {
     /** Cap for exponential backoff in ms. Default 30000. */
     maxReconnectMs?: number;
     /**
+     * Fraction of each reconnect delay that is randomised, 0–1. Default 0.5:
+     * attempt n waits a uniform `[(1 - j) * d, d]` where `d` is the capped
+     * exponential delay — never longer than without jitter. Without it every
+     * client of a gateway that restarts reconnects at the same 1/2/4/8… s
+     * instants, a thundering herd of upgrades and token fetches. 0 disables.
+     */
+    reconnectJitter?: number;
+    /**
      * Cap on reconnect attempts. Default `Infinity` (unbounded — preserves
      * v1 behavior). When exceeded, hook transitions to `disconnected` and
      * emits a terminal `RECONNECT_EXHAUSTED` error.
@@ -98,5 +106,11 @@ export interface UseWebSocketHookReturn extends UseWebSocketReturn {
      */
     publish: (channel: string, frame: Record<string, unknown>) => void;
 }
+/**
+ * The wait before reconnect attempt `attempt` (0-based): exponential from
+ * `baseMs`, capped at `maxMs`, then the top `jitter` fraction randomised
+ * downward — `[(1 - jitter) * d, d]`. Exported for tests.
+ */
+export declare function reconnectDelayMs(attempt: number, baseMs: number, maxMs: number, jitter: number, random?: () => number): number;
 export declare function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn;
 //# sourceMappingURL=useWebSocket.d.ts.map

@@ -11,4 +11,7 @@
 // minimal `WsHttpServer` shape that real `http.Server` + `https.Server`
 // instances satisfy.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_WS_MAX_PAYLOAD = void 0;
+/** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 16 MiB. */
+exports.DEFAULT_WS_MAX_PAYLOAD = 16 * 1024 * 1024;
 //# sourceMappingURL=types.js.map

@@ -269,6 +269,29 @@ export declare class CallService {
     handleAction(clientId: string, action: string, data: CallInvite | null | undefined): Promise<void>;
     handleCallEvent(clientId: string, action: CallAction, data: CallInvite | null | undefined): Promise<void>;
     /**
+     * Put a fresh socket back in the seat its person held, when it announces
+     * itself (`participant-state`) in a call it is not on the roster of.
+     *
+     * Admitted only when all of these hold — anything else is forwarded as
+     * before and seats nobody:
+     *   - the sender's identity comes from the router (an authenticated
+     *     socket), never from the frame;
+     *   - the frame names the call's own lobby, so the `authorize` hook /
+     *     `calls({ lobbyGuard })` that already passed this frame judged the
+     *     lobby the call is really in (a frame without a lobby is not judged
+     *     by the guard, so it cannot rejoin);
+     *   - the call is still live, here or in the shared store;
+     *   - that person took a seat in it before (`invite` as the caller or
+     *     `accepted`): this node's record, or the store's per-user index
+     *     when the seat was taken on another node or before a restart. Being
+     *     rung is not a seat.
+     * One person, one seat: a seat this person still holds on another socket
+     * moves to the new one (the old socket is half-open or about to close;
+     * the shipped client never announces from a tab that is not in the call).
+     * Registering cancels the rejoin grace (registerParticipant).
+     */
+    private rejoinSeat;
+    /**
      * The live socket of the sender's own user that is already a participant
      * of `callId`, other than the sender — or null. A socket this node knows
      * to be closed (isClientLive false) does not count, so a refresh whose

@@ -28,7 +28,9 @@
 //     preserving the old open-means-connected behavior for plain servers.
 //   - Captures `sessionToken` + `clientId` from the gateway's
 //     `{ type: 'session', ... }` handshake frame.
-//   - Reconnects with exponential backoff (capped at `maxReconnectMs`).
+//   - Reconnects with exponential backoff (capped at `maxReconnectMs`),
+//     jittered so the clients of a restarted gateway do not all come back
+//     in the same instant (`reconnectJitter`).
 //   - Optionally caps reconnect attempts at `maxRetries`; on exhaustion
 //     emits `RECONNECT_EXHAUSTED` and transitions to `disconnected`.
 //   - Optionally persists session across page reloads via `persist`.
@@ -84,6 +86,14 @@ export interface UseWebSocketOptions {
   reconnectMs?: number;
   /** Cap for exponential backoff in ms. Default 30000. */
   maxReconnectMs?: number;
+  /**
+   * Fraction of each reconnect delay that is randomised, 0–1. Default 0.5:
+   * attempt n waits a uniform `[(1 - j) * d, d]` where `d` is the capped
+   * exponential delay — never longer than without jitter. Without it every
+   * client of a gateway that restarts reconnects at the same 1/2/4/8… s
+   * instants, a thundering herd of upgrades and token fetches. 0 disables.
+   */
+  reconnectJitter?: number;
   /**
    * Cap on reconnect attempts. Default `Infinity` (unbounded — preserves
    * v1 behavior). When exceeded, hook transitions to `disconnected` and
@@ -169,6 +179,24 @@ export interface UseWebSocketHookReturn extends UseWebSocketReturn {
 
 const DEFAULT_RECONNECT_MS = 1000;
 const DEFAULT_MAX_RECONNECT_MS = 30_000;
+const DEFAULT_RECONNECT_JITTER = 0.5;
+
+/**
+ * The wait before reconnect attempt `attempt` (0-based): exponential from
+ * `baseMs`, capped at `maxMs`, then the top `jitter` fraction randomised
+ * downward — `[(1 - jitter) * d, d]`. Exported for tests.
+ */
+export function reconnectDelayMs(
+  attempt: number,
+  baseMs: number,
+  maxMs: number,
+  jitter: number,
+  random: () => number = Math.random,
+): number {
+  const d = Math.min(baseMs * Math.pow(2, attempt), maxMs);
+  const j = Number.isFinite(jitter) ? Math.min(1, Math.max(0, jitter)) : 0;
+  return Math.round(d * (1 - j * random()));
+}
 const DEFAULT_PERSIST_PREFIX = 'ws_';
 /** Fallback window for servers that never send a `{type:'session'}` frame. */
 const DEFAULT_SESSION_TIMEOUT_MS = 3000;
@@ -246,6 +274,7 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
     authProtocol = 'bearer-token-v1',
     reconnectMs = DEFAULT_RECONNECT_MS,
     maxReconnectMs = DEFAULT_MAX_RECONNECT_MS,
+    reconnectJitter = DEFAULT_RECONNECT_JITTER,
     maxRetries = Infinity,
     defaultChannel = '',
     persist,
@@ -289,6 +318,8 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
   // closure from going stale across reconnects.
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectJitterRef = useRef(reconnectJitter);
+  reconnectJitterRef.current = reconnectJitter;
   const reconnectAttemptRef = useRef(0);
   const authTokenRef = useRef(authToken);
   const channelsRef = useRef<Set<string>>(new Set());
@@ -524,8 +555,8 @@ export function useWebSocket(opts: UseWebSocketOptions): UseWebSocketHookReturn 
         });
         return;
       }
-      // Exponential backoff: 1000, 2000, 4000, ... capped at max.
-      const delay = Math.min(reconnectMs * Math.pow(2, attempt), maxReconnectMs);
+      // Exponential backoff: 1000, 2000, 4000, ... capped at max, jittered.
+      const delay = reconnectDelayMs(attempt, reconnectMs, maxReconnectMs, reconnectJitterRef.current);
       reconnectAttemptRef.current = attempt + 1;
       setConnectionState('reconnecting');
       clearReconnectTimer();

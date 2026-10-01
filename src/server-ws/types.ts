@@ -101,7 +101,19 @@ export interface WsHandlerOptions {
      * recipes use '/realtime'.
      */
     path?: string;
+    /**
+     * Largest inbound frame a client may send, in bytes. A bigger one closes
+     * that socket (code 1009) before it is buffered, so one client cannot push
+     * the process toward OOM. Default {@link DEFAULT_WS_MAX_PAYLOAD} (16 MiB);
+     * `ws` itself would allow 100 MiB. Call signalling, chat and presence
+     * frames are a few KB — a gateway that carries no CRDT / canvas / file
+     * frames can set this far lower (e.g. 256 KiB).
+     */
+    maxPayload?: number;
 }
+
+/** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 16 MiB. */
+export const DEFAULT_WS_MAX_PAYLOAD = 16 * 1024 * 1024;
 
 export interface WsHandlerHandle {
     /** The underlying `ws.Server` instance. */

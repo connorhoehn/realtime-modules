@@ -176,6 +176,30 @@ describe('useConversationCall — caller', () => {
     expect(onCallEnded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'peer-left' }));
   });
 
+  it("a peer's socket drop (left with rejoinGraceMs) holds the call as reconnecting; their re-announce brings them back", async () => {
+    const { g, m, hook, onCallEnded } = setup();
+    await act(async () => { await hook.result.current.start([{ userId: 'u-bob' }]); });
+    const callId = hook.result.current.call!.callId;
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    act(() => { g.push('accepted', { callId, userId: 'u-bob', lobbyName: LOBBY }); });
+    // What the server sends the survivor when the other side's socket drops.
+    act(() => { g.push('user-status', { callId, userId: 'u-bob', status: 'left', reason: 'peer-disconnected', rejoinGraceMs: 30_000, lobbyName: LOBBY }); });
+    expect(hook.result.current.phase).toBe('live');
+    expect(onCallEnded).not.toHaveBeenCalled();
+    expect(hook.result.current.call!.participants.find((p) => p.userId === 'u-bob')!.state).toBe('reconnecting');
+    act(() => { g.push('participant-state', { callId, userId: 'u-bob', status: 'in-call', lobbyName: LOBBY }); });
+    expect(hook.result.current.call!.participants.find((p) => p.userId === 'u-bob')!.state).toBe('in-call');
+    // If they never come back, the server ends it.
+    act(() => { g.push('ended', { callId, lobbyName: LOBBY, reason: 'rejoin-grace-expired' }); });
+    expect(hook.result.current.phase).toBe('ended');
+  });
+
+  it('dmLobbyName refuses an id containing ":" (it would collide with another member set)', () => {
+    expect(() => dmLobbyName(['a', 'b:c'])).toThrow(/contains ':'/);
+    expect(() => dmLobbyName(['a:b', 'c'], { prefix: 'acme:' })).toThrow(/contains ':'/);
+    expect(dmLobbyName(['u-b', 'u-a'], { prefix: 'acme:' })).toBe('acme:dm:u-a:u-b');
+  });
+
   it('a media failure is failed; rejoin makes a fresh session in the same call', async () => {
     const { m, pa, hook } = setup();
     await act(async () => { await hook.result.current.start([{ userId: 'u-bob' }]); });

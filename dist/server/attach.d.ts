@@ -61,6 +61,15 @@ export declare function calls(opts?: {
      * lobbies) and document-call invites are never refused.
      */
     allowUntargetedInvites?: boolean;
+    /**
+     * Cross-node pub/sub for call departures (`CallServiceOptions.crossNodePubSub`).
+     * With more than one gateway node, a socket dropping on one node tells
+     * the call's participants on the others (`user-status: left` / `ended`).
+     * Single process: leave unset. It relays departures only — it is not a
+     * cross-node router; rings and frames still need a router that reaches
+     * every node (`attachRealtime({ router })`).
+     */
+    crossNodePubSub?: import('../call/types').CallCrossNodePubSub;
 }): RealtimeFeature;
 export declare function ingest(opts?: import('../ingest/types').IngestConfig): RealtimeFeature;
 export declare function pipeline(opts?: import('../pipeline/types').PipelineConfig): RealtimeFeature;

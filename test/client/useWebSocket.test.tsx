@@ -23,7 +23,7 @@
 import React from 'react';
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react';
-import { useWebSocket } from '../../src/client/useWebSocket';
+import { useWebSocket, reconnectDelayMs } from '../../src/client/useWebSocket';
 import { GatewaySocketProvider, useGateway } from '../../src/client/GatewaySocketProvider';
 
 // -----------------------------------------------------------------------
@@ -1032,5 +1032,23 @@ describe('useWebSocket', () => {
                 globalThis.fetch = realFetch;
             }
         });
+    });
+});
+
+// Capacity review (aws-agentcore, 2026-10-01, change #4): every client of a
+// restarted gateway reconnected at the same 1/2/4/8 s instants.
+describe('reconnectDelayMs — jittered exponential backoff', () => {
+    it('stays within [(1 - jitter) * d, d] of the capped exponential delay', () => {
+        expect(reconnectDelayMs(0, 1000, 30_000, 0.5, () => 0)).toBe(1000);
+        expect(reconnectDelayMs(0, 1000, 30_000, 0.5, () => 0.999999)).toBe(500);
+        expect(reconnectDelayMs(3, 1000, 30_000, 0.5, () => 0.5)).toBe(6000);
+        expect(reconnectDelayMs(10, 1000, 30_000, 0.5, () => 0)).toBe(30_000);
+        expect(reconnectDelayMs(2, 1000, 30_000, 0, () => 0.9)).toBe(4000);
+    });
+
+    it('spreads a thousand clients instead of landing them on one instant', () => {
+        const delays = new Set(Array.from({ length: 1000 }, () => reconnectDelayMs(1, 1000, 30_000, 0.5)));
+        expect(delays.size).toBeGreaterThan(500);
+        for (const d of delays) { expect(d).toBeGreaterThanOrEqual(1000); expect(d).toBeLessThanOrEqual(2000); }
     });
 });

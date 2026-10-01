@@ -627,6 +627,14 @@ export interface ActiveCallState {
      * This is the roster a record needs.
      */
     everParticipated?: Set<string>;
+    /**
+     * People (authenticated user ids, never a payload's claim) who took a
+     * seat in this call — the caller on `invite`, each callee on `accepted`.
+     * A seat outlives the socket it was taken on: this is who may take it
+     * back from a fresh socket after a drop (`participant-state` rejoin).
+     * Someone only rung, never seated, is not in it.
+     */
+    seatedUserIds?: Set<string>;
     invitedAt?: number;
     inviteExpiresAt?: number;
     /** Epoch ms of the first `accepted` — when the call became a call. */

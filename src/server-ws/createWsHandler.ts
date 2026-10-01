@@ -26,6 +26,7 @@
 // install `ws` themselves (peerDep style).
 
 import { attachWsHeartbeat, wsSend } from 'distributed-core/transport';
+import { DEFAULT_WS_MAX_PAYLOAD } from './types';
 import type {
     WsAuthContext,
     WsHandlerHandle,
@@ -72,9 +73,13 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         pingIntervalMs = DEFAULT_PING_INTERVAL_MS,
         generateClientId = defaultGenerateClientId,
         path,
+        maxPayload = DEFAULT_WS_MAX_PAYLOAD,
     } = opts;
 
-    const wss = new WebSocketServer({ noServer: true });
+    if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
+        throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
+    }
+    const wss = new WebSocketServer({ noServer: true, maxPayload });
 
     /** clientId -> { ws, ctx } */
     const clients = new Map<string, { ws: any; ctx: WsAuthContext }>();

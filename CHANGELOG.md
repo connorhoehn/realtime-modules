@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.99.4 — 2026-10-01
+
+From the aws-agentcore capacity review for 100 simultaneous calls
+(2026-10-01) and its signalling load test, whose `churn` scenario reproduced
+the first item twice.
+
+- **Calls: a dropped socket takes its seat back when it reconnects.**
+  useConversationCall re-announces on every reconnect (`status`, then
+  `participant-state`) and never sends `accepted` again, but only `invite` and
+  `accepted` registered a socket on a conversation call. The fresh socket was
+  never on the roster: a group call lost the person, and a two-party call
+  ended with `ended { reason: 'rejoin-grace-expired' }` exactly one grace after
+  the drop however soon they came back — so one socket blip, or one gateway
+  deploy, ended every 1:1 call 30 s later. A `participant-state` from a socket
+  not on the roster now re-seats it (and cancels the grace) when the sender's
+  authenticated user held a seat in that call (caller or acceptor; this node's
+  record, else the store's per-user index, so it works across nodes and with
+  `RedisCallStateStore`), the frame names the call's own lobby (so
+  `config.authorize` / `lobbyGuard` judged it), and the call is still live.
+  Strangers, people only rung, and frames without the lobby or naming another
+  lobby are forwarded as before and seat nobody. A seat still held on an older
+  socket of the same person moves to the new one, so a half-open socket that
+  closes later does not announce a false `left`. `status` stays a query.
+  Document calls already re-seated on `participant-state` and are unchanged.
+- **Calls client: a peer's socket drop no longer ends a two-party call on the
+  side that stayed.** `user-status: left` with `rejoinGraceMs` (the server
+  holding the seat) now marks that person `reconnecting`; it used to remove
+  them and tear the call down locally at once.
+- **Socket: jittered reconnect backoff.** `useWebSocket` waited exactly
+  1/2/4/8… s, so every client of a restarted gateway came back in the same
+  instant. Each wait is now uniform in `[(1 - j) * d, d]` — never longer than
+  before — with `reconnectJitter` (`j`, default 0.5; 0 restores the old
+  timing). `reconnectDelayMs` is exported from `useWebSocket`'s module.
+- **Server: `maxPayload` on `createWsHandler` / `attachRealtime`.** The
+  WebSocketServer had no limit (ws allows 100 MiB), so one client could push
+  a process toward OOM. Default 16 MiB (`DEFAULT_WS_MAX_PAYLOAD`, exported
+  from `./server` and `./server-ws`); a larger frame closes that socket with
+  1009 before it reaches a service.
+- **Server: `calls({ crossNodePubSub })` is forwarded** to CallService. It was
+  silently dropped, so a multi-node gateway built with attachRealtime never
+  relayed departures. It relays departures only — not a cross-node router.
+- **`dmLobbyName` throws on an id containing `:`**, the member separator:
+  `['a', 'b:c']` and `['a:b', 'c']` named the same lobby.
+
+## 0.99.3 — 2026-09-30
+
+Tenant-prefixed DM and group lobbies retain their private membership checks;
+outsiders knock instead of joining directly.
+
 ## 0.99.2 — 2026-09-30
 
 Four findings from a live walk of room calls against the local SFU

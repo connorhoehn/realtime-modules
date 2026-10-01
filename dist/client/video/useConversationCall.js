@@ -609,7 +609,13 @@ function useConversationCall(opts) {
                         setOutcomes(next);
                         return;
                     }
-                    if (status === 'reconnecting' || (status === 'left' && str(d.reason) === 'unload')) {
+                    // A `left` that carries `rejoinGraceMs` is the server saying their
+                    // socket dropped and it is holding the seat: they are reconnecting,
+                    // not gone. Tearing down on it ended every two-party call at the
+                    // first socket blip on the side that stayed; if they do not come
+                    // back the server ends the call (`ended`, rejoin-grace-expired).
+                    const graceHeld = status === 'left' && typeof d.rejoinGraceMs === 'number' && d.rejoinGraceMs > 0;
+                    if (status === 'reconnecting' || graceHeld || (status === 'left' && str(d.reason) === 'unload')) {
                         setRoster((r) => ({ ...r, [uid]: { ...(r[uid] ?? {}), status: 'reconnecting' } }));
                         return;
                     }

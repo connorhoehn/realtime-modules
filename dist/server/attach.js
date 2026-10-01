@@ -205,6 +205,7 @@ function calls(opts = {}) {
                 stateStore: opts.stateStore,
                 config,
                 ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
+                ...(opts.crossNodePubSub ? { crossNodePubSub: opts.crossNodePubSub } : {}),
             });
         },
     });
