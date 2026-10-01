@@ -172,40 +172,8 @@ export interface GatewayRest {
   unpin?: (channel: string, messageId: string) => Promise<void>;
 }
 
-/**
- * A message pinned to the top of a channel.
- *
- * Channel state, not message content: set by one person, seen by everyone,
- * and outliving the session that set it — which is why it has its own store
- * rather than riding the message's metadata, where a later pin by someone
- * else would have nowhere to live.
- */
-export interface PinnedMessage {
-  channelId: string;
-  messageId: string;
-  /** userId of whoever pinned it. */
-  pinnedBy: string;
-  /** ISO-8601. */
-  pinnedAt: string;
-  /** Short excerpt, so a pin panel renders without re-reading the transcript. */
-  preview: string;
-  /** Display name of the original sender. */
-  author: string;
-  /**
-   * ISO-8601: when the MESSAGE was sent, which is not when it was pinned.
-   *
-   * A pinned panel that shows `pinnedAt` makes the same message read as two
-   * different times depending on which panel you are in, and shows the one
-   * that cannot be matched against the transcript — where the message is
-   * stamped with this. The pinning act belongs in the byline, next to
-   * `pinnedBy`, the way Teams and Slack put it.
-   *
-   * Optional: pins written before the gateway stored it have none, and the
-   * gateway will not invent one. Fall back to `pinnedAt`, or to no time at
-   * all — do not treat the absence as an error.
-   */
-  sentAt?: string;
-}
+export type { PinnedMessage } from '../chat/ChatPinsStore';
+import type { PinnedMessage } from '../chat/ChatPinsStore';
 
 export interface GatewayContextValue extends UseWebSocketHookReturn {
   /** Trusted HTTP origin/base for gateway-owned upload routes. */

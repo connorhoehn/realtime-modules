@@ -52,5 +52,7 @@ export type { ChatStore } from './ChatStore';
 export type { ChatReadReceipt, ChatReadReceiptStore } from './ChatReadReceiptStore';
 export type { ChatMembershipStore, ChatMember, ChatMemberRole, ChatMemberView, ChatHistoryChoice } from './ChatMembershipStore';
 export type { ChatMessage, ChatHistoryQuery, ChatMessagePatch } from './types';
+export { MemoryChatPinsStore, PIN_PREVIEW_MAX } from './ChatPinsStore';
+export type { ChatPinInput, ChatPinsStore, PinnedMessage } from './ChatPinsStore';
 
 export default ChatService;

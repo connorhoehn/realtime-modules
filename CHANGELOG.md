@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.100.0 — 2026-10-01
+
+- Add `ChatPinsStore` and `MemoryChatPinsStore` under `/chat`, plus
+  `DynamoChatPinsStore` under `/server/stores/dynamo`, extracted from the
+  realtime-examples pin index. Pins are independent channel state with
+  authenticated attribution supplied by the host, bounded previews, optional
+  original send times, idempotent writes and 90-day retention. Dynamo reads
+  follow all pages, filter expired rows and reconcile consistently.
+- Share the existing client `PinnedMessage` type with the server store without
+  importing React into the server entry.
+
 ## 0.99.4 — 2026-10-01
 
 From the aws-agentcore capacity review for 100 simultaneous calls

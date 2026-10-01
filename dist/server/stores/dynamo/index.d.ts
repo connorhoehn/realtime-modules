@@ -8,6 +8,8 @@ export { DynamoChatMembershipStore, memberFromItem } from './DynamoChatMembershi
 export type { DynamoChatMembershipStoreOpts } from './DynamoChatMembershipStore';
 export { DynamoChatReadReceiptStore, receiptFromItem } from './DynamoChatReadReceiptStore';
 export type { DynamoChatReadReceiptStoreOpts } from './DynamoChatReadReceiptStore';
+export { DynamoChatPinsStore } from './DynamoChatPinsStore';
+export type { DynamoChatPinsStoreOpts } from './DynamoChatPinsStore';
 export { CHAT_TTL_SECONDS } from './common';
 export type { DynamoCommandClient, DynamoStoreLogger, DynamoStoreClockOpts } from './common';
 //# sourceMappingURL=index.d.ts.map
