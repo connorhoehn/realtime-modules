@@ -90,6 +90,25 @@ closes later does not tell the others they left. On the client, a
 rather than ending a two-party call; the server's `ended` (`rejoin-grace-expired`)
 ends it if they do not come back.
 
+**Gateway restart.** An accepted ordinary call held in the shared store gets
+the service's fixed startup `rejoinGraceMs` window (30 seconds by default).
+When every previous local socket is dead, `status` still reports
+`active:false`; it does not register a tab or remove the stored call during
+that window. The returning active client then sends `participant-state` and
+proves its authenticated remembered seat. Original call ID, caller name and
+start time are retained. Status polling cannot extend this startup deadline.
+
+Built-in stores implement `resumeParticipant(callId, clientId, userId,
+lobbyName, departedClientIds?)` atomically: an existing accepted call, the
+authenticated user's seat index and the stored lobby must all match. No
+missing call is created, and provably dead client IDs are retired. They also
+implement `forgetCallIfUnchanged(callId, snapshot)` so a delayed liveness read
+cannot prune a newly registered roster. Redis needs EVAL through `command`,
+`sendCommand`, `call` or `eval`; the memory implementation mutates synchronously.
+Custom stores without atomic resume can still serve local calls but cannot
+resume from a cold cache. These state operations do not provide distributed
+socket routing or multi-gateway delivery.
+
 ## 2 — Client (React hooks)
 
 `./client/video` has the client half of `calls()` for a conversation — a DM or

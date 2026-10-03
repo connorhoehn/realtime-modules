@@ -14,6 +14,13 @@ export interface ActiveCallStateView {
     callerName?: string | null;
 }
 export interface CallStateStore {
+    /** Atomically resume an existing accepted call for a previously seated
+     * authenticated user. Must not create a missing call. Departed client IDs
+     * have already been proven dead by the consumer's router/liveness hook. */
+    resumeParticipant?(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
+    /** Atomically forget only the exact metadata/roster snapshot inspected by
+     * a liveness query. A concurrent registration must make this return false. */
+    forgetCallIfUnchanged?(callId: string, expected: ActiveCallStateView): Promise<boolean>;
     /** Add a participant to a call. Creates the call entry if missing. */
     registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
     /** Remove one participant. Returns the remaining count post-removal,
@@ -144,6 +151,8 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     private recentInvites;
     private userToCalls;
     private lobbyToCalls;
+    resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
+    forgetCallIfUnchanged(callId: string, expected: ActiveCallStateView): Promise<boolean>;
     registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
     removeParticipant(callId: string, clientId: string): Promise<{
         remaining: number;
@@ -180,6 +189,12 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     getCallsForClient(clientId: string): Promise<string[]>;
 }
 export interface CallStateRedis {
+    /** Lua support is required by atomic resume/conditional prune. Clients
+     * may instead expose node-redis sendCommand or ioredis call. */
+    command?(command: string, ...args: (string | number)[]): Promise<unknown>;
+    sendCommand?(args: string[]): Promise<unknown>;
+    call?(command: string, ...args: (string | number)[]): Promise<unknown>;
+    eval?(script: string, ...args: unknown[]): Promise<unknown>;
     hset(key: string, field: string, value: string): Promise<unknown>;
     hSetNX?(key: string, field: string, value: string): Promise<unknown>;
     hsetnx?(key: string, field: string, value: string): Promise<unknown>;
@@ -199,6 +214,9 @@ export declare class RedisCallStateStore implements CallStateStore {
     private callKey;
     private participantsKey;
     private clientKey;
+    private script;
+    resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
+    forgetCallIfUnchanged(callId: string, expected: ActiveCallStateView): Promise<boolean>;
     registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
     private hsetnx;
     private sadd;

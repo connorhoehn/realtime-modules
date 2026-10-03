@@ -9,6 +9,50 @@ export class FakeRedis {
   strings = new Map<string, string>();
   ttls = new Map<string, number>();
 
+  // Atomic script double: these branches mutate maps without yielding.
+  async command(command: string, script: string, count: number, ...values: (string | number)[]) {
+    if (command !== 'EVAL') throw new Error('FakeRedis only implements EVAL here');
+    const keys = values.slice(0, count).map(String);
+    const args = values.slice(count).map(String);
+    const hash = this.hashes.get(keys[0]);
+    if (script.startsWith('-- call-resume-participant-v1')) {
+      const participants = this.sets.get(keys[1]);
+      if (!hash || hash.get('lobbyName') !== args[0] || !this.sets.get(keys[3])?.has(args[2])
+        || (!this.strings.has(keys[4]) && (participants?.size ?? 0) < 2)) return 0;
+      const members = participants ?? new Set<string>();
+      members.add(args[1]); this.sets.set(keys[1], members);
+      const clients = this.sets.get(keys[2]) ?? new Set<string>();
+      clients.add(args[2]); this.sets.set(keys[2], clients);
+      for (const old of JSON.parse(args[4]) as string[]) {
+        if (old === args[1]) continue;
+        members.delete(old);
+        const oldCalls = this.sets.get(args[5] + old);
+        oldCalls?.delete(args[2]);
+        if (oldCalls?.size === 0) this.sets.delete(args[5] + old);
+      }
+      const lobby = this.sets.get(keys[5]) ?? new Set<string>();
+      lobby.add(args[2]); this.sets.set(keys[5], lobby);
+      this.strings.set(keys[4], '1');
+      for (const key of keys) this.ttls.set(key, Number(args[3]));
+      return 1;
+    }
+    if (script.startsWith('-- call-forget-unchanged-v1')) {
+      const expected = JSON.parse(args[3]) as string[];
+      const members = this.sets.get(keys[1]);
+      if (!hash || hash.get('callerId') !== args[0] || hash.get('lobbyName') !== args[1]
+        || (hash.get('invitedAt') ?? '') !== args[2] || (members?.size ?? 0) !== expected.length
+        || expected.some((cid) => !members?.has(cid))) return 0;
+      for (const cid of expected) {
+        const calls = this.sets.get(args[5] + cid);
+        calls?.delete(args[4]);
+        if (calls?.size === 0) this.sets.delete(args[5] + cid);
+      }
+      this.hashes.delete(keys[0]); this.sets.delete(keys[1]); this.strings.delete(keys[2]);
+      return 1;
+    }
+    throw new Error('Unknown FakeRedis Lua script');
+  }
+
   async hset(key: string, field: string, value: string) {
     let h = this.hashes.get(key);
     if (!h) { h = new Map(); this.hashes.set(key, h); }

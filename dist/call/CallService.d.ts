@@ -122,6 +122,8 @@ export declare class CallService {
     private lastRingingPush;
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning;
+    /** Fixed service-start deadline; status polling cannot extend recovery. */
+    private storedRecoveryUntil;
     constructor(opts: CallServiceOptions);
     /**
      * Fan-out logic for a cross-node departure. Mirrors handleDisconnect

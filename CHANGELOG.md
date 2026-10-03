@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.100.2 — 2026-10-03
+
+- Preserve accepted ordinary calls through a fixed service-start recovery
+  grace. A cold `status` with no live sockets reports inactive without
+  deleting remembered seats before the client's `participant-state` arrives.
+- Add atomic `CallStateStore.resumeParticipant` and
+  `forgetCallIfUnchanged` contracts to the memory and Redis adapters. Resume
+  checks the existing hash, authenticated prior seat and stored lobby without
+  creating a missing call; conditional pruning cannot delete a newer roster.
+  Redis executes both mutations with Lua. Custom stores must implement atomic
+  resume before cold recovery is allowed.
+- Rehydrate the original caller name/start time and retire provably dead
+  client IDs during restart recovery, so old sockets cannot keep a ghost call
+  alive after the returning user leaves.
+- Add cold-cache, authorization, terminal-race and stale-prune regressions,
+  plus opt-in real Redis Lua tests through `CALL_TEST_REDIS_URL`.
+
 ## 0.100.1 — 2026-10-01
 
 - Add optional `ChatStore.getMessage(channel, messageId)` with direct lookups

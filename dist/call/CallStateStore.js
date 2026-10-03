@@ -23,6 +23,49 @@ class InMemoryCallStateStore {
     // Append-only; readers liveness-filter through getCall.
     userToCalls = new Map();
     lobbyToCalls = new Map();
+    async resumeParticipant(callId, clientId, userId, lobbyName, departedClientIds = []) {
+        const state = this.activeCalls.get(callId);
+        if (!state || state.lobbyName !== lobbyName || !this.userToCalls.get(userId)?.has(callId)
+            || (!(this.acceptedCalls.get(callId) > Date.now()) && state.participantClientIds.size < 2))
+            return false;
+        state.participantClientIds.add(clientId);
+        const calls = this.clientToCalls.get(clientId) ?? new Set();
+        calls.add(callId);
+        this.clientToCalls.set(clientId, calls);
+        for (const old of departedClientIds) {
+            if (old === clientId)
+                continue;
+            state.participantClientIds.delete(old);
+            const oldCalls = this.clientToCalls.get(old);
+            oldCalls?.delete(callId);
+            if (oldCalls?.size === 0)
+                this.clientToCalls.delete(old);
+        }
+        this.acceptedCalls.set(callId, Date.now() + TTL_SECONDS * 1000);
+        const lobby = this.lobbyToCalls.get(lobbyName) ?? new Set();
+        lobby.add(callId);
+        this.lobbyToCalls.set(lobbyName, lobby);
+        return true;
+    }
+    async forgetCallIfUnchanged(callId, expected) {
+        if (new Set(expected.participantClientIds).size !== expected.participantClientIds.length)
+            return false;
+        const state = this.activeCalls.get(callId);
+        if (!state || state.callerId !== expected.callerId || state.lobbyName !== expected.lobbyName
+            || (state.invitedAt ?? null) !== (expected.invitedAt ?? null)
+            || state.participantClientIds.size !== expected.participantClientIds.length
+            || expected.participantClientIds.some((cid) => !state.participantClientIds.has(cid)))
+            return false;
+        for (const cid of state.participantClientIds) {
+            const calls = this.clientToCalls.get(cid);
+            calls?.delete(callId);
+            if (calls?.size === 0)
+                this.clientToCalls.delete(cid);
+        }
+        this.activeCalls.delete(callId);
+        this.acceptedCalls.delete(callId);
+        return true;
+    }
     async registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds) {
         let state = this.activeCalls.get(callId);
         if (!state) {
@@ -321,6 +364,39 @@ const LOBBY_CALLS_PREFIX = 'call:lobby:'; // set: callIds in a lobbyName
 const ACCEPTED_KEY_PREFIX = 'call:accepted:'; // string: SETNX with TTL
 const RECENT_INVITE_PREFIX = 'call:recent-invite:'; // string: SETNX with TTL
 const TTL_SECONDS = 4 * 60 * 60;
+const RESUME_PARTICIPANT = `-- call-resume-participant-v1
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if redis.call('HGET', KEYS[1], 'lobbyName') ~= ARGV[1] then return 0 end
+if redis.call('SISMEMBER', KEYS[4], ARGV[3]) == 0 then return 0 end
+if redis.call('EXISTS', KEYS[5]) == 0 and redis.call('SCARD', KEYS[2]) < 2 then return 0 end
+redis.call('SADD', KEYS[2], ARGV[2])
+redis.call('SADD', KEYS[3], ARGV[3])
+for _, old in ipairs(cjson.decode(ARGV[5])) do
+  if old ~= ARGV[2] then
+    redis.call('SREM', KEYS[2], old)
+    local clientKey = ARGV[6] .. old
+    redis.call('SREM', clientKey, ARGV[3])
+    if redis.call('SCARD', clientKey) == 0 then redis.call('DEL', clientKey) end
+  end
+end
+redis.call('SADD', KEYS[6], ARGV[3])
+redis.call('SET', KEYS[5], '1', 'EX', ARGV[4])
+for _, key in ipairs({KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[6]}) do redis.call('EXPIRE', key, ARGV[4]) end
+return 1`;
+const FORGET_UNCHANGED = `-- call-forget-unchanged-v1
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if redis.call('HGET', KEYS[1], 'callerId') ~= ARGV[1] or redis.call('HGET', KEYS[1], 'lobbyName') ~= ARGV[2] then return 0 end
+if (redis.call('HGET', KEYS[1], 'invitedAt') or '') ~= ARGV[3] then return 0 end
+local expected = cjson.decode(ARGV[4])
+if redis.call('SCARD', KEYS[2]) ~= #expected then return 0 end
+for _, cid in ipairs(expected) do if redis.call('SISMEMBER', KEYS[2], cid) == 0 then return 0 end end
+for _, cid in ipairs(expected) do
+  local clientKey = ARGV[6] .. cid
+  redis.call('SREM', clientKey, ARGV[5])
+  if redis.call('SCARD', clientKey) == 0 then redis.call('DEL', clientKey) end
+end
+redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+return 1`;
 class RedisCallStateStore {
     redis;
     constructor(redis) {
@@ -329,6 +405,28 @@ class RedisCallStateStore {
     callKey(callId) { return `${CALL_KEY_PREFIX}${callId}`; }
     participantsKey(callId) { return `${CALL_KEY_PREFIX}${callId}:participants`; }
     clientKey(clientId) { return `${CLIENT_KEY_PREFIX}${clientId}`; }
+    async script(script, keys, args) {
+        const r = this.redis;
+        if (typeof r.command === 'function')
+            return r.command('EVAL', script, keys.length, ...keys, ...args);
+        if (typeof r.sendCommand === 'function')
+            return r.sendCommand(['EVAL', script, String(keys.length), ...keys, ...args.map(String)]);
+        if (typeof r.call === 'function')
+            return r.call('EVAL', script, keys.length, ...keys, ...args);
+        if (typeof r.eval === 'function')
+            return r.eval(script, keys.length, ...keys, ...args);
+        throw new Error('CallStateRedis: atomic recovery requires EVAL/command/sendCommand/call');
+    }
+    async resumeParticipant(callId, clientId, userId, lobbyName, departedClientIds = []) {
+        const result = await this.script(RESUME_PARTICIPANT, [this.callKey(callId), this.participantsKey(callId), this.clientKey(clientId), `${USER_CALLS_PREFIX}${userId}`, `${ACCEPTED_KEY_PREFIX}${callId}`, `${LOBBY_CALLS_PREFIX}${lobbyName}`], [lobbyName, clientId, callId, TTL_SECONDS, JSON.stringify(departedClientIds), CLIENT_KEY_PREFIX]);
+        return Number(result) === 1;
+    }
+    async forgetCallIfUnchanged(callId, expected) {
+        if (new Set(expected.participantClientIds).size !== expected.participantClientIds.length)
+            return false;
+        const result = await this.script(FORGET_UNCHANGED, [this.callKey(callId), this.participantsKey(callId), `${ACCEPTED_KEY_PREFIX}${callId}`], [expected.callerId, expected.lobbyName, expected.invitedAt == null ? '' : String(expected.invitedAt), JSON.stringify(expected.participantClientIds), callId, CLIENT_KEY_PREFIX]);
+        return Number(result) === 1;
+    }
     async registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds) {
         const callKey = this.callKey(callId);
         const participantsKey = this.participantsKey(callId);

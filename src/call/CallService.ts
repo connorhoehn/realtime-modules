@@ -290,6 +290,8 @@ export class CallService {
     private lastRingingPush = new Map<string, number>();
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning = false;
+    /** Fixed service-start deadline; status polling cannot extend recovery. */
+    private storedRecoveryUntil: number;
 
     constructor(opts: CallServiceOptions) {
         if (!opts || !opts.messageRouter) {
@@ -306,6 +308,7 @@ export class CallService {
         if (typeof opts.rejoinGraceMs === 'number' && opts.rejoinGraceMs >= 0) {
             this.rejoinGraceMs = opts.rejoinGraceMs;
         }
+        this.storedRecoveryUntil = Date.now() + this.rejoinGraceMs;
         this.onSweepSkipped = opts.onSweepSkipped ?? null;
         this._withSpan = opts.withSpan ?? _passthroughWithSpan;
         this.metaStore = opts.metaStore ?? null;
@@ -618,7 +621,7 @@ export class CallService {
      * write-through TTL matches the call lifetime — 60s for an open
      * invite, refreshed to 4h once accepted.
      */
-    private registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): void {
+    private registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], mirror = true): void {
         // F2 — a (re)registration during the rejoin grace window saves
         // the call: cancel the deferred teardown.
         const pendingEnd = this.rejoinGraceTimers.get(callId);
@@ -647,7 +650,7 @@ export class CallService {
         // participant. Fire-and-forget: Redis hiccup shouldn't block
         // call routing. Local Map writes above are the source of truth
         // for THIS node; the store is for cross-node visibility.
-        if (this.stateStore) {
+        if (this.stateStore && mirror) {
             void this.stateStore.registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds)
                 .then(() => { this.storeMirrored.add(callId); })
                 .catch((e: any) => this.logger.warn(`[CallService] stateStore.register failed for ${callId}/${clientId}: ${e?.message ?? e}`));
@@ -909,6 +912,11 @@ export class CallService {
         view: import('./CallStateStore').ActiveCallStateView,
     ): Promise<void> {
         if (!this.stateStore) return;
+        // Status and participant-state handlers can run concurrently. A dead
+        // roster read must not delete a newer registration.
+        if (typeof this.stateStore.forgetCallIfUnchanged === 'function') {
+            if (!(await this.stateStore.forgetCallIfUnchanged(callId, view))) return;
+        }
         this.logger.info(`[CallService] status query reaped dead stored call ${callId} in lobby ${lobbyName}`);
         if (typeof this.stateStore.forgetLobbyCall === 'function') {
             try { await this.stateStore.forgetLobbyCall(lobbyName, callId); } catch { /* best-effort */ }
@@ -929,7 +937,9 @@ export class CallService {
                 try { await this.stateStore.clearInviteForUser(uid, callId); } catch { /* best-effort */ }
             }
         }
-        try { await this.stateStore.forgetCall(callId); } catch { /* best-effort */ }
+        if (typeof this.stateStore.forgetCallIfUnchanged !== 'function') {
+            try { await this.stateStore.forgetCall(callId); } catch { /* best-effort */ }
+        }
         this.acceptedCallIds.delete(callId);
     }
 
@@ -1294,6 +1304,13 @@ export class CallService {
             if (view) for (const cid of view.participantClientIds) ids.add(cid);
             const alive = await liveParticipants(Array.from(ids));
             if (alive.length === 0) {
+                // Restart makes every old local client ID dead. The public
+                // client sends status before participant-state, so preserve
+                // accepted store-only calls briefly while their users prove
+                // prior seat ownership. Discovery grants no seat and still
+                // answers active:false. This deadline is fixed at startup.
+                if (!local && view && now < this.storedRecoveryUntil
+                    && await this.callHasAcceptedParticipant(id)) continue;
                 // Provably dead: every registered participant failed the probe.
                 this.logger.info(`[CallService] status query reaped dead call ${id} in lobby ${lobbyName}`);
                 if (local) this.forgetCall(id);
@@ -2176,6 +2193,32 @@ export class CallService {
             return false;
         }
 
+        const departed = new Set<string>();
+        for (const cid of view?.participantClientIds ?? []) {
+            if (cid !== clientId && this.messageRouter.isClientLive?.(cid) === false) departed.add(cid);
+        }
+        let resumedAtomically = false;
+        if (this.stateStore && typeof this.stateStore.resumeParticipant === 'function') {
+            // The hash and authenticated user's seat index must STILL exist
+            // at the mutation boundary, with the same stored lobby. Never
+            // turn an old read into create-if-missing registration.
+            try {
+                resumedAtomically = await this.stateStore.resumeParticipant(callId, clientId, userId, lobbyName, Array.from(departed));
+                if (!resumedAtomically) return false;
+                const current = await this.stateStore.getCall(callId);
+                if (!current || !current.participantClientIds.includes(clientId)) return false;
+                view = current;
+            } catch (e: any) {
+                this.logger.warn(`[CallService] atomic rejoin failed for ${callId}/${clientId}: ${e?.message ?? e}`);
+                return false;
+            }
+        } else if (!local && this.stateStore) {
+            // Legacy custom stores remain usable for local calls, but must
+            // implement atomic recovery before a cold cache may resume one.
+            this.logger.warn(`[CallService] cold rejoin requires stateStore.resumeParticipant (${callId})`);
+            return false;
+        }
+
         // Synchronous from here to registerParticipant: the call must not
         // have ended (grace expiry, a hang-up) while the lookups above ran,
         // or registering would resurrect it.
@@ -2187,9 +2230,11 @@ export class CallService {
         const previous = Array.from(now?.participantClientIds ?? view?.participantClientIds ?? [])
             .filter((cid) => cid !== clientId
                 && (this.participantUserIds.get(cid) ?? this.messageRouter.getUserIdForClient?.(cid) ?? null) === userId);
-        this.registerParticipant(callId, clientId, callerId, lobbyName, targets.slice());
+        this.registerParticipant(callId, clientId, callerId, lobbyName, targets.slice(), !resumedAtomically);
         this.participantUserIds.set(clientId, userId);
         const state = this.activeCalls.get(callId)!;
+        if (view?.invitedAt != null) state.invitedAt = view.invitedAt;
+        if (view?.callerName) state.originalCallerName = view.callerName;
         (state.seatedUserIds ??= new Set()).add(userId);
         for (const old of previous) {
             state.participantClientIds.delete(old);
@@ -2199,9 +2244,16 @@ export class CallService {
                 if (cs.size === 0) this.clientToCalls.delete(old);
             }
         }
+        for (const old of departed) state.participantClientIds.delete(old);
         this.logger.info(`[CallService] ${userId} rejoined ${callId} on ${clientId}${previous.length ? ` (seat moved from ${previous.join(', ')})` : ''}`);
 
-        if (this.stateStore) {
+        if (resumedAtomically) {
+            this.storeMirrored.add(callId);
+            for (const old of previous) {
+                await this.stateStore!.removeParticipant(callId, old);
+                await this.stateStore!.removeClientFromCall?.(old, callId);
+            }
+        } else if (this.stateStore) {
             const store = this.stateStore;
             try {
                 // Awaited, in order: the new seat lands before any old one is
