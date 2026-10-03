@@ -628,10 +628,13 @@ export class RedisCallStateStore implements CallStateStore {
 
     private async script(script: string, keys: string[], args: (string | number)[]): Promise<unknown> {
         const r = this.redis as any;
-        if (typeof r.command === 'function') return r.command('EVAL', script, keys.length, ...keys, ...args);
         if (typeof r.sendCommand === 'function') return r.sendCommand(['EVAL', script, String(keys.length), ...keys, ...args.map(String)]);
         if (typeof r.call === 'function') return r.call('EVAL', script, keys.length, ...keys, ...args);
         if (typeof r.eval === 'function') return r.eval(script, keys.length, ...keys, ...args);
+        // node-redis also has command(), but it runs Redis COMMAND
+        // introspection; only minimal adapters such as RedisLite use this
+        // name for a generic command runner.
+        if (typeof r.command === 'function') return r.command('EVAL', script, keys.length, ...keys, ...args);
         throw new Error('CallStateRedis: atomic recovery requires EVAL/command/sendCommand/call');
     }
 

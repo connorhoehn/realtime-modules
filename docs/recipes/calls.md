@@ -103,8 +103,11 @@ lobbyName, departedClientIds?)` atomically: an existing accepted call, the
 authenticated user's seat index and the stored lobby must all match. No
 missing call is created, and provably dead client IDs are retired. They also
 implement `forgetCallIfUnchanged(callId, snapshot)` so a delayed liveness read
-cannot prune a newly registered roster. Redis needs EVAL through `command`,
-`sendCommand`, `call` or `eval`; the memory implementation mutates synchronously.
+cannot prune a newly registered roster. Redis needs EVAL through `sendCommand`,
+`call`, positional `eval`, or a minimal adapter's generic `command` method,
+in that order. node-redis uses `sendCommand`; its `command()` is introspection
+and must not be selected ahead of the EVAL transport. The memory implementation
+mutates synchronously.
 Custom stores without atomic resume can still serve local calls but cannot
 resume from a cold cache. These state operations do not provide distributed
 socket routing or multi-gateway delivery.

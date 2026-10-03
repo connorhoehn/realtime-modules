@@ -15,7 +15,9 @@
   client IDs during restart recovery, so old sockets cannot keep a ghost call
   alive after the returning user leaves.
 - Add cold-cache, authorization, terminal-race and stale-prune regressions,
-  plus opt-in real Redis Lua tests through `CALL_TEST_REDIS_URL`.
+  plus opt-in real Redis Lua tests through `CALL_TEST_REDIS_URL`. Lua dispatch
+  prefers node-redis `sendCommand` and ioredis `call` over minimal adapters'
+  `command`, which node-redis also exposes for unrelated introspection.
 
 ## 0.100.1 — 2026-10-01
 
