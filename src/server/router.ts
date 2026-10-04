@@ -284,13 +284,17 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     // ---- sends -----------------------------------------------------------
 
     sendToClient(clientId: string, message: unknown): boolean | Promise<boolean> {
+        return this.sendFiltered(clientId, message);
+    }
+
+    private sendFiltered(clientId: string, message: unknown, stillCurrent: () => boolean = () => true): boolean | Promise<boolean> {
         const handle = this.handleRef;
         if (!handle) return false;
-        if (!this.filterClientMessage) return handle.sendToClient(clientId, message as Record<string, unknown>);
+        if (!this.filterClientMessage) return stillCurrent() && handle.sendToClient(clientId, message as Record<string, unknown>);
         const context = this.ctxOf(clientId);
         if (!context) return false;
         const deliver = (filtered: unknown): boolean => {
-            if (filtered == null || this.handleRef !== handle || this.ctxOf(clientId) !== context) return false;
+            if (filtered == null || this.handleRef !== handle || this.ctxOf(clientId) !== context || !stillCurrent()) return false;
             return handle.sendToClient(clientId, filtered as Record<string, unknown>);
         };
         try {
@@ -352,7 +356,8 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             const token = this.subscriptionTokens.get(channel)?.get(clientId);
             if (!(await this.allows('subscribe', clientId, channel))) return;
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token) return;
-            await this.sendToClient(clientId, message);
+            await this.sendFiltered(clientId, message, () => this.ctxOf(clientId) === context
+                && this.subscriptionTokens.get(channel)?.get(clientId) === token);
         }));
     }
 

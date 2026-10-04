@@ -51,6 +51,17 @@ test('passes channel fanout through the same filter and never mutates a peer fra
     expect(h.frames).toEqual([{ clientId: 'a', frame: { rows: ['public'] } }, { clientId: 'b', frame: input }]);
     expect(input.rows).toEqual(['private', 'public']);
 });
+test.each(['unsubscribe', 'resubscribe'])('preserves the channel generation fence through a delayed filter and %s', async mode => {
+    const pending = deferred<unknown>(), started = deferred<void>(); let delayed = true;
+    const h = harness(({ message }) => { if (!delayed) return message; started.resolve(); return pending.promise; });
+    h.router.subscribeToChannel('a', 'room');
+    const delivery = h.router.sendToChannel('room', { old: true }); await started.promise;
+    h.router.unsubscribeFromChannel('a', 'room');
+    if (mode === 'resubscribe') h.router.subscribeToChannel('a', 'room');
+    pending.resolve({ old: true }); await delivery; expect(h.frames).toEqual([]);
+    delayed = false;
+    if (mode === 'resubscribe') { await h.router.sendToChannel('room', { fresh: true }); expect(h.frames).toEqual([{ clientId: 'a', frame: { fresh: true } }]); }
+});
 test('notification actions wait for authorization before any store work and rejected authority refuses', async () => {
     const h = harness(); const waiting = deferred<boolean>();
     const store = { list: jest.fn(async () => []), markRead: jest.fn(async () => undefined), markAllRead: jest.fn(async () => []) };

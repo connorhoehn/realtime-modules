@@ -213,6 +213,7 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     /** Single process: a client not connected here is not connected. */
     isClientLive(clientId: string): boolean | null;
     sendToClient(clientId: string, message: unknown): boolean | Promise<boolean>;
+    private sendFiltered;
     sendToLocalClient(clientId: string, message: unknown): boolean | Promise<boolean>;
     broadcastToAll(message: unknown, excludeClientId?: string): Promise<void>;
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {

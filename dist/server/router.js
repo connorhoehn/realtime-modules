@@ -101,16 +101,19 @@ class LocalRealtimeRouter {
     }
     // ---- sends -----------------------------------------------------------
     sendToClient(clientId, message) {
+        return this.sendFiltered(clientId, message);
+    }
+    sendFiltered(clientId, message, stillCurrent = () => true) {
         const handle = this.handleRef;
         if (!handle)
             return false;
         if (!this.filterClientMessage)
-            return handle.sendToClient(clientId, message);
+            return stillCurrent() && handle.sendToClient(clientId, message);
         const context = this.ctxOf(clientId);
         if (!context)
             return false;
         const deliver = (filtered) => {
-            if (filtered == null || this.handleRef !== handle || this.ctxOf(clientId) !== context)
+            if (filtered == null || this.handleRef !== handle || this.ctxOf(clientId) !== context || !stillCurrent())
                 return false;
             return handle.sendToClient(clientId, filtered);
         };
@@ -170,7 +173,8 @@ class LocalRealtimeRouter {
                 return;
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token)
                 return;
-            await this.sendToClient(clientId, message);
+            await this.sendFiltered(clientId, message, () => this.ctxOf(clientId) === context
+                && this.subscriptionTokens.get(channel)?.get(clientId) === token);
         }));
     }
     // ---- authz -----------------------------------------------------------

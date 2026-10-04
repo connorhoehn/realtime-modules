@@ -8,7 +8,9 @@ fanout. The public `ClientMessageFilter` type is exported from `./server`.
 Return the original frame or a filtered copy to deliver it; return `null` to
 suppress it. Synchronous predicates preserve synchronous sends. Async results
 are awaited and discarded after disconnect, auth-context replacement or
-handle replacement. Throws and rejections suppress delivery. A slow or refused
+handle replacement. Channel sends also retain their subscription generation
+fence through the awaited filter; unsubscribe/resubscribe cannot revive an old
+frame. Throws and rejections suppress delivery. A slow or refused
 recipient does not prevent a permitted peer from receiving a broadcast.
 Channel publication continues to enforce its existing channel checks.
 
