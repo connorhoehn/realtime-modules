@@ -1,6 +1,6 @@
 import type { FeatureManifest } from '../feature-manifest/types';
 import type { WsHandlerHandle, WsHandlerOptions, WsService } from '../server-ws/types';
-import { type ChannelAuthorize, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
+import { type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
 /** Everything a feature's factory receives. */
 export interface FeatureContext {
     /** The shared router — Local by default, swappable via attach opts. */
@@ -82,6 +82,7 @@ export declare function rooms(opts?: {
 export declare function notifications(opts?: {
     store?: import('../notification/RedisNotificationStore').RedisNotificationStore;
     redisClient?: import('../notification/RedisNotificationStore').NotificationRedisClient | null;
+    authorize?: import('../notification/NotificationService').NotificationServiceOpts['authorize'];
 }): RealtimeFeature;
 export declare function fileUploads(opts?: {
     blobStore?: import('../fileupload/FileBlobStore').FileBlobStore;
@@ -101,12 +102,14 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     features: RealtimeFeature[];
     /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
     authorize?: ChannelAuthorize;
+    /** Last-mile direct/broadcast/channel delivery filtering for the local router. */
+    filterClientMessage?: ClientMessageFilter;
     /** Lifecycle plugins (connect/disconnect/message observers). */
     plugins?: FeaturePlugin[];
     /** Shared logger; defaults to silent. */
     logger?: RouterLogger;
     /**
-     * Swap the transport. When provided, `authorize`/`plugins` are the
+     * Swap the transport. When provided, `authorize`/`filterClientMessage`/`plugins` are the
      * custom router's responsibility and are ignored here.
      */
     router?: RealtimeRouter & {

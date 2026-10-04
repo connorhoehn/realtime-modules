@@ -12,11 +12,16 @@ export interface NotificationServiceOpts {
     redisClient?: NotificationRedisClient | null;
     /** Pre-built store (tests inject a fake here). */
     store?: RedisNotificationStore;
+    /** Awaited before inbound history/read-state work. False, throw or
+     * rejection refuses the action. Recipient delivery filtering belongs to
+     * the router so it also covers producer delivery and connect replay. */
+    authorize?: (clientId: string, action: string) => boolean | Promise<boolean>;
 }
 export declare class NotificationService {
     private readonly messageRouter;
     private readonly logger;
     private readonly store;
+    private readonly authorize;
     constructor(opts: NotificationServiceOpts);
     /**
      * Publish a notification to a user. Persists it (Redis) then delivers a
@@ -42,7 +47,8 @@ export declare class NotificationService {
     replayUnreadForUser(clientId: string, userId: string): Promise<void>;
     /**
      * Resolve every live clientId for `userId` and deliver `frame` to each.
-     * Returns the count of clients we attempted delivery to. We pass '' as
+     * Returns the count of successful deliveries (false suppresses/counts
+     * nothing; legacy void-returning routers count as success). We pass '' as
      * the exclude so ALL of the user's tabs receive it — a notification
      * targets the user, not a peer, so there's no sender to exclude here
      * (markRead echoes deliberately include the originating tab).

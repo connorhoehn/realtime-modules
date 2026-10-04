@@ -49,6 +49,7 @@ class NotificationService {
     messageRouter;
     logger;
     store;
+    authorize;
     constructor(opts) {
         if (!opts || !opts.messageRouter) {
             throw new Error('NotificationService: messageRouter is required');
@@ -58,6 +59,7 @@ class NotificationService {
         }
         this.messageRouter = opts.messageRouter;
         this.logger = opts.logger;
+        this.authorize = opts.authorize;
         this.store =
             opts.store ??
                 new RedisNotificationStore_1.RedisNotificationStore({
@@ -116,6 +118,17 @@ class NotificationService {
     // Inbound WS dispatch — server.ts calls handleAction(clientId, action, data)
     // ──────────────────────────────────────────────────────────────────
     async handleAction(clientId, action, data) {
+        if (this.authorize) {
+            let allowed = false;
+            try {
+                allowed = await this.authorize(clientId, action) === true;
+            }
+            catch { /* refuse */ }
+            if (!allowed) {
+                this.sendErrorToClient(clientId, 'AUTHZ_NOTIFICATION_DENIED', 'Notification access is no longer current');
+                return;
+            }
+        }
         const userId = this.resolveUserId(clientId, data);
         if (!userId) {
             this.logger.warn('[notification] action with no resolvable userId', {
@@ -219,7 +232,8 @@ class NotificationService {
     // ──────────────────────────────────────────────────────────────────
     /**
      * Resolve every live clientId for `userId` and deliver `frame` to each.
-     * Returns the count of clients we attempted delivery to. We pass '' as
+     * Returns the count of successful deliveries (false suppresses/counts
+     * nothing; legacy void-returning routers count as success). We pass '' as
      * the exclude so ALL of the user's tabs receive it — a notification
      * targets the user, not a peer, so there's no sender to exclude here
      * (markRead echoes deliberately include the originating tab).
@@ -240,15 +254,15 @@ class NotificationService {
         const isLive = typeof this.messageRouter.isClientLive === 'function'
             ? this.messageRouter.isClientLive.bind(this.messageRouter)
             : null;
-        let attempted = 0;
+        let delivered = 0;
         for (const m of matches) {
             // Three-state liveness: false = dead-local (skip), true/null =
             // deliver (null means peer-node — let sendToClient route it).
             if (isLive && isLive(m.clientId) === false)
                 continue;
-            attempted++;
             try {
-                await Promise.resolve(this.messageRouter.sendToClient(m.clientId, frame));
+                if (await Promise.resolve(this.messageRouter.sendToClient(m.clientId, frame)) !== false)
+                    delivered++;
             }
             catch (err) {
                 this.logger.warn('[notification] sendToClient failed', {
@@ -258,7 +272,7 @@ class NotificationService {
                 });
             }
         }
-        return attempted;
+        return delivered;
     }
     /**
      * Resolve the authed userId for an inbound action. The router's reverse

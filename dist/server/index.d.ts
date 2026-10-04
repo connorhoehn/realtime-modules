@@ -19,7 +19,7 @@ export { createRealtimeServer, inMemoryAdapters, type AdapterMap, type AdapterCo
 export { attachRealtime, defineFeature, chat, presence, cursor, reactions, activity, social, calls, ingest, pipeline, typedDocuments, rooms, notifications, fileUploads, collabDocs, } from './attach';
 export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHandle, } from './attach';
 export { LocalRealtimeRouter, } from './router';
-export type { RealtimeRouter, RouterLogger, ChannelAuthorize, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
+export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
 export { DEFAULT_WS_MAX_PAYLOAD } from '../server-ws/types';
 export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';

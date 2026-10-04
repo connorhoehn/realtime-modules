@@ -52,7 +52,7 @@ import type {
 import type { RoomAnnounceEvent } from '../../src/room';
 
 // ./server — CRDTServiceOpts.awarenessLedger is one of these.
-import { AwarenessLedger } from '../../src/server';
+import { AwarenessLedger, type ClientMessageFilter } from '../../src/server';
 
 // --- The assertions -------------------------------------------------------
 // Each declaration below fails to compile if the type is not exported, and
@@ -67,6 +67,7 @@ const streamStep: StreamStep = step;
 const unsupported: UnsupportedForm = {} as UnsupportedForm;
 const snapshotStep: PipelineSnapshotStep = { stepId: 's-1', status: 'running' };
 const log: TransportLog = (msg: string) => void msg;
+const recipientFilter: ClientMessageFilter = async ({ message }) => message;
 
 // Structural, so a consumer's own object satisfies it — which is the point:
 // they need the name to declare one.
@@ -87,6 +88,7 @@ describe('public types are importable from published entry points', () => {
     expect(snapshotStep.stepId).toBe('s-1');
     expect(status).toBe('completed');
     expect(typeof log).toBe('function');
+    expect(typeof recipientFilter).toBe('function');
     expect(typeof router.sendToClient).toBe('function');
     expect(typeof logger.info).toBe('function');
     expect(AwarenessLedger).toBeDefined();

@@ -276,6 +276,7 @@ function notifications(opts = {}) {
                 logger: logger,
                 store: opts.store,
                 redisClient: opts.redisClient ?? null,
+                authorize: opts.authorize,
             });
         },
     });
@@ -323,9 +324,9 @@ function collabDocs(opts = {}) {
  * All HTTP routes, middleware and listeners you already have are untouched.
  */
 function attachRealtime(server, opts) {
-    const { features, authorize, plugins, logger, router: customRouter, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router = customRouter ?? new router_1.LocalRealtimeRouter({ plugins, authorize, logger: log });
+    const router = customRouter ?? new router_1.LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log });
     const services = {};
     const manifests = [];
     for (const feature of features) {

@@ -4,6 +4,12 @@
 
 User-addressed toasts/badges delivered to every live tab; replay on reconnect when a store is wired.
 
+For current recipient access and filtered replay across tenants, see
+[current direct recipients](../integrations/current-direct-recipients.md).
+Use `filterClientMessage` on the local attachment and `authorize` on the
+notification feature; producer-time authorization alone does not protect
+later replay.
+
 ## 1 — Server (attach to your existing http.Server)
 
 ```ts

@@ -102,6 +102,7 @@ export type {
     RealtimeRouter,
     RouterLogger,
     ChannelAuthorize,
+    ClientMessageFilter,
     FeaturePlugin as RealtimeFeaturePlugin,
 } from './router';
 // The auth context `auth` returns and `authorize` / `lobbyGuard` /

@@ -43,6 +43,7 @@ import { createWsHandler } from '../server-ws/createWsHandler';
 import {
     LocalRealtimeRouter,
     type ChannelAuthorize,
+    type ClientMessageFilter,
     type FeaturePlugin,
     type RealtimeRouter,
     type RouterLogger,
@@ -350,6 +351,7 @@ export function rooms(opts: {
 export function notifications(opts: {
     store?: import('../notification/RedisNotificationStore').RedisNotificationStore;
     redisClient?: import('../notification/RedisNotificationStore').NotificationRedisClient | null;
+    authorize?: import('../notification/NotificationService').NotificationServiceOpts['authorize'];
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../notification/manifest').NotificationManifest,
@@ -360,6 +362,7 @@ export function notifications(opts: {
                 logger: logger as any,
                 store: opts.store,
                 redisClient: opts.redisClient ?? null,
+                authorize: opts.authorize,
             });
         },
     });
@@ -422,12 +425,14 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     features: RealtimeFeature[];
     /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
     authorize?: ChannelAuthorize;
+    /** Last-mile direct/broadcast/channel delivery filtering for the local router. */
+    filterClientMessage?: ClientMessageFilter;
     /** Lifecycle plugins (connect/disconnect/message observers). */
     plugins?: FeaturePlugin[];
     /** Shared logger; defaults to silent. */
     logger?: RouterLogger;
     /**
-     * Swap the transport. When provided, `authorize`/`plugins` are the
+     * Swap the transport. When provided, `authorize`/`filterClientMessage`/`plugins` are the
      * custom router's responsibility and are ignored here.
      */
     router?: RealtimeRouter & { _setHandle?: (h: WsHandlerHandle) => void; removeClient?: (id: string) => void };
@@ -450,9 +455,9 @@ export function attachRealtime(
     server: WsHandlerOptions['server'],
     opts: AttachRealtimeOptions,
 ): RealtimeHandle {
-    const { features, authorize, plugins, logger, router: customRouter, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, logger: log });
+    const router = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log });
 
     const services: Record<string, WsService> = {};
     const manifests: FeatureManifest[] = [];

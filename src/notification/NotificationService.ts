@@ -65,12 +65,17 @@ export interface NotificationServiceOpts {
     redisClient?: NotificationRedisClient | null;
     /** Pre-built store (tests inject a fake here). */
     store?: RedisNotificationStore;
+    /** Awaited before inbound history/read-state work. False, throw or
+     * rejection refuses the action. Recipient delivery filtering belongs to
+     * the router so it also covers producer delivery and connect replay. */
+    authorize?: (clientId: string, action: string) => boolean | Promise<boolean>;
 }
 
 export class NotificationService {
     private readonly messageRouter: NotificationMessageRouter;
     private readonly logger: NotificationLogger;
     private readonly store: RedisNotificationStore;
+    private readonly authorize: NotificationServiceOpts['authorize'];
 
     constructor(opts: NotificationServiceOpts) {
         if (!opts || !opts.messageRouter) {
@@ -81,6 +86,7 @@ export class NotificationService {
         }
         this.messageRouter = opts.messageRouter;
         this.logger = opts.logger;
+        this.authorize = opts.authorize;
         this.store =
             opts.store ??
             new RedisNotificationStore({
@@ -151,6 +157,14 @@ export class NotificationService {
     // ──────────────────────────────────────────────────────────────────
 
     async handleAction(clientId: string, action: string, data: any): Promise<void> {
+        if (this.authorize) {
+            let allowed = false;
+            try { allowed = await this.authorize(clientId, action) === true; } catch { /* refuse */ }
+            if (!allowed) {
+                this.sendErrorToClient(clientId, 'AUTHZ_NOTIFICATION_DENIED', 'Notification access is no longer current');
+                return;
+            }
+        }
         const userId = this.resolveUserId(clientId, data);
         if (!userId) {
             this.logger.warn('[notification] action with no resolvable userId', {
@@ -259,7 +273,8 @@ export class NotificationService {
 
     /**
      * Resolve every live clientId for `userId` and deliver `frame` to each.
-     * Returns the count of clients we attempted delivery to. We pass '' as
+     * Returns the count of successful deliveries (false suppresses/counts
+     * nothing; legacy void-returning routers count as success). We pass '' as
      * the exclude so ALL of the user's tabs receive it — a notification
      * targets the user, not a peer, so there's no sender to exclude here
      * (markRead echoes deliberately include the originating tab).
@@ -284,14 +299,13 @@ export class NotificationService {
                 ? this.messageRouter.isClientLive.bind(this.messageRouter)
                 : null;
 
-        let attempted = 0;
+        let delivered = 0;
         for (const m of matches) {
             // Three-state liveness: false = dead-local (skip), true/null =
             // deliver (null means peer-node — let sendToClient route it).
             if (isLive && isLive(m.clientId) === false) continue;
-            attempted++;
             try {
-                await Promise.resolve(this.messageRouter.sendToClient(m.clientId, frame));
+                if (await Promise.resolve(this.messageRouter.sendToClient(m.clientId, frame)) !== false) delivered++;
             } catch (err: any) {
                 this.logger.warn('[notification] sendToClient failed', {
                     userId,
@@ -300,7 +314,7 @@ export class NotificationService {
                 });
             }
         }
-        return attempted;
+        return delivered;
     }
 
     /**

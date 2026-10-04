@@ -96,6 +96,17 @@ export type ChannelAuthorize = (args: {
     ctx: WsAuthContext | null;
 }) => boolean | Promise<boolean>;
 
+/** Last-mile recipient filter for the local router, including direct user
+ * delivery, broadcast and channel fanout. Return the original/filtered frame
+ * or null to suppress it. Throws and rejected promises suppress delivery.
+ * Async results are discarded if the connection's auth context changes.
+ * Custom routers must implement this boundary themselves. */
+export type ClientMessageFilter = (args: {
+    clientId: string;
+    message: unknown;
+    ctx: WsAuthContext | null;
+}) => unknown | Promise<unknown>;
+
 /**
  * Lifecycle plugin hooks (carried over from the v0.6 factory).
  *
@@ -122,7 +133,7 @@ export interface FeaturePlugin {
  */
 export interface RealtimeRouter {
     sendToClient(clientId: string, message: unknown): void | boolean | Promise<void | boolean>;
-    sendToLocalClient?(clientId: string, message: unknown): void;
+    sendToLocalClient?(clientId: string, message: unknown): void | boolean | Promise<void | boolean>;
     /**
      * Publish to a channel. `opts.publisherClientId` names the AUTHZ subject
      * independently of `excludeClientId` (echo control) — the M3 contract:
@@ -207,6 +218,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     private handleRef: WsHandlerHandle | null = null;
     private readonly plugins: FeaturePlugin[];
     private readonly authorize: ChannelAuthorize | null;
+    private readonly filterClientMessage: ClientMessageFilter | null;
     private readonly logger: RouterLogger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
     private readonly pendingSubscriptions = new Map<string, Map<string, Set<{ cancelled: boolean }>>>();
@@ -217,10 +229,12 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     constructor(opts: {
         plugins?: FeaturePlugin[];
         authorize?: ChannelAuthorize;
+        filterClientMessage?: ClientMessageFilter;
         logger?: RouterLogger;
     } = {}) {
         this.plugins = opts.plugins ?? [];
         this.authorize = opts.authorize ?? null;
+        this.filterClientMessage = opts.filterClientMessage ?? null;
         this.logger = opts.logger ?? {
             debug: () => undefined,
             info: () => undefined,
@@ -269,20 +283,33 @@ export class LocalRealtimeRouter implements RealtimeRouter {
 
     // ---- sends -----------------------------------------------------------
 
-    sendToClient(clientId: string, message: unknown): void {
-        if (!this.handleRef) return; // pre-connection, no-op
-        this.handleRef.sendToClient(clientId, message as Record<string, unknown>);
+    sendToClient(clientId: string, message: unknown): boolean | Promise<boolean> {
+        const handle = this.handleRef;
+        if (!handle) return false;
+        if (!this.filterClientMessage) return handle.sendToClient(clientId, message as Record<string, unknown>);
+        const context = this.ctxOf(clientId);
+        if (!context) return false;
+        const deliver = (filtered: unknown): boolean => {
+            if (filtered == null || this.handleRef !== handle || this.ctxOf(clientId) !== context) return false;
+            return handle.sendToClient(clientId, filtered as Record<string, unknown>);
+        };
+        try {
+            const filtered = this.filterClientMessage({ clientId, message, ctx: context });
+            if (filtered && typeof (filtered as Promise<unknown>).then === 'function') {
+                return Promise.resolve(filtered).then(deliver, () => false);
+            }
+            return deliver(filtered);
+        } catch { return false; }
     }
 
-    sendToLocalClient(clientId: string, message: unknown): void {
-        this.sendToClient(clientId, message);
+    sendToLocalClient(clientId: string, message: unknown): boolean | Promise<boolean> {
+        return this.sendToClient(clientId, message);
     }
 
     async broadcastToAll(message: unknown, excludeClientId?: string): Promise<void> {
         if (!this.handleRef) return;
-        for (const clientId of this.handleRef.listClients()) {
-            if (clientId !== excludeClientId) this.sendToClient(clientId, message);
-        }
+        await Promise.all(this.handleRef.listClients().filter(clientId => clientId !== excludeClientId)
+            .map(clientId => this.sendToClient(clientId, message)));
     }
 
     async sendToChannel(
@@ -325,7 +352,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             const token = this.subscriptionTokens.get(channel)?.get(clientId);
             if (!(await this.allows('subscribe', clientId, channel))) return;
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token) return;
-            this.sendToClient(clientId, message);
+            await this.sendToClient(clientId, message);
         }));
     }
 

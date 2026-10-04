@@ -47,6 +47,7 @@ class LocalRealtimeRouter {
     handleRef = null;
     plugins;
     authorize;
+    filterClientMessage;
     logger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
     pendingSubscriptions = new Map();
@@ -55,6 +56,7 @@ class LocalRealtimeRouter {
     constructor(opts = {}) {
         this.plugins = opts.plugins ?? [];
         this.authorize = opts.authorize ?? null;
+        this.filterClientMessage = opts.filterClientMessage ?? null;
         this.logger = opts.logger ?? {
             debug: () => undefined,
             info: () => undefined,
@@ -99,20 +101,38 @@ class LocalRealtimeRouter {
     }
     // ---- sends -----------------------------------------------------------
     sendToClient(clientId, message) {
-        if (!this.handleRef)
-            return; // pre-connection, no-op
-        this.handleRef.sendToClient(clientId, message);
+        const handle = this.handleRef;
+        if (!handle)
+            return false;
+        if (!this.filterClientMessage)
+            return handle.sendToClient(clientId, message);
+        const context = this.ctxOf(clientId);
+        if (!context)
+            return false;
+        const deliver = (filtered) => {
+            if (filtered == null || this.handleRef !== handle || this.ctxOf(clientId) !== context)
+                return false;
+            return handle.sendToClient(clientId, filtered);
+        };
+        try {
+            const filtered = this.filterClientMessage({ clientId, message, ctx: context });
+            if (filtered && typeof filtered.then === 'function') {
+                return Promise.resolve(filtered).then(deliver, () => false);
+            }
+            return deliver(filtered);
+        }
+        catch {
+            return false;
+        }
     }
     sendToLocalClient(clientId, message) {
-        this.sendToClient(clientId, message);
+        return this.sendToClient(clientId, message);
     }
     async broadcastToAll(message, excludeClientId) {
         if (!this.handleRef)
             return;
-        for (const clientId of this.handleRef.listClients()) {
-            if (clientId !== excludeClientId)
-                this.sendToClient(clientId, message);
-        }
+        await Promise.all(this.handleRef.listClients().filter(clientId => clientId !== excludeClientId)
+            .map(clientId => this.sendToClient(clientId, message)));
     }
     async sendToChannel(channel, message, excludeClientId, opts) {
         // M3 publish authz: runs whenever a publisher is named, independent
@@ -150,7 +170,7 @@ class LocalRealtimeRouter {
                 return;
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token)
                 return;
-            this.sendToClient(clientId, message);
+            await this.sendToClient(clientId, message);
         }));
     }
     // ---- authz -----------------------------------------------------------

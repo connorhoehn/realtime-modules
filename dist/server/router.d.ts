@@ -74,6 +74,16 @@ export type ChannelAuthorize = (args: {
     channel: string;
     ctx: WsAuthContext | null;
 }) => boolean | Promise<boolean>;
+/** Last-mile recipient filter for the local router, including direct user
+ * delivery, broadcast and channel fanout. Return the original/filtered frame
+ * or null to suppress it. Throws and rejected promises suppress delivery.
+ * Async results are discarded if the connection's auth context changes.
+ * Custom routers must implement this boundary themselves. */
+export type ClientMessageFilter = (args: {
+    clientId: string;
+    message: unknown;
+    ctx: WsAuthContext | null;
+}) => unknown | Promise<unknown>;
 /**
  * Lifecycle plugin hooks (carried over from the v0.6 factory).
  *
@@ -111,7 +121,7 @@ export interface FeaturePlugin {
  */
 export interface RealtimeRouter {
     sendToClient(clientId: string, message: unknown): void | boolean | Promise<void | boolean>;
-    sendToLocalClient?(clientId: string, message: unknown): void;
+    sendToLocalClient?(clientId: string, message: unknown): void | boolean | Promise<void | boolean>;
     /**
      * Publish to a channel. `opts.publisherClientId` names the AUTHZ subject
      * independently of `excludeClientId` (echo control) — the M3 contract:
@@ -178,6 +188,7 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     private handleRef;
     private readonly plugins;
     private readonly authorize;
+    private readonly filterClientMessage;
     private readonly logger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
     private readonly pendingSubscriptions;
@@ -186,6 +197,7 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     constructor(opts?: {
         plugins?: FeaturePlugin[];
         authorize?: ChannelAuthorize;
+        filterClientMessage?: ClientMessageFilter;
         logger?: RouterLogger;
     });
     _setHandle(handle: WsHandlerHandle): void;
@@ -200,8 +212,8 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     }[];
     /** Single process: a client not connected here is not connected. */
     isClientLive(clientId: string): boolean | null;
-    sendToClient(clientId: string, message: unknown): void;
-    sendToLocalClient(clientId: string, message: unknown): void;
+    sendToClient(clientId: string, message: unknown): boolean | Promise<boolean>;
+    sendToLocalClient(clientId: string, message: unknown): boolean | Promise<boolean>;
     broadcastToAll(message: unknown, excludeClientId?: string): Promise<void>;
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;

@@ -1757,7 +1757,9 @@ export class CallService {
         // accept, falling back to '' when neither is available. `invite`
         // still requires lobbyName (enforced earlier via sendError).
         let resolvedLobbyName = docMeta?.documentId || lobbyName || '';
-        if (action === 'accepted' && callId && !resolvedLobbyName) {
+        // Capture the resource before terminal actions delete its state.
+        // Recipient authorization must also scope callId-only terminal frames.
+        if (callId && !resolvedLobbyName) {
             const local = this.activeCalls.get(callId);
             if (local?.lobbyName) {
                 resolvedLobbyName = local.lobbyName;
@@ -2023,7 +2025,7 @@ export class CallService {
         const envelope: CallEvent = {
             type: 'call',
             action,
-            data: payload,
+            data: resolvedLobbyName ? { ...payload, lobbyName: resolvedLobbyName } : payload,
             timestamp: new Date().toISOString(),
         };
 
@@ -2031,7 +2033,7 @@ export class CallService {
             // The ring's clock is the server's: a client that got the invite
             // late (queued, replayed, slow link) still closes it on time.
             // `expiresInMs` is relative, so the client's clock skew does not matter.
-            payload = { ...payload, invitedAt: Date.now(), expiresInMs: CallService.INVITE_TTL_MS };
+            payload = { ...envelope.data, invitedAt: Date.now(), expiresInMs: CallService.INVITE_TTL_MS };
             envelope.data = payload;
         }
         if (docInvite && docInvite.ringTargets.length === 0) {
