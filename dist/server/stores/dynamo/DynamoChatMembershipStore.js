@@ -28,6 +28,9 @@ class DynamoChatMembershipStore {
         do {
             const res = await this.client.send(new client_dynamodb_1.QueryCommand({
                 TableName: this.tableName,
+                // Membership is authority, not a directory preview. Every
+                // base-table page must observe a completed removal write.
+                ConsistentRead: true,
                 KeyConditionExpression: '#c = :c',
                 ExpressionAttributeNames: { '#c': 'channel' },
                 ExpressionAttributeValues: { ':c': { S: channel } },
@@ -42,6 +45,7 @@ class DynamoChatMembershipStore {
     async getMember(channel, userId) {
         const res = await this.client.send(new client_dynamodb_1.GetItemCommand({
             TableName: this.tableName,
+            ConsistentRead: true,
             Key: { channel: { S: channel }, userId: { S: userId } },
         }));
         return res?.Item ? memberFromItem(res.Item) : null;

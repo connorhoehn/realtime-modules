@@ -525,6 +525,7 @@ export class ChatService {
 
     async handleAction(clientId: string, action: string, data: any): Promise<void> {
         const startTime = Date.now();
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         try {
             // The router's channel authz, for every action that reads or
             // writes a named channel. `join` asks through subscribeToChannel;
@@ -535,6 +536,7 @@ export class ChatService {
                 && !(await routerPermits(this.messageRouter, kind, clientId, channel, { service: 'chat', clientChannel: channel }))) {
                 return;
             }
+            if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context) return;
             switch (action) {
                 case 'join':
                     await this.handleJoinChannel(clientId, data);
@@ -591,6 +593,7 @@ export class ChatService {
         clientId: string,
         { channel, metadata: _metadata = {} }: { channel: string; metadata?: any }
     ): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
             this.sendError(clientId, 'Channel name is required');
             return;
@@ -652,6 +655,7 @@ export class ChatService {
                 }
             }
 
+            if (!(await this.mayDeliverRead(clientId, channel, context))) return;
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'joined',
@@ -732,10 +736,12 @@ export class ChatService {
             timestamp: new Date().toISOString(),
         };
 
+        try { await this._persistMessage(messageData); }
+        catch (err: any) {
+            this.logger.error('Failed to persist system message:', err && err.message);
+            return null;
+        }
         this.addToChannelHistory(channel, messageData);
-        this._persistMessage(messageData).catch((err: any) =>
-            this.logger.error('Failed to persist system message:', err && err.message),
-        );
         // No sender to exclude and none to authorize as: this is the server
         // talking to the channel.
         await this.broadcastMessage(channel, messageData);
@@ -794,6 +800,8 @@ export class ChatService {
         clientId: string,
         frame: { channel: string; message: string; metadata?: any }
     ): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+        const sameContext = () => !this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context;
         const { channel, message } = frame;
         let { metadata = {} } = frame;
         if (!channel) {
@@ -848,6 +856,7 @@ export class ChatService {
             return;
         }
 
+        if (!sameContext()) return;
         if (!this.clientChannels.hasSubscription(clientId, channel)) {
             this.sendError(clientId, 'You must join the channel before sending messages');
             return;
@@ -889,60 +898,29 @@ export class ChatService {
             // reached the store has not been sent, no matter what the local
             // cache and the other participants' screens say, so nothing else
             // happens until this resolves.
-            // Two properties have to hold at once here, and the original code
-            // broke both by doing the wrong half of each.
-            //
-            //   1. A store outage must not drop LIVE chat. The gateway states
-            //      this explicitly and has an integration test calling it
-            //      load-bearing (chat-ddb-store-x-chat-service): realtime
-            //      delivery is the product, and history is what degrades.
-            //   2. The sender must not be told a message was stored when it
-            //      was not. Two independent audits ranked the old silent
-            //      `sent` ack the worst defect in the system.
-            //
-            // These only looked contradictory because persistence, delivery
-            // and the ack were one undifferentiated step. They are separable:
-            // the message is still cached and still broadcast, so everyone
-            // connected sees it, and the SENDER is told it was not stored
-            // instead of being told it was. Nobody is lied to, and nobody
-            // loses live chat.
-            let stored = true;
+            // The stored record gates every visible success: a failed write
+            // must not enter the cache, fan out, or tell observers it was sent.
+            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel })) || !sameContext()) return;
             try {
                 await this._persistMessage(messageData);
             } catch (err: any) {
-                stored = false;
                 this.logger.error('Failed to persist chat message:', err && err.message);
+                if (!sameContext()) return;
+                this.sendError(clientId, 'Message could not be stored. Your message was not sent.',
+                    ErrorCodes.CHAT_STORE_FAILED, channel, { messageId: messageData.id });
+                return;
             }
+            // Authority may have changed while storage was pending. The
+            // committed record remains durable; publication and its receipt
+            // still require the author's current write authority.
+            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel })) || !sameContext()) return;
             this.addToChannelHistory(channel, messageData);
-
-            // M3 gap #9: pass the sender as the publisher identity so the
-            // router can enforce ChatRoom/RealtimeChannel CRD publisher authz.
-            // We intentionally do NOT set excludeClientId — the sender must
-            // receive their own message (sender-echo; the swarm chat
-            // verification depends on it). Decoupling authz subject from echo
-            // is what makes both work at once.
             await this.broadcastMessage(channel, messageData, clientId);
-
-            if (stored) {
-                this.sendToClient(clientId, {
-                    type: 'chat',
-                    action: 'sent',
-                    messageId: messageData.id,
-                    channel,
-                    timestamp: messageData.timestamp,
-                });
-            } else {
-                // Delivered live, not durable. Saying `sent` here is the lie
-                // this whole change exists to remove — the sender would have
-                // no way to know the message will be missing on reload.
-                this.sendError(
-                    clientId,
-                    'Message was delivered but could not be stored — it may not be there later',
-                    ErrorCodes.CHAT_STORE_FAILED,
-                    channel,
-                    { messageId: messageData.id },
-                );
-            }
+            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel })) || !sameContext()) return;
+            this.sendToClient(clientId, {
+                type: 'chat', action: 'sent', messageId: messageData.id,
+                channel, timestamp: messageData.timestamp,
+            });
 
             // DM activity seam (v0.23.0) — fire-and-forget observer after a
             // successful dm send. Exceptions never fail the send path.
@@ -1157,6 +1135,7 @@ export class ChatService {
         clientId: string,
         { channel, limit }: { channel: string; limit?: number }
     ): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
             this.sendError(clientId, 'Channel name is required');
             return;
@@ -1171,7 +1150,9 @@ export class ChatService {
         }
 
         try {
-            const history = await this.getChannelHistoryFor(identity?.userId, channel, limit ?? this.defaultHistoryLimit);
+            const fetched = await this.getChannelHistoryFor(identity?.userId, channel, limit ?? this.defaultHistoryLimit);
+            const history = await this.historyForDelivery(clientId, channel, fetched, context, identity?.userId);
+            if (history === null) return;
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'history',
@@ -1231,7 +1212,11 @@ export class ChatService {
     }
 
     async sendChannelHistory(clientId: string, channel: string, userId?: string): Promise<void> {
-        const history = await this.getChannelHistoryFor(userId, channel, this.joinHistoryLimit);
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+        const originalUserId = userId ?? this._resolveIdentity(clientId)?.userId;
+        const fetched = await this.getChannelHistoryFor(originalUserId, channel, this.joinHistoryLimit);
+        const history = await this.historyForDelivery(clientId, channel, fetched, context, originalUserId);
+        if (history === null) return;
         if (history.length > 0) {
             this.sendToClient(clientId, {
                 type: 'chat',
@@ -1241,6 +1226,43 @@ export class ChatService {
                 timestamp: new Date().toISOString(),
             });
         }
+    }
+
+    /** Refilter an already fetched tail when a leave/rejoin tightened its floor. */
+    private async historyForDelivery(clientId: string, channel: string, history: ChatMessage[], context: unknown, userId?: string): Promise<ChatMessage[] | null> {
+        if (!(await this.mayDeliverRead(clientId, channel, context))) return null;
+        const sameIdentity = () => (!this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context)
+            && this._resolveIdentity(clientId)?.userId === userId;
+        if (!sameIdentity()) return null;
+        if (!this.membershipStore || isDmChatChannel(channel)) return history;
+        let rows: ChatMember[];
+        try {
+            // This last authority read is intentionally fail-closed. A store
+            // outage cannot turn a closed channel into an unrestricted tail.
+            rows = await this.membershipStore.listMembers(channel);
+        } catch (err: any) {
+            this.logger.error('ChatMembershipStore final history check failed:', err && err.message);
+            return null;
+        }
+        if (!sameIdentity()) return null;
+        return this.filterMemberHistory(userId, rows, history);
+    }
+
+    /** Sensitive direct replies must not use a decision from before a store read. */
+    private async mayDeliverRead(clientId: string, channel: string, context: unknown): Promise<boolean> {
+        const sameContext = () => !this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context;
+        if (!sameContext()) return false;
+        const identity = this._resolveIdentity(clientId);
+        const allowed = this.authz(clientId, channel, this)
+            && this._checkDmMembership(clientId, channel, identity)
+            && await this._checkMembership(clientId, channel, identity)
+            && await routerPermits(this.messageRouter, 'subscribe', clientId, channel, { service: 'chat', clientChannel: channel });
+        if (!sameContext()) return false;
+        if (!allowed) {
+            this.clientChannels.removeSubscription(clientId, channel);
+            await this.messageRouter.unsubscribeFromChannel?.(clientId, channel);
+        }
+        return allowed;
     }
 
     // ---- Membership ------------------------------------------------------
@@ -1337,6 +1359,10 @@ export class ChatService {
         const history = await this.getChannelHistory(channel, limit);
         if (!this.membershipStore || isDmChatChannel(channel)) return history;
         const rows = await this._membershipRows(channel);
+        return this.filterMemberHistory(userId, rows, history);
+    }
+
+    private filterMemberHistory(userId: string | undefined, rows: ChatMember[], history: ChatMessage[]): ChatMessage[] {
         if (rows.length === 0) return history;
         const row = userId ? rows.find((r) => r.userId === userId) : undefined;
         if (!row || row.removedAt != null) return [];
@@ -1359,11 +1385,13 @@ export class ChatService {
 
     /** `{action:'members', channel}` → who is in it, to the sender. */
     async handleMembers(clientId: string, { channel }: { channel: string }): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
         const { open, members } = await this.describeMembers(channel);
+        if (!(await this.mayDeliverRead(clientId, channel, context))) return;
         this.sendToClient(clientId, {
             type: 'chat',
             action: 'members',
@@ -1603,9 +1631,10 @@ export class ChatService {
 
     /** The roster, to everyone in the channel and to the requester whether or not they are subscribed. */
     async _broadcastMembers(channel: string, requesterClientId: string): Promise<void> {
+        const context = this.messageRouter.getClientData?.(requesterClientId)?.userContext;
         const { open, members } = await this.describeMembers(channel);
         const frame = { type: 'chat', action: 'membersUpdated', channel, open, members, timestamp: new Date().toISOString() };
-        this.sendToClient(requesterClientId, frame);
+        if (await this.mayDeliverRead(requesterClientId, channel, context)) this.sendToClient(requesterClientId, frame);
         await this.messageRouter.sendToChannel(channel, frame, requesterClientId);
     }
 
@@ -1817,6 +1846,7 @@ export class ChatService {
      * instead of showing an empty list that looks like "nobody has read it".
      */
     async handleReceipts(clientId: string, { channel }: { channel: string }): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
@@ -1824,7 +1854,8 @@ export class ChatService {
         const identity = this._resolveIdentity(clientId);
         if (!this._checkDmMembership(clientId, channel, identity)) return;
         if (!(await this._checkMembership(clientId, channel, identity))) return;
-        this.sendToClient(clientId, await this._receiptsFrame(channel));
+        const frame = await this._receiptsFrame(channel);
+        if (await this.mayDeliverRead(clientId, channel, context)) this.sendToClient(clientId, frame);
     }
 
     /** The full-state receipts frame — the reply to `receipts` and the broadcast after a roster change. */
@@ -1857,9 +1888,10 @@ export class ChatService {
      * difference.
      */
     async _broadcastReceipts(channel: string, requesterClientId: string): Promise<void> {
+        const context = this.messageRouter.getClientData?.(requesterClientId)?.userContext;
         if (!this.readReceiptStore) return;
         const frame = await this._receiptsFrame(channel);
-        this.sendToClient(requesterClientId, frame);
+        if (await this.mayDeliverRead(requesterClientId, channel, context)) this.sendToClient(requesterClientId, frame);
         await this.messageRouter.sendToChannel(channel, frame, requesterClientId);
     }
 

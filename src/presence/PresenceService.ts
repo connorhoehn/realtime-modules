@@ -263,6 +263,7 @@ class PresenceService {
         clientId: string,
         { targetClientId, channel }: { targetClientId?: string; channel?: string },
     ): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         try {
             let presenceData: PresenceEntry | PresenceEntry[] | undefined;
 
@@ -278,11 +279,15 @@ class PresenceService {
             } else if (channel) {
                 if (!(await this.mayRead(clientId, channel))) return;
                 presenceData = this.getChannelPresence(channel);
+                // Admission may have settled after revocation. Fence the
+                // snapshot again at delivery, as with stored chat reads.
+                if (!(await this.mayRead(clientId, channel))) return;
             } else {
                 this.sendError(clientId, 'Either targetClientId or channel is required');
                 return;
             }
 
+            if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context) return;
             this.sendToClient(clientId, {
                 type: 'presence',
                 action: 'presence',
@@ -298,6 +303,7 @@ class PresenceService {
     }
 
     async handleSubscribePresence(clientId: string, { channel }: { channel: string }): Promise<void> {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
             return;
@@ -319,7 +325,12 @@ class PresenceService {
             );
             if (subscribed === false) return;
 
+            if (!(await this.mayRead(clientId, channel))) {
+                await this.messageRouter.unsubscribeFromChannel(clientId, `presence:${channel}`);
+                return;
+            }
             const channelPresence = this.getChannelPresence(channel);
+            if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context) return;
             this.sendToClient(clientId, {
                 type: 'presence',
                 action: 'subscribed',

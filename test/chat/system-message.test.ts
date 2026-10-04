@@ -89,11 +89,12 @@ describe('postSystemMessage', () => {
     });
 
     // The message about a thing must never be able to break the thing.
-    it('still broadcasts when persistence fails', async () => {
+    it('returns null without broadcasting or caching when persistence fails', async () => {
         const { service, broadcasts, store } = makeService();
         store.putMessage = jest.fn(async () => { throw new Error('table gone'); }) as any;
-        await service.postSystemMessage('general', 'x');
-        expect(broadcasts).toHaveLength(1);
+        expect(await service.postSystemMessage('general', 'x')).toBeNull();
+        expect(broadcasts).toHaveLength(0);
+        expect(await service.getChannelHistory('general', 50)).toEqual([]);
     });
 });
 

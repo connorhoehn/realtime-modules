@@ -1335,7 +1335,17 @@ class CallService {
                     return;
                 }
                 const typedAction = action;
-                if (!this.authorize(clientId, typedAction, data ?? {})) {
+                const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+                let authorized = false;
+                try {
+                    authorized = (await this.authorize(clientId, typedAction, data ?? {})) === true;
+                }
+                catch (error) {
+                    this.logger.error('[CallService] authorize failed; refusing', error);
+                }
+                if (this.messageRouter.getClientData && (!context || this.messageRouter.getClientData(clientId)?.userContext !== context))
+                    authorized = false;
+                if (!authorized) {
                     span.setAttribute('call.outcome', 'unauthorized');
                     this.sendError(clientId, `Not authorized for call action: ${typedAction}`);
                     return;

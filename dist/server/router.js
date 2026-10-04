@@ -42,10 +42,14 @@ class LocalRealtimeRouter {
     channelMembers = new Map();
     /** clientId → Set<channel> — mirror for disconnect notification */
     clientChannels = new Map();
+    /** A fresh token for each admission, including a re-subscribe. */
+    subscriptionTokens = new Map();
     handleRef = null;
     plugins;
     authorize;
     logger;
+    /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
+    pendingSubscriptions = new Map();
     redisAvailable = false;
     nodeId = 'local';
     constructor(opts = {}) {
@@ -114,10 +118,13 @@ class LocalRealtimeRouter {
         // M3 publish authz: runs whenever a publisher is named, independent
         // of echo exclusion.
         const publisher = opts?.publisherClientId ?? null;
-        if (publisher && !this.allows('publish', publisher, channel)) {
+        const publisherContext = publisher ? this.ctxOf(publisher) : null;
+        if (publisher && !(await this.allows('publish', publisher, channel))) {
             this.logger.info(`[realtime] publish to ${channel} denied for ${publisher}`);
             return;
         }
+        if (publisher && this.ctxOf(publisher) !== publisherContext)
+            return;
         const senderClientId = publisher ?? excludeClientId ?? null;
         const senderId = senderClientId ?? 'server';
         if (this.plugins.length > 0) {
@@ -131,18 +138,33 @@ class LocalRealtimeRouter {
         const members = this.channelMembers.get(channel);
         if (!members || members.size === 0)
             return;
-        for (const clientId of members) {
-            if (clientId !== excludeClientId)
-                this.sendToClient(clientId, message);
-        }
+        // Admission is not a lasting grant. Recheck every recipient, even for
+        // server-originated updates, and do not revive a subscription removed
+        // while asynchronous authorization was resolving.
+        await Promise.all([...members].map(async (clientId) => {
+            if (clientId === excludeClientId)
+                return;
+            const context = this.ctxOf(clientId);
+            const token = this.subscriptionTokens.get(channel)?.get(clientId);
+            if (!(await this.allows('subscribe', clientId, channel)))
+                return;
+            if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token)
+                return;
+            this.sendToClient(clientId, message);
+        }));
     }
     // ---- authz -----------------------------------------------------------
-    /** Run `authorize`; absent → allow, throwing → refuse. */
+    /** Preserve synchronous decisions; rejected async decisions fail closed. */
     allows(kind, clientId, channel) {
         if (!this.authorize)
             return true;
+        const context = this.ctxOf(clientId);
+        const handle = this.handleRef;
         try {
-            return !!this.authorize({ kind, clientId, channel, ctx: this.ctxOf(clientId) });
+            const decision = this.authorize({ kind, clientId, channel, ctx: context });
+            if (typeof decision === 'boolean')
+                return decision;
+            return Promise.resolve(decision).then(allowed => allowed === true && this.handleRef === handle && (!handle || (context !== null && this.ctxOf(clientId) === context)), err => { this.logger.warn(`[realtime] authorize rejected for ${kind} ${channel}; refusing`, err); return false; });
         }
         catch (err) {
             this.logger.warn(`[realtime] authorize threw for ${kind} ${channel}; refusing`, err);
@@ -157,7 +179,12 @@ class LocalRealtimeRouter {
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
      */
     checkChannel(kind, clientId, channel, opts = {}) {
-        if (this.allows(kind, clientId, channel))
+        const decision = this.allows(kind, clientId, channel);
+        return typeof decision === 'boolean' ? this.channelDecision(decision, kind, clientId, channel, opts)
+            : decision.then(allowed => this.channelDecision(allowed, kind, clientId, channel, opts));
+    }
+    channelDecision(allowed, kind, clientId, channel, opts) {
+        if (allowed)
             return true;
         this.logger.info(`[realtime] ${kind} to ${channel} denied for ${clientId}`);
         if (opts.silent)
@@ -172,14 +199,34 @@ class LocalRealtimeRouter {
     // ---- membership ------------------------------------------------------
     subscribeToChannel(clientId, channel, opts) {
         // M3: on false, services suppress the local subscription and the ack.
-        if (!this.checkChannel('subscribe', clientId, channel, opts))
-            return false;
+        const context = this.ctxOf(clientId);
+        const decision = this.checkChannel('subscribe', clientId, channel, opts);
+        if (typeof decision === 'boolean')
+            return decision && this.addSubscription(clientId, channel);
+        const pending = { cancelled: false };
+        const channels = this.pendingSubscriptions.get(clientId) ?? new Map();
+        const requests = channels.get(channel) ?? new Set();
+        requests.add(pending);
+        channels.set(channel, requests);
+        this.pendingSubscriptions.set(clientId, channels);
+        return decision.then(allowed => allowed && !pending.cancelled && this.ctxOf(clientId) === context && this.addSubscription(clientId, channel)).finally(() => {
+            requests.delete(pending);
+            if (!requests.size)
+                channels.delete(channel);
+            if (!channels.size)
+                this.pendingSubscriptions.delete(clientId);
+        });
+    }
+    addSubscription(clientId, channel) {
         let members = this.channelMembers.get(channel);
         if (!members) {
             members = new Set();
             this.channelMembers.set(channel, members);
         }
         members.add(clientId);
+        const tokens = this.subscriptionTokens.get(channel) ?? new Map();
+        tokens.set(clientId, {});
+        this.subscriptionTokens.set(channel, tokens);
         let channels = this.clientChannels.get(clientId);
         if (!channels) {
             channels = new Set();
@@ -195,6 +242,12 @@ class LocalRealtimeRouter {
         return true;
     }
     unsubscribeFromChannel(clientId, channel) {
+        for (const pending of this.pendingSubscriptions.get(clientId)?.get(channel) ?? [])
+            pending.cancelled = true;
+        const tokens = this.subscriptionTokens.get(channel);
+        tokens?.delete(clientId);
+        if (tokens?.size === 0)
+            this.subscriptionTokens.delete(channel);
         const members = this.channelMembers.get(channel);
         if (members) {
             members.delete(clientId);
@@ -215,9 +268,17 @@ class LocalRealtimeRouter {
         }
     }
     removeClient(clientId) {
+        for (const requests of this.pendingSubscriptions.get(clientId)?.values() ?? []) {
+            for (const pending of requests)
+                pending.cancelled = true;
+        }
         const channels = this.clientChannels.get(clientId);
         const channelList = channels ? [...channels] : [];
         for (const channel of channelList) {
+            const tokens = this.subscriptionTokens.get(channel);
+            tokens?.delete(clientId);
+            if (tokens?.size === 0)
+                this.subscriptionTokens.delete(channel);
             const members = this.channelMembers.get(channel);
             if (members) {
                 members.delete(clientId);

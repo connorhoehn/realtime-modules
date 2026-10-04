@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.100.3 — 2026-10-03
+
+- Await asynchronous `ChannelAuthorize` and `CallConfig.authorize` decisions,
+  treating false, throws and rejected promises as refusal. Synchronous local
+  channel predicates retain synchronous check/subscribe results.
+- Recheck every channel recipient's read authority, including server-origin
+  updates. Pending joins and fanout are fenced against disconnect, actor
+  replacement and unsubscribe/resubscribe. Custom routers must implement the
+  same recipient checks; this does not add cross-node routing.
+- Reauthorize chat join/history/member/receipt replies after asynchronous
+  reads, refilter history when a leave/rejoin tightens its boundary, and fence
+  direct chat/presence replies and pending sends against changed connections.
+- Make user and system chat sends durable-first: failed writes return an
+  explicit author error (or null for a system send), with no cache entry,
+  message fanout or successful receipt. This replaces the previous live-only
+  delivery on storage failure. Generic sends still have no retry deduplication.
+- Strongly read Dynamo membership rows and every base-table query page, so a
+  completed removal cannot be revived by an eventual authority read.
+
 ## 0.100.2 — 2026-10-03
 
 - Preserve accepted ordinary calls through a fixed service-start recovery

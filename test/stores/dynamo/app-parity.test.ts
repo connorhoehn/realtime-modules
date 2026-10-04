@@ -3,7 +3,9 @@
 // — every write, read, update, TTL, conversations-index write and the
 // server.ts hook maintenance, the DM-edit and card-patch paths included) runs
 // against both implementations with the same clock and canned DynamoDB
-// answers; the commands sent and the values resolved must be identical.
+// answers; schemas, writes and resolved values remain identical. Membership
+// reads deliberately use stronger consistency than the original app: they
+// are access-control decisions and must observe completed removal writes.
 //
 //   1. Always: the library against the committed transcript the app's
 //      repositories produced (parity/realtime-examples-transcript.json).
@@ -41,11 +43,22 @@ const appDir = path.resolve(process.env.REALTIME_EXAMPLES_DIR ?? path.join(__dir
 const appAdapters = path.join(appDir, 'src/realtime-fanout/chat/adapters/DdbChatStore.ts');
 const hasApp = existsSync(appAdapters) && existsSync(path.join(appDir, 'node_modules/ts-node'));
 
+// The transcript keeps its original app provenance. Apply only the documented
+// membership-read consistency improvement to expected inputs; separate SDK
+// regressions assert that every real base-table read sets this flag.
+const hardenedMembershipReads = (entry: any) => ({
+    ...entry,
+    sent: entry.sent.map((command: any) => (
+        entry.op.startsWith('members.') &&
+        (command.name === 'GetItemCommand' || command.name === 'QueryCommand')
+    ) ? { ...command, input: { ...command.input, ConsistentRead: true } } : command),
+});
+
 describe("DynamoChatStore ≡ realtime-examples' chat repositories", () => {
     it('matches the committed app transcript op for op', async () => {
         const lib = await libraryTranscript();
         expect(lib.map((e: any) => e.op)).toEqual(golden.transcript.map((e: any) => e.op));
-        for (let i = 0; i < lib.length; i++) expect({ i, ...lib[i] }).toEqual({ i, ...golden.transcript[i] });
+        for (let i = 0; i < lib.length; i++) expect({ i, ...lib[i] }).toEqual({ i, ...hardenedMembershipReads(golden.transcript[i]) });
     });
 
     (hasApp ? it : it.skip)('matches the app repositories as they are today (live)', async () => {
@@ -56,6 +69,6 @@ describe("DynamoChatStore ≡ realtime-examples' chat repositories", () => {
         });
         const app = JSON.parse(out);
         const lib = await libraryTranscript();
-        for (let i = 0; i < Math.max(app.length, lib.length); i++) expect({ i, ...lib[i] }).toEqual({ i, ...app[i] });
+        for (let i = 0; i < Math.max(app.length, lib.length); i++) expect({ i, ...lib[i] }).toEqual({ i, ...hardenedMembershipReads(app[i]) });
     }, 90_000);
 });

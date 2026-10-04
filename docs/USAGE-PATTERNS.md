@@ -659,3 +659,41 @@ client's `sessionTimeoutMs` fallback (default 3000 ms).
 - **DDB / Redis client lifecycle** — gateway adapters own their
   clients. Reference implementations at
   `realtime-examples/src/realtime-fanout/crdt/adapters/`.
+
+
+### Current channel authority and durable receipts (0.100.3)
+
+`attachRealtime({ authorize })` accepts a boolean or `Promise<boolean>`.
+The local router awaits each predicate and fails closed on rejection. A
+synchronous predicate keeps synchronous `checkChannel` and
+`subscribeToChannel` results; consumers should await the public router
+interface because an asynchronous predicate returns a promise.
+
+Read authorization runs at admission and before each channel delivery,
+including server-originated messages. Direct chat history, member and
+receipt replies recheck after their store reads. History is filtered again
+against the current membership boundary, so a leave/rejoin cannot reuse a
+broader pending result. That final membership read fails closed on outage.
+Pending sends keep their original actor through storage and receipts. The
+captured connection
+context identifies one connection: do not mutate identity/actor fields in
+place. `WsHandlerHandle.getClientContext` must return the same context object
+for that connection; replacing it fences pending authority and replies.
+`CallConfig.authorize` is also awaited before call state/routing changes.
+Recipient call routing and user-targeted notification replay are separate
+from channel authorization and remain the host's responsibility.
+
+A custom `attachRealtime({ router })` owns authorization. Its channel fanout
+must recheck read permission and the current subscription before sending to
+each recipient, even when there is no publisher. Redis state alone does not
+provide cross-node routing or authorization invalidation.
+
+Chat persistence now gates cache, message fanout, observer hooks and the
+successful `sent` receipt. A rejected write emits `store-failed` to the author
+and does not publish the message. `postSystemMessage` returns null on a
+rejected write. In-memory storage remains the zero-configuration default.
+There is no generic delivery-ID deduplication: an ambiguous timeout or
+revocation after a durable commit requires checking history before retrying.
+An authority check and a chat write are not a transaction across stores.
+Dynamo membership `GetItem` and all base-table `Query` pages use strong
+consistency because membership is an authority input.

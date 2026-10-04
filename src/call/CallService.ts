@@ -172,7 +172,7 @@ export class CallService {
     messageRouter: CallMessageRouter;
     logger: CallLogger;
 
-    private authorize: (clientId: string, action: CallAction, data: CallInvite) => boolean;
+    private authorize: (clientId: string, action: CallAction, data: CallInvite) => boolean | Promise<boolean>;
     private canCallHook: NonNullable<CallConfig['canCall']> | null;
     private recordCallActionHook: ((action: CallAction, targetKind: 'targeted' | 'broadcast') => void) | null;
     private persistBindingHook: NonNullable<CallConfig['persistCallBinding']> | null;
@@ -1413,7 +1413,12 @@ export class CallService {
                         return;
                     }
                     const typedAction = action as CallAction;
-                    if (!this.authorize(clientId, typedAction, data ?? {})) {
+                    const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+                    let authorized = false;
+                    try { authorized = (await this.authorize(clientId, typedAction, data ?? {})) === true; }
+                    catch (error) { this.logger.error('[CallService] authorize failed; refusing', error); }
+                    if (this.messageRouter.getClientData && (!context || this.messageRouter.getClientData(clientId)?.userContext !== context)) authorized = false;
+                    if (!authorized) {
                         span.setAttribute('call.outcome', 'unauthorized');
                         this.sendError(clientId, `Not authorized for call action: ${typedAction}`);
                         return;

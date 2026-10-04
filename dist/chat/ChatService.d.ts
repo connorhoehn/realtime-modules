@@ -367,6 +367,10 @@ export declare class ChatService {
     addToChannelHistory(channel: string, messageData: ChatMessage): void;
     getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]>;
     sendChannelHistory(clientId: string, channel: string, userId?: string): Promise<void>;
+    /** Refilter an already fetched tail when a leave/rejoin tightened its floor. */
+    private historyForDelivery;
+    /** Sensitive direct replies must not use a decision from before a store read. */
+    private mayDeliverRead;
     /**
      * Who should hear about a message on a non-dm channel, sender excluded:
      * a closed channel's active members; an open channel's currently
@@ -396,6 +400,7 @@ export declare class ChatService {
      * dm channel show everything (the dm gate has already run).
      */
     getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number): Promise<ChatMessage[]>;
+    private filterMemberHistory;
     /** `{action:'members', channel}` → who is in it, to the sender. */
     handleMembers(clientId: string, { channel }: {
         channel: string;

@@ -129,7 +129,9 @@ export interface WsHandlerHandle {
      * `auth` callback returned), or null when unknown/disconnected. Lets a
      * router derive user identity locally — presence display names,
      * fileupload's uploader attribution, call's user-targeted routing all
-     * read identity through this.
+     * read identity through this. Return the same context object for the
+     * connection's lifetime; do not mutate identity/actor fields in place.
+     * Replacing the context fences pending authorization and sensitive replies.
      */
     getClientContext(clientId: string): WsAuthContext | null;
 }

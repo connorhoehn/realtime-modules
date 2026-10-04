@@ -215,6 +215,7 @@ class PresenceService {
         this.logger.info(`Presence set for client ${clientId}: ${status}`);
     }
     async handleGetPresence(clientId, { targetClientId, channel }) {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         try {
             let presenceData;
             if (targetClientId) {
@@ -231,11 +232,17 @@ class PresenceService {
                 if (!(await this.mayRead(clientId, channel)))
                     return;
                 presenceData = this.getChannelPresence(channel);
+                // Admission may have settled after revocation. Fence the
+                // snapshot again at delivery, as with stored chat reads.
+                if (!(await this.mayRead(clientId, channel)))
+                    return;
             }
             else {
                 this.sendError(clientId, 'Either targetClientId or channel is required');
                 return;
             }
+            if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context)
+                return;
             this.sendToClient(clientId, {
                 type: 'presence',
                 action: 'presence',
@@ -250,6 +257,7 @@ class PresenceService {
         }
     }
     async handleSubscribePresence(clientId, { channel }) {
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
             return;
@@ -265,7 +273,13 @@ class PresenceService {
             const subscribed = await this.messageRouter.subscribeToChannel(clientId, `presence:${channel}`, { service: 'presence', clientChannel: channel });
             if (subscribed === false)
                 return;
+            if (!(await this.mayRead(clientId, channel))) {
+                await this.messageRouter.unsubscribeFromChannel(clientId, `presence:${channel}`);
+                return;
+            }
             const channelPresence = this.getChannelPresence(channel);
+            if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context)
+                return;
             this.sendToClient(clientId, {
                 type: 'presence',
                 action: 'subscribed',

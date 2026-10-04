@@ -181,17 +181,28 @@ function calls(opts = {}) {
                 config = {
                     ...config,
                     authorize: (clientId, action, data) => {
-                        if (inner && !inner(clientId, action, data))
-                            return false;
-                        // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
-                        const nested = data && typeof data.data === 'object' && data.data ? data.data : null;
-                        const raw = data?.lobbyName ?? nested?.lobbyName;
-                        const lobby = typeof raw === 'string' ? raw : '';
-                        if (!lobby)
-                            return true;
-                        const auth = router.getClientData?.(clientId)?.userContext ?? {};
+                        const guard = () => {
+                            // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
+                            const nested = data && typeof data.data === 'object' && data.data ? data.data : null;
+                            const raw = data?.lobbyName ?? nested?.lobbyName;
+                            const lobby = typeof raw === 'string' ? raw : '';
+                            if (!lobby)
+                                return true;
+                            const auth = router.getClientData?.(clientId)?.userContext ?? {};
+                            try {
+                                return lobbyGuard(auth, lobby) !== false;
+                            }
+                            catch {
+                                return false;
+                            }
+                        };
+                        if (!inner)
+                            return guard();
                         try {
-                            return lobbyGuard(auth, lobby) !== false;
+                            const decision = inner(clientId, action, data);
+                            if (typeof decision === 'boolean')
+                                return decision && guard();
+                            return Promise.resolve(decision).then(allowed => allowed === true && guard(), () => false);
                         }
                         catch {
                             return false;

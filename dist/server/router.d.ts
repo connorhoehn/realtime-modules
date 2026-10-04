@@ -30,6 +30,10 @@ export interface RouterLogger {
  *     `addMembers` / `removeMember`, and the router's own `sendToChannel`
  *     backstop whenever a publisher is named.
  *
+ * Predicates may be asynchronous; false, throws and rejected promises deny.
+ * The local router also rechecks subscribe access before every recipient
+ * delivery, including server-originated fanout.
+ *
  * On `false` the service does nothing: no subscription, no ack, no state
  * returned, no stored write, no fan-out. The refused client receives
  * `{ type: 'error', service, code: 'AUTHZ_CHANNEL_DENIED', kind, channel,
@@ -69,7 +73,7 @@ export type ChannelAuthorize = (args: {
     clientId: string;
     channel: string;
     ctx: WsAuthContext | null;
-}) => boolean;
+}) => boolean | Promise<boolean>;
 /**
  * Lifecycle plugin hooks (carried over from the v0.6 factory).
  *
@@ -169,10 +173,14 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     private readonly channelMembers;
     /** clientId → Set<channel> — mirror for disconnect notification */
     private readonly clientChannels;
+    /** A fresh token for each admission, including a re-subscribe. */
+    private readonly subscriptionTokens;
     private handleRef;
     private readonly plugins;
     private readonly authorize;
     private readonly logger;
+    /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
+    private readonly pendingSubscriptions;
     readonly redisAvailable = false;
     readonly nodeId = "local";
     constructor(opts?: {
@@ -199,15 +207,17 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
     }): Promise<void>;
-    /** Run `authorize`; absent → allow, throwing → refuse. */
+    /** Preserve synchronous decisions; rejected async decisions fail closed. */
     private allows;
     hasChannelAuthorize(): boolean;
     /**
      * The check every service runs before acting on a channel. On refusal
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
      */
-    checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean;
-    subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean;
+    checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
+    private channelDecision;
+    subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
+    private addSubscription;
     unsubscribeFromChannel(clientId: string, channel: string): void;
     removeClient(clientId: string): void;
 }

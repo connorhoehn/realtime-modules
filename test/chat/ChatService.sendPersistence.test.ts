@@ -7,12 +7,8 @@
 // message was gone on the next reload. This file pins the fix: a failing
 // store must produce an error frame instead of `sent`.
 //
-// It must STILL BROADCAST, though. The gateway states "a store outage does
-// not drop live chat" as a deliberate property, with its own integration test
-// calling it load-bearing — realtime delivery is the product and history is
-// what degrades. The two properties only looked contradictory because
-// persistence, delivery and the ack were one step: separate them and the
-// message is delivered live while the SENDER is told it was not stored.
+// Rejected writes neither fan out nor enter the cache: every observer sees
+// the same durable-first result, and the author can safely retain the draft.
 //
 // A healthy default (no store configured at all) must keep working as before.
 
@@ -64,7 +60,7 @@ const sentAcksTo = (sent: any[], clientId: string) =>
     sent.filter((s) => s.clientId === clientId && s.message.type === 'chat' && s.message.action === 'sent');
 
 describe('ChatService send path — persistence must gate the ack', () => {
-    it('a failing store does NOT produce a plain "sent" ack, but DOES still deliver live', async () => {
+    it('a failing store produces an error without ack, cache, or fanout', async () => {
         const { router, sentToClient, sendToChannelCalls } = makeRouter();
         const chatStore = new BrokenChatStore();
         const svc = new ChatService({
@@ -87,16 +83,10 @@ describe('ChatService send path — persistence must gate the ack', () => {
         expect(errors[0].error).toMatchObject({ code: 'store-failed' });
         expect(errors[0].error.messageId).toEqual(expect.any(String));
 
-        // But the channel DID receive it. "A store outage does not drop live
-        // chat" is a deliberate gateway property; what was wrong before was
-        // telling the sender it had been stored, not the delivery itself.
-        expect(sendToChannelCalls).toHaveLength(1);
-
-        // And it is in the in-process cache, so clients connected right now
-        // can still read it back. It is the DURABLE copy that is missing —
-        // which is exactly what the sender was just told.
+        expect(sendToChannelCalls).toEqual([]);
         const history = await svc.getChannelHistory('general', 10);
-        expect(history).toHaveLength(1);
+        expect(history).toEqual([]);
+        await svc.shutdown();
     });
 
     it('with no store configured at all (zero-config default), send still works end to end', async () => {

@@ -34,6 +34,9 @@ export class DynamoChatMembershipStore implements ChatMembershipStore {
         do {
             const res = await this.client.send(new QueryCommand({
                 TableName: this.tableName,
+                // Membership is authority, not a directory preview. Every
+                // base-table page must observe a completed removal write.
+                ConsistentRead: true,
                 KeyConditionExpression: '#c = :c',
                 ExpressionAttributeNames: { '#c': 'channel' },
                 ExpressionAttributeValues: { ':c': { S: channel } },
@@ -48,6 +51,7 @@ export class DynamoChatMembershipStore implements ChatMembershipStore {
     async getMember(channel: string, userId: string): Promise<ChatMember | null> {
         const res = await this.client.send(new GetItemCommand({
             TableName: this.tableName,
+            ConsistentRead: true,
             Key: { channel: { S: channel }, userId: { S: userId } },
         }));
         return res?.Item ? memberFromItem(res.Item) : null;

@@ -303,6 +303,9 @@ export interface UserClientMatch {
  *     connected client (sender excluded).
  */
 export interface CallMessageRouter {
+    /** Stable connection context; when available, fences awaited authority
+     * against a reused client ID with a different actor. */
+    getClientData?(clientId: string): { userContext?: import('../server-ws/types').WsAuthContext } | null;
     getClientsByUserId?(
         userIds: string[],
         excludeClientId: string,
@@ -343,13 +346,14 @@ export interface CallConfig {
     /**
      * Authorization hook. Called once per handleAction invocation BEFORE
      * any routing happens. Return false to deny (the service emits an
-     * error frame and the action is dropped). Default: allow all.
+     * error frame and the action is dropped). Async decisions are awaited;
+     * throws/rejections deny before any state mutation. Default: allow all.
      *
      * Replaces gateway's enforceChannelPermission interceptor — call
      * routing is direct user-to-user so there's no channel to gate, but
      * consumers may still want RBAC (e.g. block guest-mode initiations).
      */
-    authorize?: (clientId: string, action: CallAction, data: CallInvite) => boolean;
+    authorize?: (clientId: string, action: CallAction, data: CallInvite) => boolean | Promise<boolean>;
 
     /**
      * Cross-user policy gate for `invite` actions ONLY. Called AFTER
