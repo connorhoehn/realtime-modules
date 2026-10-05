@@ -39,6 +39,10 @@ one `authorize` hook every feature asks before a subscribe, a read or a write,
 and the channel names it sees (`presence:<channel>`, `reactions:<channel>`,
 `cursor:<channel>`, chat's unprefixed).
 
+**Peer routing:** [redis-router](./redis-router.md) — opt-in Redis transport,
+leased connection ownership, confirmed direct writes and the service state
+that an application must share separately.
+
 Authoring your own capability: `defineFeature({ manifest, create })` — it
 plugs in identically to the built-ins. See `src/server/attach.ts`.
 

@@ -114,7 +114,8 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      */
     router?: RealtimeRouter & {
         _setHandle?: (h: WsHandlerHandle) => void;
-        removeClient?: (id: string) => void;
+        onClientConnect?: (id: string, ctx: import('../server-ws/types').WsAuthContext) => Promise<void> | void;
+        shutdown?: () => Promise<void> | void;
     };
 }
 export interface RealtimeHandle extends WsHandlerHandle {

@@ -159,11 +159,21 @@ export interface RealtimeRouter {
     getClientsByUserId?(userIds: string[], excludeClientId?: string): {
         clientId: string;
         userId: string;
-    }[];
+    }[] | Promise<{
+        clientId: string;
+        userId: string;
+    }[]>;
+    /** Fresh cluster lookup. Local getClientData remains synchronous for
+     * inbound identity fences; REST-originated readers can await this seam. */
+    resolveClientData?(clientId: string): Promise<{
+        userContext?: WsAuthContext;
+    } | null>;
     /** true = connected here, false = not connected here, null = unknown
      *  (another replica may hold it). Services use it to tell a live
      *  participant from one whose socket is gone. */
     isClientLive?(clientId: string): boolean | null;
+    /** Optional authoritative cluster liveness for call recovery/sweeps. */
+    isClientAlive?(clientId: string): boolean | Promise<boolean>;
     /** Broadcast to every connected client (call's no-target fallback). */
     broadcastToAll?(message: unknown, excludeClientId?: string): Promise<void> | void;
     /** Remove a client from all channels (disconnect path). */
@@ -220,6 +230,9 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
     }): Promise<void>;
+    /** Trusted peer fanout: local recipient authorization and generation
+     * fences still run; origin plugins/publish hooks are not fired twice. */
+    sendToLocalChannel(channel: string, message: unknown, excludeClientId?: string | null): Promise<void>;
     /** Preserve synchronous decisions; rejected async decisions fail closed. */
     private allows;
     hasChannelAuthorize(): boolean;

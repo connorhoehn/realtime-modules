@@ -55,7 +55,7 @@ function createWsHandler(opts) {
     // Lazy-require ws so consumers without server-side code never load it.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { WebSocketServer } = require('ws');
-    const { server, services, auth, onConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, } = opts;
+    const { server, services, auth, onConnect, beforeConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, } = opts;
     if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
         throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
     }
@@ -66,6 +66,8 @@ function createWsHandler(opts) {
     const wsToId = new WeakMap();
     /** heartbeat cleanup functions keyed by clientId. */
     const cleanupFns = new Map();
+    /** Async disconnect hooks must finish before a host closes shared ports. */
+    const closing = new Set();
     const denyUpgrade = (socket, status, reason) => {
         try {
             socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
@@ -105,11 +107,63 @@ function createWsHandler(opts) {
     server.on('upgrade', upgradeListener);
     wss.on('connection', async (ws, _req, ctx = {}) => {
         const clientId = generateClientId();
+        if (clients.has(clientId)) {
+            ws.once('error', () => undefined);
+            ws.close(1011, 'Duplicate connection identity');
+            return;
+        }
         clients.set(clientId, { ws, ctx });
         wsToId.set(ws, clientId);
+        // An async registration may outlive a socket error; keep that error
+        // from becoming an unhandled EventEmitter event during bootstrap.
+        ws.once('error', () => undefined);
+        // Clients may subscribe on TCP open, before the session handshake.
+        // Retain those frames in arrival order while registration runs, with
+        // both a count and aggregate-byte bound. They enter the same service
+        // queue only after the authenticated connection is ready.
+        const initialFrames = [];
+        let initialBytes = 0;
+        const bufferInitialFrame = (raw) => {
+            const bytes = typeof raw === 'string' ? Buffer.byteLength(raw) : Buffer.isBuffer(raw) ? raw.length : maxPayload;
+            if (initialFrames.length >= 32 || initialBytes + bytes > maxPayload) {
+                ws.close(1009, 'Connection initialization queue full');
+                return;
+            }
+            initialFrames.push(raw);
+            initialBytes += bytes;
+        };
+        ws.on('message', bufferInitialFrame);
+        const connectedServices = [];
+        const rollback = async () => {
+            clients.delete(clientId);
+            wsToId.delete(ws);
+            ws.off('message', bufferInitialFrame);
+            initialFrames.length = 0;
+            for (const service of connectedServices) {
+                try {
+                    await service.onClientDisconnect?.(clientId);
+                }
+                catch { /* rollback best effort */ }
+            }
+            try {
+                await onDisconnect?.(clientId);
+            }
+            catch { /* rollback best effort */ }
+            ws.close(1011, 'Connection registration failed');
+        };
+        try {
+            await beforeConnect?.(clientId, ctx);
+            if (ws.readyState !== 1)
+                throw new Error('Connection closed during registration');
+        }
+        catch {
+            await rollback();
+            return;
+        }
         // Fire optional service-level connect hooks (presence-style).
         for (const [name, svc] of Object.entries(services)) {
             if (typeof svc.onClientConnect === 'function') {
+                connectedServices.push(svc);
                 try {
                     await svc.onClientConnect(clientId);
                 }
@@ -118,6 +172,10 @@ function createWsHandler(opts) {
                     // eslint-disable-next-line no-console
                     console.warn(`[realtime-modules] service '${name}' onClientConnect failed`, err);
                 }
+            }
+            if (ws.readyState !== 1) {
+                await rollback();
+                return;
             }
         }
         // User connect hook last so it sees a fully-registered client.
@@ -200,10 +258,14 @@ function createWsHandler(opts) {
                 }));
             }
         };
-        ws.on('message', (raw) => {
+        const enqueueFrame = (raw) => {
             // A rejected frame must not poison the chain for the next one.
             frameQueue = frameQueue.then(() => handleFrame(raw)).catch(() => undefined);
-        });
+        };
+        ws.off('message', bufferInitialFrame);
+        ws.on('message', enqueueFrame);
+        for (const raw of initialFrames.splice(0))
+            enqueueFrame(raw);
         const handleClose = async () => {
             const id = wsToId.get(ws);
             if (!id)
@@ -250,14 +312,19 @@ function createWsHandler(opts) {
                 }
             }
             try {
-                onDisconnect?.(id);
+                await onDisconnect?.(id);
             }
             catch {
                 // swallow
             }
         };
-        ws.on('close', handleClose);
-        ws.on('error', handleClose);
+        const close = () => {
+            const task = handleClose();
+            closing.add(task);
+            void task.finally(() => closing.delete(task));
+        };
+        ws.on('close', close);
+        ws.on('error', close);
     });
     return {
         wss,
@@ -266,13 +333,14 @@ function createWsHandler(opts) {
         },
         sendToClient(clientId, frame) {
             const entry = clients.get(clientId);
-            if (!entry)
+            if (!entry || entry.ws.readyState !== 1)
                 return false;
             (0, transport_1.wsSend)(entry.ws, JSON.stringify(frame));
             return true;
         },
         getClientContext(clientId) {
-            return clients.get(clientId)?.ctx ?? null;
+            const entry = clients.get(clientId);
+            return entry?.ws.readyState === 1 ? entry.ctx : null;
         },
         async dispose() {
             // Remove our upgrade listener (best-effort across http.Server APIs).
@@ -301,6 +369,7 @@ function createWsHandler(opts) {
                     resolve();
                 }
             });
+            await Promise.all([...closing]);
         },
     };
 }

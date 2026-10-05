@@ -177,11 +177,16 @@ export interface RealtimeRouter {
     /** Uploader/identity attribution (fileupload). */
     getUserIdForClient?(clientId: string): string | undefined;
     /** User-targeted routing (call). */
-    getClientsByUserId?(userIds: string[], excludeClientId?: string): { clientId: string; userId: string }[];
+    getClientsByUserId?(userIds: string[], excludeClientId?: string): { clientId: string; userId: string }[] | Promise<{ clientId: string; userId: string }[]>;
+    /** Fresh cluster lookup. Local getClientData remains synchronous for
+     * inbound identity fences; REST-originated readers can await this seam. */
+    resolveClientData?(clientId: string): Promise<{ userContext?: WsAuthContext } | null>;
     /** true = connected here, false = not connected here, null = unknown
      *  (another replica may hold it). Services use it to tell a live
      *  participant from one whose socket is gone. */
     isClientLive?(clientId: string): boolean | null;
+    /** Optional authoritative cluster liveness for call recovery/sweeps. */
+    isClientAlive?(clientId: string): boolean | Promise<boolean>;
     /** Broadcast to every connected client (call's no-target fallback). */
     broadcastToAll?(message: unknown, excludeClientId?: string): Promise<void> | void;
     /** Remove a client from all channels (disconnect path). */
@@ -345,6 +350,12 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             }
         }
 
+        await this.sendToLocalChannel(channel, message, excludeClientId);
+    }
+
+    /** Trusted peer fanout: local recipient authorization and generation
+     * fences still run; origin plugins/publish hooks are not fired twice. */
+    async sendToLocalChannel(channel: string, message: unknown, excludeClientId?: string | null): Promise<void> {
         const members = this.channelMembers.get(channel);
         if (!members || members.size === 0) return;
         // Admission is not a lasting grant. Recheck every recipient, even for

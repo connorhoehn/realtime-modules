@@ -1,0 +1,398 @@
+// Native WebSockets and dedicated Redis, with explicit fixture authority.
+// This accepts peer transport; it does not accept an application's directory,
+// CRDT/presence replication, multi-replica deployment or capacity.
+import http from 'http';
+import { randomUUID } from 'crypto';
+import { createClient, type RedisClientType } from 'redis';
+import WebSocket from 'ws';
+import { attachRealtime, defineFeature, calls, notifications, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
+import { RedisCallStateStore, type CallStateRedis } from '../../src/call';
+import type { NotificationService } from '../../src/notification';
+
+const enabled = process.env.REAL_ROUTER_REDIS === '1';
+const redisUrl = process.env.REAL_ROUTER_REDIS_URL;
+const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+function deferred<T = void>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(done => { resolve = done; });
+    return { promise, resolve };
+}
+async function eventually(predicate: () => boolean | Promise<boolean>) {
+    for (let n = 0; n < 100; n++) { if (await predicate()) return; await delay(10); }
+    throw new Error('Peer condition did not become true');
+}
+type Client = { ws: WebSocket; id: string; frames: any[] };
+type Authority = { epoch: number; org: string };
+type VoidDeferred = ReturnType<typeof deferred<void>>;
+type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server: http.Server;
+    command: RedisClientType; subscriber: RedisClientType; published: Array<{ topic: string; payload: string; frame: any }>;
+    port: RealtimeClusterRedis; calls: RedisCallStateStore; url: string };
+
+(enabled ? describe : describe.skip)('RedisRealtimeRouter / native peer transport', () => {
+    let namespace: string;
+    let clients: Client[];
+    let nodes: NativeNode[];
+    let authorities: Map<string, Authority>;
+    let members: Set<string>;
+    let held: { id: string; entered: VoidDeferred; release: VoidDeferred; calls: number } | null;
+
+    async function boot(nodeId: string, ns = namespace, options: { fixedClientId?: string; dropReceipts?: boolean;
+        registerGate?: VoidDeferred; disconnectGate?: VoidDeferred; disconnected?: VoidDeferred;
+        rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred } = {}): Promise<NativeNode> {
+        if (!redisUrl) throw new Error('REAL_ROUTER_REDIS_URL is required for real Redis acceptance');
+        const command = createClient({ url: redisUrl, disableOfflineQueue: true, socket: { reconnectStrategy: false } });
+        command.on('error', () => undefined);
+        const subscriber = command.duplicate(); subscriber.on('error', () => undefined);
+        await Promise.all([command.connect(), subscriber.connect()]);
+        const published: Array<{ topic: string; payload: string; frame: any }> = [];
+        const port: RealtimeClusterRedis = {
+            command: async (...args) => {
+                if (options.registerGate && args[0] === 'EVAL' && args[1]?.includes("redis.call('EXISTS',KEYS[2])")) {
+                    await options.registerGate.promise;
+                }
+                if (options.renewGate && args[0] === 'EVAL' && args[1]?.includes('for i=2,#KEYS,2')) {
+                    // Redis committed the renewal but the response is held.
+                    // A late success cannot resurrect local lease ownership.
+                    const result = await command.sendCommand(args);
+                    options.renewing?.resolve(); await options.renewGate.promise;
+                    return result;
+                }
+                return command.sendCommand(args);
+            },
+            publish: async (topic, payload) => {
+                const frame = JSON.parse(payload); published.push({ topic, payload, frame });
+                if (options.dropReceipts && frame.kind === 'receipt') return 0;
+                return command.publish(topic, payload);
+            },
+            subscribe: async (topic, receive) => {
+                await subscriber.subscribe(topic, receive);
+                return async () => { await subscriber.unsubscribe(topic); };
+            },
+        };
+        const authorize = async ({ ctx, channel }: { ctx: any; channel: string }) => {
+            const current = authorities.get(ctx?.userId);
+            return !!current && current.epoch === ctx.epoch && current.org === ctx.org
+                && channel.startsWith(`${ctx.org}:`) && members.has(ctx.userId);
+        };
+        const router = new RedisRealtimeRouter({ redis: port, namespace: ns, nodeId, leaseMs: 900, requestTimeoutMs: 200,
+            authorize, filterClientMessage: async ({ ctx, message }) => {
+                const frame = message as any;
+                if (held && frame.id === held.id && ctx?.userId === 'bob') {
+                    held.calls++; held.entered.resolve(); await held.release.promise;
+                }
+                const authority = authorities.get(String(ctx?.userId));
+                if (frame.type === 'call' && typeof frame.data?.lobbyName === 'string'
+                    && !frame.data.lobbyName.startsWith(`${ctx?.org}:`)) return null;
+                return authority && authority.epoch === ctx?.epoch && authority.org === ctx?.org ? message : null;
+            } });
+        await router.start();
+        const callRedis: CallStateRedis & { get(key: string): Promise<string | null> } = {
+            sendCommand: args => command.sendCommand(args),
+            hsetnx: (key, field, value) => command.hSetNX(key, field, value),
+            get: key => command.get(key),
+            hset: (key, field, value) => command.hSet(key, field, value),
+            hgetall: key => command.hGetAll(key), hdel: (key, ...fields) => command.hDel(key, fields),
+            sadd: (key, ...values) => command.sAdd(key, values), srem: (key, ...values) => command.sRem(key, values),
+            smembers: key => command.sMembers(key), del: (...keys) => command.del(keys), expire: (key, seconds) => command.expire(key, seconds),
+            setNX: async (key, value) => (await command.set(key, value, { NX: true })) === 'OK',
+        };
+        const state = new RedisCallStateStore(callRedis);
+        const server = http.createServer((_req, res) => res.end('existing route'));
+        const handle: RealtimeHandle = attachRealtime(server, { router, path: '/realtime', pingIntervalMs: 0,
+            logger: process.env.REAL_ROUTER_TEST_DEBUG === '1' ? console : undefined,
+            generateClientId: () => options.fixedClientId ?? `${nodeId}-${randomUUID()}`,
+            onDisconnect: async () => { options.disconnected?.resolve(); await options.disconnectGate?.promise; },
+            auth: req => {
+                // The fixture's trusted auth source. An unknown credential
+                // rejects upgrade; payload fields cannot select this identity.
+                const userId = String(req.headers['x-test-credential'] ?? '');
+                const current = authorities.get(userId);
+                if (!current) throw new Error('Unauthenticated');
+                return { userId, org: current.org, epoch: current.epoch, role: 'member' };
+            },
+            features: [calls({ stateStore: state, crossNodePubSub: router.crossNodePubSub, rejoinGraceMs: options.rejoinGraceMs ?? 200,
+                lobbyGuard: (ctx, lobby) => !!ctx && lobby.startsWith(`${ctx.org}:`),
+                config: { authorize: async clientId => {
+                    const ctx = router.getClientData(clientId)?.userContext;
+                    return !!ctx && authorities.get(String(ctx.userId))?.epoch === ctx.epoch;
+                } } }), notifications(), defineFeature({ manifest: { name: 'peer-test' } as any,
+                create: () => ({ handleAction: async (clientId, action, data) => {
+                    if (action === 'publish') await router.sendToChannel(String(data.channel),
+                        { type: 'test', id: data.id }, null, { publisherClientId: clientId });
+                } }) })],
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+        const node = { router, handle, server, command, subscriber, published, port, calls: state, url: `ws://127.0.0.1:${address.port}/realtime` };
+        nodes.push(node);
+        return node;
+    }
+    async function connect(node: NativeNode, userId: string): Promise<Client> {
+        const ws = new WebSocket(node.url, { headers: { 'x-test-credential': userId } });
+        const frames: any[] = [];
+        const ready = deferred<string>();
+        ws.on('message', raw => {
+            const frame = JSON.parse(String(raw)); frames.push(frame);
+            if (frame.type === 'session') ready.resolve(frame.clientId);
+        });
+        ws.on('error', () => undefined);
+        const id = await ready.promise;
+        const client = { ws, id, frames }; clients.push(client);
+        return client;
+    }
+    beforeEach(() => {
+        namespace = `acceptance-${randomUUID()}`;
+        clients = []; nodes = []; held = null;
+        authorities = new Map([['alice', { epoch: 0, org: 'orgiq' }], ['bob', { epoch: 0, org: 'orgiq' }],
+            ['charlie', { epoch: 0, org: 'assessment' }]]);
+        members = new Set(['alice', 'bob', 'charlie']);
+    });
+    afterEach(async () => {
+        held?.release.resolve();
+        for (const client of clients) client.ws.terminate();
+        for (const node of nodes) {
+            await node.handle.dispose();
+            await new Promise<void>(resolve => node.server.close(() => resolve()));
+            if (node.command.isOpen) node.command.destroy();
+            if (node.subscriber.isOpen) node.subscriber.destroy();
+        }
+    });
+
+    it('resolves authenticated peers across nodes and confirms actual remote writes', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        expect(await a.router.getClientsByUserId(['bob'])).toEqual([{ clientId: bob.id, userId: 'bob' }]);
+        expect(await a.router.resolveClientData(bob.id)).toEqual({ userContext: { userId: 'bob', org: 'orgiq', epoch: 0, role: 'member' } });
+        expect(await a.router.sendToClient(bob.id, { type: 'test', id: 'remote' })).toBe(true);
+        await eventually(() => bob.frames.some(frame => frame.id === 'remote'));
+        expect(alice.frames.some(frame => frame.id === 'remote')).toBe(false);
+        expect(await a.router.sendToClient('missing', { type: 'test' })).toBe(false);
+    });
+
+    it('rechecks remote recipient epoch/policy and keeps the inbox delivery count honest', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        authorities.set('bob', { epoch: 1, org: 'orgiq' });
+        expect(await a.router.sendToClient(bob.id, { type: 'test', id: 'revoked' })).toBe(false);
+        expect(bob.frames.some(frame => frame.id === 'revoked')).toBe(false);
+    });
+
+    it('shares channels with source publish checks and destination membership checks', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        expect(await b.router.subscribeToChannel(bob.id, 'orgiq:room')).toBe(true);
+        alice.ws.send(JSON.stringify({ service: 'peer-test', action: 'publish', channel: 'orgiq:room', id: 'channel' }));
+        await eventually(() => bob.frames.some(frame => frame.id === 'channel'));
+        expect(await b.router.subscribeToChannel(bob.id, 'assessment:room')).toBe(false);
+        members.delete('bob');
+        await a.router.sendToChannel('orgiq:room', { type: 'test', id: 'removed' });
+        await delay(30);
+        expect(bob.frames.some(frame => frame.id === 'removed')).toBe(false);
+        members.delete('alice');
+        await a.router.sendToChannel('orgiq:room', { type: 'test', id: 'publisher-denied' }, null, { publisherClientId: alice.id });
+        expect(a.published.some(entry => entry.frame.message?.id === 'publisher-denied')).toBe(false);
+    });
+
+    it('drops a held delivery after disconnect and suppresses in-flight duplicate frames', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        held = { id: 'held', entered: deferred(), release: deferred(), calls: 0 };
+        const sending = a.router.sendToClient(bob.id, { type: 'test', id: 'held' });
+        await held.entered.promise;
+        const request = a.published.find(entry => entry.frame.kind === 'direct')!;
+        await a.command.publish(request.topic, request.payload);
+        bob.ws.terminate();
+        await eventually(() => b.handle.getClientContext(bob.id) === null);
+        held.release.resolve();
+        expect(await sending).toBe(false);
+        expect(held.calls).toBe(1);
+        expect(bob.frames.some(frame => frame.id === 'held')).toBe(false);
+    });
+
+    it('fences an awaited channel filter across unsubscribe and resubscribe', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        await b.router.subscribeToChannel(bob.id, 'orgiq:room');
+        held = { id: 'old-subscription', entered: deferred(), release: deferred(), calls: 0 };
+        await a.router.sendToChannel('orgiq:room', { type: 'test', id: held.id });
+        await held.entered.promise;
+        b.router.unsubscribeFromChannel(bob.id, 'orgiq:room');
+        await b.router.subscribeToChannel(bob.id, 'orgiq:room');
+        held.release.resolve(); await delay(30);
+        expect(bob.frames.some(frame => frame.id === 'old-subscription')).toBe(false);
+        await a.router.sendToChannel('orgiq:room', { type: 'test', id: 'new-subscription' });
+        await eventually(() => bob.frames.some(frame => frame.id === 'new-subscription'));
+    });
+
+    it('keeps live directory entries through renewals and rejects another live node owner', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        const duplicate = new RedisRealtimeRouter({ redis: a.port, namespace, nodeId: 'b' });
+        await expect(duplicate.start()).rejects.toThrow('live owner');
+        await delay(1200);
+        expect(await a.router.isClientAlive(bob.id)).toBe(true);
+        expect(await a.router.sendToClient(bob.id, { type: 'test', id: 'after-renewal' })).toBe(true);
+    });
+
+    it('fences a lost node lease and rejects stale connection generations after restart', async () => {
+        const a = await boot('a'), b = await boot('b', namespace, { fixedClientId: 'fixed' });
+        const bob = await connect(b, 'bob');
+        await a.router.resolveClientData(bob.id);
+        await b.handle.dispose();
+        const replacement = await boot('b', namespace, { fixedClientId: 'fixed' });
+        const charlie = await connect(replacement, 'charlie');
+        expect(await a.router.sendToClient('fixed', { type: 'test', id: 'old-audience' })).toBe(false);
+        expect(await a.router.sendToClient('fixed', { type: 'test', id: 'old-audience-retry' })).toBe(false);
+        expect(charlie.frames.some(frame => frame.id === 'old-audience')).toBe(false);
+        expect((await a.router.resolveClientData('fixed'))?.userContext?.userId).toBe('charlie');
+        expect(await a.router.sendToClient('fixed', { type: 'test', id: 'new-audience' })).toBe(true);
+        await a.command.del(`realtime:${encodeURIComponent(namespace)}:node:b`);
+        expect(await a.router.isClientAlive('fixed')).toBe(false);
+        await eventually(() => replacement.router.isClientLive('fixed') === false);
+    });
+
+    it('keeps an expired local lease fenced after a late successful renewal response', async () => {
+        const gate = deferred(), renewing = deferred();
+        const a = await boot('a', namespace, { renewGate: gate, renewing });
+        const alice = await connect(a, 'alice');
+        await renewing.promise;
+        await eventually(() => a.router.isClientLive(alice.id) === false);
+        gate.resolve(); await delay(350);
+        expect(a.router.isClientLive(alice.id)).toBe(false);
+        expect(await a.router.sendToClient(alice.id, { type: 'test', id: 'late-renewal' })).toBe(false);
+        expect(alice.frames.some(frame => frame.id === 'late-renewal')).toBe(false);
+    });
+
+    it('isolates cluster namespaces and ignores forged peer origins', async () => {
+        const a = await boot('a'), b = await boot('b'), c = await boot('a', `${namespace}-other`);
+        const bob = await connect(b, 'bob');
+        expect(await c.router.getClientsByUserId(['bob'])).toEqual([]);
+        await a.router.sendToClient(bob.id, { type: 'test', id: 'known' });
+        const request = a.published.find(entry => entry.frame.kind === 'direct')!;
+        const forged = { ...request.frame, id: randomUUID(), source: { nodeId: 'unknown', instance: randomUUID() }, message: { id: 'forged' } };
+        await a.command.publish(request.topic, JSON.stringify(forged)); await delay(30);
+        expect(bob.frames.some(frame => frame.id === 'forged')).toBe(false);
+    });
+
+    it('returns an unconfirmed receipt on lost acknowledgement without duplicating the write', async () => {
+        const a = await boot('a'), b = await boot('b', namespace, { dropReceipts: true }), bob = await connect(b, 'bob');
+        expect(await a.router.sendToClient(bob.id, { type: 'test', id: 'receipt-lost' })).toBe(false);
+        expect(bob.frames.filter(frame => frame.id === 'receipt-lost')).toHaveLength(1);
+    });
+
+    it('does not announce readiness or leave a registry entry when registration outlives its socket', async () => {
+        const gate = deferred();
+        const a = await boot('a', namespace, { registerGate: gate });
+        const ws = new WebSocket(a.url, { headers: { 'x-test-credential': 'alice' } });
+        const frames: any[] = []; ws.on('message', raw => frames.push(JSON.parse(String(raw)))); ws.on('error', () => undefined);
+        await new Promise<void>(resolve => ws.once('open', resolve));
+        ws.terminate(); gate.resolve();
+        await eventually(async () => (await a.router.getClientsByUserId(['alice'])).length === 0 && a.handle.listClients().length === 0);
+        expect(frames.some(frame => frame.type === 'session')).toBe(false);
+    });
+
+    it('retains bounded early client frames and dispatches them once after registration', async () => {
+        const gate = deferred(), a = await boot('a', namespace, { registerGate: gate }), b = await boot('b');
+        const bob = await connect(b, 'bob'); await b.router.subscribeToChannel(bob.id, 'orgiq:room');
+        const ws = new WebSocket(a.url, { headers: { 'x-test-credential': 'alice' } });
+        ws.on('error', () => undefined);
+        await new Promise<void>(resolve => ws.once('open', resolve));
+        for (const id of ['early-1', 'early-2']) ws.send(JSON.stringify({ service: 'peer-test', action: 'publish', channel: 'orgiq:room', id }));
+        await delay(20); expect(bob.frames.some(frame => frame.id === 'early-1')).toBe(false);
+        gate.resolve();
+        await eventually(() => bob.frames.filter(frame => /^early-/.test(frame.id ?? '')).length === 2);
+        expect(a.published.filter(entry => /^early-/.test(entry.frame.message?.id ?? '')).map(entry => entry.frame.message.id)).toEqual(['early-1', 'early-2']);
+        ws.terminate();
+    });
+
+    it('closes an overfull startup queue without dispatching unauthorised early work', async () => {
+        const gate = deferred(), a = await boot('a', namespace, { registerGate: gate });
+        const ws = new WebSocket(a.url, { headers: { 'x-test-credential': 'alice' } });
+        ws.on('error', () => undefined);
+        const closed = new Promise<number>(resolve => ws.once('close', code => resolve(code)));
+        await new Promise<void>(resolve => ws.once('open', resolve));
+        for (let n = 0; n < 33; n++) ws.send(JSON.stringify({ service: 'peer-test', action: 'publish', channel: 'orgiq:room', id: `early-${n}` }));
+        expect(await closed).toBe(1009); gate.resolve();
+        await eventually(async () => (await a.router.getClientsByUserId(['alice'])).length === 0);
+        expect(a.published).toEqual([]);
+    });
+
+    it('carries native call invite/accept and named departures with shared Redis call state', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const callId = randomUUID(), lobbyName = 'orgiq:dm:alice:bob';
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName,
+            callerId: 'alice', targetUserIds: ['bob'] }));
+        try { await eventually(() => bob.frames.some(frame => frame.action === 'invite' && (frame.callId ?? frame.data?.callId) === callId)); }
+        catch (error) { throw new Error(`Call invite failed: ${JSON.stringify({ alice: alice.frames, bob: bob.frames,
+            published: a.published, state: await a.calls.getCall(callId), audience: await a.router.getClientsByUserId(['bob']),
+            source: a.router.getClientData(alice.id) })}`, { cause: error }); }
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'accepted', callId, lobbyName,
+            callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(() => alice.frames.some(frame => frame.action === 'accepted' && (frame.callId ?? frame.data?.callId) === callId));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.length === 2);
+        expect((await a.calls.getCall(callId))?.participantClientIds.sort()).toEqual([alice.id, bob.id].sort());
+        bob.ws.terminate();
+        await eventually(() => alice.frames.some(frame => frame.action === 'user-status' && frame.data?.status === 'left' && frame.data?.userId === 'bob'));
+        await delay(30);
+        expect(alice.frames.filter(frame => frame.action === 'user-status' && frame.data?.status === 'left' && frame.data?.userId === 'bob')).toHaveLength(1);
+    });
+
+    it('drains async disconnect cleanup before disposing the peer transport', async () => {
+        const gate = deferred(), disconnected = deferred();
+        const a = await boot('a', namespace, { disconnectGate: gate, disconnected });
+        const alice = await connect(a, 'alice');
+        let disposed = false;
+        const dispose = a.handle.dispose().then(() => { disposed = true; });
+        await disconnected.promise;
+        expect(disposed).toBe(false);
+        gate.resolve(); await dispose;
+        expect(await a.command.get(`realtime:${encodeURIComponent(namespace)}:client:${encodeURIComponent(alice.id)}`)).toBeNull();
+    });
+
+    it('restores an accepted call seat when the user reconnects on another node', async () => {
+        const a = await boot('a', namespace, { rejoinGraceMs: 1200 }), b = await boot('b', namespace, { rejoinGraceMs: 1200 });
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const callId = randomUUID(), lobbyName = `orgiq:dm:${randomUUID()}`;
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName,
+            callerId: 'alice', targetUserIds: ['bob'] }));
+        await eventually(() => bob.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId));
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'accepted', callId, lobbyName,
+            callerId: 'bob', userId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.length === 2);
+        bob.ws.terminate();
+        await eventually(() => alice.frames.some(frame => frame.action === 'user-status' && frame.data?.callId === callId
+            && frame.data?.userId === 'bob' && frame.data?.status === 'left'));
+        const returned = await connect(a, 'bob');
+        returned.ws.send(JSON.stringify({ service: 'call', action: 'status', lobbyName }));
+        returned.ws.send(JSON.stringify({ service: 'call', action: 'participant-state', callId, lobbyName,
+            callerId: 'bob', userId: 'bob', status: 'in-call', targetUserIds: ['alice'] }));
+        await eventually(() => alice.frames.some(frame => frame.action === 'participant-state' && frame.data?.callId === callId
+            && frame.data?.userId === 'bob'));
+        await eventually(async () => {
+            const ids = (await a.calls.getCall(callId))?.participantClientIds;
+            return !!ids && ids.length === 2 && ids.includes(returned.id) && !ids.includes(bob.id);
+        });
+        await delay(1400);
+        expect(alice.frames.filter(frame => frame.action === 'ended' && frame.data?.callId === callId)).toEqual([]);
+        expect(returned.frames.filter(frame => frame.action === 'ended' && frame.data?.callId === callId)).toEqual([]);
+    });
+
+    it('applies the destination tenant policy to a cross-node call invite', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), outsider = await connect(b, 'charlie');
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId: randomUUID(), lobbyName: 'orgiq:dm:private',
+            callerId: 'alice', targetUserIds: ['charlie'] }));
+        await eventually(() => b.published.some(({ frame }) => frame.kind === 'receipt'));
+        expect(b.published.find(({ frame }) => frame.kind === 'receipt')?.frame.delivered).toBe(false);
+        expect(outsider.frames.filter(frame => frame.action === 'invite')).toEqual([]);
+    });
+
+    it('routes a server-originated notification across nodes and excludes revoked recipients from its receipt count', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        const service = a.handle.services.notification as unknown as NotificationService;
+        const delivered = await service.notifyUser('bob', { type: 'message', title: 'Peer notification' });
+        expect(delivered.delivered).toBe(1);
+        await eventually(() => bob.frames.some(frame => frame.type === 'notification:new'));
+        authorities.set('bob', { epoch: 1, org: 'orgiq' });
+        const refused = await service.notifyUser('bob', { type: 'message', title: 'Revoked notification' });
+        expect(refused.delivered).toBe(0);
+    });
+});

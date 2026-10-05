@@ -284,6 +284,7 @@ export function calls(opts: {
                 config,
                 ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
                 ...(opts.crossNodePubSub ? { crossNodePubSub: opts.crossNodePubSub } : {}),
+                ...(router.isClientAlive ? { isClientAlive: router.isClientAlive.bind(router) } : {}),
             });
         },
     });
@@ -435,7 +436,9 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      * Swap the transport. When provided, `authorize`/`filterClientMessage`/`plugins` are the
      * custom router's responsibility and are ignored here.
      */
-    router?: RealtimeRouter & { _setHandle?: (h: WsHandlerHandle) => void; removeClient?: (id: string) => void };
+    router?: RealtimeRouter & { _setHandle?: (h: WsHandlerHandle) => void;
+        onClientConnect?: (id: string, ctx: import('../server-ws/types').WsAuthContext) => Promise<void> | void;
+        shutdown?: () => Promise<void> | void };
 }
 
 export interface RealtimeHandle extends WsHandlerHandle {
@@ -457,7 +460,7 @@ export function attachRealtime(
 ): RealtimeHandle {
     const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log });
+    const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log });
 
     const services: Record<string, WsService> = {};
     const manifests: FeatureManifest[] = [];
@@ -482,12 +485,17 @@ export function attachRealtime(
     }
 
     const consumerOnDisconnect = wsOpts.onDisconnect;
+    const consumerBeforeConnect = wsOpts.beforeConnect;
     const handle = createWsHandler({
         ...wsOpts,
         server,
         services,
-        onDisconnect: (clientId: string) => {
-            try { consumerOnDisconnect?.(clientId); } catch { /* consumer errors stay theirs */ }
+        beforeConnect: async (clientId, ctx) => {
+            await router.onClientConnect?.(clientId, ctx);
+            await consumerBeforeConnect?.(clientId, ctx);
+        },
+        onDisconnect: async (clientId: string) => {
+            try { await consumerOnDisconnect?.(clientId); } catch { /* consumer errors stay theirs */ }
             router.removeClient?.(clientId);
         },
     });
@@ -495,11 +503,13 @@ export function attachRealtime(
     router._setHandle?.(handle);
 
     // Lifecycle-aware dispose: services with a shutdown()/stop() get it
-    // called before the WS handler tears down — CRDT flushes snapshots,
-    // sweep/eviction timers clear. Best-effort per service; one feature's
+    // called after socket frames/disconnect hooks drain — CRDT flushes
+    // snapshots and sweep/eviction timers clear after their last mutation.
+    // Best-effort per service; one feature's
     // teardown failure never blocks the rest.
     const baseDispose = handle.dispose.bind(handle);
     const dispose = async (): Promise<void> => {
+        await baseDispose();
         for (const [name, svc] of Object.entries(services)) {
             const s = svc as { shutdown?: () => Promise<void> | void; stop?: () => Promise<void> | void };
             try {
@@ -509,7 +519,7 @@ export function attachRealtime(
                 log.warn(`[attachRealtime] '${name}' teardown failed`, err);
             }
         }
-        await baseDispose();
+        await router.shutdown?.();
     };
 
     return Object.assign(Object.create(null), handle, { router, services, manifests, dispose });

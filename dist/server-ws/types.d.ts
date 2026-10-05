@@ -48,6 +48,9 @@ export interface WsHandlerOptions {
      * throws or rejects, the upgrade is denied with 401.
      */
     auth?: WsAuthFn;
+    /** Mandatory registration before service hooks/session readiness.
+     * A rejection closes the connection without admitting client actions. */
+    beforeConnect?: (clientId: string, ctx: WsAuthContext) => void | Promise<void>;
     /** Fired after a client is fully connected. */
     onConnect?: (clientId: string, ctx: WsAuthContext) => void;
     /** Fired after a client disconnects (for any reason). */

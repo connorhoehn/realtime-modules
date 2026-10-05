@@ -98,6 +98,8 @@ export type {
 export {
     LocalRealtimeRouter,
 } from './router';
+export { RedisRealtimeRouter } from './RedisRealtimeRouter';
+export type { RealtimeClusterRedis, RedisRealtimeRouterOptions } from './RedisRealtimeRouter';
 export type {
     RealtimeRouter,
     RouterLogger,

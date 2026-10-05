@@ -17,7 +17,7 @@
 import http from 'http';
 import { AddressInfo } from 'net';
 import WebSocket from 'ws';
-import { createClient } from 'redis';
+import { createClient, type RedisClientType } from 'redis';
 import { attachRealtime, calls, type RealtimeHandle } from '../../src/server';
 import { InMemoryCallStateStore, RedisCallStateStore, type CallStateStore } from '../../src/call/CallStateStore';
 import { FakeRedis } from '../call/helpers/fakeRedis';
@@ -29,7 +29,7 @@ const rand = () => Math.random().toString(36).slice(2, 8);
 
 type StoreCase = { name: string; make: () => Promise<CallStateStore | null>; close?: () => Promise<void> };
 
-let realRedis: ReturnType<typeof createClient> | null = null;
+let realRedis: RedisClientType | null = null;
 const storeCases: StoreCase[] = [
     { name: 'InMemoryCallStateStore', make: async () => new InMemoryCallStateStore() },
     { name: 'RedisCallStateStore (Redis double)', make: async () => new RedisCallStateStore(new FakeRedis() as any) },

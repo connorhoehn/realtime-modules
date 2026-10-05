@@ -69,6 +69,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         services,
         auth,
         onConnect,
+        beforeConnect,
         onDisconnect,
         pingIntervalMs = DEFAULT_PING_INTERVAL_MS,
         generateClientId = defaultGenerateClientId,
@@ -87,6 +88,8 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
     const wsToId = new WeakMap<object, string>();
     /** heartbeat cleanup functions keyed by clientId. */
     const cleanupFns = new Map<string, () => void>();
+    /** Async disconnect hooks must finish before a host closes shared ports. */
+    const closing = new Set<Promise<void>>();
 
     const denyUpgrade = (socket: any, status: number, reason: string): void => {
         try {
@@ -129,12 +132,53 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
 
     wss.on('connection', async (ws: any, _req: any, ctx: WsAuthContext = {}) => {
         const clientId = generateClientId();
+        if (clients.has(clientId)) {
+            ws.once('error', () => undefined);
+            ws.close(1011, 'Duplicate connection identity');
+            return;
+        }
         clients.set(clientId, { ws, ctx });
         wsToId.set(ws, clientId);
+        // An async registration may outlive a socket error; keep that error
+        // from becoming an unhandled EventEmitter event during bootstrap.
+        ws.once('error', () => undefined);
+        // Clients may subscribe on TCP open, before the session handshake.
+        // Retain those frames in arrival order while registration runs, with
+        // both a count and aggregate-byte bound. They enter the same service
+        // queue only after the authenticated connection is ready.
+        const initialFrames: unknown[] = [];
+        let initialBytes = 0;
+        const bufferInitialFrame = (raw: unknown) => {
+            const bytes = typeof raw === 'string' ? Buffer.byteLength(raw) : Buffer.isBuffer(raw) ? raw.length : maxPayload;
+            if (initialFrames.length >= 32 || initialBytes + bytes > maxPayload) {
+                ws.close(1009, 'Connection initialization queue full'); return;
+            }
+            initialFrames.push(raw); initialBytes += bytes;
+        };
+        ws.on('message', bufferInitialFrame);
+        const connectedServices: WsService[] = [];
+        const rollback = async () => {
+            clients.delete(clientId); wsToId.delete(ws);
+            ws.off('message', bufferInitialFrame); initialFrames.length = 0;
+            for (const service of connectedServices) {
+                try { await service.onClientDisconnect?.(clientId); } catch { /* rollback best effort */ }
+            }
+            try { await onDisconnect?.(clientId); } catch { /* rollback best effort */ }
+            ws.close(1011, 'Connection registration failed');
+        };
+
+        try {
+            await beforeConnect?.(clientId, ctx);
+            if (ws.readyState !== 1) throw new Error('Connection closed during registration');
+        } catch {
+            await rollback();
+            return;
+        }
 
         // Fire optional service-level connect hooks (presence-style).
         for (const [name, svc] of Object.entries(services)) {
             if (typeof svc.onClientConnect === 'function') {
+                connectedServices.push(svc);
                 try {
                     await svc.onClientConnect(clientId);
                 } catch (err) {
@@ -143,6 +187,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
                     console.warn(`[realtime-modules] service '${name}' onClientConnect failed`, err);
                 }
             }
+            if (ws.readyState !== 1) { await rollback(); return; }
         }
 
         // User connect hook last so it sees a fully-registered client.
@@ -232,10 +277,13 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             }
         };
 
-        ws.on('message', (raw: unknown) => {
+        const enqueueFrame = (raw: unknown) => {
             // A rejected frame must not poison the chain for the next one.
             frameQueue = frameQueue.then(() => handleFrame(raw)).catch(() => undefined);
-        });
+        };
+        ws.off('message', bufferInitialFrame);
+        ws.on('message', enqueueFrame);
+        for (const raw of initialFrames.splice(0)) enqueueFrame(raw);
 
         const handleClose = async (): Promise<void> => {
             const id = wsToId.get(ws);
@@ -282,14 +330,19 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
                 }
             }
             try {
-                onDisconnect?.(id);
+                await onDisconnect?.(id);
             } catch {
                 // swallow
             }
         };
 
-        ws.on('close', handleClose);
-        ws.on('error', handleClose);
+        const close = () => {
+            const task = handleClose();
+            closing.add(task);
+            void task.finally(() => closing.delete(task));
+        };
+        ws.on('close', close);
+        ws.on('error', close);
     });
 
     return {
@@ -299,12 +352,13 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         },
         sendToClient(clientId: string, frame: Record<string, unknown>): boolean {
             const entry = clients.get(clientId);
-            if (!entry) return false;
+            if (!entry || entry.ws.readyState !== 1) return false;
             wsSend(entry.ws, JSON.stringify(frame));
             return true;
         },
         getClientContext(clientId: string) {
-            return clients.get(clientId)?.ctx ?? null;
+            const entry = clients.get(clientId);
+            return entry?.ws.readyState === 1 ? entry.ctx : null;
         },
         async dispose(): Promise<void> {
             // Remove our upgrade listener (best-effort across http.Server APIs).
@@ -331,6 +385,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
                     resolve();
                 }
             });
+            await Promise.all([...closing]);
         },
     };
 }

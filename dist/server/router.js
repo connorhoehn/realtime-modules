@@ -158,6 +158,11 @@ class LocalRealtimeRouter {
                 }
             }
         }
+        await this.sendToLocalChannel(channel, message, excludeClientId);
+    }
+    /** Trusted peer fanout: local recipient authorization and generation
+     * fences still run; origin plugins/publish hooks are not fired twice. */
+    async sendToLocalChannel(channel, message, excludeClientId) {
         const members = this.channelMembers.get(channel);
         if (!members || members.size === 0)
             return;

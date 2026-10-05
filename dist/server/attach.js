@@ -217,6 +217,7 @@ function calls(opts = {}) {
                 config,
                 ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
                 ...(opts.crossNodePubSub ? { crossNodePubSub: opts.crossNodePubSub } : {}),
+                ...(router.isClientAlive ? { isClientAlive: router.isClientAlive.bind(router) } : {}),
             });
         },
     });
@@ -348,13 +349,18 @@ function attachRealtime(server, opts) {
         services.subscribe = (0, subscribeService_1.createSubscribeService)(router);
     }
     const consumerOnDisconnect = wsOpts.onDisconnect;
+    const consumerBeforeConnect = wsOpts.beforeConnect;
     const handle = (0, createWsHandler_1.createWsHandler)({
         ...wsOpts,
         server,
         services,
-        onDisconnect: (clientId) => {
+        beforeConnect: async (clientId, ctx) => {
+            await router.onClientConnect?.(clientId, ctx);
+            await consumerBeforeConnect?.(clientId, ctx);
+        },
+        onDisconnect: async (clientId) => {
             try {
-                consumerOnDisconnect?.(clientId);
+                await consumerOnDisconnect?.(clientId);
             }
             catch { /* consumer errors stay theirs */ }
             router.removeClient?.(clientId);
@@ -362,11 +368,13 @@ function attachRealtime(server, opts) {
     });
     router._setHandle?.(handle);
     // Lifecycle-aware dispose: services with a shutdown()/stop() get it
-    // called before the WS handler tears down — CRDT flushes snapshots,
-    // sweep/eviction timers clear. Best-effort per service; one feature's
+    // called after socket frames/disconnect hooks drain — CRDT flushes
+    // snapshots and sweep/eviction timers clear after their last mutation.
+    // Best-effort per service; one feature's
     // teardown failure never blocks the rest.
     const baseDispose = handle.dispose.bind(handle);
     const dispose = async () => {
+        await baseDispose();
         for (const [name, svc] of Object.entries(services)) {
             const s = svc;
             try {
@@ -379,7 +387,7 @@ function attachRealtime(server, opts) {
                 log.warn(`[attachRealtime] '${name}' teardown failed`, err);
             }
         }
-        await baseDispose();
+        await router.shutdown?.();
     };
     return Object.assign(Object.create(null), handle, { router, services, manifests, dispose });
 }

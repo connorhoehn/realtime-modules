@@ -1,13 +1,13 @@
 // Opt-in real Redis Lua contracts. The URL must identify a disposable local
 // Redis; only randomly named keys created by this suite are removed.
-import { createClient } from 'redis';
+import { createClient, type RedisClientType } from 'redis';
 import { RedisCallStateStore } from '../../src/call/CallStateStore';
 
 const url = process.env.CALL_TEST_REDIS_URL;
 const suite = url ? describe : describe.skip;
 
 suite('RedisCallStateStore atomic recovery (real Redis)', () => {
-  let redis: ReturnType<typeof createClient>;
+  let redis: RedisClientType;
   let store: RedisCallStateStore;
   let id: string, alice: string, bob: string, lobby: string, oldA: string, oldB: string, newA: string;
   let keys: string[];
