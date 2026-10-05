@@ -1790,14 +1790,29 @@ export class CallService {
         // was answered elsewhere; it has already been sent the winner's
         // `accepted` by the sibling fan-out. Document calls keep their own
         // bookkeeping.
+        let acceptedSeatClaimed = false;
         if (action === 'accepted' && callId && !docMeta) {
             let storeMembers: { participantClientIds: string[]; callerId: string } | null = null;
             if (this.stateStore) {
                 try { storeMembers = await this.stateStore.getCall(callId); } catch { /* local view stands */ }
             }
-            // Synchronous from here to registerParticipant below, so two
-            // accepts racing on this node cannot both pass.
-            const winner = this.sameUserSeatedElsewhere(clientId, callId, storeMembers);
+            let winner = this.sameUserSeatedElsewhere(clientId, callId, storeMembers);
+            if (!winner && this.stateStore?.claimAcceptedSeat && this.messageRouter.getUserIdForClient) {
+                const userId = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));
+                if (userId) {
+                    let claim = await this.stateStore.claimAcceptedSeat(callId, clientId, userId, resolvedLobbyName);
+                    if (!claim.accepted && claim.winnerClientId && this.isClientAliveHook
+                        && await this.isClientAliveHook(claim.winnerClientId) === false) {
+                        if (this.messageRouter.isReady?.() === false) return;
+                        claim = await this.stateStore.claimAcceptedSeat(callId, clientId, userId, resolvedLobbyName, claim.winnerClientId);
+                    }
+                    if (this.messageRouter.isReady?.() === false) return;
+                    if (claim.accepted) acceptedSeatClaimed = true;
+                    else if (claim.winnerClientId) winner = { clientId: claim.winnerClientId, userId,
+                        callerId: storeMembers?.callerId || callerId };
+                    else { this.sendError(clientId, 'The call is no longer active', { code: 'CALL_NOT_ACTIVE', callId }); return; }
+                }
+            }
             if (winner) {
                 this.logger.info(`[CallService] refused second accept of ${callId} from ${clientId}: ${winner.userId} is already in the call on ${winner.clientId}`);
                 const envelope: CallEvent = {
@@ -1822,7 +1837,8 @@ export class CallService {
             || action === 'accepted'
         );
         if (shouldRegister) {
-            const participantWrite = this.registerParticipant(callId!, clientId, callerId, resolvedLobbyName, targetUserIds);
+            const participantWrite = this.registerParticipant(callId!, clientId, callerId, resolvedLobbyName, targetUserIds, !acceptedSeatClaimed);
+            if (acceptedSeatClaimed) this.storeMirrored.add(callId!);
             if (typeof this.messageRouter.getUserIdForClient === 'function') {
                 try {
                     const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));

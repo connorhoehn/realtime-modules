@@ -25,6 +25,11 @@ export interface ActiveCallStateView {
 }
 
 export interface CallStateStore {
+    /** Atomically claim one authenticated user's accepted seat in an existing
+     * call. A replacement is permitted only for the exact winner the caller
+     * proved dead through its router. Never creates a missing call. */
+    claimAcceptedSeat?(callId: string, clientId: string, userId: string, lobbyName: string,
+        departedClientId?: string): Promise<{ accepted: boolean; winnerClientId?: string }>;
     /** Atomically resume an existing accepted call for a previously seated
      * authenticated user. Must not create a missing call. Departed client IDs
      * have already been proven dead by the consumer's router/liveness hook. */
@@ -225,6 +230,28 @@ interface InMemoryActiveCall {
 export class InMemoryCallStateStore implements CallStateStore {
     private activeCalls = new Map<string, InMemoryActiveCall>();
     private clientToCalls = new Map<string, Set<string>>();
+    private acceptedSeats = new WeakMap<InMemoryActiveCall, Map<string, string>>();
+
+    async claimAcceptedSeat(callId: string, clientId: string, userId: string, lobbyName: string,
+        departedClientId?: string): Promise<{ accepted: boolean; winnerClientId?: string }> {
+        const state = this.activeCalls.get(callId);
+        if (!state || state.lobbyName !== lobbyName) return { accepted: false };
+        const seats = this.acceptedSeats.get(state) ?? new Map<string, string>();
+        const winner = seats.get(userId);
+        if (winner && winner !== clientId && state.participantClientIds.has(winner) && winner !== departedClientId) {
+            return { accepted: false, winnerClientId: winner };
+        }
+        if (winner && winner !== clientId && winner === departedClientId) {
+            state.participantClientIds.delete(winner);
+            const oldCalls = this.clientToCalls.get(winner); oldCalls?.delete(callId);
+            if (oldCalls?.size === 0) this.clientToCalls.delete(winner);
+        }
+        seats.set(userId, clientId); this.acceptedSeats.set(state, seats);
+        state.participantClientIds.add(clientId);
+        const calls = this.clientToCalls.get(clientId) ?? new Set<string>(); calls.add(callId); this.clientToCalls.set(clientId, calls);
+        const users = this.userToCalls.get(userId) ?? new Set<string>(); users.add(callId); this.userToCalls.set(userId, users);
+        return { accepted: true, winnerClientId: clientId };
+    }
     // PR-W2.1 — per-userId invite registry. Value is callId→expiresAtMs.
     private invitesByUser = new Map<string, Map<string, number>>();
     // PR-W2.1 — accept dedup. Value is the expiry millis (TTL-emulated).
@@ -240,6 +267,10 @@ export class InMemoryCallStateStore implements CallStateStore {
         const state = this.activeCalls.get(callId);
         if (!state || state.lobbyName !== lobbyName || !this.userToCalls.get(userId)?.has(callId)
             || (!(this.acceptedCalls.get(callId)! > Date.now()) && state.participantClientIds.size < 2)) return false;
+        const seats = this.acceptedSeats.get(state) ?? new Map<string, string>();
+        const winner = seats.get(userId);
+        if (winner && winner !== clientId && state.participantClientIds.has(winner) && !departedClientIds.includes(winner)) return false;
+        seats.set(userId, clientId); this.acceptedSeats.set(state, seats);
         state.participantClientIds.add(clientId);
         const calls = this.clientToCalls.get(clientId) ?? new Set<string>();
         calls.add(callId);
@@ -584,11 +615,35 @@ const ACCEPTED_KEY_PREFIX = 'call:accepted:';        // string: SETNX with TTL
 const RECENT_INVITE_PREFIX = 'call:recent-invite:'; // string: SETNX with TTL
 const TTL_SECONDS = 4 * 60 * 60;
 
+const CLAIM_ACCEPTED_SEAT = `-- call-claim-accepted-seat-v1
+if redis.call('EXISTS', KEYS[1]) == 0 or redis.call('HGET', KEYS[1], 'lobbyName') ~= ARGV[1] then return {0, ''} end
+local winner = redis.call('HGET', KEYS[1], 'seat:' .. ARGV[4])
+if winner and winner ~= ARGV[2] and redis.call('SISMEMBER', KEYS[2], winner) == 1 and winner ~= ARGV[5] then return {0, winner} end
+if winner and winner ~= ARGV[2] and winner == ARGV[5] then
+  redis.call('SREM', KEYS[2], winner)
+  local oldKey = ARGV[7] .. winner
+  redis.call('SREM', oldKey, ARGV[3])
+  if redis.call('SCARD', oldKey) == 0 then redis.call('DEL', oldKey) end
+end
+redis.call('HSET', KEYS[1], 'seat:' .. ARGV[4], ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[2])
+redis.call('SADD', KEYS[3], ARGV[3])
+redis.call('SADD', KEYS[4], ARGV[3])
+for _, key in ipairs(KEYS) do redis.call('EXPIRE', key, ARGV[6]) end
+return {1, ARGV[2]}`;
+
 const RESUME_PARTICIPANT = `-- call-resume-participant-v1
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HGET', KEYS[1], 'lobbyName') ~= ARGV[1] then return 0 end
 if redis.call('SISMEMBER', KEYS[4], ARGV[3]) == 0 then return 0 end
 if redis.call('EXISTS', KEYS[5]) == 0 and redis.call('SCARD', KEYS[2]) < 2 then return 0 end
+local winner = redis.call('HGET', KEYS[1], 'seat:' .. ARGV[7])
+if winner and winner ~= ARGV[2] and redis.call('SISMEMBER', KEYS[2], winner) == 1 then
+  local dead = false
+  for _, old in ipairs(cjson.decode(ARGV[5])) do if old == winner then dead = true end end
+  if not dead then return 0 end
+end
+redis.call('HSET', KEYS[1], 'seat:' .. ARGV[7], ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[2])
 redis.call('SADD', KEYS[3], ARGV[3])
 for _, old in ipairs(cjson.decode(ARGV[5])) do
@@ -626,6 +681,15 @@ export class RedisCallStateStore implements CallStateStore {
     private participantsKey(callId: string): string { return `${CALL_KEY_PREFIX}${callId}:participants`; }
     private clientKey(clientId: string): string { return `${CLIENT_KEY_PREFIX}${clientId}`; }
 
+    async claimAcceptedSeat(callId: string, clientId: string, userId: string, lobbyName: string,
+        departedClientId?: string): Promise<{ accepted: boolean; winnerClientId?: string }> {
+        const result = await this.script(CLAIM_ACCEPTED_SEAT,
+            [this.callKey(callId), this.participantsKey(callId), this.clientKey(clientId), `${USER_CALLS_PREFIX}${userId}`],
+            [lobbyName, clientId, callId, userId, departedClientId ?? '', TTL_SECONDS, CLIENT_KEY_PREFIX]);
+        if (!Array.isArray(result)) throw new Error('Invalid accepted-seat claim reply');
+        return { accepted: Number(result[0]) === 1, ...(result[1] ? { winnerClientId: String(result[1]) } : {}) };
+    }
+
     private async script(script: string, keys: string[], args: (string | number)[]): Promise<unknown> {
         const r = this.redis as any;
         if (typeof r.sendCommand === 'function') return r.sendCommand(['EVAL', script, String(keys.length), ...keys, ...args.map(String)]);
@@ -641,7 +705,7 @@ export class RedisCallStateStore implements CallStateStore {
     async resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds: string[] = []): Promise<boolean> {
         const result = await this.script(RESUME_PARTICIPANT,
             [this.callKey(callId), this.participantsKey(callId), this.clientKey(clientId), `${USER_CALLS_PREFIX}${userId}`, `${ACCEPTED_KEY_PREFIX}${callId}`, `${LOBBY_CALLS_PREFIX}${lobbyName}`],
-            [lobbyName, clientId, callId, TTL_SECONDS, JSON.stringify(departedClientIds), CLIENT_KEY_PREFIX]);
+            [lobbyName, clientId, callId, TTL_SECONDS, JSON.stringify(departedClientIds), CLIENT_KEY_PREFIX, userId]);
         return Number(result) === 1;
     }
 

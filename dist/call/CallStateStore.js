@@ -13,6 +13,34 @@ exports.RedisDocumentCallMetaStore = exports.InMemoryDocumentCallMetaStore = exp
 class InMemoryCallStateStore {
     activeCalls = new Map();
     clientToCalls = new Map();
+    acceptedSeats = new WeakMap();
+    async claimAcceptedSeat(callId, clientId, userId, lobbyName, departedClientId) {
+        const state = this.activeCalls.get(callId);
+        if (!state || state.lobbyName !== lobbyName)
+            return { accepted: false };
+        const seats = this.acceptedSeats.get(state) ?? new Map();
+        const winner = seats.get(userId);
+        if (winner && winner !== clientId && state.participantClientIds.has(winner) && winner !== departedClientId) {
+            return { accepted: false, winnerClientId: winner };
+        }
+        if (winner && winner !== clientId && winner === departedClientId) {
+            state.participantClientIds.delete(winner);
+            const oldCalls = this.clientToCalls.get(winner);
+            oldCalls?.delete(callId);
+            if (oldCalls?.size === 0)
+                this.clientToCalls.delete(winner);
+        }
+        seats.set(userId, clientId);
+        this.acceptedSeats.set(state, seats);
+        state.participantClientIds.add(clientId);
+        const calls = this.clientToCalls.get(clientId) ?? new Set();
+        calls.add(callId);
+        this.clientToCalls.set(clientId, calls);
+        const users = this.userToCalls.get(userId) ?? new Set();
+        users.add(callId);
+        this.userToCalls.set(userId, users);
+        return { accepted: true, winnerClientId: clientId };
+    }
     // PR-W2.1 — per-userId invite registry. Value is callId→expiresAtMs.
     invitesByUser = new Map();
     // PR-W2.1 — accept dedup. Value is the expiry millis (TTL-emulated).
@@ -28,6 +56,12 @@ class InMemoryCallStateStore {
         if (!state || state.lobbyName !== lobbyName || !this.userToCalls.get(userId)?.has(callId)
             || (!(this.acceptedCalls.get(callId) > Date.now()) && state.participantClientIds.size < 2))
             return false;
+        const seats = this.acceptedSeats.get(state) ?? new Map();
+        const winner = seats.get(userId);
+        if (winner && winner !== clientId && state.participantClientIds.has(winner) && !departedClientIds.includes(winner))
+            return false;
+        seats.set(userId, clientId);
+        this.acceptedSeats.set(state, seats);
         state.participantClientIds.add(clientId);
         const calls = this.clientToCalls.get(clientId) ?? new Set();
         calls.add(callId);
@@ -364,11 +398,34 @@ const LOBBY_CALLS_PREFIX = 'call:lobby:'; // set: callIds in a lobbyName
 const ACCEPTED_KEY_PREFIX = 'call:accepted:'; // string: SETNX with TTL
 const RECENT_INVITE_PREFIX = 'call:recent-invite:'; // string: SETNX with TTL
 const TTL_SECONDS = 4 * 60 * 60;
+const CLAIM_ACCEPTED_SEAT = `-- call-claim-accepted-seat-v1
+if redis.call('EXISTS', KEYS[1]) == 0 or redis.call('HGET', KEYS[1], 'lobbyName') ~= ARGV[1] then return {0, ''} end
+local winner = redis.call('HGET', KEYS[1], 'seat:' .. ARGV[4])
+if winner and winner ~= ARGV[2] and redis.call('SISMEMBER', KEYS[2], winner) == 1 and winner ~= ARGV[5] then return {0, winner} end
+if winner and winner ~= ARGV[2] and winner == ARGV[5] then
+  redis.call('SREM', KEYS[2], winner)
+  local oldKey = ARGV[7] .. winner
+  redis.call('SREM', oldKey, ARGV[3])
+  if redis.call('SCARD', oldKey) == 0 then redis.call('DEL', oldKey) end
+end
+redis.call('HSET', KEYS[1], 'seat:' .. ARGV[4], ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[2])
+redis.call('SADD', KEYS[3], ARGV[3])
+redis.call('SADD', KEYS[4], ARGV[3])
+for _, key in ipairs(KEYS) do redis.call('EXPIRE', key, ARGV[6]) end
+return {1, ARGV[2]}`;
 const RESUME_PARTICIPANT = `-- call-resume-participant-v1
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HGET', KEYS[1], 'lobbyName') ~= ARGV[1] then return 0 end
 if redis.call('SISMEMBER', KEYS[4], ARGV[3]) == 0 then return 0 end
 if redis.call('EXISTS', KEYS[5]) == 0 and redis.call('SCARD', KEYS[2]) < 2 then return 0 end
+local winner = redis.call('HGET', KEYS[1], 'seat:' .. ARGV[7])
+if winner and winner ~= ARGV[2] and redis.call('SISMEMBER', KEYS[2], winner) == 1 then
+  local dead = false
+  for _, old in ipairs(cjson.decode(ARGV[5])) do if old == winner then dead = true end end
+  if not dead then return 0 end
+end
+redis.call('HSET', KEYS[1], 'seat:' .. ARGV[7], ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[2])
 redis.call('SADD', KEYS[3], ARGV[3])
 for _, old in ipairs(cjson.decode(ARGV[5])) do
@@ -405,6 +462,12 @@ class RedisCallStateStore {
     callKey(callId) { return `${CALL_KEY_PREFIX}${callId}`; }
     participantsKey(callId) { return `${CALL_KEY_PREFIX}${callId}:participants`; }
     clientKey(clientId) { return `${CLIENT_KEY_PREFIX}${clientId}`; }
+    async claimAcceptedSeat(callId, clientId, userId, lobbyName, departedClientId) {
+        const result = await this.script(CLAIM_ACCEPTED_SEAT, [this.callKey(callId), this.participantsKey(callId), this.clientKey(clientId), `${USER_CALLS_PREFIX}${userId}`], [lobbyName, clientId, callId, userId, departedClientId ?? '', TTL_SECONDS, CLIENT_KEY_PREFIX]);
+        if (!Array.isArray(result))
+            throw new Error('Invalid accepted-seat claim reply');
+        return { accepted: Number(result[0]) === 1, ...(result[1] ? { winnerClientId: String(result[1]) } : {}) };
+    }
     async script(script, keys, args) {
         const r = this.redis;
         if (typeof r.sendCommand === 'function')
@@ -421,7 +484,7 @@ class RedisCallStateStore {
         throw new Error('CallStateRedis: atomic recovery requires EVAL/command/sendCommand/call');
     }
     async resumeParticipant(callId, clientId, userId, lobbyName, departedClientIds = []) {
-        const result = await this.script(RESUME_PARTICIPANT, [this.callKey(callId), this.participantsKey(callId), this.clientKey(clientId), `${USER_CALLS_PREFIX}${userId}`, `${ACCEPTED_KEY_PREFIX}${callId}`, `${LOBBY_CALLS_PREFIX}${lobbyName}`], [lobbyName, clientId, callId, TTL_SECONDS, JSON.stringify(departedClientIds), CLIENT_KEY_PREFIX]);
+        const result = await this.script(RESUME_PARTICIPANT, [this.callKey(callId), this.participantsKey(callId), this.clientKey(clientId), `${USER_CALLS_PREFIX}${userId}`, `${ACCEPTED_KEY_PREFIX}${callId}`, `${LOBBY_CALLS_PREFIX}${lobbyName}`], [lobbyName, clientId, callId, TTL_SECONDS, JSON.stringify(departedClientIds), CLIENT_KEY_PREFIX, userId]);
         return Number(result) === 1;
     }
     async forgetCallIfUnchanged(callId, expected) {

@@ -15,10 +15,30 @@ export class FakeRedis {
     const keys = values.slice(0, count).map(String);
     const args = values.slice(count).map(String);
     const hash = this.hashes.get(keys[0]);
+    if (script.startsWith('-- call-claim-accepted-seat-v1')) {
+      if (!hash || hash.get('lobbyName') !== args[0]) return [0, ''];
+      const members = this.sets.get(keys[1]) ?? new Set<string>();
+      const winner = hash.get('seat:' + args[3]);
+      if (winner && winner !== args[1] && members.has(winner) && winner !== args[4]) return [0, winner];
+      if (winner && winner !== args[1] && winner === args[4]) {
+        members.delete(winner);
+        const old = this.sets.get(args[6] + winner); old?.delete(args[2]);
+        if (old?.size === 0) this.sets.delete(args[6] + winner);
+      }
+      hash.set('seat:' + args[3], args[1]); members.add(args[1]); this.sets.set(keys[1], members);
+      for (const key of [keys[2], keys[3]]) {
+        const values = this.sets.get(key) ?? new Set<string>(); values.add(args[2]); this.sets.set(key, values);
+      }
+      for (const key of keys) this.ttls.set(key, Number(args[5]));
+      return [1, args[1]];
+    }
     if (script.startsWith('-- call-resume-participant-v1')) {
       const participants = this.sets.get(keys[1]);
       if (!hash || hash.get('lobbyName') !== args[0] || !this.sets.get(keys[3])?.has(args[2])
         || (!this.strings.has(keys[4]) && (participants?.size ?? 0) < 2)) return 0;
+      const winner = hash.get('seat:' + args[6]);
+      if (winner && winner !== args[1] && participants?.has(winner) && !(JSON.parse(args[4]) as string[]).includes(winner)) return 0;
+      hash.set('seat:' + args[6], args[1]);
       const members = participants ?? new Set<string>();
       members.add(args[1]); this.sets.set(keys[1], members);
       const clients = this.sets.get(keys[2]) ?? new Set<string>();

@@ -350,6 +350,44 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         expect(alice.frames.filter(frame => frame.action === 'user-status' && frame.data?.status === 'left' && frame.data?.userId === 'bob')).toHaveLength(1);
     });
 
+    it('admits exactly one of two same-user accepts that race across nodes', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), first = await connect(a, 'bob'), second = await connect(b, 'bob');
+        const callId = randomUUID(), lobbyName = `orgiq:dm:${randomUUID()}`;
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName,
+            callerId: 'alice', targetUserIds: ['bob'] }));
+        await eventually(() => [first, second].every(client => client.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId)));
+        // Force both replicas to inspect the same pre-accept roster. A
+        // getCall-then-register check must lose to an atomic shared claim.
+        const bothRead = deferred(); let reads = 0;
+        const spies = [a, b].map(node => {
+            const original = node.calls.getCall.bind(node.calls);
+            return jest.spyOn(node.calls, 'getCall').mockImplementation(async id => {
+                const snapshot = await original(id);
+                if (id === callId && reads < 2) { if (++reads === 2) bothRead.resolve(); await bothRead.promise; }
+                return snapshot;
+            });
+        });
+        try {
+            for (const client of [first, second]) client.ws.send(JSON.stringify({ service: 'call', action: 'accepted',
+                callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+            await eventually(() => alice.frames.some(frame => frame.action === 'accepted' && frame.data?.callId === callId));
+            await eventually(() => [first, second].some(client => client.frames.some(frame => frame.action === 'ended'
+                && frame.data?.callId === callId && frame.data?.reason === 'answered-elsewhere')));
+            await delay(30);
+            expect(alice.frames.filter(frame => frame.action === 'accepted' && frame.data?.callId === callId)).toHaveLength(1);
+            const ids = (await a.calls.getCall(callId))!.participantClientIds;
+            expect(ids).toHaveLength(2);
+            expect(ids).toContain(alice.id);
+            expect(ids.filter(id => [first.id, second.id].includes(id))).toHaveLength(1);
+            const loser = [first, second].find(client => !ids.includes(client.id))!;
+            loser.ws.send(JSON.stringify({ service: 'call', action: 'participant-state', callId, lobbyName,
+                callerId: 'bob', userId: 'bob', status: 'in-call', targetUserIds: ['alice'] }));
+            await delay(60);
+            expect((await a.calls.getCall(callId))!.participantClientIds.sort()).toEqual(ids.sort());
+        } finally { bothRead.resolve(); for (const spy of spies) spy.mockRestore(); }
+    });
+
     it('drains async disconnect cleanup before disposing the peer transport', async () => {
         const gate = deferred(), disconnected = deferred();
         const a = await boot('a', namespace, { disconnectGate: gate, disconnected });

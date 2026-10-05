@@ -14,6 +14,13 @@ export interface ActiveCallStateView {
     callerName?: string | null;
 }
 export interface CallStateStore {
+    /** Atomically claim one authenticated user's accepted seat in an existing
+     * call. A replacement is permitted only for the exact winner the caller
+     * proved dead through its router. Never creates a missing call. */
+    claimAcceptedSeat?(callId: string, clientId: string, userId: string, lobbyName: string, departedClientId?: string): Promise<{
+        accepted: boolean;
+        winnerClientId?: string;
+    }>;
     /** Atomically resume an existing accepted call for a previously seated
      * authenticated user. Must not create a missing call. Departed client IDs
      * have already been proven dead by the consumer's router/liveness hook. */
@@ -146,6 +153,11 @@ export interface CallStateStore {
 export declare class InMemoryCallStateStore implements CallStateStore {
     private activeCalls;
     private clientToCalls;
+    private acceptedSeats;
+    claimAcceptedSeat(callId: string, clientId: string, userId: string, lobbyName: string, departedClientId?: string): Promise<{
+        accepted: boolean;
+        winnerClientId?: string;
+    }>;
     private invitesByUser;
     private acceptedCalls;
     private recentInvites;
@@ -214,6 +226,10 @@ export declare class RedisCallStateStore implements CallStateStore {
     private callKey;
     private participantsKey;
     private clientKey;
+    claimAcceptedSeat(callId: string, clientId: string, userId: string, lobbyName: string, departedClientId?: string): Promise<{
+        accepted: boolean;
+        winnerClientId?: string;
+    }>;
     private script;
     resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
     forgetCallIfUnchanged(callId: string, expected: ActiveCallStateView): Promise<boolean>;

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.105.0 — 2026-10-05
+
+- Claim an authenticated person's accepted call seat atomically in shared
+  Redis, so simultaneous accepts from tabs on different nodes admit one
+  winner. The losing tab receives `answered-elsewhere` and cannot bypass the
+  claim through participant-state recovery while the winner is still live.
+- Add optional `CallStateStore.claimAcceptedSeat` to the memory and Redis
+  adapters. Claims require an existing call and matching lobby, maintain the
+  roster and reverse indexes, and permit replacement only for the exact
+  participant proved dead by the router. Existing custom stores retain their
+  local behavior until they implement this shared admission contract.
+- Reproduce the pre-fix race with native WebSockets and Redis, and cover
+  concurrent claims, independent group seats, missing/foreign calls,
+  current-winner recovery and stale replacement proofs.
+
 ## 0.100.3 — 2026-10-03
 
 - Await asynchronous `ChannelAuthorize` and `CallConfig.authorize` decisions,
