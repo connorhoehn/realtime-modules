@@ -260,6 +260,18 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         expect(alice.frames.some(frame => frame.id === 'late-renewal')).toBe(false);
     });
 
+    it('prunes expired peer entries while preserving a live user connection index', async () => {
+        const a = await boot('a'), b = await boot('b'), c = await boot('c');
+        const old = await connect(b, 'bob'), current = await connect(c, 'bob');
+        const prefix = `realtime:${encodeURIComponent(namespace)}:`;
+        await a.command.del(`${prefix}node:b`);
+        await a.command.pExpire(`${prefix}client:${encodeURIComponent(old.id)}`, 1);
+        await eventually(async () => await a.command.get(`${prefix}client:${encodeURIComponent(old.id)}`) === null);
+        expect(await a.router.getClientsByUserId(['bob'])).toEqual([{ clientId: current.id, userId: 'bob' }]);
+        expect(await a.command.sMembers(`${prefix}user:bob`)).toEqual([current.id]);
+        expect(await a.router.sendToClient(current.id, { type: 'test', id: 'retained-live-peer' })).toBe(true);
+    });
+
     it('isolates cluster namespaces and ignores forged peer origins', async () => {
         const a = await boot('a'), b = await boot('b'), c = await boot('a', `${namespace}-other`);
         const bob = await connect(b, 'bob');

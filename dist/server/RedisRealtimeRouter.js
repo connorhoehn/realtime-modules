@@ -12,6 +12,7 @@ redis.call('SET',KEYS[2],ARGV[2],'PX',ARGV[3]); redis.call('SADD',KEYS[3],ARGV[4
 redis.call('PEXPIRE',KEYS[3],ARGV[3]*2); return 1`;
 const REMOVE = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
 redis.call('DEL',KEYS[1]); redis.call('SREM',KEYS[2],ARGV[2]); return 1`;
+const PRUNE = "if redis.call('EXISTS',KEYS[1]) == 0 then return redis.call('SREM',KEYS[2],ARGV[1]) end return 0";
 const RENEW = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
 redis.call('PEXPIRE',KEYS[1],ARGV[2]);
 for i=2,#KEYS,2 do if redis.call('GET',KEYS[i]) == ARGV[i/2+2] then
@@ -235,18 +236,31 @@ class RedisRealtimeRouter {
         if (!this.live())
             return [];
         const ids = new Set();
+        const indexes = new Map();
         for (const userId of new Set(userIds)) {
             const values = await this.opts.redis.command('SMEMBERS', this.userKey(userId));
             if (Array.isArray(values))
                 for (const id of values)
-                    if (typeof id === 'string' && id !== excludeClientId)
+                    if (typeof id === 'string' && id !== excludeClientId) {
                         ids.add(id);
+                        const users = indexes.get(id) ?? [];
+                        users.push(userId);
+                        indexes.set(id, users);
+                    }
         }
         const wanted = new Set(userIds), found = [];
         for (const clientId of ids) {
             const registration = await this.registration(clientId);
             if (registration && wanted.has(registration.ctx.userId))
                 found.push({ clientId, userId: registration.ctx.userId });
+            else if (!registration) {
+                // One healthy socket can keep its user's index alive through
+                // many crashed peers. Remove only entries whose client lease
+                // is still absent at the atomic prune, preserving a racing
+                // authenticated replacement registration.
+                for (const userId of indexes.get(clientId) ?? [])
+                    await this.opts.redis.command('EVAL', PRUNE, '2', this.clientKey(clientId), this.userKey(userId), clientId);
+            }
         }
         return found;
     }

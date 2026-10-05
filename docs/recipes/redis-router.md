@@ -64,6 +64,9 @@ that interval. Delivery is fenced on renewal failure or local lease expiry.
 A late successful renewal cannot revive a fenced router: dispose it and
 create/start a fresh instance. Lease fencing does not close the host's TCP
 sockets automatically. The host decides when to retire that replica.
+User lookups atomically prune index entries whose client lease has expired,
+so a healthy socket cannot retain crashed peers indefinitely. A registration
+created before that prune is preserved.
 
 `sendToClient` resolves `true` only after the owning node confirms an actual
 socket write following its recipient checks. `false` means unconfirmed or
