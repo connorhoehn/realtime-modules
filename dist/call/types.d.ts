@@ -251,6 +251,9 @@ export interface UserClientMatch {
  *     connected client (sender excluded).
  */
 export interface CallMessageRouter {
+    /** A permanently fenced replica must preserve shared state for recovery
+     * by a current owner instead of treating retirement as a user hang-up. */
+    isReady?(): boolean;
     /** Stable connection context; when available, fences awaited authority
      * against a reused client ID with a different actor. */
     getClientData?(clientId: string): {

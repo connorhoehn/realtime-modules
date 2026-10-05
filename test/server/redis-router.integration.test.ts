@@ -27,7 +27,7 @@ type Authority = { epoch: number; org: string };
 type VoidDeferred = ReturnType<typeof deferred<void>>;
 type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server: http.Server;
     command: RedisClientType; subscriber: RedisClientType; published: Array<{ topic: string; payload: string; frame: any }>;
-    port: RealtimeClusterRedis; calls: RedisCallStateStore; url: string };
+    port: RealtimeClusterRedis; calls: RedisCallStateStore; url: string; unavailable: () => void };
 
 (enabled ? describe : describe.skip)('RedisRealtimeRouter / native peer transport', () => {
     let namespace: string;
@@ -46,7 +46,9 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         const subscriber = command.duplicate(); subscriber.on('error', () => undefined);
         await Promise.all([command.connect(), subscriber.connect()]);
         const published: Array<{ topic: string; payload: string; frame: any }> = [];
-        const port: RealtimeClusterRedis = {
+        let unavailable: () => void = () => {};
+        const port: RealtimeClusterRedis & { onUnavailable(handler: () => void): () => void } = {
+            onUnavailable: handler => { unavailable = handler; return () => { unavailable = () => {}; }; },
             command: async (...args) => {
                 if (options.registerGate && args[0] === 'EVAL' && args[1]?.includes("redis.call('EXISTS',KEYS[2])")) {
                     await options.registerGate.promise;
@@ -125,7 +127,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
-        const node = { router, handle, server, command, subscriber, published, port, calls: state, url: `ws://127.0.0.1:${address.port}/realtime` };
+        const node = { router, handle, server, command, subscriber, published, port, calls: state, url: `ws://127.0.0.1:${address.port}/realtime`, unavailable: () => unavailable() };
         nodes.push(node);
         return node;
     }
@@ -515,6 +517,40 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         await b.handle.dispose();
         await eventually(async () => (await store.list(channel)).length === 1);
         expect((await store.list(channel))[0].clientId).toBe(alice.id);
+    });
+
+    it('retires a fenced node without changing shared accepted seats, then recovers the user on a peer', async () => {
+        const ended: string[] = [];
+        const a = await boot('a', namespace, { ended }), b = await boot('b', namespace, { ended });
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const callId = randomUUID(), lobbyName = 'orgiq:dm:alice:bob';
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName, callerId: 'alice', targetUserIds: ['bob'] }));
+        await eventually(() => bob.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId));
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'accepted', callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => await a.calls.isAccepted(callId));
+        await a.command.del(`realtime:${encodeURIComponent(namespace)}:node:b`);
+        await eventually(() => !b.router.isReady());
+        await b.handle.dispose();
+        expect((await a.calls.getCall(callId))?.participantClientIds.sort()).toEqual([alice.id, bob.id].sort());
+        expect(await a.calls.isAccepted(callId)).toBe(true); expect(ended).toEqual([]);
+        const c = await boot('c'), returned = await connect(c, 'bob');
+        returned.ws.send(JSON.stringify({ service: 'call', action: 'participant-state', callId, lobbyName,
+            callerId: 'bob', userId: 'bob', status: 'in-call', targetUserIds: ['alice'] }));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.includes(returned.id) === true);
+        expect((await a.calls.getCall(callId))?.participantClientIds.sort()).toEqual([alice.id, returned.id].sort());
+        expect(ended).toEqual([]);
+    });
+
+    it('fences a disconnected peer transport permanently even while command leases remain available', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        expect(b.router.isReady()).toBe(true);
+        b.unavailable();
+        expect(b.router.isReady()).toBe(false);
+        expect(await b.router.sendToClient(bob.id, { type: 'test', id: 'retired-transport' })).toBe(false);
+        expect(await a.router.sendToClient(bob.id, { type: 'test', id: 'retired-destination' })).toBe(false);
+        await delay(350);
+        expect(b.router.isReady()).toBe(false);
+        expect(bob.frames.some(frame => /^retired-/.test(frame.id ?? ''))).toBe(false);
     });
 
     it('routes a server-originated notification across nodes and excludes revoked recipients from its receipt count', async () => {

@@ -23,6 +23,14 @@ const router = new RedisRealtimeRouter({
     redis: {
         command: (...args) => command.sendCommand(args),
         publish: (topic, payload) => command.publish(topic, payload),
+        onUnavailable: handler => {
+            for (const client of [command, subscriber]) {
+                client.on('reconnecting', handler); client.on('end', handler);
+            }
+            return () => { for (const client of [command, subscriber]) {
+                client.off('reconnecting', handler); client.off('end', handler);
+            } };
+        },
         subscribe: async (topic, receive) => {
             await subscriber.subscribe(topic, receive);
             return () => subscriber.unsubscribe(topic);
@@ -65,6 +73,13 @@ A late successful renewal cannot revive a fenced router: dispose it and
 create/start a fresh instance. `isReady()` exposes that permanent fence for
 host admission/retirement. Lease fencing does not close the host's TCP
 sockets automatically. The host decides when to retire that replica.
+Supply `onUnavailable` for all established Redis connections: a lost
+subscriber or publisher can otherwise miss peer traffic while the command
+connection continues renewing its lease. Such a loss fences the router
+immediately and permanently; reconnect requires a new router incarnation.
+Pending direct receipts become unconfirmed. Shutdown attempts every
+unsubscribe and owner release even if Redis is unavailable, relying on lease
+expiry when release cannot complete.
 User lookups atomically prune index entries whose client lease has expired,
 so a healthy socket cannot retain crashed peers indefinitely. A registration
 created before that prune is preserved.
@@ -99,6 +114,9 @@ end a call with surviving peers; an accepted DM closes when either party
 explicitly leaves. Mid-call invitations preserve the original caller and
 invite metadata. Notifications likewise need the application's
 durable inbox for history; live fanout alone does not persist it.
+Retiring an already fenced router does not perform shared call disconnect
+mutations or sweeps. Recovery proves old remote connections dead and removes
+those seats atomically while registering the authenticated new connection.
 
 For shared presence, pass `presence({ store: new RedisPresenceStore(port,
 namespace) })`, importing the store from the public `/presence` export and

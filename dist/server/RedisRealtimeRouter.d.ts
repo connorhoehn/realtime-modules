@@ -9,6 +9,10 @@ export interface RealtimeClusterRedis {
     command(...args: string[]): Promise<unknown>;
     publish(topic: string, payload: string): Promise<unknown>;
     subscribe(topic: string, receive: (payload: string) => void): Promise<() => Promise<void> | void>;
+    /** Notify an established connection loss, including a subscriber/publisher
+     * loss while command leases still renew. Reconnect cannot revive that
+     * router incarnation. The returned function removes the listener. */
+    onUnavailable?(handler: () => void): () => void;
 }
 /** Namespace-scoped invalidation events from trusted application replicas.
  * Payloads are hints: handlers must reread their durable authority. Delivery
@@ -81,6 +85,7 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private userKey;
     private topic;
     private live;
+    private fence;
     private source;
     private current;
     private validSource;

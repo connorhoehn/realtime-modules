@@ -1329,6 +1329,8 @@ class CallService {
         return data;
     }
     async handleAction(clientId, action, data) {
+        if (this.messageRouter.isReady?.() === false)
+            return;
         // Wrap the whole action in a per-verb span so the trace UI shows
         // `call.invite` / `call.accepted` / etc. rather than just a single
         // generic `ws.message.dispatch` span. Inner Redis / peer-fan-out /
@@ -2146,9 +2148,23 @@ class CallService {
         }
         const departed = new Set();
         for (const cid of view?.participantClientIds ?? []) {
-            if (cid !== clientId && this.messageRouter.isClientLive?.(cid) === false)
+            if (cid === clientId)
+                continue;
+            const localLive = this.messageRouter.isClientLive?.(cid);
+            if (localLive === false)
                 departed.add(cid);
+            else if (localLive === null && this.isClientAliveHook) {
+                // A remote lease disappearing is as conclusive as a closed
+                // local socket. A directory failure is not proof of death.
+                try {
+                    if (await this.isClientAliveHook(cid) === false)
+                        departed.add(cid);
+                }
+                catch { /* preserve unknown seats */ }
+            }
         }
+        if (this.messageRouter.isReady?.() === false)
+            return false;
         let resumedAtomically = false;
         if (this.stateStore && typeof this.stateStore.resumeParticipant === 'function') {
             // The hash and authenticated user's seat index must STILL exist
@@ -2360,6 +2376,14 @@ class CallService {
      * manually. Best-effort: failures to deliver are logged, not retried.
      */
     async handleDisconnect(clientId) {
+        if (this.messageRouter.isReady?.() === false) {
+            // Retirement after transport/lease loss cannot end a shared call
+            // or revoke the user's durable seat/history. A new owner proves
+            // old connections dead during authenticated atomic recovery.
+            this.participantUserIds.delete(clientId);
+            this.clientToCalls.delete(clientId);
+            return;
+        }
         // W3 — drop any room-membership dedup entries for this client.
         // RoomService has its own `handleDisconnect` (wired via the
         // services map) that handles the actual member-left fan-out;
@@ -2629,6 +2653,8 @@ class CallService {
         // longer than anyone was in it.
         const departedAt = Date.now();
         const timer = setTimeout(() => {
+            if (this.messageRouter.isReady?.() === false)
+                return;
             this.rejoinGraceTimers.delete(callId);
             this.rejoinGraceInfo.delete(callId);
             void (async () => {
@@ -2650,6 +2676,8 @@ class CallService {
                 }
                 if (remaining >= 2)
                     return; // rejoined — call lives
+                if (this.messageRouter.isReady?.() === false)
+                    return;
                 const envelope = {
                     type: 'call',
                     action: 'ended',
@@ -2720,6 +2748,8 @@ class CallService {
      *     are pruned when `isClientAlive` is wired.
      */
     async runInviteSweep(now = Date.now()) {
+        if (this.messageRouter.isReady?.() === false)
+            return;
         if (this.sweepRunning)
             return;
         this.sweepRunning = true;
@@ -3566,11 +3596,15 @@ class CallService {
         const key = `${callId}|${userId}`;
         this.clearDocLeaveTimerKey(key);
         const fire = async () => {
+            if (this.messageRouter.isReady?.() === false)
+                return;
             this.docLeaveTimers.delete(key);
             const meta = await this.getDocumentMeta(callId);
             if (!meta)
                 return;
             const members = await this.docCallMemberClientIds(callId);
+            if (this.messageRouter.isReady?.() === false)
+                return;
             if (members.length === 0) {
                 await this.endDocumentCall(callId, meta, 'rejoin-grace-expired');
                 return;

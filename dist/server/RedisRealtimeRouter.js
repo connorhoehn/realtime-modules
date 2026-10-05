@@ -119,8 +119,19 @@ class RedisRealtimeRouter {
     topic(nodeId = this.nodeId, instance = this.instance) { return `${this.prefix}direct:${encodeURIComponent(nodeId)}:${instance}`; }
     live() {
         if (this.started && perf_hooks_1.performance.now() >= this.deadline)
-            this.fenced = true;
+            this.fence('ownership lease expired');
         return this.started && !this.stopped && !this.fenced;
+    }
+    fence(reason, error) {
+        if (this.fenced || this.stopped)
+            return;
+        this.fenced = true;
+        this.deadline = 0;
+        if (this.timer)
+            clearInterval(this.timer);
+        for (const pending of this.pending.values())
+            pending.resolve(false);
+        this.log.warn(`[realtime-cluster] ${reason}; routing permanently fenced`, error);
     }
     source() { return { nodeId: this.nodeId, instance: this.instance }; }
     current(clientId) { return this.handle?.getClientContext(clientId) ?? null; }
@@ -140,20 +151,20 @@ class RedisRealtimeRouter {
             throw new Error('Cluster nodeId already has a live owner');
         this.deadline = before + this.leaseMs;
         try {
+            if (this.opts.redis.onUnavailable)
+                this.unsubs.push(this.opts.redis.onUnavailable(() => this.fence('Redis connection unavailable')));
             for (const topic of [this.topic(), `${this.prefix}channels`, `${this.prefix}broadcast`, `${this.prefix}call-events`, `${this.prefix}peer-events`]) {
                 this.unsubs.push(await this.opts.redis.subscribe(topic, payload => {
                     void this.receive(payload).catch(error => this.log.warn('[realtime-cluster] peer delivery failed', error));
                 }));
             }
-            if (perf_hooks_1.performance.now() >= this.deadline)
-                throw new Error('Cluster startup exceeded its ownership lease');
+            if (this.fenced || perf_hooks_1.performance.now() >= this.deadline)
+                throw new Error('Cluster startup exceeded or lost its ownership lease');
             this.started = true;
             this.timer = setInterval(() => {
                 if (!this.renewing) {
                     this.renewing = this.renew().catch(error => {
-                        this.fenced = true;
-                        this.deadline = 0;
-                        this.log.warn('[realtime-cluster] lease renewal failed; delivery fenced', error);
+                        this.fence('lease renewal failed', error);
                     }).finally(() => { this.renewing = null; });
                 }
             }, Math.floor(this.leaseMs / 3));
@@ -494,9 +505,20 @@ class RedisRealtimeRouter {
             this.removeClient(id);
         await this.renewing;
         await Promise.all([...this.cleanup]);
-        for (const unsubscribe of this.unsubs.splice(0))
-            await unsubscribe();
-        await this.opts.redis.command('EVAL', RELEASE, '1', this.nodeKey(), this.instance);
+        for (const unsubscribe of this.unsubs.splice(0)) {
+            try {
+                await unsubscribe();
+            }
+            catch (error) {
+                this.log.warn('[realtime-cluster] unsubscribe failed during retirement', error);
+            }
+        }
+        try {
+            await this.opts.redis.command('EVAL', RELEASE, '1', this.nodeKey(), this.instance);
+        }
+        catch (error) {
+            this.log.warn('[realtime-cluster] owner release unavailable; lease will expire', error);
+        }
         this.remote.clear();
         this.seen.clear();
         this.callHandlers.clear();
