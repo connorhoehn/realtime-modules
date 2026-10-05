@@ -141,6 +141,9 @@ export interface RealtimeRouter {
      */
     subscribeToChannel?(clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
+    /** Current readable subscription, fenced across actor replacement,
+     * disconnect and unsubscribe/resubscribe. Peer transports may await it. */
+    isClientSubscribed?(clientId: string, channel: string): boolean | Promise<boolean>;
     /**
      * Ask the channel authz without subscribing or publishing — services run
      * it before a write (presence `set`, reaction `send`, chat `send`) or a
@@ -246,6 +249,7 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     private channelDecision;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
+    isClientSubscribed(clientId: string, channel: string): Promise<boolean>;
     private addSubscription;
     unsubscribeFromChannel(clientId: string, channel: string): void;
     removeClient(clientId: string): void;

@@ -246,6 +246,15 @@ class LocalRealtimeRouter {
                 this.pendingSubscriptions.delete(clientId);
         });
     }
+    async isClientSubscribed(clientId, channel) {
+        const context = this.ctxOf(clientId);
+        const token = this.subscriptionTokens.get(channel)?.get(clientId);
+        if (!context || !token)
+            return false;
+        const allowed = await this.checkChannel('subscribe', clientId, channel, { silent: true });
+        return allowed && this.ctxOf(clientId) === context
+            && this.subscriptionTokens.get(channel)?.get(clientId) === token;
+    }
     addSubscription(clientId, channel) {
         let members = this.channelMembers.get(channel);
         if (!members) {

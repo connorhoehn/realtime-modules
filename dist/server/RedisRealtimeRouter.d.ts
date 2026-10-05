@@ -111,11 +111,13 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private encode;
     private publish;
     sendToClient(clientId: string, message: unknown): Promise<boolean>;
+    private request;
     sendToLocalClient(clientId: string, message: unknown): boolean | Promise<boolean>;
     hasChannelAuthorize(): boolean;
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void;
+    isClientSubscribed(clientId: string, channel: string): Promise<boolean>;
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.106.0 — 2026-10-05
+
+- Expose `RealtimeRouter.isClientSubscribed` to check an actual readable
+  subscription locally or on its leased peer owner. Quiet checks retain the
+  exact connection/admission token across pending authorization, reject
+  retired membership/epochs and bounded missing receipts, and do not send
+  client-visible errors. Consumers can suppress unread alerts for people
+  already reading on another replica without inspecting private router maps.
+- Add native peer, stale-admission, actor replacement and missing-receipt
+  coverage. Transport/data delivery contracts remain unchanged.
+
 ## 0.105.0 — 2026-10-05
 
 - Claim an authenticated person's accepted call seat atomically in shared

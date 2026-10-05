@@ -42,7 +42,7 @@ export interface RedisRealtimeRouterOptions {
 }
 type Source = { nodeId: string; instance: string };
 type Registration = Source & { generation: string; ctx: WsAuthContext };
-type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'channel' | 'broadcast' | 'call-event' | 'peer-event';
+type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'channel' | 'broadcast' | 'call-event' | 'peer-event' | 'subscription-check';
     clientId?: string; generation?: string; delivered?: boolean; channel?: string;
     eventTopic?: string;
     excludeClientId?: string | null; publisher?: { clientId: string; generation: string }; message?: unknown };
@@ -319,13 +319,16 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         // audience must not silently adopt a replacement connection.
         const target = await this.registration(clientId, false);
         if (!target || (previous && previous.generation !== target.generation) || this.pending.size >= this.maxPending) return false;
+        return this.request(target, { kind: 'direct', clientId, generation: target.generation, message });
+    }
+    private request(target: Registration, fields: Pick<Wire, 'kind' | 'clientId' | 'generation' | 'message' | 'channel'>): Promise<boolean> {
         const id = randomUUID();
         return new Promise<boolean>(resolve => {
             const timer = setTimeout(() => finish(false), this.timeoutMs);
             const finish = (delivered: boolean) => { clearTimeout(timer); this.pending.delete(id); resolve(delivered); };
             this.pending.set(id, { target, resolve: finish });
             void this.publish(this.topic(target.nodeId, target.instance), {
-                v: 1, id, source: this.source(), kind: 'direct', clientId, generation: target.generation, message,
+                v: 1, id, source: this.source(), ...fields,
             }).catch(() => finish(false));
         });
     }
@@ -353,6 +356,16 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
     }
     unsubscribeFromChannel(clientId: string, channel: string) { this.local.unsubscribeFromChannel(clientId, channel); }
+    async isClientSubscribed(clientId: string, channel: string): Promise<boolean> {
+        if (!this.live() || typeof channel !== 'string' || !channel || Buffer.byteLength(channel) > this.maxBytes) return false;
+        if (this.current(clientId)) {
+            const subscribed = await this.local.isClientSubscribed(clientId, channel);
+            return this.live() && subscribed;
+        }
+        const target = await this.registration(clientId, false);
+        if (!target || target.instance === this.instance || this.pending.size >= this.maxPending) return false;
+        return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel });
+    }
     async sendToChannel(channel: string, message: unknown, excludeClientId?: string | null,
         opts?: { skipCoalesce?: boolean; publisherClientId?: string | null }): Promise<void> {
         if (!this.live()) throw new Error('Cluster routing is not ready');
@@ -383,7 +396,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             return;
         }
         if (frame.source.instance === this.instance) return;
-        if (!['direct', 'channel', 'broadcast', 'call-event', 'peer-event'].includes(frame.kind)) return;
+        if (!['direct', 'channel', 'broadcast', 'call-event', 'peer-event', 'subscription-check'].includes(frame.kind)) return;
         const key = `${frame.source.instance}:${frame.id}`;
         const now = performance.now();
         for (const [id, entry] of this.seen) if (!entry.pending && entry.until < now) this.seen.delete(id);
@@ -398,7 +411,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             void result.finally(() => { captured.pending = false; captured.until = performance.now() + this.leaseMs * 2; this.activeDeliveries--; });
         }
         const delivered = await entry.result;
-        if (frame.kind === 'direct') await this.publish(this.topic(frame.source.nodeId, frame.source.instance), {
+        if (frame.kind === 'direct' || frame.kind === 'subscription-check') await this.publish(this.topic(frame.source.nodeId, frame.source.instance), {
             v: 1, id: frame.id, source: this.source(), kind: 'receipt', delivered,
         });
     }
@@ -415,11 +428,14 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             await Promise.all([...this.callHandlers].map(async handler => { await handler(frame.message as string); }));
             return true;
         }
-        if (frame.kind === 'direct') {
+        if (frame.kind === 'direct' || frame.kind === 'subscription-check') {
             if (typeof frame.clientId !== 'string' || typeof frame.generation !== 'string') return false;
             const local = this.registrations.get(frame.clientId);
             if (!local || local.registration.generation !== frame.generation || this.current(frame.clientId) !== local.context) return false;
-            return this.local.sendToClient(frame.clientId, frame.message);
+            return frame.kind === 'subscription-check'
+                ? typeof frame.channel === 'string' && !!frame.channel && Buffer.byteLength(frame.channel) <= this.maxBytes
+                    && await this.local.isClientSubscribed(frame.clientId, frame.channel)
+                : this.local.sendToClient(frame.clientId, frame.message);
         }
         if (frame.kind === 'channel') {
             if (typeof frame.channel !== 'string' || !frame.channel) return false;

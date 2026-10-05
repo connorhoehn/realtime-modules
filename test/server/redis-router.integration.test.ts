@@ -173,6 +173,50 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         expect(await a.router.sendToClient('missing', { type: 'test' })).toBe(false);
     });
 
+    it('checks actual readable peer subscriptions and refuses unsubscribed, retired and lost owners', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        const channel = 'orgiq:room';
+        expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(false);
+        expect(await b.router.subscribeToChannel(bob.id, channel)).toBe(true);
+        expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(true);
+        b.router.unsubscribeFromChannel(bob.id, channel);
+        expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(false);
+        await b.router.subscribeToChannel(bob.id, channel);
+        members.delete('bob'); expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(false);
+        members.add('bob'); authorities.set('bob', { epoch: 1, org: 'orgiq' });
+        expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(false);
+        authorities.set('bob', { epoch: 0, org: 'orgiq' });
+        b.unavailable(); expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(false);
+        expect(bob.frames.some(frame => frame.code === 'AUTHZ_CHANNEL_DENIED')).toBe(false);
+    });
+
+    it('bounds missing peer subscription receipts and cannot turn a stale reply into a positive query', async () => {
+        const a = await boot('a'), b = await boot('b', namespace, { dropReceipts: true });
+        const bob = await connect(b, 'bob'); await b.router.subscribeToChannel(bob.id, 'orgiq:room');
+        expect(await a.router.isClientSubscribed(bob.id, 'orgiq:room')).toBe(false);
+        const receipt = b.published.find(entry => entry.frame.kind === 'receipt')!;
+        expect(receipt.frame.delivered).toBe(true);
+        await b.command.publish(receipt.topic, receipt.payload);
+        expect(await a.router.isClientSubscribed('missing', 'orgiq:room')).toBe(false);
+    });
+
+    it('fences a pending peer subscription query across unsubscribe and resubscribe', async () => {
+        const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
+        const channel = 'orgiq:room'; await b.router.subscribeToChannel(bob.id, channel);
+        const gate = deferred(), entered = deferred();
+        const local = (b.router as any).local;
+        const original = local.checkChannel.bind(local);
+        const check = jest.spyOn(local, 'checkChannel').mockImplementationOnce(async (...args: any[]) => {
+            const allowed = await original(...args); entered.resolve(); await gate.promise; return allowed;
+        });
+        try {
+            const pending = a.router.isClientSubscribed(bob.id, channel); await entered.promise;
+            b.router.unsubscribeFromChannel(bob.id, channel); await b.router.subscribeToChannel(bob.id, channel);
+            gate.resolve(); expect(await pending).toBe(false);
+            expect(await a.router.isClientSubscribed(bob.id, channel)).toBe(true);
+        } finally { gate.resolve(); check.mockRestore(); }
+    });
+
     it('rechecks remote recipient epoch/policy and keeps the inbox delivery count honest', async () => {
         const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
         authorities.set('bob', { epoch: 1, org: 'orgiq' });

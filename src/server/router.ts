@@ -159,6 +159,9 @@ export interface RealtimeRouter {
         opts?: ChannelAccessOpts,
     ): Promise<boolean | void> | boolean | void;
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
+    /** Current readable subscription, fenced across actor replacement,
+     * disconnect and unsubscribe/resubscribe. Peer transports may await it. */
+    isClientSubscribed?(clientId: string, channel: string): boolean | Promise<boolean>;
     /**
      * Ask the channel authz without subscribing or publishing — services run
      * it before a write (presence `set`, reaction `send`, chat `send`) or a
@@ -437,6 +440,15 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             if (!requests.size) channels.delete(channel);
             if (!channels.size) this.pendingSubscriptions.delete(clientId);
         });
+    }
+
+    async isClientSubscribed(clientId: string, channel: string): Promise<boolean> {
+        const context = this.ctxOf(clientId);
+        const token = this.subscriptionTokens.get(channel)?.get(clientId);
+        if (!context || !token) return false;
+        const allowed = await this.checkChannel('subscribe', clientId, channel, { silent: true });
+        return allowed && this.ctxOf(clientId) === context
+            && this.subscriptionTokens.get(channel)?.get(clientId) === token;
     }
 
     private addSubscription(clientId: string, channel: string): boolean {

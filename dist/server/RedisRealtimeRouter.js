@@ -328,13 +328,16 @@ class RedisRealtimeRouter {
         const target = await this.registration(clientId, false);
         if (!target || (previous && previous.generation !== target.generation) || this.pending.size >= this.maxPending)
             return false;
+        return this.request(target, { kind: 'direct', clientId, generation: target.generation, message });
+    }
+    request(target, fields) {
         const id = (0, crypto_1.randomUUID)();
         return new Promise(resolve => {
             const timer = setTimeout(() => finish(false), this.timeoutMs);
             const finish = (delivered) => { clearTimeout(timer); this.pending.delete(id); resolve(delivered); };
             this.pending.set(id, { target, resolve: finish });
             void this.publish(this.topic(target.nodeId, target.instance), {
-                v: 1, id, source: this.source(), kind: 'direct', clientId, generation: target.generation, message,
+                v: 1, id, source: this.source(), ...fields,
             }).catch(() => finish(false));
         });
     }
@@ -367,6 +370,18 @@ class RedisRealtimeRouter {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
     }
     unsubscribeFromChannel(clientId, channel) { this.local.unsubscribeFromChannel(clientId, channel); }
+    async isClientSubscribed(clientId, channel) {
+        if (!this.live() || typeof channel !== 'string' || !channel || Buffer.byteLength(channel) > this.maxBytes)
+            return false;
+        if (this.current(clientId)) {
+            const subscribed = await this.local.isClientSubscribed(clientId, channel);
+            return this.live() && subscribed;
+        }
+        const target = await this.registration(clientId, false);
+        if (!target || target.instance === this.instance || this.pending.size >= this.maxPending)
+            return false;
+        return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel });
+    }
     async sendToChannel(channel, message, excludeClientId, opts) {
         if (!this.live())
             throw new Error('Cluster routing is not ready');
@@ -408,7 +423,7 @@ class RedisRealtimeRouter {
         }
         if (frame.source.instance === this.instance)
             return;
-        if (!['direct', 'channel', 'broadcast', 'call-event', 'peer-event'].includes(frame.kind))
+        if (!['direct', 'channel', 'broadcast', 'call-event', 'peer-event', 'subscription-check'].includes(frame.kind))
             return;
         const key = `${frame.source.instance}:${frame.id}`;
         const now = perf_hooks_1.performance.now();
@@ -427,7 +442,7 @@ class RedisRealtimeRouter {
             void result.finally(() => { captured.pending = false; captured.until = perf_hooks_1.performance.now() + this.leaseMs * 2; this.activeDeliveries--; });
         }
         const delivered = await entry.result;
-        if (frame.kind === 'direct')
+        if (frame.kind === 'direct' || frame.kind === 'subscription-check')
             await this.publish(this.topic(frame.source.nodeId, frame.source.instance), {
                 v: 1, id: frame.id, source: this.source(), kind: 'receipt', delivered,
             });
@@ -453,13 +468,16 @@ class RedisRealtimeRouter {
             await Promise.all([...this.callHandlers].map(async (handler) => { await handler(frame.message); }));
             return true;
         }
-        if (frame.kind === 'direct') {
+        if (frame.kind === 'direct' || frame.kind === 'subscription-check') {
             if (typeof frame.clientId !== 'string' || typeof frame.generation !== 'string')
                 return false;
             const local = this.registrations.get(frame.clientId);
             if (!local || local.registration.generation !== frame.generation || this.current(frame.clientId) !== local.context)
                 return false;
-            return this.local.sendToClient(frame.clientId, frame.message);
+            return frame.kind === 'subscription-check'
+                ? typeof frame.channel === 'string' && !!frame.channel && Buffer.byteLength(frame.channel) <= this.maxBytes
+                    && await this.local.isClientSubscribed(frame.clientId, frame.channel)
+                : this.local.sendToClient(frame.clientId, frame.message);
         }
         if (frame.kind === 'channel') {
             if (typeof frame.channel !== 'string' || !frame.channel)
