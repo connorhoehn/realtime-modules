@@ -9,9 +9,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PresenceManifest = exports.PresenceService = void 0;
+exports.RedisPresenceStore = exports.PresenceManifest = exports.PresenceService = void 0;
 const PresenceService_1 = __importDefault(require("./PresenceService"));
 exports.PresenceService = PresenceService_1.default;
 var manifest_1 = require("./manifest");
 Object.defineProperty(exports, "PresenceManifest", { enumerable: true, get: function () { return manifest_1.PresenceManifest; } });
+var PresenceStore_1 = require("./PresenceStore");
+Object.defineProperty(exports, "RedisPresenceStore", { enumerable: true, get: function () { return PresenceStore_1.RedisPresenceStore; } });
 //# sourceMappingURL=index.js.map

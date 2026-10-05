@@ -31,6 +31,7 @@ export declare class CallService {
      *  Local cache is a write-through view: every mutation here also
      *  mirrors to stateStore. */
     private activeCalls;
+    private readonly participantWrites;
     private clientToCalls;
     private inviteSweepTimer;
     /** PR-W2.1 — kept ONLY as a fallback when stateStore is null
@@ -187,6 +188,7 @@ export declare class CallService {
      * invite, refreshed to 4h once accepted.
      */
     private registerParticipant;
+    private waitForParticipantWrites;
     /** Forget a call entirely — used on terminal `ended`/`declined`.
      *  PR-W2.1 (completion) — also clears the cluster-wide reverse-
      *  index via `removeClientFromCall` per participant. The

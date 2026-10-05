@@ -1,0 +1,64 @@
+import type { PresenceEntry } from './types';
+
+/** Durable roster entries; the service must still verify each connection's
+ * current identity/liveness and channel access before returning an entry. */
+export interface PresenceStore {
+    put(entry: PresenceEntry, ttlMs: number): Promise<void>;
+    get(clientId: string): Promise<PresenceEntry | null>;
+    list(channel: string): Promise<PresenceEntry[]>;
+    remove(clientId: string): Promise<void>;
+}
+export interface PresenceRedis {
+    command(...args: string[]): Promise<unknown>;
+}
+const WRITE = `local old=redis.call('GET',KEYS[1])
+if old then local prior=cjson.decode(old); for _,ch in ipairs(prior.channels) do
+redis.call('SREM',ARGV[4]..ch,ARGV[1]) end end
+local entry=cjson.decode(ARGV[2]); redis.call('SET',KEYS[1],ARGV[2],'PX',ARGV[3])
+for _,ch in ipairs(entry.channels) do local key=ARGV[4]..ch
+redis.call('SADD',key,ARGV[1]); redis.call('PEXPIRE',key,ARGV[3]*2) end return 1`;
+const REMOVE = `local old=redis.call('GET',KEYS[1]); if not old then return 0 end
+local entry=cjson.decode(old); for _,ch in ipairs(entry.channels) do
+redis.call('SREM',ARGV[2]..ch,ARGV[1]) end return redis.call('DEL',KEYS[1])`;
+const PRUNE = "if redis.call('EXISTS',KEYS[1]) == 0 then return redis.call('SREM',KEYS[2],ARGV[1]) end return 0";
+
+/** Namespace-isolated Redis roster storage. Client IDs must be globally
+ * unique for a connection's lifetime, as required by RedisRealtimeRouter.
+ * Expired channel-index members are pruned without removing a racing write. */
+export class RedisPresenceStore implements PresenceStore {
+    private readonly prefix: string;
+    constructor(private readonly redis: PresenceRedis, namespace: string) {
+        if (!namespace) throw new Error('Presence namespace is required');
+        this.prefix = `presence:${encodeURIComponent(namespace)}:`;
+    }
+    private key(clientId: string) { return `${this.prefix}client:${clientId}`; }
+    private channel(channel: string) { return `${this.prefix}channel:${channel}`; }
+    async put(entry: PresenceEntry, ttlMs: number): Promise<void> {
+        if (!Number.isSafeInteger(ttlMs) || ttlMs < 100 || !entry.clientId || !Array.isArray(entry.channels)) {
+            throw new Error('Invalid shared presence entry or TTL');
+        }
+        await this.redis.command('EVAL', WRITE, '1', this.key(entry.clientId), entry.clientId,
+            JSON.stringify(entry), String(ttlMs), `${this.prefix}channel:`);
+    }
+    async get(clientId: string): Promise<PresenceEntry | null> {
+        const raw = await this.redis.command('GET', this.key(clientId));
+        if (raw === null) return null;
+        if (typeof raw !== 'string') throw new Error('Invalid shared presence value');
+        const entry = JSON.parse(raw) as PresenceEntry;
+        if (!entry || entry.clientId !== clientId || !Array.isArray(entry.channels)) throw new Error('Invalid shared presence identity');
+        return entry;
+    }
+    async list(channel: string): Promise<PresenceEntry[]> {
+        const ids = await this.redis.command('SMEMBERS', this.channel(channel));
+        if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new Error('Invalid shared presence index');
+        const rows = await Promise.all(ids.map(async clientId => {
+            const entry = await this.get(clientId);
+            if (!entry) await this.redis.command('EVAL', PRUNE, '2', this.key(clientId), this.channel(channel), clientId);
+            return entry?.channels.includes(channel) ? entry : null;
+        }));
+        return rows.filter((entry): entry is PresenceEntry => entry !== null);
+    }
+    async remove(clientId: string): Promise<void> {
+        await this.redis.command('EVAL', REMOVE, '1', this.key(clientId), clientId, `${this.prefix}channel:`);
+    }
+}

@@ -5,7 +5,8 @@ import http from 'http';
 import { randomUUID } from 'crypto';
 import { createClient, type RedisClientType } from 'redis';
 import WebSocket from 'ws';
-import { attachRealtime, defineFeature, calls, notifications, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
+import { attachRealtime, defineFeature, calls, notifications, presence, splitServiceChannel, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
+import { RedisPresenceStore } from '../../src/presence';
 import { RedisCallStateStore, type CallStateRedis } from '../../src/call';
 import type { NotificationService } from '../../src/notification';
 
@@ -38,7 +39,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
 
     async function boot(nodeId: string, ns = namespace, options: { fixedClientId?: string; dropReceipts?: boolean;
         registerGate?: VoidDeferred; disconnectGate?: VoidDeferred; disconnected?: VoidDeferred;
-        rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred } = {}): Promise<NativeNode> {
+        rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred; ended?: string[] } = {}): Promise<NativeNode> {
         if (!redisUrl) throw new Error('REAL_ROUTER_REDIS_URL is required for real Redis acceptance');
         const command = createClient({ url: redisUrl, disableOfflineQueue: true, socket: { reconnectStrategy: false } });
         command.on('error', () => undefined);
@@ -72,7 +73,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         const authorize = async ({ ctx, channel }: { ctx: any; channel: string }) => {
             const current = authorities.get(ctx?.userId);
             return !!current && current.epoch === ctx.epoch && current.org === ctx.org
-                && channel.startsWith(`${ctx.org}:`) && members.has(ctx.userId);
+                && splitServiceChannel(channel).channel.startsWith(`${ctx.org}:`) && members.has(ctx.userId);
         };
         const router = new RedisRealtimeRouter({ redis: port, namespace: ns, nodeId, leaseMs: 900, requestTimeoutMs: 200,
             authorize, filterClientMessage: async ({ ctx, message }) => {
@@ -110,9 +111,9 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
                 if (!current) throw new Error('Unauthenticated');
                 return { userId, org: current.org, epoch: current.epoch, role: 'member' };
             },
-            features: [calls({ stateStore: state, crossNodePubSub: router.crossNodePubSub, rejoinGraceMs: options.rejoinGraceMs ?? 200,
+            features: [presence({ store: new RedisPresenceStore(port, ns), disconnectDelayMs: 50 }), calls({ stateStore: state, crossNodePubSub: router.crossNodePubSub, rejoinGraceMs: options.rejoinGraceMs ?? 200,
                 lobbyGuard: (ctx, lobby) => !!ctx && lobby.startsWith(`${ctx.org}:`),
-                config: { authorize: async clientId => {
+                config: { onCallEnded: summary => { options.ended?.push(summary.callId); }, authorize: async clientId => {
                     const ctx = router.getClientData(clientId)?.userContext;
                     return !!ctx && authorities.get(String(ctx.userId))?.epoch === ctx.epoch;
                 } } }), notifications(), defineFeature({ manifest: { name: 'peer-test' } as any,
@@ -395,6 +396,125 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         await eventually(() => b.published.some(({ frame }) => frame.kind === 'receipt'));
         expect(b.published.find(({ frame }) => frame.kind === 'receipt')?.frame.delivered).toBe(false);
         expect(outsider.frames.filter(frame => frame.action === 'invite')).toEqual([]);
+    });
+
+    it('keeps a group call alive when the last local participant leaves but a peer remains', async () => {
+        const endedA: string[] = [], endedB: string[] = [];
+        const a = await boot('a', namespace, { ended: endedA }), b = await boot('b', namespace, { ended: endedB });
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const callId = randomUUID(), lobbyName = `orgiq:initiative:${randomUUID()}`;
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName, callerId: 'alice', targetUserIds: ['bob'] }));
+        await eventually(() => bob.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId));
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'accepted', callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.length === 2);
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'ended', callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.length === 1);
+        expect((await a.calls.getCall(callId))?.participantClientIds).toEqual([alice.id]);
+        expect(endedA).not.toContain(callId); expect(endedB).not.toContain(callId);
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'status', lobbyName }));
+        await eventually(() => alice.frames.some(frame => frame.action === 'active-call' && frame.data?.callId === callId && frame.data?.active));
+    });
+
+    it('ends an accepted DM when its last local participant leaves a peer on another node', async () => {
+        const endedA: string[] = [], endedB: string[] = [];
+        const a = await boot('a', namespace, { ended: endedA }), b = await boot('b', namespace, { ended: endedB });
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const callId = randomUUID(), lobbyName = 'orgiq:dm:alice:bob';
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName, callerId: 'alice', targetUserIds: ['bob'] }));
+        await eventually(() => bob.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId));
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'accepted', callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.length === 2);
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'ended', callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => await a.calls.getCall(callId) === null);
+        await eventually(() => endedA.includes(callId) || endedB.includes(callId));
+        expect([...endedA, ...endedB].filter(id => id === callId)).toHaveLength(1);
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'status', lobbyName }));
+        await eventually(() => alice.frames.some(frame => frame.action === 'active-call' && frame.data?.lobbyName === lobbyName && !frame.data?.active));
+    });
+
+    it('preserves the original caller when an accepted peer invites another participant', async () => {
+        authorities.set('charlie', { epoch: 0, org: 'orgiq' });
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob'), charlie = await connect(a, 'charlie');
+        const callId = randomUUID(), lobbyName = `orgiq:initiative:${randomUUID()}`;
+        alice.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName, callerId: 'alice', targetUserIds: ['bob'] }));
+        await eventually(() => bob.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId));
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'accepted', callId, lobbyName, callerId: 'bob', targetUserIds: ['alice'] }));
+        await eventually(async () => (await a.calls.getCall(callId))?.participantClientIds.length === 2);
+        const original = await a.calls.getCall(callId);
+        bob.ws.send(JSON.stringify({ service: 'call', action: 'invite', callId, lobbyName, callerId: 'bob', targetUserIds: ['charlie'] }));
+        await eventually(() => charlie.frames.some(frame => frame.action === 'invite' && frame.data?.callId === callId));
+        const current = await a.calls.getCall(callId);
+        expect(current?.callerId).toBe('alice');
+        expect(current?.lobbyName).toBe(lobbyName);
+        expect(current?.invitedAt).toBe(original?.invitedAt);
+        expect(current?.targetUserIds).toEqual(['bob']);
+        expect(current?.participantClientIds.sort()).toEqual([alice.id, bob.id].sort());
+        expect(await a.calls.isAccepted(callId)).toBe(true);
+    });
+
+    it('delivers namespace-scoped peer invalidations once and refuses an expired source owner', async () => {
+        const a = await boot('a'), b = await boot('b'), isolated = await boot('c', `${namespace}-isolated`);
+        const received: string[] = [], others: string[] = [];
+        const unsubscribe = b.router.peerEvents.subscribe('social:membership', async payload => { received.push(payload); });
+        isolated.router.peerEvents.subscribe('social:membership', payload => { others.push(payload); });
+        expect(a.router.isReady()).toBe(true);
+        await a.router.peerEvents.publish('social:membership', 'channel-one');
+        await eventually(() => received.length === 1);
+        const published = a.published.find(frame => frame.frame.kind === 'peer-event')!;
+        await a.command.publish(published.topic, published.payload);
+        await delay(30);
+        expect(received).toEqual(['channel-one']); expect(others).toEqual([]);
+        unsubscribe();
+        await a.router.peerEvents.publish('social:membership', 'unsubscribed');
+        await delay(30); expect(received).toHaveLength(1);
+        await expect(a.router.peerEvents.publish('bad topic', 'value')).rejects.toThrow('Invalid peer event topic');
+        await a.router.shutdown();
+        expect(a.router.isReady()).toBe(false);
+        b.router.peerEvents.subscribe('social:membership', payload => { received.push(payload); });
+        await a.command.publish(published.topic, JSON.stringify({ ...published.frame, id: randomUUID() }));
+        await delay(30); expect(received).toHaveLength(1);
+        await expect(a.router.peerEvents.publish('social:membership', 'retired')).rejects.toThrow();
+    });
+
+    it('reads a fresh shared presence roster and excludes revoked, foreign and departed owners', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob'), charlie = await connect(b, 'charlie');
+        const channel = 'orgiq:shared-presence';
+        alice.ws.send(JSON.stringify({ service: 'presence', action: 'set', status: 'busy', channels: [channel], metadata: { userId: 'forged', displayName: 'Forged' } }));
+        bob.ws.send(JSON.stringify({ service: 'presence', action: 'set', status: 'away', channels: [channel] }));
+        await eventually(() => alice.frames.some(f => f.type === 'presence' && f.action === 'set' && f.presence?.channels.includes(channel))
+            && bob.frames.some(f => f.type === 'presence' && f.action === 'set' && f.presence?.channels.includes(channel)));
+        const query = async () => {
+            const start = bob.frames.length;
+            bob.ws.send(JSON.stringify({ service: 'presence', action: 'get', channel }));
+            await eventually(() => bob.frames.slice(start).some(f => f.type === 'presence' && f.action === 'presence'));
+            return bob.frames.slice(start).find(f => f.type === 'presence' && f.action === 'presence').data;
+        };
+        const roster = await query();
+        expect(roster.map((row: any) => row.userId).sort()).toEqual(['alice', 'bob']);
+        expect(roster.find((row: any) => row.userId === 'alice').metadata.userId).toBe('alice');
+        charlie.ws.send(JSON.stringify({ service: 'presence', action: 'get', channel }));
+        await eventually(() => charlie.frames.some(f => f.code === 'AUTHZ_CHANNEL_DENIED'));
+        expect(charlie.frames.some(f => f.type === 'presence' && f.action === 'presence')).toBe(false);
+        authorities.set('alice', { epoch: 1, org: 'orgiq' });
+        expect((await query()).map((row: any) => row.userId)).toEqual(['bob']);
+        authorities.set('alice', { epoch: 0, org: 'orgiq' });
+        alice.ws.terminate();
+        await eventually(async () => !await a.router.isClientAlive(alice.id));
+        expect((await query()).map((row: any) => row.userId)).toEqual(['bob']);
+    });
+
+    it('does not lose surviving shared presence entries when another owner shuts down', async () => {
+        const a = await boot('a'), b = await boot('b');
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const channel = 'orgiq:presence-survivor';
+        for (const client of [alice, bob]) client.ws.send(JSON.stringify({ service: 'presence', action: 'set', status: 'online', channels: [channel] }));
+        const store = new RedisPresenceStore(a.port, namespace);
+        await eventually(async () => (await store.list(channel)).length === 2);
+        await b.handle.dispose();
+        await eventually(async () => (await store.list(channel)).length === 1);
+        expect((await store.list(channel))[0].clientId).toBe(alice.id);
     });
 
     it('routes a server-originated notification across nodes and excludes revoked recipients from its receipt count', async () => {

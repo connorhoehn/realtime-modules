@@ -86,6 +86,7 @@ class PresenceService {
     disconnectDelayMs;
     maxMetadataKeys;
     maxMetadataSize;
+    store;
     // Public state — exposed for tests & consumer-app debugging dashboards,
     // matching gateway's original surface.
     clientPresence;
@@ -99,6 +100,10 @@ class PresenceService {
             throw new Error('PresenceService: messageRouter is required');
         }
         this.messageRouter = messageRouter;
+        this.store = config.store ?? null;
+        if (this.store && (!messageRouter.resolveClientData || !messageRouter.isClientAlive)) {
+            throw new Error('Shared presence requires fresh router identity and liveness');
+        }
         this.logger = logger;
         this.authorizeChannel = config.authorizeChannel || (() => true);
         this.hasAuthorizeChannel = typeof config.authorizeChannel === 'function';
@@ -203,6 +208,13 @@ class PresenceService {
             lastSeen: new Date().toISOString(),
             lastHeartbeat: Date.now(),
         };
+        if (this.store) {
+            if (this.messageRouter.isReady?.() === false)
+                return;
+            await this.store.put(presenceData, this.staleThresholdMs);
+            if (this.messageRouter.isReady?.() === false)
+                return;
+        }
         this.clientPresence.set(clientId, presenceData);
         await this.updateChannelPresence(clientId, presenceData, channels);
         await this.broadcastPresenceUpdate(presenceData, clientId);
@@ -231,7 +243,7 @@ class PresenceService {
             else if (channel) {
                 if (!(await this.mayRead(clientId, channel)))
                     return;
-                presenceData = this.getChannelPresence(channel);
+                presenceData = await this.readChannelPresence(channel);
                 // Admission may have settled after revocation. Fence the
                 // snapshot again at delivery, as with stored chat reads.
                 if (!(await this.mayRead(clientId, channel)))
@@ -277,7 +289,9 @@ class PresenceService {
                 await this.messageRouter.unsubscribeFromChannel(clientId, `presence:${channel}`);
                 return;
             }
-            const channelPresence = this.getChannelPresence(channel);
+            const channelPresence = await this.readChannelPresence(channel);
+            if (!(await this.mayRead(clientId, channel)))
+                return;
             if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context)
                 return;
             this.sendToClient(clientId, {
@@ -313,6 +327,11 @@ class PresenceService {
         if (presenceData) {
             presenceData.lastSeen = new Date().toISOString();
             presenceData.lastHeartbeat = Date.now();
+            if (this.store) {
+                if (this.messageRouter.isReady?.() === false)
+                    return;
+                await this.store.put(presenceData, this.staleThresholdMs);
+            }
             this.clientPresence.set(clientId, presenceData);
         }
     }
@@ -358,6 +377,32 @@ class PresenceService {
             return [];
         return Array.from(channelPresenceMap.values());
     }
+    /** Fresh shared snapshots never turn a stored lease into authority. A
+     * departed connection, retired identity or revoked publisher is omitted. */
+    async currentStoredEntry(entry) {
+        if (this.messageRouter.isReady?.() === false)
+            return false;
+        const current = await this.messageRouter.resolveClientData(entry.clientId);
+        return !!current?.userContext && current.userContext.userId === entry.userId
+            && await this.messageRouter.isClientAlive(entry.clientId);
+    }
+    async readChannelPresence(channel) {
+        if (!this.store)
+            return this.getChannelPresence(channel);
+        const rows = await this.store.list(channel);
+        const current = await Promise.all(rows.map(async (entry) => {
+            if (!await this.currentStoredEntry(entry))
+                return null;
+            if (!await (0, channelAccess_1.routerPermits)(this.messageRouter, 'publish', entry.clientId, `presence:${channel}`, {
+                service: 'presence', clientChannel: channel, silent: true,
+            }))
+                return null;
+            if (!await this.currentStoredEntry(entry))
+                return null;
+            return { ...entry, channels: [channel] };
+        }));
+        return current.filter((entry) => entry !== null);
+    }
     /**
      * The channels of a `set` this client may publish to: the service's own
      * `authorizeChannel` and the router's channel authz must both pass.
@@ -389,8 +434,10 @@ class PresenceService {
      * entry comes back whole.
      */
     async readableEntry(clientId, targetClientId) {
-        const entry = this.clientPresence.get(targetClientId);
+        const entry = this.store ? await this.store.get(targetClientId) ?? undefined : this.clientPresence.get(targetClientId);
         if (!entry)
+            return undefined;
+        if (this.store && !await this.currentStoredEntry(entry))
             return undefined;
         if (targetClientId === clientId)
             return entry;
@@ -406,6 +453,10 @@ class PresenceService {
                 ok = false;
             }
             if (!ok)
+                continue;
+            if (this.store && !await (0, channelAccess_1.routerPermits)(this.messageRouter, 'publish', targetClientId, `presence:${channel}`, {
+                service: 'presence', clientChannel: channel, silent: true,
+            }))
                 continue;
             if (!(await (0, channelAccess_1.routerPermits)(this.messageRouter, 'subscribe', clientId, `presence:${channel}`, {
                 service: 'presence',
@@ -475,6 +526,8 @@ class PresenceService {
             const currentEntry = this.clientPresence.get(clientId);
             if (!currentEntry || now - currentEntry.lastHeartbeat > this.staleThresholdMs) {
                 this.clientPresence.delete(clientId);
+                if (this.store)
+                    void this.store.remove(clientId).catch(error => this.logger.warn('Shared presence cleanup failed', error));
                 cleaned++;
                 this.removeClientFromAllChannels(clientId);
             }
@@ -488,6 +541,8 @@ class PresenceService {
         if (presenceData && presenceData.status !== 'offline') {
             presenceData.status = 'offline';
             presenceData.timestamp = new Date().toISOString();
+            if (this.store && this.messageRouter.isReady?.() !== false)
+                await this.store.put(presenceData, this.staleThresholdMs);
             await this.updateChannelPresence(clientId, presenceData, presenceData.channels);
             await this.broadcastPresenceUpdate(presenceData);
             this.logger.debug(`Client ${clientId} marked as offline due to inactivity`);
@@ -534,6 +589,7 @@ class PresenceService {
         const presenceData = this.clientPresence.get(clientId);
         if (presenceData) {
             await this.setClientOffline(clientId);
+            await this.store?.remove(clientId);
             const channels = this.clientChannels.get(clientId);
             if (channels) {
                 const offlineMsg = {
@@ -560,6 +616,8 @@ class PresenceService {
         await this.heartbeatSweep.stop();
         await this.cleanupSweep.stop();
         this.disconnectEviction.cancelAll();
+        if (this.store)
+            await Promise.all([...this.clientPresence.keys()].map(clientId => this.store.remove(clientId)));
         this.clientPresence.clear();
         this.channelPresence.clear();
         this.clientChannels.clear();

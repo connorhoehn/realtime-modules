@@ -1,6 +1,6 @@
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
-import type { ChannelAccessKind, ChannelAccessOpts } from '../server-ws/channelAccess';
+import { type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
 /** Connected command/publish and dedicated subscriber clients. The host owns
  * connection setup, TLS/credentials, reconnect policy and final client close.
@@ -9,6 +9,13 @@ export interface RealtimeClusterRedis {
     command(...args: string[]): Promise<unknown>;
     publish(topic: string, payload: string): Promise<unknown>;
     subscribe(topic: string, receive: (payload: string) => void): Promise<() => Promise<void> | void>;
+}
+/** Namespace-scoped invalidation events from trusted application replicas.
+ * Payloads are hints: handlers must reread their durable authority. Delivery
+ * is best effort and duplicate-suppressed; there is no replay or receipt. */
+export interface RealtimePeerEvents {
+    publish(topic: string, payload: string): Promise<void>;
+    subscribe(topic: string, handler: (payload: string) => void | Promise<void>): () => void;
 }
 export interface RedisRealtimeRouterOptions {
     redis: RealtimeClusterRedis;
@@ -59,6 +66,12 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private activeDeliveries;
     private readonly cleanup;
     private readonly callHandlers;
+    private readonly peerHandlers;
+    readonly peerEvents: RealtimePeerEvents;
+    private validateEventTopic;
+    /** False permanently after ownership expires or renewal fails. Hosts can
+     * remove an unhealthy replica from admission without knowing Redis keys. */
+    isReady(): boolean;
     /** Ready with start(), namespace-scoped and checked against the origin's
      * live ownership lease. CallService's sync subscription has no async gap. */
     readonly crossNodePubSub: CallCrossNodePubSub;
@@ -95,7 +108,7 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     sendToClient(clientId: string, message: unknown): Promise<boolean>;
     sendToLocalClient(clientId: string, message: unknown): boolean | Promise<boolean>;
     hasChannelAuthorize(): boolean;
-    checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
+    checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void;
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {

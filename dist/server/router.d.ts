@@ -120,6 +120,9 @@ export interface FeaturePlugin {
  * its transport supports.
  */
 export interface RealtimeRouter {
+    /** Optional transport admission health. A leased router stays false once
+     * ownership is lost, even if its Redis connection later recovers. */
+    isReady?(): boolean;
     sendToClient(clientId: string, message: unknown): void | boolean | Promise<void | boolean>;
     sendToLocalClient?(clientId: string, message: unknown): void | boolean | Promise<void | boolean>;
     /**

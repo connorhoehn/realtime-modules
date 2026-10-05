@@ -20,7 +20,7 @@ export { attachRealtime, defineFeature, chat, presence, cursor, reactions, activ
 export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHandle, } from './attach';
 export { LocalRealtimeRouter, } from './router';
 export { RedisRealtimeRouter } from './RedisRealtimeRouter';
-export type { RealtimeClusterRedis, RedisRealtimeRouterOptions } from './RedisRealtimeRouter';
+export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents } from './RedisRealtimeRouter';
 export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
 export { DEFAULT_WS_MAX_PAYLOAD } from '../server-ws/types';

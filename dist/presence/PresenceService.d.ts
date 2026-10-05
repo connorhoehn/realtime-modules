@@ -14,6 +14,7 @@ declare class PresenceService {
     private readonly disconnectDelayMs;
     private readonly maxMetadataKeys;
     private readonly maxMetadataSize;
+    private readonly store;
     clientPresence: Map<string, PresenceEntry>;
     channelPresence: Map<string, Map<string, PresenceEntry>>;
     clientChannels: Map<string, Set<string>>;
@@ -37,6 +38,10 @@ declare class PresenceService {
     updateChannelPresence(clientId: string, presenceData: PresenceEntry, newChannels: string[]): Promise<void>;
     removeClientFromAllChannels(clientId: string): void;
     getChannelPresence(channel: string): PresenceEntry[];
+    /** Fresh shared snapshots never turn a stored lease into authority. A
+     * departed connection, retired identity or revoked publisher is omitted. */
+    private currentStoredEntry;
+    readChannelPresence(channel: string): Promise<PresenceEntry[]>;
     /**
      * The channels of a `set` this client may publish to: the service's own
      * `authorizeChannel` and the router's channel authz must both pass.

@@ -62,7 +62,8 @@ connection. A local duplicate client ID or a second live node owner is refused.
 Ownership and client leases default to 30 seconds and renew every third of
 that interval. Delivery is fenced on renewal failure or local lease expiry.
 A late successful renewal cannot revive a fenced router: dispose it and
-create/start a fresh instance. Lease fencing does not close the host's TCP
+create/start a fresh instance. `isReady()` exposes that permanent fence for
+host admission/retirement. Lease fencing does not close the host's TCP
 sockets automatically. The host decides when to retire that replica.
 User lookups atomically prune index entries whose client lease has expired,
 so a healthy socket cannot retain crashed peers indefinitely. A registration
@@ -91,14 +92,33 @@ directory grant. Refresh the audience explicitly for a new delivery attempt.
 For calls, supply a shared `CallStateStore` and pass
 `crossNodePubSub: router.crossNodePubSub` to `calls()`. `attachRealtime`
 forwards the router's asynchronous liveness probe to CallService. The
-departure transport supports only `call:client-departed`. Call-state mirrors
-are asynchronous, so signaling acknowledgement does not imply that every
-state write has completed. Notifications likewise need the application's
+departure transport supports only `call:client-departed`. Signaling waits for
+the sender's durable seat and accepted marker. Discovery indexes and external
+hooks remain asynchronous. A replica's final local group-call seat does not
+end a call with surviving peers; an accepted DM closes when either party
+explicitly leaves. Mid-call invitations preserve the original caller and
+invite metadata. Notifications likewise need the application's
 durable inbox for history; live fanout alone does not persist it.
 
-Presence, CRDT ownership/snapshots, cached chat membership, room state and
-other service state require their own shared stores/invalidation policies.
-Adding this router alone does not accept a multi-replica application.
+For shared presence, pass `presence({ store: new RedisPresenceStore(port,
+namespace) })`, importing the store from the public `/presence` export and
+using the same namespace as the router. Entries and channel indexes expire;
+reads verify fresh connection identity/liveness and current publisher channel
+access. A node's shutdown removes its own entries and preserves peers. Channel
+rosters reveal only the requested channel. The host still owns directory
+authorization, command deadlines, and the connection's heartbeat policy.
+
+`peerEvents.subscribe(topic, handler)` and `peerEvents.publish(topic, payload)`
+carry namespace-scoped, duplicate-suppressed invalidation hints from a live
+replica. Topic names use lowercase letters, digits, colon, underscore or
+hyphen, begin with a letter, and have at most 128 characters. Payloads are
+strings within the router's frame limit. There is no replay or receipt; a
+consumer must reread durable authority on every protected read even if an
+invalidation was missed. Do not use event payloads as identity or permission.
+
+CRDT ownership/snapshots, cached chat membership, room state and other service
+state still require their own shared stores/invalidation policies. Adding
+this router alone does not accept a multi-replica application.
 
 Run the native transport, call recovery and socket-close contracts against a
 dedicated local Redis:
@@ -109,5 +129,6 @@ CALL_TEST_REDIS_URL=redis://127.0.0.1:16481 npm test -- --runInBand
 ```
 
 The native fixture uses real Redis and two TCP WebSocket servers with explicit
-fixture authority. Application directory, cloud deployment, capacity and
-presence/CRDT replication are separate acceptance work.
+fixture authority, including shared presence and peer invalidations.
+Application directory, cloud deployment, capacity and CRDT ownership are
+separate acceptance work.

@@ -35,6 +35,9 @@ export interface PresenceUpdate {
  * declared by PresenceManifest.
  */
 export interface PresenceConfig {
+    /** Shared roster storage. Requires current remote identity/liveness
+     * methods on the router; otherwise construction fails closed. */
+    store?: import('./PresenceStore').PresenceStore;
     /** Heartbeat sweep interval (ms). Default 30_000. */
     heartbeatIntervalMs?: number;
     /** Inactivity threshold before a client is auto-flipped to offline (ms). Default 60_000. */
@@ -98,6 +101,11 @@ export interface PresenceMessageRouter {
     getClientData?(clientId: string): {
         userContext?: import('../server-ws/types').WsAuthContext;
     } | null;
+    resolveClientData?(clientId: string): Promise<{
+        userContext?: import('../server-ws/types').WsAuthContext;
+    } | null>;
+    isClientAlive?(clientId: string): Promise<boolean>;
+    isReady?(): boolean;
     /**
      * Optional: when undefined the service treats itself as "single node"
      * and falls back to 'local' for the `nodeId` field on PresenceEntry.

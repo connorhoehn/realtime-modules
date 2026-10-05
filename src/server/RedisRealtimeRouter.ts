@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { LocalRealtimeRouter, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
-import type { ChannelAccessKind, ChannelAccessOpts } from '../server-ws/channelAccess';
+import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
 
 /** Connected command/publish and dedicated subscriber clients. The host owns
@@ -12,6 +12,13 @@ export interface RealtimeClusterRedis {
     command(...args: string[]): Promise<unknown>;
     publish(topic: string, payload: string): Promise<unknown>;
     subscribe(topic: string, receive: (payload: string) => void): Promise<() => Promise<void> | void>;
+}
+/** Namespace-scoped invalidation events from trusted application replicas.
+ * Payloads are hints: handlers must reread their durable authority. Delivery
+ * is best effort and duplicate-suppressed; there is no replay or receipt. */
+export interface RealtimePeerEvents {
+    publish(topic: string, payload: string): Promise<void>;
+    subscribe(topic: string, handler: (payload: string) => void | Promise<void>): () => void;
 }
 export interface RedisRealtimeRouterOptions {
     redis: RealtimeClusterRedis;
@@ -31,8 +38,9 @@ export interface RedisRealtimeRouterOptions {
 }
 type Source = { nodeId: string; instance: string };
 type Registration = Source & { generation: string; ctx: WsAuthContext };
-type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'channel' | 'broadcast' | 'call-event';
+type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'channel' | 'broadcast' | 'call-event' | 'peer-event';
     clientId?: string; generation?: string; delivered?: boolean; channel?: string;
+    eventTopic?: string;
     excludeClientId?: string | null; publisher?: { clientId: string; generation: string }; message?: unknown };
 const NOOP_LOGGER: RouterLogger = { debug() {}, info() {}, warn() {}, error() {} };
 const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0";
@@ -81,6 +89,28 @@ export class RedisRealtimeRouter implements RealtimeRouter {
     private activeDeliveries = 0;
     private readonly cleanup = new Set<Promise<unknown>>();
     private readonly callHandlers = new Set<(payload: string) => void>();
+    private readonly peerHandlers = new Map<string, Set<(payload: string) => void | Promise<void>>>();
+    readonly peerEvents: RealtimePeerEvents = {
+        publish: async (topic, payload) => {
+            this.validateEventTopic(topic);
+            if (typeof payload !== 'string') throw new Error('Peer event payload must be a string');
+            await this.publish(`${this.prefix}peer-events`, {
+                v: 1, id: randomUUID(), source: this.source(), kind: 'peer-event', eventTopic: topic, message: payload,
+            });
+        },
+        subscribe: (topic, handler) => {
+            this.validateEventTopic(topic);
+            const handlers = this.peerHandlers.get(topic) ?? new Set();
+            handlers.add(handler); this.peerHandlers.set(topic, handlers);
+            return () => { handlers.delete(handler); if (!handlers.size) this.peerHandlers.delete(topic); };
+        },
+    };
+    private validateEventTopic(topic: string): void {
+        if (typeof topic !== 'string' || !/^[a-z][a-z0-9:_-]{0,127}$/.test(topic)) throw new Error('Invalid peer event topic');
+    }
+    /** False permanently after ownership expires or renewal fails. Hosts can
+     * remove an unhealthy replica from admission without knowing Redis keys. */
+    isReady(): boolean { return this.live(); }
     /** Ready with start(), namespace-scoped and checked against the origin's
      * live ownership lease. CallService's sync subscription has no async gap. */
     readonly crossNodePubSub: CallCrossNodePubSub = {
@@ -136,7 +166,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (claimed !== 'OK') throw new Error('Cluster nodeId already has a live owner');
         this.deadline = before + this.leaseMs;
         try {
-            for (const topic of [this.topic(), `${this.prefix}channels`, `${this.prefix}broadcast`, `${this.prefix}call-events`]) {
+            for (const topic of [this.topic(), `${this.prefix}channels`, `${this.prefix}broadcast`, `${this.prefix}call-events`, `${this.prefix}peer-events`]) {
                 this.unsubs.push(await this.opts.redis.subscribe(topic, payload => {
                     void this.receive(payload).catch(error => this.log.warn('[realtime-cluster] peer delivery failed', error));
                 }));
@@ -293,8 +323,21 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         return this.live() ? this.local.sendToLocalClient(clientId, message) : false;
     }
     hasChannelAuthorize() { return this.local.hasChannelAuthorize(); }
-    checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts) {
-        return this.live() ? this.local.checkChannel(kind, clientId, channel, opts) : false;
+    async checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts: ChannelAccessOpts = {}): Promise<boolean> {
+        if (!this.live()) return false;
+        if (this.current(clientId)) return this.local.checkChannel(kind, clientId, channel, opts);
+        const before = await this.registration(clientId);
+        if (!before) return false;
+        let allowed = false;
+        try {
+            allowed = !this.opts.authorize || await this.opts.authorize({ kind, clientId, channel, ctx: before.ctx });
+        } catch { /* fail closed */ }
+        const after = await this.registration(clientId);
+        allowed = allowed && this.live() && !!after && before.generation === after.generation && before.instance === after.instance;
+        if (!allowed && !opts.silent) await this.sendToClient(clientId, channelDeniedFrame({
+            kind, channel: opts.clientChannel ?? channel, service: opts.service,
+        }));
+        return allowed;
     }
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts) {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
@@ -330,7 +373,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             return;
         }
         if (frame.source.instance === this.instance) return;
-        if (!['direct', 'channel', 'broadcast', 'call-event'].includes(frame.kind)) return;
+        if (!['direct', 'channel', 'broadcast', 'call-event', 'peer-event'].includes(frame.kind)) return;
         const key = `${frame.source.instance}:${frame.id}`;
         const now = performance.now();
         for (const [id, entry] of this.seen) if (!entry.pending && entry.until < now) this.seen.delete(id);
@@ -351,6 +394,12 @@ export class RedisRealtimeRouter implements RealtimeRouter {
     }
     private async deliver(frame: Wire): Promise<boolean> {
         if (!await this.ownerAlive(frame.source) || !this.live()) return false;
+        if (frame.kind === 'peer-event') {
+            if (typeof frame.message !== 'string' || typeof frame.eventTopic !== 'string') return false;
+            try { this.validateEventTopic(frame.eventTopic); } catch { return false; }
+            await Promise.all([...this.peerHandlers.get(frame.eventTopic) ?? []].map(handler => handler(frame.message as string)));
+            return true;
+        }
         if (frame.kind === 'call-event') {
             if (typeof frame.message !== 'string') return false;
             await Promise.all([...this.callHandlers].map(async handler => { await handler(frame.message as string); }));
@@ -397,6 +446,6 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         await Promise.all([...this.cleanup]);
         for (const unsubscribe of this.unsubs.splice(0)) await unsubscribe();
         await this.opts.redis.command('EVAL', RELEASE, '1', this.nodeKey(), this.instance);
-        this.remote.clear(); this.seen.clear(); this.callHandlers.clear();
+        this.remote.clear(); this.seen.clear(); this.callHandlers.clear(); this.peerHandlers.clear();
     }
 }

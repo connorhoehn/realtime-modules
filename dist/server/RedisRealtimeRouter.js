@@ -4,6 +4,7 @@ exports.RedisRealtimeRouter = void 0;
 const crypto_1 = require("crypto");
 const perf_hooks_1 = require("perf_hooks");
 const router_1 = require("./router");
+const channelAccess_1 = require("../server-ws/channelAccess");
 const NOOP_LOGGER = { debug() { }, info() { }, warn() { }, error() { } };
 const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0";
 const REGISTER = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
@@ -51,6 +52,32 @@ class RedisRealtimeRouter {
     activeDeliveries = 0;
     cleanup = new Set();
     callHandlers = new Set();
+    peerHandlers = new Map();
+    peerEvents = {
+        publish: async (topic, payload) => {
+            this.validateEventTopic(topic);
+            if (typeof payload !== 'string')
+                throw new Error('Peer event payload must be a string');
+            await this.publish(`${this.prefix}peer-events`, {
+                v: 1, id: (0, crypto_1.randomUUID)(), source: this.source(), kind: 'peer-event', eventTopic: topic, message: payload,
+            });
+        },
+        subscribe: (topic, handler) => {
+            this.validateEventTopic(topic);
+            const handlers = this.peerHandlers.get(topic) ?? new Set();
+            handlers.add(handler);
+            this.peerHandlers.set(topic, handlers);
+            return () => { handlers.delete(handler); if (!handlers.size)
+                this.peerHandlers.delete(topic); };
+        },
+    };
+    validateEventTopic(topic) {
+        if (typeof topic !== 'string' || !/^[a-z][a-z0-9:_-]{0,127}$/.test(topic))
+            throw new Error('Invalid peer event topic');
+    }
+    /** False permanently after ownership expires or renewal fails. Hosts can
+     * remove an unhealthy replica from admission without knowing Redis keys. */
+    isReady() { return this.live(); }
     /** Ready with start(), namespace-scoped and checked against the origin's
      * live ownership lease. CallService's sync subscription has no async gap. */
     crossNodePubSub = {
@@ -113,7 +140,7 @@ class RedisRealtimeRouter {
             throw new Error('Cluster nodeId already has a live owner');
         this.deadline = before + this.leaseMs;
         try {
-            for (const topic of [this.topic(), `${this.prefix}channels`, `${this.prefix}broadcast`, `${this.prefix}call-events`]) {
+            for (const topic of [this.topic(), `${this.prefix}channels`, `${this.prefix}broadcast`, `${this.prefix}call-events`, `${this.prefix}peer-events`]) {
                 this.unsubs.push(await this.opts.redis.subscribe(topic, payload => {
                     void this.receive(payload).catch(error => this.log.warn('[realtime-cluster] peer delivery failed', error));
                 }));
@@ -304,8 +331,26 @@ class RedisRealtimeRouter {
         return this.live() ? this.local.sendToLocalClient(clientId, message) : false;
     }
     hasChannelAuthorize() { return this.local.hasChannelAuthorize(); }
-    checkChannel(kind, clientId, channel, opts) {
-        return this.live() ? this.local.checkChannel(kind, clientId, channel, opts) : false;
+    async checkChannel(kind, clientId, channel, opts = {}) {
+        if (!this.live())
+            return false;
+        if (this.current(clientId))
+            return this.local.checkChannel(kind, clientId, channel, opts);
+        const before = await this.registration(clientId);
+        if (!before)
+            return false;
+        let allowed = false;
+        try {
+            allowed = !this.opts.authorize || await this.opts.authorize({ kind, clientId, channel, ctx: before.ctx });
+        }
+        catch { /* fail closed */ }
+        const after = await this.registration(clientId);
+        allowed = allowed && this.live() && !!after && before.generation === after.generation && before.instance === after.instance;
+        if (!allowed && !opts.silent)
+            await this.sendToClient(clientId, (0, channelAccess_1.channelDeniedFrame)({
+                kind, channel: opts.clientChannel ?? channel, service: opts.service,
+            }));
+        return allowed;
     }
     subscribeToChannel(clientId, channel, opts) {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
@@ -352,7 +397,7 @@ class RedisRealtimeRouter {
         }
         if (frame.source.instance === this.instance)
             return;
-        if (!['direct', 'channel', 'broadcast', 'call-event'].includes(frame.kind))
+        if (!['direct', 'channel', 'broadcast', 'call-event', 'peer-event'].includes(frame.kind))
             return;
         const key = `${frame.source.instance}:${frame.id}`;
         const now = perf_hooks_1.performance.now();
@@ -379,6 +424,18 @@ class RedisRealtimeRouter {
     async deliver(frame) {
         if (!await this.ownerAlive(frame.source) || !this.live())
             return false;
+        if (frame.kind === 'peer-event') {
+            if (typeof frame.message !== 'string' || typeof frame.eventTopic !== 'string')
+                return false;
+            try {
+                this.validateEventTopic(frame.eventTopic);
+            }
+            catch {
+                return false;
+            }
+            await Promise.all([...this.peerHandlers.get(frame.eventTopic) ?? []].map(handler => handler(frame.message)));
+            return true;
+        }
         if (frame.kind === 'call-event') {
             if (typeof frame.message !== 'string')
                 return false;
@@ -443,6 +500,7 @@ class RedisRealtimeRouter {
         this.remote.clear();
         this.seen.clear();
         this.callHandlers.clear();
+        this.peerHandlers.clear();
     }
 }
 exports.RedisRealtimeRouter = RedisRealtimeRouter;

@@ -126,6 +126,7 @@ class CallService {
      *  Local cache is a write-through view: every mutation here also
      *  mirrors to stateStore. */
     activeCalls = new Map();
+    participantWrites = new Map();
     clientToCalls = new Map();
     inviteSweepTimer = null;
     /** PR-W2.1 — kept ONLY as a fallback when stateStore is null
@@ -422,7 +423,7 @@ class CallService {
             if (told.has(cid))
                 continue;
             if (isLive) {
-                const live = isLive(cid);
+                const live = await Promise.resolve(isLive(cid));
                 if (live === true)
                     localPeers.push(cid);
             }
@@ -567,14 +568,29 @@ class CallService {
             this.clientToCalls.set(clientId, calls);
         }
         calls.add(callId);
-        // W11 — mirror to durable store so peer nodes can read this
-        // participant. Fire-and-forget: Redis hiccup shouldn't block
-        // call routing. Local Map writes above are the source of truth
-        // for THIS node; the store is for cross-node visibility.
+        // A peer must see this durable seat before its next signaling
+        // transition. Call-event callers await the write; local-only paths
+        // still register synchronously when no shared store is configured.
         if (this.stateStore && mirror) {
-            void this.stateStore.registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds)
-                .then(() => { this.storeMirrored.add(callId); })
-                .catch((e) => this.logger.warn(`[CallService] stateStore.register failed for ${callId}/${clientId}: ${e?.message ?? e}`));
+            const writes = this.participantWrites.get(callId) ?? new Map();
+            this.participantWrites.set(callId, writes);
+            const prior = writes.get(clientId) ?? Promise.resolve();
+            const write = prior.then(async () => {
+                await this.stateStore.registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds);
+                this.storeMirrored.add(callId);
+                if (typeof this.stateStore.addClientToCall === 'function') {
+                    const ttl = this.acceptedCallIds.has(callId) ? CallService.ACCEPTED_CALL_TTL_SEC : CallService.INVITE_TTL_SEC;
+                    await this.stateStore.addClientToCall(clientId, callId, ttl);
+                }
+            });
+            writes.set(clientId, write);
+            void write.catch((e) => this.logger.warn(`[CallService] stateStore.register failed for ${callId}/${clientId}: ${e?.message ?? e}`));
+            void write.finally(() => {
+                if (writes.get(clientId) === write)
+                    writes.delete(clientId);
+                if (writes.size === 0)
+                    this.participantWrites.delete(callId);
+            }).catch(() => undefined);
             // PR-W2.1 (completion) — also mirror via the explicit
             // addClientToCall API so peer nodes can query
             // getCallsForClient on disconnect without first needing to
@@ -583,14 +599,13 @@ class CallService {
             // path keeps the write-through invariant explicit and
             // testable, AND covers in-memory stub implementations that
             // don't mirror clientToCalls inside registerParticipant.
-            if (typeof this.stateStore.addClientToCall === 'function') {
-                const ttl = this.acceptedCallIds.has(callId)
-                    ? CallService.ACCEPTED_CALL_TTL_SEC
-                    : CallService.INVITE_TTL_SEC;
-                void this.stateStore.addClientToCall(clientId, callId, ttl)
-                    .catch((e) => this.logger.warn(`[CallService] stateStore.addClientToCall failed for ${clientId}/${callId}: ${e?.message ?? e}`));
-            }
+            return write;
         }
+    }
+    async waitForParticipantWrites(callId) {
+        const writes = this.participantWrites.get(callId);
+        if (writes)
+            await Promise.all([...writes.values()]);
     }
     /** Forget a call entirely — used on terminal `ended`/`declined`.
      *  PR-W2.1 (completion) — also clears the cluster-wide reverse-
@@ -637,17 +652,15 @@ class CallService {
             participantClientIds: Array.from(state.everParticipated ?? state.participantClientIds),
         };
         const store = this.stateStore;
-        if (this.acceptedCallIds.has(callId)) {
+        if (this.acceptedCallIds.has(callId) && !store?.takeAccepted) {
             // Accepted on this node: announce now, synchronously — teardown
             // must not wait on a store. The cluster marker is taken too, so
             // a peer that sees the same call go cannot announce it twice.
             this.acceptedCallIds.delete(callId);
-            if (store && typeof store.takeAccepted === 'function') {
-                void store.takeAccepted(callId).catch(() => { });
-            }
             this._emitCallEnded(ended);
             return;
         }
+        const locallyAccepted = this.acceptedCallIds.delete(callId);
         // Not accepted HERE. Either it was accepted on a peer node (a
         // two-node DM: the accept lands on the accepter's node, the caller's
         // hang-up on the caller's) — then the cluster marker says so and
@@ -684,8 +697,8 @@ class CallService {
                 }
                 catch { /* the local view stands */ }
             }
-            if (participantsNow > 1 || peerRegistered)
-                return; // answered elsewhere: a peer's to announce
+            if (locallyAccepted || participantsNow > 1 || peerRegistered)
+                return; // already announced or answered elsewhere
             if (missed && this.callMissedHook) {
                 await Promise.resolve(this.callMissedHook(missed));
             }
@@ -1716,7 +1729,7 @@ class CallService {
         const shouldRegister = !!callId && ((action === 'invite' && !!lobbyName)
             || action === 'accepted');
         if (shouldRegister) {
-            this.registerParticipant(callId, clientId, callerId, resolvedLobbyName, targetUserIds);
+            const participantWrite = this.registerParticipant(callId, clientId, callerId, resolvedLobbyName, targetUserIds);
             if (typeof this.messageRouter.getUserIdForClient === 'function') {
                 try {
                     const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));
@@ -1729,6 +1742,22 @@ class CallService {
                     }
                 }
                 catch { /* best-effort */ }
+            }
+            // A peer may accept or disconnect as soon as signaling arrives.
+            // Commit its durable seat before exposing that next transition.
+            await participantWrite;
+            if (this.stateStore) {
+                const shared = await this.stateStore.getCall(callId);
+                const local = this.activeCalls.get(callId);
+                if (shared && local) {
+                    local.callerId = shared.callerId;
+                    local.lobbyName = shared.lobbyName;
+                    local.originalTargetUserIds = shared.targetUserIds.slice();
+                    if (typeof shared.invitedAt === 'number')
+                        local.invitedAt = shared.invitedAt;
+                    if (shared.callerName)
+                        local.originalCallerName = shared.callerName;
+                }
             }
             // F2/F3 — durable discovery indexes, fire-and-forget. The
             // userId index is what survives a page refresh (new tab =
@@ -1753,7 +1782,8 @@ class CallService {
             }
             if (action === 'invite') {
                 const state = this.activeCalls.get(callId);
-                if (state) {
+                const initialInvite = state && typeof state.invitedAt !== 'number';
+                if (initialInvite) {
                     const now = Date.now();
                     state.invitedAt = now;
                     state.inviteExpiresAt = now + CallService.INVITE_TTL_MS;
@@ -1768,15 +1798,14 @@ class CallService {
                 // wall-clock startedAt for the dialog's live timer and a
                 // friendly caller label for the prompt body. Fire-and-forget
                 // (Redis hiccup shouldn't block invite routing).
-                if (this.stateStore && typeof this.stateStore.setInviteMetadata === 'function') {
+                if (initialInvite && this.stateStore && typeof this.stateStore.setInviteMetadata === 'function') {
                     const callerNameRaw = typeof payload.callerName === 'string' ? payload.callerName : '';
                     const meta = {
                         invitedAt: state?.invitedAt ?? Date.now(),
                     };
                     if (callerNameRaw.length)
                         meta.callerName = callerNameRaw;
-                    void this.stateStore.setInviteMetadata(callId, meta)
-                        .catch((e) => this.logger.warn(`[CallService] stateStore.setInviteMetadata failed for ${callId}: ${e?.message ?? e}`));
+                    await this.stateStore.setInviteMetadata(callId, meta);
                 }
                 for (const targetUserId of (docInvite ? docInvite.ringTargets : targetUserIds)) {
                     let set = this.activeInvitesByUserId.get(targetUserId);
@@ -1797,24 +1826,9 @@ class CallService {
                             .catch((e) => this.logger.warn(`[CallService] stateStore.registerInvite failed for ${targetUserId}/${callId}: ${e?.message ?? e}`));
                     }
                 }
-                // PR-W2.1 (completion) — authoritative setCall mirror.
-                // registerParticipant already wrote individual fields
-                // via HSETNX; setCall is the explicit "here's the full
-                // resolved view" overwrite so a peer node reading getCall
-                // on a cross-node-departed event sees the lobby + caller
-                // name even if HSETNX raced.
-                if (state && this.stateStore && typeof this.stateStore.setCall === 'function') {
-                    const view = {
-                        callerId: state.callerId,
-                        lobbyName: state.lobbyName,
-                        targetUserIds: state.originalTargetUserIds ?? state.targetUserIds,
-                        participantClientIds: Array.from(state.participantClientIds),
-                        invitedAt: state.invitedAt ?? null,
-                        callerName: state.originalCallerName ?? null,
-                    };
-                    void this.stateStore.setCall(callId, view, CallService.INVITE_TTL_SEC)
-                        .catch((e) => this.logger.warn(`[CallService] stateStore.setCall failed for ${callId}: ${e?.message ?? e}`));
-                }
+                // registerParticipant uses first-writer metadata. Replacing
+                // it with this replica's partial roster would transfer caller
+                // ownership and shorten an accepted call's TTL on a re-invite.
             }
             // Persist call→session binding so the recording.completed
             // webhook (downstream) can resolve channelArn → callId.
@@ -1856,8 +1870,7 @@ class CallService {
             // "answered elsewhere" prompts. SETNX with the accepted
             // call's 4h safety TTL.
             if (this.stateStore && typeof this.stateStore.markAccepted === 'function') {
-                void this.stateStore.markAccepted(callId, CallService.ACCEPTED_CALL_TTL_SEC)
-                    .catch((e) => this.logger.warn(`[CallService] stateStore.markAccepted failed for ${callId}: ${e?.message ?? e}`));
+                await this.stateStore.markAccepted(callId, CallService.ACCEPTED_CALL_TTL_SEC);
             }
         }
         // Document call: someone joined (or came back) — people still being
@@ -1871,6 +1884,16 @@ class CallService {
             }
         }
         if (callId && (action === 'ended' || action === 'declined' || action === 'cancelled')) {
+            await this.waitForParticipantWrites(callId);
+            let sharedRemaining = null;
+            let sharedBefore = null;
+            let sharedAccepted = false;
+            if (this.stateStore) {
+                sharedBefore = await this.stateStore.getCall(callId);
+                sharedAccepted = await this.stateStore.isAccepted?.(callId) ?? false;
+                await this.stateStore.removeParticipant(callId, clientId);
+                sharedRemaining = (await this.stateStore.getCall(callId))?.participantClientIds.length ?? 0;
+            }
             // J2 (2026-08-22) — a TERMINAL verb is an explicit decision:
             // it must supersede the rejoin grace. Without this, hanging
             // up cleanly and refreshing still found the call alive for
@@ -1889,6 +1912,12 @@ class CallService {
             // participant, forget the call entirely.
             const state = this.activeCalls.get(callId);
             if (state) {
+                if (sharedBefore) {
+                    state.callerId = sharedBefore.callerId;
+                    state.lobbyName = sharedBefore.lobbyName;
+                    for (const cid of sharedBefore.participantClientIds)
+                        (state.everParticipated ??= new Set()).add(cid);
+                }
                 // A decline does not end the call (the caller may still be
                 // ringing others); it is remembered so the caller's hang-up
                 // then records "declined" rather than "cancelled".
@@ -1901,10 +1930,24 @@ class CallService {
                     if (cs.size === 0)
                         this.clientToCalls.delete(clientId);
                 }
-                if (state.participantClientIds.size === 0) {
+                if (sharedRemaining === 1 && sharedAccepted && (0, lobbyChannel_1.lobbyConversationKind)(state.lobbyName) === 'dm') {
+                    // The other party is on a peer node. Its remaining seat
+                    // must not keep an explicitly ended DM discoverable.
+                    this.forgetCall(callId);
+                    if (this.crossNodePubSub) {
+                        await this.crossNodePubSub.publish(CROSS_NODE_DEPARTED_TOPIC, JSON.stringify({
+                            callId, departedClientId: clientId, callerId: state.callerId,
+                            lobbyName: state.lobbyName, callContinues: false, notified: true,
+                        }));
+                    }
+                }
+                else if (state.participantClientIds.size === 0) {
                     // Last one out — the call is over, whichever verb got us
                     // here. This path never goes through forgetCall().
-                    this._announceCallEnded(callId, state);
+                    // A replica's last local seat is not the cluster's last
+                    // seat. Leave the shared conversation alive for peers.
+                    if (sharedRemaining === null || sharedRemaining === 0)
+                        this._announceCallEnded(callId, state);
                     this.activeCalls.delete(callId);
                     this.storeMirrored.delete(callId);
                 }
@@ -1920,11 +1963,6 @@ class CallService {
                     this.logger.info(`[CallService] ${action} by one party ended DM call ${callId}`);
                     this.forgetCall(callId);
                 }
-            }
-            // W11 — mirror to durable store. Fire-and-forget.
-            if (this.stateStore) {
-                void this.stateStore.removeParticipant(callId, clientId)
-                    .catch((e) => this.logger.warn(`[CallService] stateStore.removeParticipant failed for ${callId}/${clientId}: ${e?.message ?? e}`));
             }
         }
         const envelope = {
