@@ -25,10 +25,14 @@
 // `attachRealtime` exposes it as `handle.services.notification`. See
 // docs/recipes/notifications.md.
 //
-// This hook is receive-only on purpose: it never sends. `markAsRead` moves a
+// By default this hook is receive-only: it never sends. `markAsRead` moves a
 // mark in local storage, so read state does not follow the user to another
-// device. The service has markRead / markAllRead actions for that; nothing
-// here calls them.
+// device. Pass `syncReads: true` to also send the service's own actions —
+//   { service:'notification', action:'markRead', id }
+//   { service:'notification', action:'markAllRead' }
+// (the names NotificationService.handleAction accepts) — so the server store
+// and every other tab follow. Frames are sent only while the socket is
+// `connected`; a mark made offline stays local and is not queued or replayed.
 //
 // ──────────────────────────────────────────────────────────────────────────────
 // Design notes:
@@ -105,6 +109,17 @@ export interface UseNotificationsOptions {
    * SSR and for privacy modes where a write would throw anyway.
    */
   storage?: Storage | null;
+  /**
+   * Also persist read marks on the server: `markAsRead(id)` sends
+   * `{ service: 'notification', action: 'markRead', id }` and `markAllRead()`
+   * sends `{ service: 'notification', action: 'markAllRead' }`, the actions
+   * `NotificationService` accepts. Sent only while `connectionState` is
+   * `'connected'`; offline marks stay local (no queue, no replay). The local
+   * mark is applied either way, and the server's `notification:read` echo is
+   * idempotent.
+   * @default false
+   */
+  syncReads?: boolean;
 }
 
 export interface UseNotificationsResult {
@@ -147,7 +162,20 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
   // `undefined` means "not specified" and takes the global; `null` means the
   // caller asked for no persistence at all. They are not the same answer.
   const storage = options.storage === undefined ? defaultStorage() : options.storage;
-  const { onMessage } = useGateway();
+  const syncReads = options.syncReads === true;
+  const { onMessage, send, connectionState } = useGateway();
+  // Read through a ref so the action callbacks stay stable across reconnects.
+  const syncRef = useRef({ syncReads, send, connectionState });
+  syncRef.current = { syncReads, send, connectionState };
+  const sendReadAction = useCallback((frame: Record<string, unknown>) => {
+    const { syncReads: on, send: sendFrame, connectionState: state } = syncRef.current;
+    if (!on || state !== 'connected' || typeof sendFrame !== 'function') return;
+    try {
+      sendFrame({ service: 'notification', ...frame });
+    } catch {
+      // A send that throws (socket closing under us) leaves the local mark.
+    }
+  }, []);
 
   // ------------------------------------------------------------------
   // Restore persisted read-state from localStorage on first mount.
@@ -255,7 +283,8 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
     );
-  }, [persistReadMap]);
+    sendReadAction({ action: 'markRead', id });
+  }, [persistReadMap, sendReadAction]);
 
   const markAllRead = useCallback(() => {
     setNotifications((prev) => {
@@ -266,7 +295,8 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
       persistReadMap(map);
       return next;
     });
-  }, [persistReadMap]);
+    sendReadAction({ action: 'markAllRead' });
+  }, [persistReadMap, sendReadAction]);
 
   const remove = useCallback((id: string) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));

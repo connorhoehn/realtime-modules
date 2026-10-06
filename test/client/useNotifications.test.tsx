@@ -541,4 +541,35 @@ describe('useNotifications', () => {
       expect(result.current.notifications[i]!.type).toBe(type);
     });
   });
+
+  describe('syncReads', () => {
+    it('sends nothing by default', () => {
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications({ storage: null }), { wrapper: makeWrapper(ctx) });
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      act(() => { result.current.markAsRead('n-1'); result.current.markAllRead(); });
+      expect(ctx.send).not.toHaveBeenCalled();
+    });
+
+    it('sends the service markRead / markAllRead actions while connected', () => {
+      const { ctx, emit } = makeGatewayContext();
+      const { result } = renderHook(() => useNotifications({ storage: null, syncReads: true }), { wrapper: makeWrapper(ctx) });
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      act(() => { result.current.markAsRead('n-1'); });
+      act(() => { result.current.markAllRead(); });
+      expect(ctx.send).toHaveBeenNthCalledWith(1, { service: 'notification', action: 'markRead', id: 'n-1' });
+      expect(ctx.send).toHaveBeenNthCalledWith(2, { service: 'notification', action: 'markAllRead' });
+      expect(result.current.unreadCount).toBe(0);
+    });
+
+    it('keeps the mark local and sends nothing while not connected', () => {
+      const { ctx, emit } = makeGatewayContext();
+      const offline = { ...ctx, connectionState: 'reconnecting' } as GatewayContextValue;
+      const { result } = renderHook(() => useNotifications({ storage: null, syncReads: true }), { wrapper: makeWrapper(offline) });
+      act(() => { emitNew(emit, makeNotificationPayload({ id: 'n-1' })); });
+      act(() => { result.current.markAsRead('n-1'); result.current.markAllRead(); });
+      expect(offline.send).not.toHaveBeenCalled();
+      expect(result.current.notifications[0]!.read).toBe(true);
+    });
+  });
 });
