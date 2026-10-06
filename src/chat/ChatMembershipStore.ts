@@ -17,6 +17,8 @@
 // Interface + in-memory store live here; the DynamoDB adapter stays in the
 // gateway beside DdbChatStore (same split as ChatStore).
 
+import type { AuthorityScope } from '../server-ws/authorityScope';
+
 export type ChatMemberRole = 'owner' | 'member';
 
 export interface ChatMember {
@@ -34,8 +36,18 @@ export interface ChatMember {
 }
 
 export interface ChatMembershipStore {
-    /** Every row for the channel, removed ones included; [] when the channel is open. */
-    listMembers(channel: string): Promise<ChatMember[]>;
+    /**
+     * Every row for the channel, removed ones included; [] when the channel is open.
+     *
+     * `opts.scope` (0.107) is the operation the read belongs to — a chat send
+     * passes one scope to its membership gate and its unread-recipient list,
+     * and the same scope reaches the router's `authorize` hook for the send's
+     * publish checks and fan-out. A store may share one read per channel per
+     * scope (`scope.share`) under the `AuthorityScope` contract: never past
+     * the operation, and revocable during it. ChatService passes `opts` only
+     * when it has a scope, and never for the final history-authority read.
+     */
+    listMembers(channel: string, opts?: { scope?: AuthorityScope }): Promise<ChatMember[]>;
     getMember(channel: string, userId: string): Promise<ChatMember | null>;
     /** Upsert on (channel, userId). */
     putMember(member: ChatMember): Promise<void>;

@@ -65,6 +65,7 @@ import {
 import type { ChatMessage } from './types';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
 import { routerPermits, type ChannelAccessKind, type ChannelAccessRouter } from '../server-ws/channelAccess';
+import { createAuthorityScope, type AuthorityScope } from '../server-ws/authorityScope';
 
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 
@@ -162,6 +163,8 @@ export interface ChatMessageRouter {
     sendToChannel(channel: string, message: any, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
+        /** The send's authority scope, shared with the fan-out's checks. */
+        scope?: AuthorityScope;
     }): Promise<void> | void;
     /**
      * Subscribe a client to a channel. Returns `false` when operator-pushed
@@ -180,6 +183,20 @@ export interface ChatMessageRouter {
     getClientData?(clientId: string): any;
     /** Optional flag — when explicitly `false`, broadcast warns about Redis. */
     redisAvailable?: boolean;
+}
+
+/**
+ * What `onDmMessage` / `onChannelMessage` receive. `scope` is the send's
+ * authority scope: pass it to `router.isClientSubscribed(…, { scope })` (an
+ * unread probe) so those checks share the send's per-channel proof. It stays
+ * open until a returned promise settles, then closes; after that it is a
+ * pass-through (fresh checks). Absent when the send had no scope.
+ */
+export interface ChatMessageHookInfo {
+    channel: string;
+    members: string[];
+    message: ChatMessage;
+    scope?: AuthorityScope;
 }
 
 /**
@@ -296,7 +313,7 @@ export interface ChatServiceOpts {
      * their own index). The gateway uses this seam to maintain a
      * conversations index and fire notifications.
      */
-    onDmMessage?: (info: { channel: string; members: string[]; message: ChatMessage }) => void;
+    onDmMessage?: (info: ChatMessageHookInfo) => void | Promise<void>;
     /**
      * Fires after every stored message on a NON-dm channel, with who should
      * hear about it: a closed channel's current members, an open channel's
@@ -304,7 +321,7 @@ export interface ChatServiceOpts {
      * turns it into unread counts / notifications; dm channels stay on
      * `onDmMessage`. Exceptions never fail the send.
      */
-    onChannelMessage?: (info: { channel: string; members: string[]; message: ChatMessage }) => void;
+    onChannelMessage?: (info: ChatMessageHookInfo) => void | Promise<void>;
     /**
      * A stored message changed after the fact — edited or deleted by its
      * author. The host keeps its previews (the conversations index) honest
@@ -436,8 +453,8 @@ export class ChatService {
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
-    onDmMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
-    onChannelMessage: ((info: { channel: string; members: string[]; message: ChatMessage }) => void) | null;
+    onDmMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
+    onChannelMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
     onMessageChanged: ((info: { channel: string; kind: 'edited' | 'deleted'; message: ChatMessage }) => void) | null;
     onReadReceipt: ((info: { channel: string; receipt: ChatReadReceipt }) => void) | null;
     onChannelJoin: ((info: { channel: string; userId: string }) => void) | null;
@@ -526,6 +543,10 @@ export class ChatService {
     async handleAction(clientId: string, action: string, data: any): Promise<void> {
         const startTime = Date.now();
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
+        // One authority scope per inbound action: the router pre-check, the
+        // membership gate, the post-persist publish rechecks, the fan-out and
+        // the unread probes of one send all name the same operation.
+        const scope = createAuthorityScope(`chat.${action}`);
         try {
             // The router's channel authz, for every action that reads or
             // writes a named channel. `join` asks through subscribeToChannel;
@@ -533,19 +554,19 @@ export class ChatService {
             const kind = Object.prototype.hasOwnProperty.call(CHAT_ACTION_ACCESS, action) ? CHAT_ACTION_ACCESS[action] : undefined;
             const channel = data?.channel;
             if (kind && typeof channel === 'string' && channel.length > 0
-                && !(await routerPermits(this.messageRouter, kind, clientId, channel, { service: 'chat', clientChannel: channel }))) {
+                && !(await routerPermits(this.messageRouter, kind, clientId, channel, { service: 'chat', clientChannel: channel, scope }))) {
                 return;
             }
             if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context) return;
             switch (action) {
                 case 'join':
-                    await this.handleJoinChannel(clientId, data);
+                    await this.handleJoinChannel(clientId, data, scope);
                     return;
                 case 'leave':
                     await this.handleLeaveChannel(clientId, data);
                     return;
                 case 'send':
-                    await this.handleSendMessage(clientId, data);
+                    await this.handleSendMessage(clientId, data, scope);
                     return;
                 case 'history':
                     await this.handleGetHistory(clientId, data);
@@ -581,6 +602,7 @@ export class ChatService {
             this.logger.error(`Error handling chat action ${action} for client ${clientId}:`, error);
             this.sendError(clientId, 'Internal server error');
         } finally {
+            scope.close();
             const duration = Date.now() - startTime;
             this.logger.info(`[chat] ${action}`, { clientId, channel: data?.channel, duration });
             if (duration > 500) {
@@ -591,7 +613,8 @@ export class ChatService {
 
     async handleJoinChannel(
         clientId: string,
-        { channel, metadata: _metadata = {} }: { channel: string; metadata?: any }
+        { channel, metadata: _metadata = {} }: { channel: string; metadata?: any },
+        scope?: AuthorityScope,
     ): Promise<void> {
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
@@ -622,7 +645,7 @@ export class ChatService {
             // Channel membership gate: a closed channel admits only its
             // active members. Runs before the router subscribe, like the dm
             // gate, so a refused client never holds a subscription.
-            if (!(await this._checkMembership(clientId, channel, joinIdentity))) {
+            if (!(await this._checkMembership(clientId, channel, joinIdentity, scope))) {
                 return;
             }
 
@@ -635,7 +658,7 @@ export class ChatService {
             // had joined a channel the gateway refused. On denial: register no
             // local subscription, send no joined ack, skip history.
             if (this.isDistributed && this.messageRouter.subscribeToChannel) {
-                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel, { service: 'chat', clientChannel: channel });
+                const subscribed = await this.messageRouter.subscribeToChannel(clientId, channel, { service: 'chat', clientChannel: channel, ...(scope ? { scope } : {}) });
                 if (subscribed === false) {
                     this.logger.info(`Client ${clientId} subscribe to chat channel ${channel} denied by router authz`);
                     return;
@@ -655,7 +678,7 @@ export class ChatService {
                 }
             }
 
-            if (!(await this.mayDeliverRead(clientId, channel, context))) return;
+            if (!(await this.mayDeliverRead(clientId, channel, context, scope))) return;
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'joined',
@@ -663,7 +686,7 @@ export class ChatService {
                 timestamp: new Date().toISOString(),
             });
 
-            await this.sendChannelHistory(clientId, channel, joinIdentity?.userId);
+            await this.sendChannelHistory(clientId, channel, joinIdentity?.userId, scope);
 
             this.logger.info(`Client ${clientId} joined chat channel: ${channel}`);
         } catch (error) {
@@ -798,7 +821,8 @@ export class ChatService {
 
     async handleSendMessage(
         clientId: string,
-        frame: { channel: string; message: string; metadata?: any }
+        frame: { channel: string; message: string; metadata?: any },
+        scope?: AuthorityScope,
     ): Promise<void> {
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         const sameContext = () => !this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context;
@@ -852,7 +876,7 @@ export class ChatService {
         if (!this._checkDmMembership(clientId, channel, identity)) {
             return;
         }
-        if (!(await this._checkMembership(clientId, channel, identity))) {
+        if (!(await this._checkMembership(clientId, channel, identity, scope))) {
             return;
         }
 
@@ -900,7 +924,7 @@ export class ChatService {
             // happens until this resolves.
             // The stored record gates every visible success: a failed write
             // must not enter the cache, fan out, or tell observers it was sent.
-            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel })) || !sameContext()) return;
+            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel, scope })) || !sameContext()) return;
             try {
                 await this._persistMessage(messageData);
             } catch (err: any) {
@@ -913,10 +937,10 @@ export class ChatService {
             // Authority may have changed while storage was pending. The
             // committed record remains durable; publication and its receipt
             // still require the author's current write authority.
-            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel })) || !sameContext()) return;
+            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel, scope })) || !sameContext()) return;
             this.addToChannelHistory(channel, messageData);
-            await this.broadcastMessage(channel, messageData, clientId);
-            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel })) || !sameContext()) return;
+            await this.broadcastMessage(channel, messageData, clientId, scope);
+            if (!sameContext() || !(await routerPermits(this.messageRouter, 'publish', clientId, channel, { service: 'chat', clientChannel: channel, scope })) || !sameContext()) return;
             this.sendToClient(clientId, {
                 type: 'chat', action: 'sent', messageId: messageData.id,
                 channel, timestamp: messageData.timestamp,
@@ -925,24 +949,26 @@ export class ChatService {
             // DM activity seam (v0.23.0) — fire-and-forget observer after a
             // successful dm send. Exceptions never fail the send path.
             if (this.onDmMessage && isDmChatChannel(channel)) {
-                try {
-                    this.onDmMessage({
-                        channel,
-                        // Hashed chat:dmg: channels are non-reversible → [].
-                        members: dmChannelMembers(channel) ?? [],
-                        message: messageData,
-                    });
-                } catch (hookErr) {
-                    this.logger.error('onDmMessage hook threw (ignored):', hookErr);
-                }
+                const hook = this.onDmMessage;
+                this._runMessageHook('onDmMessage', scope, (hookScope) => hook({
+                    channel,
+                    // Hashed chat:dmg: channels are non-reversible → [].
+                    members: dmChannelMembers(channel) ?? [],
+                    message: messageData,
+                    ...(hookScope ? { scope: hookScope } : {}),
+                }));
             }
 
             // Channel activity seam — the same idea for rooms and named
             // channels, so a member who is not looking gets an unread count.
             if (this.onChannelMessage && !isDmChatChannel(channel)) {
+                const hook = this.onChannelMessage;
                 try {
-                    const members = await this._channelMessageRecipients(channel, messageData.userId);
-                    this.onChannelMessage({ channel, members, message: messageData });
+                    const members = await this._channelMessageRecipients(channel, messageData.userId, scope);
+                    this._runMessageHook('onChannelMessage', scope, (hookScope) => hook({
+                        channel, members, message: messageData,
+                        ...(hookScope ? { scope: hookScope } : {}),
+                    }));
                 } catch (hookErr) {
                     this.logger.error('onChannelMessage hook threw (ignored):', hookErr);
                 }
@@ -953,6 +979,29 @@ export class ChatService {
             this.logger.error(`Error sending message to channel ${channel} for client ${clientId}:`, error);
             this.sendError(clientId, 'Failed to send message');
         }
+    }
+
+    /**
+     * Fire-and-forget hook call that keeps the send's authority scope open
+     * until a returned promise settles (its unread probes are the tail of the
+     * same operation). Exceptions and rejections are logged, never thrown.
+     */
+    private _runMessageHook(name: string, scope: AuthorityScope | undefined, call: (scope: AuthorityScope | undefined) => void | Promise<void>): void {
+        const release = scope?.active ? scope.retain() : null;
+        const hookScope = release ? scope : undefined;
+        try {
+            const result = call(hookScope);
+            if (result && typeof (result as Promise<void>).then === 'function') {
+                (result as Promise<void>).then(
+                    () => release?.(),
+                    (err) => { release?.(); this.logger.error(`${name} hook rejected (ignored):`, err); },
+                );
+                return;
+            }
+        } catch (hookErr) {
+            this.logger.error(`${name} hook threw (ignored):`, hookErr);
+        }
+        release?.();
     }
 
     /**
@@ -1211,11 +1260,11 @@ export class ChatService {
         return merged.slice(-effectiveLimit);
     }
 
-    async sendChannelHistory(clientId: string, channel: string, userId?: string): Promise<void> {
+    async sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope): Promise<void> {
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         const originalUserId = userId ?? this._resolveIdentity(clientId)?.userId;
-        const fetched = await this.getChannelHistoryFor(originalUserId, channel, this.joinHistoryLimit);
-        const history = await this.historyForDelivery(clientId, channel, fetched, context, originalUserId);
+        const fetched = await this.getChannelHistoryFor(originalUserId, channel, this.joinHistoryLimit, scope);
+        const history = await this.historyForDelivery(clientId, channel, fetched, context, originalUserId, scope);
         if (history === null) return;
         if (history.length > 0) {
             this.sendToClient(clientId, {
@@ -1229,8 +1278,8 @@ export class ChatService {
     }
 
     /** Refilter an already fetched tail when a leave/rejoin tightened its floor. */
-    private async historyForDelivery(clientId: string, channel: string, history: ChatMessage[], context: unknown, userId?: string): Promise<ChatMessage[] | null> {
-        if (!(await this.mayDeliverRead(clientId, channel, context))) return null;
+    private async historyForDelivery(clientId: string, channel: string, history: ChatMessage[], context: unknown, userId?: string, scope?: AuthorityScope): Promise<ChatMessage[] | null> {
+        if (!(await this.mayDeliverRead(clientId, channel, context, scope))) return null;
         const sameIdentity = () => (!this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context)
             && this._resolveIdentity(clientId)?.userId === userId;
         if (!sameIdentity()) return null;
@@ -1239,6 +1288,8 @@ export class ChatService {
         try {
             // This last authority read is intentionally fail-closed. A store
             // outage cannot turn a closed channel into an unrestricted tail.
+            // It is also deliberately OUTSIDE any authority scope: the final
+            // history filter always reads fresh rows.
             rows = await this.membershipStore.listMembers(channel);
         } catch (err: any) {
             this.logger.error('ChatMembershipStore final history check failed:', err && err.message);
@@ -1249,14 +1300,14 @@ export class ChatService {
     }
 
     /** Sensitive direct replies must not use a decision from before a store read. */
-    private async mayDeliverRead(clientId: string, channel: string, context: unknown): Promise<boolean> {
+    private async mayDeliverRead(clientId: string, channel: string, context: unknown, scope?: AuthorityScope): Promise<boolean> {
         const sameContext = () => !this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context;
         if (!sameContext()) return false;
         const identity = this._resolveIdentity(clientId);
         const allowed = this.authz(clientId, channel, this)
             && this._checkDmMembership(clientId, channel, identity)
-            && await this._checkMembership(clientId, channel, identity)
-            && await routerPermits(this.messageRouter, 'subscribe', clientId, channel, { service: 'chat', clientChannel: channel });
+            && await this._checkMembership(clientId, channel, identity, scope)
+            && await routerPermits(this.messageRouter, 'subscribe', clientId, channel, { service: 'chat', clientChannel: channel, ...(scope ? { scope } : {}) });
         if (!sameContext()) return false;
         if (!allowed) {
             this.clientChannels.removeSubscription(clientId, channel);
@@ -1273,8 +1324,8 @@ export class ChatService {
      * subscribed users (the only ones this node can name — an open channel
      * keeps no roster).
      */
-    async _channelMessageRecipients(channel: string, senderUserId: string | undefined): Promise<string[]> {
-        const rows = await this._membershipRows(channel);
+    async _channelMessageRecipients(channel: string, senderUserId: string | undefined, scope?: AuthorityScope): Promise<string[]> {
+        const rows = await this._membershipRows(channel, scope);
         const out = new Set<string>();
         if (rows.length > 0) {
             for (const r of rows) if (!r.removedAt) out.add(r.userId);
@@ -1298,10 +1349,12 @@ export class ChatService {
     }
 
     /** Every row for the channel; [] when there is no store or the channel is open. */
-    async _membershipRows(channel: string): Promise<ChatMember[]> {
+    async _membershipRows(channel: string, scope?: AuthorityScope): Promise<ChatMember[]> {
         if (!this.membershipStore) return [];
         try {
-            return await this.membershipStore.listMembers(channel);
+            return await (scope?.active
+                ? this.membershipStore.listMembers(channel, { scope })
+                : this.membershipStore.listMembers(channel));
         } catch (err: any) {
             this.logger.error('ChatMembershipStore list failed:', err && err.message);
             // Fail closed on a closed channel we cannot read? We cannot tell
@@ -1337,9 +1390,9 @@ export class ChatService {
      * dm channel (the dm gate owns those), or the sender is an active member.
      * FAIL-CLOSED on a closed channel: no resolvable userId ⇒ refused.
      */
-    async _checkMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): Promise<boolean> {
+    async _checkMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null, scope?: AuthorityScope): Promise<boolean> {
         if (!this.membershipStore || isDmChatChannel(channel)) return true;
-        const rows = await this._membershipRows(channel);
+        const rows = await this._membershipRows(channel, scope);
         if (rows.length === 0) return true;
         const userId = identity?.userId;
         const row = userId ? rows.find((r) => r.userId === userId) : undefined;
@@ -1355,10 +1408,10 @@ export class ChatService {
      * on. A closed channel shows a non-member nothing; an open channel and a
      * dm channel show everything (the dm gate has already run).
      */
-    async getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number): Promise<ChatMessage[]> {
+    async getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number, scope?: AuthorityScope): Promise<ChatMessage[]> {
         const history = await this.getChannelHistory(channel, limit);
         if (!this.membershipStore || isDmChatChannel(channel)) return history;
-        const rows = await this._membershipRows(channel);
+        const rows = await this._membershipRows(channel, scope);
         return this.filterMemberHistory(userId, rows, history);
     }
 
@@ -1949,7 +2002,7 @@ export class ChatService {
         await this.messageRouter.sendToChannel(channel, out, clientId);
     }
 
-    async broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string): Promise<void> {
+    async broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string, scope?: AuthorityScope): Promise<void> {
         const broadcastMessage = {
             type: 'chat',
             action: 'message',
@@ -1964,7 +2017,7 @@ export class ChatService {
         // Older routers (sendToChannel arity < 4) ignore the extra arg
         // harmlessly; new routers run AUTHZ whenever publisherClientId is set.
         if (publisherClientId != null) {
-            await this.messageRouter.sendToChannel(channel, broadcastMessage, null, { publisherClientId });
+            await this.messageRouter.sendToChannel(channel, broadcastMessage, null, scope?.active ? { publisherClientId, scope } : { publisherClientId });
         } else {
             await this.messageRouter.sendToChannel(channel, broadcastMessage);
         }

@@ -13,6 +13,7 @@
 // AUTHZ_CHANNEL_DENIED error frame.
 
 import { lobbyForChatLobbyChannel } from '../call/lobbyChannel';
+import type { AuthorityScope } from './authorityScope';
 
 /**
  * Services that wrap the consumer's channel name in a prefix of their own
@@ -80,6 +81,12 @@ export interface ChannelAccessOpts {
      * unknown one, so a refusal frame would leak that the target exists.
      */
     silent?: boolean;
+    /**
+     * The operation this check belongs to (see `authorityScope.ts`). The
+     * router hands it to the host `authorize` hook as `scope`, so a host can
+     * resolve one proof per channel for the whole operation.
+     */
+    scope?: AuthorityScope;
 }
 
 /** The router slice a service needs to ask. Optional on every router. */

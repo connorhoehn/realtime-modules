@@ -115,6 +115,8 @@ export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 // Read the service prefix off a channel `authorize` receives.
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
 export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';
+export { createAuthorityScope } from '../server-ws/authorityScope';
+export type { AuthorityScope } from '../server-ws/authorityScope';
 
 export * from "./documentGrant";
 

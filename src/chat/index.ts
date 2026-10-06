@@ -11,6 +11,7 @@ import ChatService, {
     type ChatMessageRouter,
     type ChatLogger,
     type ChatSenderIdentity,
+    type ChatMessageHookInfo,
     type ChatIdentityResolver,
 } from './ChatService';
 import { ChatManifest } from './manifest';
@@ -47,7 +48,7 @@ export {
     DM_CHANNEL_NAME_MAX_LENGTH,
 };
 
-export type { ChatServiceOpts, ChatMessageRouter, ChatLogger, ChatSenderIdentity, ChatIdentityResolver };
+export type { ChatServiceOpts, ChatMessageRouter, ChatLogger, ChatSenderIdentity, ChatIdentityResolver, ChatMessageHookInfo };
 export type { ChatStore } from './ChatStore';
 export type { ChatReadReceipt, ChatReadReceiptStore } from './ChatReadReceiptStore';
 export type { ChatMembershipStore, ChatMember, ChatMemberRole, ChatMemberView, ChatHistoryChoice } from './ChatMembershipStore';

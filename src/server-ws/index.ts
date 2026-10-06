@@ -19,3 +19,5 @@ export type {
 export type { AuthSender, ResolveSender } from './senderIdentity';
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from './channelAccess';
 export type { ServiceChannelPrefix, ChannelAccessKind } from './channelAccess';
+export { createAuthorityScope } from './authorityScope';
+export type { AuthorityScope } from './authorityScope';

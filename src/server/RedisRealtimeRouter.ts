@@ -4,6 +4,7 @@ import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { LocalRealtimeRouter, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
+import { createAuthorityScope, scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
 
 /** Connected command/publish and dedicated subscriber clients. The host owns
  * connection setup, TLS/credentials, reconnect policy and final client close.
@@ -343,7 +344,9 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (!before) return false;
         let allowed = false;
         try {
-            allowed = !this.opts.authorize || await this.opts.authorize({ kind, clientId, channel, ctx: before.ctx });
+            allowed = !this.opts.authorize || await this.opts.authorize(opts.scope?.active
+                ? { kind, clientId, channel, ctx: before.ctx, scope: opts.scope }
+                : { kind, clientId, channel, ctx: before.ctx });
         } catch { /* fail closed */ }
         const after = await this.registration(clientId);
         allowed = allowed && this.live() && !!after && before.generation === after.generation && before.instance === after.instance;
@@ -356,10 +359,10 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
     }
     unsubscribeFromChannel(clientId: string, channel: string) { this.local.unsubscribeFromChannel(clientId, channel); }
-    async isClientSubscribed(clientId: string, channel: string): Promise<boolean> {
+    async isClientSubscribed(clientId: string, channel: string, opts: { scope?: AuthorityScope } = {}): Promise<boolean> {
         if (!this.live() || typeof channel !== 'string' || !channel || Buffer.byteLength(channel) > this.maxBytes) return false;
         if (this.current(clientId)) {
-            const subscribed = await this.local.isClientSubscribed(clientId, channel);
+            const subscribed = await this.local.isClientSubscribed(clientId, channel, opts);
             return this.live() && subscribed;
         }
         const target = await this.registration(clientId, false);
@@ -367,13 +370,22 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel });
     }
     async sendToChannel(channel: string, message: unknown, excludeClientId?: string | null,
-        opts?: { skipCoalesce?: boolean; publisherClientId?: string | null }): Promise<void> {
+        opts?: { skipCoalesce?: boolean; publisherClientId?: string | null; scope?: AuthorityScope }): Promise<void> {
         if (!this.live()) throw new Error('Cluster routing is not ready');
+        const { scope, owned } = scopeFor(opts?.scope, 'fanout');
+        try {
+            await this.sendToChannelScoped(channel, message, excludeClientId, opts, scope);
+        } finally {
+            if (owned) scope.close();
+        }
+    }
+    private async sendToChannelScoped(channel: string, message: unknown, excludeClientId: string | null | undefined,
+        opts: { skipCoalesce?: boolean; publisherClientId?: string | null } | undefined, scope: AuthorityScope): Promise<void> {
         const publisherId = opts?.publisherClientId ?? null;
         const ctx = publisherId ? this.current(publisherId) : null;
-        if (publisherId && (!ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true }))) return;
-        await this.local.sendToChannel(channel, message, excludeClientId, opts);
-        if (publisherId && (this.current(publisherId) !== ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true }))) return;
+        if (publisherId && (!ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true, scope }))) return;
+        await this.local.sendToChannel(channel, message, excludeClientId, { ...opts, scope });
+        if (publisherId && (this.current(publisherId) !== ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true, scope }))) return;
         const registration = publisherId ? this.registrations.get(publisherId)?.registration : null;
         if (publisherId && !registration) return;
         await this.publish(`${this.prefix}channels`, { v: 1, id: randomUUID(), source: this.source(), kind: 'channel',
@@ -439,14 +451,21 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         }
         if (frame.kind === 'channel') {
             if (typeof frame.channel !== 'string' || !frame.channel) return false;
-            if (frame.publisher) {
-                if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string') return false;
-                const publisher = await this.registration(frame.publisher.clientId);
-                if (!publisher || publisher.instance !== frame.source.instance || publisher.generation !== frame.publisher.generation) return false;
-                if (this.opts.authorize && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
-                    channel: frame.channel, ctx: publisher.ctx })) return false;
+            // One authority scope per peer fan-out: the publisher's re-check
+            // and this node's recipient checks share it.
+            const scope = createAuthorityScope('fanout');
+            try {
+                if (frame.publisher) {
+                    if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string') return false;
+                    const publisher = await this.registration(frame.publisher.clientId);
+                    if (!publisher || publisher.instance !== frame.source.instance || publisher.generation !== frame.publisher.generation) return false;
+                    if (this.opts.authorize && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
+                        channel: frame.channel, ctx: publisher.ctx, scope })) return false;
+                }
+                await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId, scope);
+            } finally {
+                scope.close();
             }
-            await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId);
         } else await this.local.broadcastToAll(frame.message, frame.excludeClientId ?? undefined);
         return true;
     }
