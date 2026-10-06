@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## 0.112.0 — 2026-10-06
+
+- **New server-side subpath `./deck` — the deck engine, extracted.** Moved
+  unchanged from the vendored copy in aws-agentcore `middleware/src/lib/deck/`
+  (originally platform-api `src/deck` at 34d17f7): the `DeckSpec` types and
+  strict `validateDeckSpec`, `deckConstraints` (`parseConstraints`,
+  `checkConstraints`), themes, `renderDeckPreview` / `renderAllSlideSvgs`, and
+  `renderPptx` / `PPTX_CONTENT_TYPE`. Symbol names are unchanged. `pptxgenjs`
+  is an optional peer used only by `renderPptx`. Its tests moved to
+  `test/deck`, plus a check that slide XML matches the vendored output.
+  Additive.
+
 ## 0.111.0 — 2026-10-06
 
 - **Page huddles are registered calls (`join`).** A lobby call nobody is rung
