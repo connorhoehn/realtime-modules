@@ -96,6 +96,16 @@ export declare function ingest(opts?: import('../ingest/types').IngestConfig): R
  * that router channel through `handle.services.pipeline.emitEvent`.
  */
 export declare function pipeline(opts?: import('../pipeline/types').PipelineConfig): RealtimeFeature;
+/**
+ * The work-graph stream behind `useWorkGraph` (0.108). Clients subscribe a
+ * person-day from a snapshot cursor; `channelFor(scope, ctx)` maps it to a
+ * router channel (absent or null refuses — default deny, no firehose) which
+ * the router's `authorize` judges. Server-publish only: the host calls
+ * `handle.services['work-graph'].publish(channel, change)` and its
+ * `source.frames(sub, trigger)` computes each subscriber's own deltas from
+ * that subscriber's cursor. See `WorkGraphStreamService`.
+ */
+export declare function workGraph(opts?: import('../work-graph/streamService').WorkGraphStreamConfig): RealtimeFeature;
 export declare function typedDocuments(opts?: import('../typed-documents/types').DocumentEventsConfig): RealtimeFeature;
 export declare function rooms(opts?: {
     stateStore?: import('../room/RoomStateStore').RoomStateStore;

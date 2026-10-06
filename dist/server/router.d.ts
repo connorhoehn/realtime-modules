@@ -112,6 +112,7 @@ export interface FeaturePlugin {
         clientId: string;
         channelId: string;
         userId?: string;
+        scope?: AuthorityScope;
     }) => void | Promise<void>;
     onDisconnect?: (info: {
         clientId: string;
@@ -122,8 +123,26 @@ export interface FeaturePlugin {
         channelId: string;
         message: unknown;
         userId?: string;
+        scope?: AuthorityScope;
     }) => void | Promise<void>;
 }
+/**
+ * `scope` on plugin hooks (0.108). `onMessage` receives the authority scope
+ * of the fan-out it observes — for a chat send, the send's own scope, so a
+ * plugin's membership reads (`listMembers(channel, { scope })`) and
+ * readable-subscription probes (`isClientSubscribed(id, channel, { scope })`)
+ * join the proof the send's authorize checks already resolved. `onConnect`
+ * receives the subscribe's scope when the subscribing service passed one.
+ *
+ * The router RETAINS the scope while the hook's promise is pending (the hook
+ * is the operation's tail, like chat's `onChannelMessage`), and releases it
+ * when the promise settles or after `PLUGIN_SCOPE_RETAIN_MAX_MS`, whichever
+ * is first. After release the scope may close: `share` then computes fresh
+ * and stores nothing, so a late plugin read is a fresh read, never a cached
+ * one. The scope is absent when the operation had none (or it had already
+ * closed); a hook that ignores it keeps the per-recipient behaviour.
+ */
+export declare const PLUGIN_SCOPE_RETAIN_MAX_MS = 30000;
 /**
  * The union router contract. Optional members are capabilities a transport
  * MAY provide; services already treat them as optional (`router.x?.(…)`) or

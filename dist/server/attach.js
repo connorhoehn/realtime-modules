@@ -48,6 +48,7 @@ exports.social = social;
 exports.calls = calls;
 exports.ingest = ingest;
 exports.pipeline = pipeline;
+exports.workGraph = workGraph;
 exports.typedDocuments = typedDocuments;
 exports.rooms = rooms;
 exports.notifications = notifications;
@@ -267,6 +268,24 @@ function pipeline(opts = {}) {
         create: ({ router, logger }) => {
             const { PipelineWsRouter } = require('../pipeline/PipelineWsRouter');
             return new PipelineWsRouter({ messageRouter: router, logger: logger, config: opts });
+        },
+    });
+}
+/**
+ * The work-graph stream behind `useWorkGraph` (0.108). Clients subscribe a
+ * person-day from a snapshot cursor; `channelFor(scope, ctx)` maps it to a
+ * router channel (absent or null refuses — default deny, no firehose) which
+ * the router's `authorize` judges. Server-publish only: the host calls
+ * `handle.services['work-graph'].publish(channel, change)` and its
+ * `source.frames(sub, trigger)` computes each subscriber's own deltas from
+ * that subscriber's cursor. See `WorkGraphStreamService`.
+ */
+function workGraph(opts = {}) {
+    return defineFeature({
+        manifest: require('../work-graph/manifest').WorkGraphStreamManifest,
+        create: ({ router, logger }) => {
+            const { WorkGraphStreamService } = require('../work-graph/streamService');
+            return new WorkGraphStreamService({ messageRouter: router, logger, config: opts });
         },
     });
 }

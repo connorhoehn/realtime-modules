@@ -131,10 +131,28 @@ export type ClientMessageFilter = (args: {
  */
 export interface FeaturePlugin {
     name: string;
-    onConnect?: (info: { clientId: string; channelId: string; userId?: string }) => void | Promise<void>;
+    onConnect?: (info: { clientId: string; channelId: string; userId?: string; scope?: AuthorityScope }) => void | Promise<void>;
     onDisconnect?: (info: { clientId: string; channels: string[] }) => void | Promise<void>;
-    onMessage?: (info: { clientId: string; channelId: string; message: unknown; userId?: string }) => void | Promise<void>;
+    onMessage?: (info: { clientId: string; channelId: string; message: unknown; userId?: string; scope?: AuthorityScope }) => void | Promise<void>;
 }
+
+/**
+ * `scope` on plugin hooks (0.108). `onMessage` receives the authority scope
+ * of the fan-out it observes — for a chat send, the send's own scope, so a
+ * plugin's membership reads (`listMembers(channel, { scope })`) and
+ * readable-subscription probes (`isClientSubscribed(id, channel, { scope })`)
+ * join the proof the send's authorize checks already resolved. `onConnect`
+ * receives the subscribe's scope when the subscribing service passed one.
+ *
+ * The router RETAINS the scope while the hook's promise is pending (the hook
+ * is the operation's tail, like chat's `onChannelMessage`), and releases it
+ * when the promise settles or after `PLUGIN_SCOPE_RETAIN_MAX_MS`, whichever
+ * is first. After release the scope may close: `share` then computes fresh
+ * and stores nothing, so a late plugin read is a fresh read, never a cached
+ * one. The scope is absent when the operation had none (or it had already
+ * closed); a hook that ignores it keeps the per-recipient behaviour.
+ */
+export const PLUGIN_SCOPE_RETAIN_MAX_MS = 30_000;
 
 /**
  * The union router contract. Optional members are capabilities a transport
@@ -213,15 +231,35 @@ export interface RealtimeRouter {
     readonly nodeId?: string;
 }
 
-function firePlugin(name: string, fn: () => void | Promise<void>): void {
+function firePlugin(name: string, fn: () => void | Promise<void>, scope?: AuthorityScope): void {
+    // A plugin observing a scoped operation keeps the scope open until its
+    // own promise settles (bounded), so its reads share the operation's
+    // proofs; it never holds the scope past that.
+    let release: (() => void) | null = scope?.active ? scope.retain() : null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const done = () => {
+        if (timer) { clearTimeout(timer); timer = null; }
+        const r = release; release = null; r?.();
+    };
     try {
         const r = fn();
-        if (r && typeof (r as Promise<void>).catch === 'function') {
-            (r as Promise<void>).catch(() => undefined);
+        if (r && typeof (r as Promise<void>).then === 'function') {
+            if (release) {
+                timer = setTimeout(done, PLUGIN_SCOPE_RETAIN_MAX_MS);
+                (timer as { unref?: () => void }).unref?.();
+            }
+            (r as Promise<void>).then(done, done);
+            return;
         }
     } catch {
         /* plugin errors never propagate */
     }
+    done();
+}
+
+/** `scope` only while it is open — a closed scope is never handed out. */
+function liveScope(scope: AuthorityScope | null | undefined): { scope: AuthorityScope } | Record<string, never> {
+    return scope?.active ? { scope } : {};
 }
 
 /**
@@ -375,8 +413,8 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             for (const plugin of this.plugins) {
                 if (plugin.onMessage) {
                     firePlugin(plugin.name, () =>
-                        plugin.onMessage!({ clientId: senderId, channelId: channel, message, userId }),
-                    );
+                        plugin.onMessage!({ clientId: senderId, channelId: channel, message, userId, ...liveScope(scope) }),
+                    scope);
                 }
             }
         }
@@ -467,12 +505,12 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         // M3: on false, services suppress the local subscription and the ack.
         const context = this.ctxOf(clientId);
         const decision = this.checkChannel('subscribe', clientId, channel, opts);
-        if (typeof decision === 'boolean') return decision && this.addSubscription(clientId, channel);
+        if (typeof decision === 'boolean') return decision && this.addSubscription(clientId, channel, opts?.scope);
         const pending = { cancelled: false };
         const channels = this.pendingSubscriptions.get(clientId) ?? new Map();
         const requests = channels.get(channel) ?? new Set();
         requests.add(pending); channels.set(channel, requests); this.pendingSubscriptions.set(clientId, channels);
-        return decision.then(allowed => allowed && !pending.cancelled && this.ctxOf(clientId) === context && this.addSubscription(clientId, channel)).finally(() => {
+        return decision.then(allowed => allowed && !pending.cancelled && this.ctxOf(clientId) === context && this.addSubscription(clientId, channel, opts?.scope)).finally(() => {
             requests.delete(pending);
             if (!requests.size) channels.delete(channel);
             if (!channels.size) this.pendingSubscriptions.delete(clientId);
@@ -488,8 +526,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             && this.subscriptionTokens.get(channel)?.get(clientId) === token;
     }
 
-    private addSubscription(clientId: string, channel: string): boolean {
-
+    private addSubscription(clientId: string, channel: string, scope?: AuthorityScope): boolean {
         let members = this.channelMembers.get(channel);
         if (!members) {
             members = new Set();
@@ -509,7 +546,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         const userId = this.plugins.length > 0 ? this.getUserIdForClient(clientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onConnect) {
-                firePlugin(plugin.name, () => plugin.onConnect!({ clientId, channelId: channel, userId }));
+                firePlugin(plugin.name, () => plugin.onConnect!({ clientId, channelId: channel, userId, ...liveScope(scope) }), scope);
             }
         }
         return true;

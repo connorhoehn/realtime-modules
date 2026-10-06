@@ -307,7 +307,7 @@ class ChatService {
                     await this.handleGetHistory(clientId, data);
                     return;
                 case 'typing':
-                    await this.handleTyping(clientId, data);
+                    await this.handleTyping(clientId, data, scope);
                     return;
                 case 'members':
                     await this.handleMembers(clientId, data);
@@ -1670,8 +1670,14 @@ class ChatService {
      * the resolver gives the connection so the others can name them. A
      * connection that has not joined the channel is not in it, and may not
      * announce itself there.
+     *
+     * 0.108: typing is held to the same authority as a send. The dm and
+     * channel membership gates run (a member removed while still subscribed
+     * cannot announce themselves), and the fan-out names the typist as
+     * publisher so the router rechecks `publish` at delivery — all within
+     * the action's one authority scope, so it costs no extra proof.
      */
-    async handleTyping(clientId, frame) {
+    async handleTyping(clientId, frame, scope) {
         const { channel, typing } = frame;
         if (!channel) {
             this.sendError(clientId, 'Channel is required');
@@ -1682,6 +1688,10 @@ class ChatService {
             return;
         }
         const identity = this._resolveIdentity(clientId, frame);
+        if (!this._checkDmMembership(clientId, channel, identity))
+            return;
+        if (!(await this._checkMembership(clientId, channel, identity, scope)))
+            return;
         const out = {
             type: 'chat',
             action: 'typing',
@@ -1692,7 +1702,7 @@ class ChatService {
             typing: typing === true,
             timestamp: new Date().toISOString(),
         };
-        await this.messageRouter.sendToChannel(channel, out, clientId);
+        await this.messageRouter.sendToChannel(channel, out, clientId, scope?.active ? { publisherClientId: clientId, scope } : { publisherClientId: clientId });
     }
     async broadcastMessage(channel, messageData, publisherClientId, scope) {
         const broadcastMessage = {

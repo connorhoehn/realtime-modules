@@ -83,6 +83,7 @@ export {
     calls,
     ingest,
     pipeline,
+    workGraph,
     typedDocuments,
     rooms,
     notifications,
@@ -97,6 +98,7 @@ export type {
 } from './attach';
 export {
     LocalRealtimeRouter,
+    PLUGIN_SCOPE_RETAIN_MAX_MS,
 } from './router';
 export { RedisRealtimeRouter } from './RedisRealtimeRouter';
 export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents } from './RedisRealtimeRouter';
@@ -116,6 +118,15 @@ export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
 export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';
 export { createAuthorityScope } from '../server-ws/authorityScope';
+export { WorkGraphStreamService } from '../work-graph/streamService';
+export type {
+    WorkGraphSource,
+    WorkGraphStreamConfig,
+    WorkGraphStreamScope,
+    WorkGraphStreamSubscription,
+    WorkGraphStreamTrigger,
+    WorkGraphChannelContext,
+} from '../work-graph/streamService';
 export type { AuthorityScope } from '../server-ws/authorityScope';
 
 export * from "./documentGrant";

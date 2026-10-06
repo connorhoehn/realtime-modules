@@ -16,4 +16,5 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./reduceSnapshot"), exports);
 __exportStar(require("./useWorkGraph"), exports);
+__exportStar(require("./gatewayTransport"), exports);
 //# sourceMappingURL=index.js.map

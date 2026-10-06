@@ -37,7 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.exportCanvasProjection = exports.createCanvasSeed = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.exportCanvasProjection = exports.createCanvasSeed = exports.WorkGraphStreamService = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.workGraph = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -95,6 +95,7 @@ Object.defineProperty(exports, "social", { enumerable: true, get: function () { 
 Object.defineProperty(exports, "calls", { enumerable: true, get: function () { return attach_1.calls; } });
 Object.defineProperty(exports, "ingest", { enumerable: true, get: function () { return attach_1.ingest; } });
 Object.defineProperty(exports, "pipeline", { enumerable: true, get: function () { return attach_1.pipeline; } });
+Object.defineProperty(exports, "workGraph", { enumerable: true, get: function () { return attach_1.workGraph; } });
 Object.defineProperty(exports, "typedDocuments", { enumerable: true, get: function () { return attach_1.typedDocuments; } });
 Object.defineProperty(exports, "rooms", { enumerable: true, get: function () { return attach_1.rooms; } });
 Object.defineProperty(exports, "notifications", { enumerable: true, get: function () { return attach_1.notifications; } });
@@ -102,6 +103,7 @@ Object.defineProperty(exports, "fileUploads", { enumerable: true, get: function 
 Object.defineProperty(exports, "collabDocs", { enumerable: true, get: function () { return attach_1.collabDocs; } });
 var router_1 = require("./router");
 Object.defineProperty(exports, "LocalRealtimeRouter", { enumerable: true, get: function () { return router_1.LocalRealtimeRouter; } });
+Object.defineProperty(exports, "PLUGIN_SCOPE_RETAIN_MAX_MS", { enumerable: true, get: function () { return router_1.PLUGIN_SCOPE_RETAIN_MAX_MS; } });
 var RedisRealtimeRouter_1 = require("./RedisRealtimeRouter");
 Object.defineProperty(exports, "RedisRealtimeRouter", { enumerable: true, get: function () { return RedisRealtimeRouter_1.RedisRealtimeRouter; } });
 var types_1 = require("../server-ws/types");
@@ -113,6 +115,8 @@ Object.defineProperty(exports, "baseChannel", { enumerable: true, get: function 
 Object.defineProperty(exports, "SERVICE_CHANNEL_PREFIXES", { enumerable: true, get: function () { return channelAccess_1.SERVICE_CHANNEL_PREFIXES; } });
 var authorityScope_1 = require("../server-ws/authorityScope");
 Object.defineProperty(exports, "createAuthorityScope", { enumerable: true, get: function () { return authorityScope_1.createAuthorityScope; } });
+var streamService_1 = require("../work-graph/streamService");
+Object.defineProperty(exports, "WorkGraphStreamService", { enumerable: true, get: function () { return streamService_1.WorkGraphStreamService; } });
 __exportStar(require("./documentGrant"), exports);
 var canvasSeed_1 = require("./canvasSeed");
 Object.defineProperty(exports, "createCanvasSeed", { enumerable: true, get: function () { return canvasSeed_1.createCanvasSeed; } });

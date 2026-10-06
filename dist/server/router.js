@@ -18,19 +18,60 @@
 // so one feature — or all thirteen — can be attached to an existing
 // http.Server with zero infrastructure.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LocalRealtimeRouter = void 0;
+exports.LocalRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = void 0;
 const channelAccess_1 = require("../server-ws/channelAccess");
 const authorityScope_1 = require("../server-ws/authorityScope");
-function firePlugin(name, fn) {
+/**
+ * `scope` on plugin hooks (0.108). `onMessage` receives the authority scope
+ * of the fan-out it observes — for a chat send, the send's own scope, so a
+ * plugin's membership reads (`listMembers(channel, { scope })`) and
+ * readable-subscription probes (`isClientSubscribed(id, channel, { scope })`)
+ * join the proof the send's authorize checks already resolved. `onConnect`
+ * receives the subscribe's scope when the subscribing service passed one.
+ *
+ * The router RETAINS the scope while the hook's promise is pending (the hook
+ * is the operation's tail, like chat's `onChannelMessage`), and releases it
+ * when the promise settles or after `PLUGIN_SCOPE_RETAIN_MAX_MS`, whichever
+ * is first. After release the scope may close: `share` then computes fresh
+ * and stores nothing, so a late plugin read is a fresh read, never a cached
+ * one. The scope is absent when the operation had none (or it had already
+ * closed); a hook that ignores it keeps the per-recipient behaviour.
+ */
+exports.PLUGIN_SCOPE_RETAIN_MAX_MS = 30_000;
+function firePlugin(name, fn, scope) {
+    // A plugin observing a scoped operation keeps the scope open until its
+    // own promise settles (bounded), so its reads share the operation's
+    // proofs; it never holds the scope past that.
+    let release = scope?.active ? scope.retain() : null;
+    let timer = null;
+    const done = () => {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+        const r = release;
+        release = null;
+        r?.();
+    };
     try {
         const r = fn();
-        if (r && typeof r.catch === 'function') {
-            r.catch(() => undefined);
+        if (r && typeof r.then === 'function') {
+            if (release) {
+                timer = setTimeout(done, exports.PLUGIN_SCOPE_RETAIN_MAX_MS);
+                timer.unref?.();
+            }
+            r.then(done, done);
+            return;
         }
     }
     catch {
         /* plugin errors never propagate */
     }
+    done();
+}
+/** `scope` only while it is open — a closed scope is never handed out. */
+function liveScope(scope) {
+    return scope?.active ? { scope } : {};
 }
 /**
  * Single-process router: in-memory channel membership, identity from the WS
@@ -164,7 +205,7 @@ class LocalRealtimeRouter {
             const userId = senderClientId ? this.getUserIdForClient(senderClientId) : undefined;
             for (const plugin of this.plugins) {
                 if (plugin.onMessage) {
-                    firePlugin(plugin.name, () => plugin.onMessage({ clientId: senderId, channelId: channel, message, userId }));
+                    firePlugin(plugin.name, () => plugin.onMessage({ clientId: senderId, channelId: channel, message, userId, ...liveScope(scope) }), scope);
                 }
             }
         }
@@ -254,14 +295,14 @@ class LocalRealtimeRouter {
         const context = this.ctxOf(clientId);
         const decision = this.checkChannel('subscribe', clientId, channel, opts);
         if (typeof decision === 'boolean')
-            return decision && this.addSubscription(clientId, channel);
+            return decision && this.addSubscription(clientId, channel, opts?.scope);
         const pending = { cancelled: false };
         const channels = this.pendingSubscriptions.get(clientId) ?? new Map();
         const requests = channels.get(channel) ?? new Set();
         requests.add(pending);
         channels.set(channel, requests);
         this.pendingSubscriptions.set(clientId, channels);
-        return decision.then(allowed => allowed && !pending.cancelled && this.ctxOf(clientId) === context && this.addSubscription(clientId, channel)).finally(() => {
+        return decision.then(allowed => allowed && !pending.cancelled && this.ctxOf(clientId) === context && this.addSubscription(clientId, channel, opts?.scope)).finally(() => {
             requests.delete(pending);
             if (!requests.size)
                 channels.delete(channel);
@@ -278,7 +319,7 @@ class LocalRealtimeRouter {
         return allowed && this.ctxOf(clientId) === context
             && this.subscriptionTokens.get(channel)?.get(clientId) === token;
     }
-    addSubscription(clientId, channel) {
+    addSubscription(clientId, channel, scope) {
         let members = this.channelMembers.get(channel);
         if (!members) {
             members = new Set();
@@ -297,7 +338,7 @@ class LocalRealtimeRouter {
         const userId = this.plugins.length > 0 ? this.getUserIdForClient(clientId) : undefined;
         for (const plugin of this.plugins) {
             if (plugin.onConnect) {
-                firePlugin(plugin.name, () => plugin.onConnect({ clientId, channelId: channel, userId }));
+                firePlugin(plugin.name, () => plugin.onConnect({ clientId, channelId: channel, userId, ...liveScope(scope) }), scope);
             }
         }
         return true;

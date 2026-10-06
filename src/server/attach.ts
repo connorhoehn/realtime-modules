@@ -349,6 +349,27 @@ export function pipeline(
     });
 }
 
+/**
+ * The work-graph stream behind `useWorkGraph` (0.108). Clients subscribe a
+ * person-day from a snapshot cursor; `channelFor(scope, ctx)` maps it to a
+ * router channel (absent or null refuses — default deny, no firehose) which
+ * the router's `authorize` judges. Server-publish only: the host calls
+ * `handle.services['work-graph'].publish(channel, change)` and its
+ * `source.frames(sub, trigger)` computes each subscriber's own deltas from
+ * that subscriber's cursor. See `WorkGraphStreamService`.
+ */
+export function workGraph(
+    opts: import('../work-graph/streamService').WorkGraphStreamConfig = {},
+): RealtimeFeature {
+    return defineFeature({
+        manifest: require('../work-graph/manifest').WorkGraphStreamManifest,
+        create: ({ router, logger }) => {
+            const { WorkGraphStreamService } = require('../work-graph/streamService') as typeof import('../work-graph/streamService');
+            return new WorkGraphStreamService({ messageRouter: router as any, logger, config: opts });
+        },
+    });
+}
+
 export function typedDocuments(
     opts: import('../typed-documents/types').DocumentEventsConfig = {},
 ): RealtimeFeature {

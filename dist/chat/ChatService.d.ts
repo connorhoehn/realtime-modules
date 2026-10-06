@@ -541,11 +541,17 @@ export declare class ChatService {
      * the resolver gives the connection so the others can name them. A
      * connection that has not joined the channel is not in it, and may not
      * announce itself there.
+     *
+     * 0.108: typing is held to the same authority as a send. The dm and
+     * channel membership gates run (a member removed while still subscribed
+     * cannot announce themselves), and the fan-out names the typist as
+     * publisher so the router rechecks `publish` at delivery — all within
+     * the action's one authority scope, so it costs no extra proof.
      */
     handleTyping(clientId: string, frame: {
         channel: string;
         typing?: unknown;
-    }): Promise<void>;
+    }, scope?: AuthorityScope): Promise<void>;
     broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string, scope?: AuthorityScope): Promise<void>;
     /**
      * Resolve the sender identity for a connection, or null. A throwing

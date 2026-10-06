@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.108.0 — 2026-10-06
+
+- **Plugin authority scope.** Router `FeaturePlugin.onMessage` receives the
+  fan-out's `scope` (for a chat send, the send's own scope) and `onConnect`
+  receives the subscribe's scope when the service passed one. A plugin's
+  membership reads (`listMembers(channel, { scope })`) and readable-
+  subscription probes (`isClientSubscribed(id, channel, { scope })`) then
+  share the one proof per channel the send's authorize checks resolved. The
+  router retains the scope while the hook's promise is pending and releases
+  it when it settles or after `PLUGIN_SCOPE_RETAIN_MAX_MS` (30 s, exported
+  from `/server`); after release reads are fresh. The 0.107 contract is
+  unchanged: one operation, revocable proofs, no settled cache. Plugins that
+  ignore `scope` keep per-recipient reads.
+- **`workGraph()` server feature** (`/server`; `WorkGraphStreamService` also
+  under `/work-graph/server`): the stream `useWorkGraph` expects. Subscribe
+  `{ subscriptionGeneration, scope: { personId, day, timezone }, cursor |
+  awaitAccess: 1, activity?, viewPatch?, baseViewHash? }`; the host's
+  `channelFor(scope, ctx)` maps it to a router channel (absent/null/throw
+  refuses — default deny, no firehose), which `router.subscribeToChannel`
+  and `authorize` judge. A router without channel authorize is refused
+  unless `allowUnenforcedRouter`. Server-publish only:
+  `service.publish(channel, change)` asks the host `WorkGraphSource.frames(sub,
+  trigger, { scope })` for each subscriber's own messages from its own
+  cursor (the change is never sent), under one AuthorityScope per publish,
+  with readability rechecked before and after the source runs. Catch-up on
+  subscribe, content-free `invalidate: policy-changed` on revocation,
+  `reset-required: source-unavailable` on a source failure, and
+  `signalAccess(channel)` answers `awaitAccess` placeholders with
+  `access-restored` once the router admits them. Node-local: call
+  `publish` / `signalAccess` on every replica.
+- `/client`: `createWorkGraphGatewayTransport({ gateway, fetchSnapshot })`
+  implements `WorkGraphClientTransport.openWebSocket` over the realtime
+  socket (`useGateway()` satisfies `gateway`). `useWorkGraph` and its
+  reducers are unchanged.
+- Chat `typing` runs the dm/channel membership gates and fans out with the
+  typist as `publisherClientId`, inside the action's scope, so a member
+  removed while still subscribed cannot announce typing and the router
+  rechecks `publish` at delivery.
+
 ## 0.107.0 — 2026-10-05
 
 - **Per-operation authority scope.** `ChannelAuthorize` receives an optional

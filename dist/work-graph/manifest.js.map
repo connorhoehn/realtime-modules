@@ -1,0 +1,1 @@
+{"version":3,"file":"manifest.js","sourceRoot":"","sources":["../../src/work-graph/manifest.ts"],"names":[],"mappings":";AAAA,8CAA8C;AAC9C,EAAE;AACF,6EAA6E;AAC7E,2EAA2E;AAC3E,kCAAkC;;;AAIrB,QAAA,uBAAuB,GAAoB;IACpD,IAAI,EAAE,YAAY;IAClB,OAAO,EAAE,OAAO;IAChB,OAAO,EAAE,EAAE;IACX,QAAQ,EAAE,EAAE;IACZ,YAAY,EAAE,EAAE;CACnB,CAAC;AAEF,kBAAe,+BAAuB,CAAC"}

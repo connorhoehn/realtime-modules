@@ -13,7 +13,7 @@ const server = require('../dist/server/index.js');
 const {
     attachRealtime, chat, presence, cursor, reactions, activity, social,
     calls, ingest, pipeline, typedDocuments, rooms, notifications, fileUploads,
-    collabDocs,
+    collabDocs, workGraph,
 } = server;
 
 const FEATURES = [
@@ -22,7 +22,7 @@ const FEATURES = [
     ['call', calls], ['ingest', ingest], ['pipeline-ws', pipeline],
     ['typed-documents', typedDocuments], ['room', rooms],
     ['notification', notifications], ['fileupload', fileUploads],
-    ['crdt', collabDocs],
+    ['crdt', collabDocs], ['work-graph', workGraph],
 ];
 
 const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv.address().port)));
