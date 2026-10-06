@@ -47,6 +47,7 @@
 
 import type {
     PipelineBusEnvelope,
+    PipelineChannelContext,
     PipelineConfig,
     PipelineFrame,
     PipelineLogger,
@@ -150,6 +151,12 @@ export class PipelineWsRouter {
     metricsCollector: PipelineMetricsCollector | null;
     clientChannels: SubscriptionTracker;
     maxChannelLength: number;
+    /** Host mapping from wire channel to router channel (identity when unset). */
+    channelFor: PipelineConfig['channelFor'] | null;
+    /** Which firehoses a client may subscribe (both off by default). */
+    firehoses: { all: boolean; approvals: boolean };
+    /** clientId → wire channel → router channel, recorded at subscribe. */
+    private readonly routedChannels = new Map<string, Map<string, string>>();
 
     constructor(opts: PipelineWsRouterOptions) {
         if (!opts || !opts.logger) {
@@ -161,6 +168,11 @@ export class PipelineWsRouter {
 
         const config: PipelineConfig = opts.config ?? {};
         this.maxChannelLength = config.maxChannelLength ?? DEFAULT_MAX_CHANNEL_LENGTH;
+        this.channelFor = typeof config.channelFor === 'function' ? config.channelFor : null;
+        this.firehoses = {
+            all: config.firehoses?.all === true,
+            approvals: config.firehoses?.approvals === true,
+        };
 
         this.clientChannels = new SubscriptionTracker();
     }
@@ -193,8 +205,12 @@ export class PipelineWsRouter {
     /**
      * Subscribe a client to a pipeline channel. Valid formats:
      *   - pipeline:run:{runId}
-     *   - pipeline:all
-     *   - pipeline:approvals
+     *   - pipeline:all        (only with `firehoses.all`)
+     *   - pipeline:approvals  (only with `firehoses.approvals`)
+     *
+     * The wire channel is mapped through `config.channelFor` (identity by
+     * default) and the ROUTER channel is subscribed, so the router's
+     * `authorize` judges the host's name. Acks echo the wire channel.
      */
     async handleSubscribe(
         clientId: string,
@@ -207,14 +223,34 @@ export class PipelineWsRouter {
             );
             return;
         }
+        if (!this._firehoseAllowed(channel)) {
+            this._sendRefused(clientId, channel, 'firehose disabled');
+            return;
+        }
+
+        const routed = await this._routerChannelFor(clientId, channel);
+        if (!routed) {
+            this._sendRefused(clientId, channel, 'unmapped');
+            return;
+        }
 
         if (this.messageRouter) {
             // `false` is the router's channel authz refusing (it told the client).
-            const subscribed: unknown = await this.messageRouter.subscribeToChannel(clientId, channel);
+            const subscribed: unknown = await this.messageRouter.subscribeToChannel(clientId, routed);
             if (subscribed === false) return;
         }
 
-        this.clientChannels.addSubscription(clientId, channel);
+        const previous = this.routedChannels.get(clientId)?.get(channel);
+        if (previous && previous !== routed) {
+            this.clientChannels.removeSubscription(clientId, previous);
+        }
+        this.clientChannels.addSubscription(clientId, routed);
+        let byWire = this.routedChannels.get(clientId);
+        if (!byWire) {
+            byWire = new Map();
+            this.routedChannels.set(clientId, byWire);
+        }
+        byWire.set(channel, routed);
 
         this.sendToClient(clientId, {
             type: 'pipeline',
@@ -224,12 +260,15 @@ export class PipelineWsRouter {
         });
 
         this.logger.info(
-            `Client ${clientId} subscribed to pipeline channel ${channel}`,
+            `Client ${clientId} subscribed to pipeline channel ${channel}${routed !== channel ? ` (${routed})` : ''}`,
         );
     }
 
     /**
      * Unsubscribe a client from a previously-subscribed pipeline channel.
+     * Uses the router channel recorded at subscribe; with `channelFor`
+     * configured, a channel never subscribed is acknowledged without
+     * touching the router.
      */
     async handleUnsubscribe(
         clientId: string,
@@ -240,11 +279,19 @@ export class PipelineWsRouter {
             return;
         }
 
-        if (this.messageRouter) {
-            await this.messageRouter.unsubscribeFromChannel(clientId, channel);
+        const byWire = this.routedChannels.get(clientId);
+        const routed = byWire?.get(channel) ?? (this.channelFor ? null : channel);
+        if (byWire) {
+            byWire.delete(channel);
+            if (byWire.size === 0) this.routedChannels.delete(clientId);
         }
 
-        this.clientChannels.removeSubscription(clientId, channel);
+        if (routed) {
+            if (this.messageRouter) {
+                await this.messageRouter.unsubscribeFromChannel(clientId, routed);
+            }
+            this.clientChannels.removeSubscription(clientId, routed);
+        }
 
         this.sendToClient(clientId, {
             type: 'pipeline',
@@ -256,6 +303,43 @@ export class PipelineWsRouter {
         this.logger.info(
             `Client ${clientId} unsubscribed from pipeline channel ${channel}`,
         );
+    }
+
+    _firehoseAllowed(channel: string): boolean {
+        if (channel === CHANNEL_ALL) return this.firehoses.all;
+        if (channel === CHANNEL_APPROVALS) return this.firehoses.approvals;
+        return true;
+    }
+
+    async _routerChannelFor(clientId: string, channel: string): Promise<string | null> {
+        if (!this.channelFor) return channel;
+        const runId = channel.startsWith(RUN_CHANNEL_PREFIX) ? channel.slice(RUN_CHANNEL_PREFIX.length) : null;
+        let userContext: Record<string, unknown> | null = null;
+        try {
+            userContext = this.messageRouter?.getClientData?.(clientId)?.userContext ?? null;
+        } catch {
+            userContext = null;
+        }
+        const ctx: PipelineChannelContext = { clientId, runId, userContext };
+        try {
+            const mapped = await this.channelFor(channel, ctx);
+            return typeof mapped === 'string' && mapped.length > 0 ? mapped : null;
+        } catch (err) {
+            this.logger.warn('[pipeline] channelFor threw; refusing', { clientId, channel, error: (err as Error)?.message });
+            return null;
+        }
+    }
+
+    _sendRefused(clientId: string, channel: string, reason: string): void {
+        this.sendToClient(clientId, {
+            type: 'error',
+            service: 'pipeline',
+            code: 'PIPELINE_CHANNEL_REFUSED',
+            channel,
+            message: `Not allowed to subscribe to ${channel}`,
+            timestamp: new Date().toISOString(),
+        });
+        this.logger.debug?.(`[pipeline] refused ${channel} for ${clientId}: ${reason}`);
     }
 
     /**
@@ -335,6 +419,7 @@ export class PipelineWsRouter {
      */
     async handleDisconnect(clientId: string): Promise<void> {
         const channels = this.clientChannels.removeClient(clientId);
+        this.routedChannels.delete(clientId);
         for (const channel of channels) {
             try {
                 if (this.messageRouter) {

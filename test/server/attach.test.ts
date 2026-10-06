@@ -406,7 +406,8 @@ describe('attachRealtime — notifications are pushed through handle.services', 
 // anyone looks before shipping a feed.
 describe('attachRealtime — activity is global, not per-channel', () => {
     it('delivers an event published on one channel to a subscriber of another', async () => {
-        const { server, port, handle } = await boot([activity()], {
+        // 0.107: both behaviours are opt-in; this pins what the opt-in does.
+        const { server, port, handle } = await boot([activity({ allowClientPublish: true, autoSubscribeBroadcast: true })], {
             auth: async () => ({ userId: 'u-1', displayName: 'Ada' }),
         });
 

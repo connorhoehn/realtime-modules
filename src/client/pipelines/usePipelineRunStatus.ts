@@ -5,9 +5,12 @@
 // host that embeds the chat gets live agent-run cards without copying app code.
 //
 // Two sources, merged per run:
-//   - Live: the gateway's `pipeline:event` frames. The firehose (`pipeline:all`)
-//     is subscribed as well as each run's own channel, because a per-run
-//     subscription lands AFTER the run has started and misses its first frames.
+//   - Live: the gateway's `pipeline:event` frames on each run's own channel.
+//     The cross-run firehose (`pipeline:all`) is subscribed only with
+//     `subscribeFirehose: true`: it catches a run's first frames, which a
+//     per-run subscription made after the run started misses, but it carries
+//     every run on the server and servers refuse it by default. Without it the
+//     snapshot read covers the frames a late subscription missed.
 //   - Durable: `GET {apiBaseUrl}/api/pipelines/:pipelineId/runs/:runId`, once
 //     on mount and then, while the run is not terminal, every `pollMs` with no
 //     live transport or every `livePollMs` (30 s) with one — the frames carry a
@@ -161,6 +164,12 @@ export interface UsePipelineRunStatusOptions {
    * `0` disables it (frames only).
    */
   reviewPollMs?: number;
+  /**
+   * Also subscribe the cross-run `pipeline:all` firehose. Default false: the
+   * library's `pipeline()` feature refuses it unless the server enables
+   * `firehoses.all`, and it carries every run's events, not just these.
+   */
+  subscribeFirehose?: boolean;
 }
 
 /** The narration people see while a step runs, keyed by step id. */
@@ -936,6 +945,7 @@ export function usePipelineRunStatus(
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
   const livePollMs = Math.max(opts.livePollMs ?? DEFAULT_LIVE_POLL_MS, pollMs);
   const reviewPollMs = opts.reviewPollMs ?? DEFAULT_REVIEW_POLL_MS;
+  const firehose = opts.subscribeFirehose === true;
 
   // Hooks cannot be conditional, so the context is always read; it is only
   // USED when the host handed in no transport of its own.
@@ -986,7 +996,7 @@ export function usePipelineRunStatus(
   useEffect(() => {
     if (runs.length === 0 || !send || !onMessage) return;
     const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
-    send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
+    if (firehose) send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
     for (const id of channels) send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
     type RunFrame = GatewayMessage & { eventType?: string; payload?: Record<string, unknown>; emittedAt?: number };
     const cardOf = (frameRunId: unknown) => {
@@ -1026,7 +1036,7 @@ export function usePipelineRunStatus(
       for (const id of channels) send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, executorKey, send, onMessage]);
+  }, [key, executorKey, send, onMessage, firehose]);
 
   // Once (and on every tick): the durable answer, for anyone arriving late.
   useEffect(() => {

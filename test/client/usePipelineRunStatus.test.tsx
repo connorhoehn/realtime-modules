@@ -207,11 +207,22 @@ describe('labels and detail', () => {
 });
 
 describe('usePipelineRunStatus (hook)', () => {
-  it('subscribes the firehose and each run, applies frames, and unsubscribes on unmount', () => {
+  it('subscribes the firehose only when asked', () => {
+    const { transport, send } = makeTransport();
+    const off = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: null, transport }));
+    expect(send).not.toHaveBeenCalledWith({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
+    expect(send).toHaveBeenCalledWith({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:run:run-1' });
+    off.unmount();
+    send.mockClear();
+    const on = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: null, transport, subscribeFirehose: true }));
+    expect(send).toHaveBeenCalledWith({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
+    on.unmount();
+  });
+
+  it('subscribes each run, applies frames, and unsubscribes on unmount', () => {
     const { transport, send, emit } = makeTransport();
     const { result, unmount } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: null, transport }));
 
-    expect(send).toHaveBeenCalledWith({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
     expect(send).toHaveBeenCalledWith({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:run:run-1' });
     expect(result.current('run-1')).toBeUndefined();
 

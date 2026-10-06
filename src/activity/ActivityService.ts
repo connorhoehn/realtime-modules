@@ -35,6 +35,7 @@ import {
     InMemoryActivityHistoryStore,
 } from './ActivityHistoryStore';
 import type { ActivityEvent, ActivityEventConfig } from './types';
+import { routerPermits, type ChannelAccessRouter } from '../server-ws/channelAccess';
 
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 
@@ -53,7 +54,12 @@ export interface ActivityLogger {
 export interface ActivityMessageRouter {
     sendToClient(clientId: string, message: any): void;
     sendToChannel?(channel: string, message: any): Promise<void> | void;
-    subscribeToChannel?(clientId: string, channel: string): Promise<void> | void;
+    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
+    /**
+     * The router's channel authz without subscribing. `getHistory` asks it
+     * (`'subscribe'`); a router without it gets no history (fail closed).
+     */
+    checkChannel?: ChannelAccessRouter['checkChannel'];
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     getClientData?(clientId: string): any;
 }
@@ -139,6 +145,8 @@ export class ActivityService {
 
     readonly maxHistoryItems: number;
     readonly maxChannelIdLength: number;
+    readonly allowClientPublish: boolean;
+    readonly autoSubscribeBroadcast: boolean;
 
     constructor(opts: ActivityServiceOpts) {
         if (!opts || !opts.logger) {
@@ -152,6 +160,8 @@ export class ActivityService {
         const cfg: ActivityEventConfig = opts.config ?? {};
         this.maxHistoryItems = cfg.maxHistoryItems ?? DEFAULT_MAX_HISTORY_ITEMS;
         this.maxChannelIdLength = cfg.maxChannelIdLength ?? DEFAULT_MAX_CHANNEL_ID_LENGTH;
+        this.allowClientPublish = cfg.allowClientPublish === true;
+        this.autoSubscribeBroadcast = cfg.autoSubscribeBroadcast === true;
 
         this.historyStore = opts.historyStore ?? new InMemoryActivityHistoryStore(this.maxHistoryItems);
 
@@ -232,6 +242,16 @@ export class ActivityService {
     }
 
     async handlePublish(clientId: string, data: any): Promise<void> {
+        if (!this.allowClientPublish) {
+            this.sendToClient(clientId, {
+                type: 'error',
+                service: 'activity',
+                code: 'ACTIVITY_PUBLISH_DISABLED',
+                message: 'Activity events are produced by the server',
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
         const { event } = data ?? {};
 
         if (!event || typeof event !== 'object') {
@@ -265,6 +285,7 @@ export class ActivityService {
 
         const broadcastMessage = {
             type: 'activity:event',
+            channel: ActivityService.BROADCAST_CHANNEL,
             payload: enrichedPayload,
         };
 
@@ -301,10 +322,11 @@ export class ActivityService {
 
     /**
      * Auto-subscribe a newly connected client to the global
-     * activity:broadcast channel. Called by the server on connection
-     * setup.
+     * activity:broadcast channel, only with `config.autoSubscribeBroadcast`.
+     * Called by the server on connection setup.
      */
     async onClientConnect(clientId: string): Promise<void> {
+        if (!this.autoSubscribeBroadcast) return;
         try {
             await this.handleSubscribe(clientId, { channelId: ActivityService.BROADCAST_CHANNEL });
             this.logger.debug('Client auto-subscribed to broadcast channel', {
@@ -318,6 +340,40 @@ export class ActivityService {
                 errorMessage: error && error.message,
             });
         }
+    }
+
+    /**
+     * Server-side producer: record `event` in `channel`'s history and deliver
+     * it to that channel's subscribers as
+     * `{ type: 'activity:event', channel, payload }`. The router's recipient
+     * checks still apply to every subscriber. Use this instead of client
+     * publishes; it never touches `activity:broadcast` unless asked to.
+     */
+    async publish(
+        channel: string,
+        event: { eventType: string; detail?: Record<string, unknown>; userId?: string | null; displayName?: string; timestamp?: string },
+    ): Promise<ActivityEvent | null> {
+        if (typeof channel !== 'string' || !channel || channel.length > this.maxChannelIdLength) return null;
+        if (!event || typeof event.eventType !== 'string' || !event.eventType) return null;
+        const payload: ActivityEvent = {
+            eventType: event.eventType,
+            detail: event.detail ?? {},
+            timestamp: event.timestamp ?? new Date().toISOString(),
+            userId: event.userId ?? null,
+            displayName: event.displayName ?? event.userId ?? 'System',
+        };
+        try {
+            await this.historyStore.append(channel, payload);
+        } catch (err: any) {
+            this.logger.error('Failed to persist activity event', { channel, errorMessage: err && err.message });
+        }
+        const frame = { type: 'activity:event', channel, payload };
+        if (this.messageRouter && this.messageRouter.sendToChannel) {
+            await this.messageRouter.sendToChannel(channel, frame);
+        } else {
+            this._broadcastToLocalSubscribers(channel, frame);
+        }
+        return payload;
     }
 
     /**
@@ -340,6 +396,25 @@ export class ActivityService {
             this.maxHistoryItems,
         );
         const channelId = data?.channelId || ActivityService.BROADCAST_CHANNEL;
+        if (typeof channelId !== 'string' || channelId.length > this.maxChannelIdLength) {
+            this.sendError(clientId, `channelId must be a string (max ${this.maxChannelIdLength} chars)`);
+            return;
+        }
+
+        // History is channel state: the router's read check decides, exactly
+        // as for a subscribe. A router that cannot answer (no checkChannel)
+        // proves nothing, so it gets nothing.
+        if (!this.messageRouter || typeof this.messageRouter.checkChannel !== 'function'
+            || !(await routerPermits(this.messageRouter, 'subscribe', clientId, channelId, { service: 'activity', clientChannel: channelId }))) {
+            this.sendToClient(clientId, {
+                type: 'activity',
+                action: 'history',
+                events: [],
+                channelId,
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
 
         try {
             const events = await this.historyStore.list(channelId, limit);

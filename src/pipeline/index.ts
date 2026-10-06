@@ -13,6 +13,7 @@
 export { PipelineWsRouter } from './PipelineWsRouter';
 
 export type {
+    PipelineChannelContext,
     PipelineBusEnvelope,
     PipelineConfig,
     PipelineEventChannel,
