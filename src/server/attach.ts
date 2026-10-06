@@ -486,6 +486,14 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     /** Shared logger; defaults to silent. */
     logger?: RouterLogger;
     /**
+     * 0.109, opt-in: share one sender-side `publish` decision per (client,
+     * channel) per operation scope while younger than this many ms. The host
+     * must revoke on observed revocations (`revokePublishProofs`). See the
+     * P1-P5 contract in `authorityScope.ts`. Ignored with a custom `router`
+     * (pass it to that router).
+     */
+    publishProofMaxAgeMs?: number;
+    /**
      * Swap the transport. When provided, `authorize`/`filterClientMessage`/`plugins` are the
      * custom router's responsibility and are ignored here.
      */
@@ -511,9 +519,9 @@ export function attachRealtime(
     server: WsHandlerOptions['server'],
     opts: AttachRealtimeOptions,
 ): RealtimeHandle {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log });
+    const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log, publishProofMaxAgeMs });
 
     const services: Record<string, WsService> = {};
     const manifests: FeatureManifest[] = [];

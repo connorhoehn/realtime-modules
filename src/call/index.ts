@@ -62,8 +62,11 @@ export {
   lobbyConversationKind,
   dmLobbyMembers,
   dmLobbyName,
+  dmLobbyPrefix,
+  parseDmLobby,
   lobbyForChatLobbyChannel,
   shouldKnockToJoin,
 } from './lobbyChannel';
+export type { ParsedDmLobby } from './lobbyChannel';
 
 export { CallManifest } from './manifest';

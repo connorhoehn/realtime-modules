@@ -28,6 +28,8 @@ exports.lobbyForChannel = lobbyForChannel;
 exports.channelForLobby = channelForLobby;
 exports.lobbyForChatLobbyChannel = lobbyForChatLobbyChannel;
 exports.dmLobbyName = dmLobbyName;
+exports.dmLobbyPrefix = dmLobbyPrefix;
+exports.parseDmLobby = parseDmLobby;
 exports.isDmLobby = isDmLobby;
 exports.lobbyConversationKind = lobbyConversationKind;
 exports.dmLobbyMembers = dmLobbyMembers;
@@ -101,6 +103,66 @@ function dmLobbyName(userIds, opts = {}) {
     if (bad !== undefined)
         throw new Error(`dmLobbyName: user id ${JSON.stringify(bad)} contains ':', the lobby's member separator`);
     return `${opts.prefix ?? ''}dm:${ids.join(':')}`;
+}
+/**
+ * The name prefix of a host's member-addressed DM lobbies:
+ * `dmLobbyPrefix()` → `dm:`, `dmLobbyPrefix({ prefix: 'social:' })` →
+ * `social:dm:`; `{ group: true }` gives the hashed form (`social:dmg:`).
+ * The same rule `dmLobbyName` writes, so a host never derives it by slicing
+ * a sample name.
+ */
+function dmLobbyPrefix(opts = {}) {
+    return `${opts.prefix ?? ''}${opts.group ? 'dmg' : 'dm'}:`;
+}
+/**
+ * Parse a DM lobby name into its tenant prefix and members (or group hash).
+ *
+ *   parseDmLobby('dm:alice:bob')                         → { kind: 'dm', prefix: '', members: ['alice', 'bob'] }
+ *   parseDmLobby('social:dm:alice:bob', { prefix: 'social:' }) → { kind: 'dm', prefix: 'social:', members: [...] }
+ *   parseDmLobby('social:dmg:<hash>', { prefix: 'social:' })   → { kind: 'dmg', prefix: 'social:', hash: '<hash>' }
+ *
+ * With `opts.prefix` (including `''`) the name must start with EXACTLY
+ * `<prefix>dm:` or `<prefix>dmg:` — another tenant's DM, or a longer prefix,
+ * is null. Without it, the tenant prefix is read with the same segment rule as
+ * `lobbyConversationKind` (everything before the first `dm`/`dmg`/`room`
+ * segment that is not the last). Null for anything that is not a well-formed
+ * DM: a room, fewer than two members, an empty member segment, an empty or
+ * `:`-bearing group hash. Members are returned in name order; a hashed group's
+ * members are not derivable from its name (see `dmLobbyMembers`).
+ */
+function parseDmLobby(lobby, opts = {}) {
+    if (!lobby)
+        return null;
+    let prefix;
+    let kind;
+    let rest;
+    if (opts.prefix !== undefined) {
+        prefix = opts.prefix;
+        if (lobby.startsWith(dmLobbyPrefix({ prefix, group: true }))) {
+            kind = 'dmg';
+            rest = lobby.slice(dmLobbyPrefix({ prefix, group: true }).length);
+        }
+        else if (lobby.startsWith(dmLobbyPrefix({ prefix }))) {
+            kind = 'dm';
+            rest = lobby.slice(dmLobbyPrefix({ prefix }).length);
+        }
+        else
+            return null;
+    }
+    else {
+        const found = lobbyKindSegment(lobby);
+        if (!found || found.kind === 'room')
+            return null;
+        kind = found.kind;
+        prefix = found.index > 0 ? `${found.segments.slice(0, found.index).join(':')}:` : '';
+        rest = found.segments.slice(found.index + 1).join(':');
+    }
+    if (kind === 'dmg')
+        return rest.length > 0 && !rest.includes(':') ? { kind, prefix, hash: rest } : null;
+    const members = rest.split(':');
+    if (members.length < 2 || members.some((m) => m.length === 0))
+        return null;
+    return { kind, prefix, members };
 }
 /**
  * True for BOTH dm lobby forms — member-addressed (`dm:alice:bob`) and hashed

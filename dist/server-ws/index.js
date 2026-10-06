@@ -7,7 +7,7 @@
 // ./client useWebSocket hook. Lazy-loads `ws` so consumers without
 // server-side code never pay the import cost.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.createWsHandler = void 0;
+exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.createWsHandler = void 0;
 var createWsHandler_1 = require("./createWsHandler");
 Object.defineProperty(exports, "createWsHandler", { enumerable: true, get: function () { return createWsHandler_1.createWsHandler; } });
 var types_1 = require("./types");
@@ -19,4 +19,7 @@ Object.defineProperty(exports, "baseChannel", { enumerable: true, get: function 
 Object.defineProperty(exports, "SERVICE_CHANNEL_PREFIXES", { enumerable: true, get: function () { return channelAccess_1.SERVICE_CHANNEL_PREFIXES; } });
 var authorityScope_1 = require("./authorityScope");
 Object.defineProperty(exports, "createAuthorityScope", { enumerable: true, get: function () { return authorityScope_1.createAuthorityScope; } });
+Object.defineProperty(exports, "publishProofKey", { enumerable: true, get: function () { return authorityScope_1.publishProofKey; } });
+Object.defineProperty(exports, "revokePublishProofs", { enumerable: true, get: function () { return authorityScope_1.revokePublishProofs; } });
+Object.defineProperty(exports, "PUBLISH_PROOF_SKEW_MS", { enumerable: true, get: function () { return authorityScope_1.PUBLISH_PROOF_SKEW_MS; } });
 //# sourceMappingURL=index.js.map

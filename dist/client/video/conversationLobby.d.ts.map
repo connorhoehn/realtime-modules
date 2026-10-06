@@ -1,1 +1,1 @@
-{"version":3,"file":"conversationLobby.d.ts","sourceRoot":"","sources":["../../../src/client/video/conversationLobby.ts"],"names":[],"mappings":"AAMA,OAAO,EAAE,eAAe,EAAE,eAAe,EAAE,SAAS,EAAE,WAAW,EAAE,MAAM,yBAAyB,CAAC"}
+{"version":3,"file":"conversationLobby.d.ts","sourceRoot":"","sources":["../../../src/client/video/conversationLobby.ts"],"names":[],"mappings":"AAMA,OAAO,EAAE,eAAe,EAAE,eAAe,EAAE,SAAS,EAAE,WAAW,EAAE,aAAa,EAAE,YAAY,EAAE,MAAM,yBAAyB,CAAC;AAChI,YAAY,EAAE,aAAa,EAAE,MAAM,yBAAyB,CAAC"}

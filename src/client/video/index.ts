@@ -158,7 +158,8 @@ export {
   DEVICE_PREFERENCES_KEY,
 } from './useDevicePreferences';
 
-export { dmLobbyName, channelForLobby, lobbyForChannel, isDmLobby } from './conversationLobby';
+export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChannel, isDmLobby } from './conversationLobby';
+export type { ParsedDmLobby } from './conversationLobby';
 
 export type {
   ConversationCall,

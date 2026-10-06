@@ -4,5 +4,6 @@
 // prepended verbatim — nothing here, and nothing in useConversationCall,
 // rewrites a lobby name after that.
 
-export { channelForLobby, lobbyForChannel, isDmLobby, dmLobbyName } from '../../call/lobbyChannel';
+export { channelForLobby, lobbyForChannel, isDmLobby, dmLobbyName, dmLobbyPrefix, parseDmLobby } from '../../call/lobbyChannel';
+export type { ParsedDmLobby } from '../../call/lobbyChannel';
 

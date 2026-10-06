@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## 0.109.0 — 2026-10-06
+
+- **Publish proofs (opt-in).** `attachRealtime({ publishProofMaxAgeMs })`,
+  `new LocalRealtimeRouter({ publishProofMaxAgeMs })` and
+  `new RedisRealtimeRouter({ publishProofMaxAgeMs })`: with a value > 0 the
+  router asks the host's `authorize` for a sender-side `publish` decision
+  once per (client, channel) per `AuthorityScope` and reuses it for the
+  operation's other publish checks while it is younger than that many ms
+  (measured from when the authorize call started) and bound to the same
+  connection context. One chat send on a two-node cluster asked the publish
+  check 7 times on its origin and once on the peer; it now asks once in
+  total. `subscribe` checks are never shared: every recipient on every node
+  is still authorized fresh. Hosts must call the new
+  `revokePublishProofs(scope[, channel])` when they observe a revocation
+  during an operation; the next recheck (chat's post-persist recheck, the
+  cluster router's post-local check) then asks fresh. Rejected decisions are
+  never kept. Off by default (0): unchanged behaviour. The cluster router
+  carries one content-free number to peers (`publisher.proofAt`, the proof's
+  start time); a peer whose own `publishProofMaxAgeMs` is > 0 skips only the
+  redundant publisher re-check while that time is fresh (and at most
+  `PUBLISH_PROOF_SKEW_MS` = 250 ms in its future), still requiring the
+  publisher's live registration and generation and its own recipient checks.
+  Contract P1-P5 in `src/server-ws/authorityScope.ts`. New exports:
+  `publishProofKey`, `revokePublishProofs`, `PUBLISH_PROOF_SKEW_MS`
+  (`/server`, `/server-ws`).
+- **`parseDmLobby(lobby, { prefix })` and `dmLobbyPrefix({ prefix, group })`**
+  (`/call`, `/client/video`). `parseDmLobby` returns
+  `{ kind: 'dm', prefix, members }` or `{ kind: 'dmg', prefix, hash }`, or
+  null for rooms, other tenants (with an explicit prefix the name must start
+  with exactly `<prefix>dm:` / `<prefix>dmg:`), fewer than two members, empty
+  member segments and malformed hashes. Without `prefix` it reads the tenant
+  prefix with `lobbyConversationKind`'s segment rule. `dmLobbyPrefix` is the
+  prefix `dmLobbyName` writes, so hosts stop deriving it by slicing a sample
+  name.
 - **Presence frames keep their own per-connection lane.** `createWsHandler`
   (and so `attachRealtime`) still serialises one connection's frames in
   arrival order, but services named in the new `independentServices` option

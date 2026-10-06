@@ -19,7 +19,7 @@
 
 import type { WsHandlerHandle, WsAuthContext } from '../server-ws/types';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
-import { scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
+import { scopeFor, sharePublishProof, publishProofStartedAt, type AuthorityScope } from '../server-ws/authorityScope';
 
 /**
  * Logger contract shared by the router and every feature. All four methods
@@ -282,6 +282,8 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     private readonly logger: RouterLogger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
     private readonly pendingSubscriptions = new Map<string, Map<string, Set<{ cancelled: boolean }>>>();
+    /** 0.109 publish proofs (see authorityScope.ts P1-P5); 0 = off. */
+    readonly publishProofMaxAgeMs: number;
 
     readonly redisAvailable = false;
     readonly nodeId = 'local';
@@ -291,7 +293,18 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         authorize?: ChannelAuthorize;
         filterClientMessage?: ClientMessageFilter;
         logger?: RouterLogger;
+        /**
+         * 0.109, opt-in. > 0: one `publish` authorize per (client, channel)
+         * per operation scope, reused while younger than this many ms and
+         * revocable by the host (`revokePublishProofs`). Recipient
+         * `subscribe` checks are never shared. 0 / unset: every publish
+         * check asks `authorize`.
+         */
+        publishProofMaxAgeMs?: number;
     } = {}) {
+        const maxAge = opts.publishProofMaxAgeMs ?? 0;
+        if (!Number.isFinite(maxAge) || maxAge < 0) throw new Error('publishProofMaxAgeMs must be a non-negative number');
+        this.publishProofMaxAgeMs = maxAge;
         this.plugins = opts.plugins ?? [];
         this.authorize = opts.authorize ?? null;
         this.filterClientMessage = opts.filterClientMessage ?? null;
@@ -459,9 +472,15 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         const context = this.ctxOf(clientId);
         const handle = this.handleRef;
         try {
-            const decision = this.authorize(scope?.active
+            const authorize = this.authorize;
+            const ask = () => authorize(scope?.active
                 ? { kind, clientId, channel, ctx: context, scope }
                 : { kind, clientId, channel, ctx: context });
+            // Only the sender-side publish decision is shared (P1); the
+            // fences below still run for this check.
+            const decision = kind === 'publish' && this.publishProofMaxAgeMs > 0 && scope?.active && context
+                ? sharePublishProof(scope, clientId, channel, context, this.publishProofMaxAgeMs, ask)
+                : ask();
             if (typeof decision === 'boolean') return decision;
             return Promise.resolve(decision).then(
                 allowed => allowed === true && this.handleRef === handle && (!handle || (context !== null && this.ctxOf(clientId) === context)),
@@ -475,6 +494,11 @@ export class LocalRealtimeRouter implements RealtimeRouter {
 
     hasChannelAuthorize(): boolean {
         return this.authorize !== null;
+    }
+
+    /** P5: the start time of this operation's live allowed publish proof. */
+    publishProofAt(scope: AuthorityScope | null | undefined, clientId: string, channel: string): number | null {
+        return publishProofStartedAt(scope, clientId, channel, this.publishProofMaxAgeMs);
     }
 
     /**

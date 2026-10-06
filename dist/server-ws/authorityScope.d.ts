@@ -39,4 +39,30 @@ export declare function scopeFor(existing: AuthorityScope | null | undefined, op
     scope: AuthorityScope;
     owned: boolean;
 };
+/** Clock tolerance a peer allows for a publish proof stamped in its future. */
+export declare const PUBLISH_PROOF_SKEW_MS = 250;
+/** The scope memo key of one (channel, clientId) publish proof. */
+export declare function publishProofKey(channel: string, clientId: string): string;
+/**
+ * The operation's publish decision for (clientId, channel), asking `ask()`
+ * only when there is no live proof for this exact context younger than
+ * `maxAgeMs` (P1-P4). Returns `ask()`'s raw decision; callers apply their
+ * own per-check fences. With an inactive scope or `maxAgeMs <= 0` this is
+ * just `ask()`.
+ */
+export declare function sharePublishProof(scope: AuthorityScope | null | undefined, clientId: string, channel: string, context: unknown, maxAgeMs: number, ask: () => boolean | Promise<boolean>): boolean | Promise<boolean>;
+/**
+ * Drop publish proofs from a running operation (P4): every proof in the
+ * scope, or only those for `channel` (the exact channel string the router
+ * authorized, e.g. `presence:<ch>` for presence). Returns how many dropped.
+ */
+export declare function revokePublishProofs(scope: AuthorityScope | null | undefined, channel?: string): number;
+/**
+ * Start time of a live, settled, ALLOWED publish proof for (clientId,
+ * channel) that is still younger than `maxAgeMs` — the peer marker (P5) —
+ * or null.
+ */
+export declare function publishProofStartedAt(scope: AuthorityScope | null | undefined, clientId: string, channel: string, maxAgeMs: number): number | null;
+/** P5, the peer side: may a peer skip the sender-side publish re-check? */
+export declare function acceptsOriginPublishProof(proofAt: unknown, maxAgeMs: number, now?: number): boolean;
 //# sourceMappingURL=authorityScope.d.ts.map

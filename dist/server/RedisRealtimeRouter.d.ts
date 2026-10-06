@@ -37,6 +37,14 @@ export interface RedisRealtimeRouterOptions {
     maxFrameBytes?: number;
     maxPendingRequests?: number;
     maxSeenFrames?: number;
+    /**
+     * 0.109, opt-in (authorityScope.ts P1-P5). > 0: one sender-side publish
+     * authorize per (client, channel) per operation on this node, and a
+     * content-free proof time carried to peers; a peer with its own value
+     * > 0 skips only the redundant publisher re-check while that time is
+     * younger than ITS max age. Recipient checks always run on every node.
+     */
+    publishProofMaxAgeMs?: number;
 }
 /** Opt-in Redis peer transport. Each destination uses LocalRealtimeRouter's
  * current recipient authorization/context/subscription fences. Directory

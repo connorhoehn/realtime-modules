@@ -241,6 +241,8 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     private readonly logger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
     private readonly pendingSubscriptions;
+    /** 0.109 publish proofs (see authorityScope.ts P1-P5); 0 = off. */
+    readonly publishProofMaxAgeMs: number;
     readonly redisAvailable = false;
     readonly nodeId = "local";
     constructor(opts?: {
@@ -248,6 +250,14 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
         authorize?: ChannelAuthorize;
         filterClientMessage?: ClientMessageFilter;
         logger?: RouterLogger;
+        /**
+         * 0.109, opt-in. > 0: one `publish` authorize per (client, channel)
+         * per operation scope, reused while younger than this many ms and
+         * revocable by the host (`revokePublishProofs`). Recipient
+         * `subscribe` checks are never shared. 0 / unset: every publish
+         * check asks `authorize`.
+         */
+        publishProofMaxAgeMs?: number;
     });
     _setHandle(handle: WsHandlerHandle): void;
     private ctxOf;
@@ -279,6 +289,8 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     /** Preserve synchronous decisions; rejected async decisions fail closed. */
     private allows;
     hasChannelAuthorize(): boolean;
+    /** P5: the start time of this operation's live allowed publish proof. */
+    publishProofAt(scope: AuthorityScope | null | undefined, clientId: string, channel: string): number | null;
     /**
      * The check every service runs before acting on a channel. On refusal
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.

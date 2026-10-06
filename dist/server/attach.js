@@ -371,9 +371,9 @@ function collabDocs(opts = {}) {
  * All HTTP routes, middleware and listeners you already have are untouched.
  */
 function attachRealtime(server, opts) {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router = customRouter ?? new router_1.LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log });
+    const router = customRouter ?? new router_1.LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log, publishProofMaxAgeMs });
     const services = {};
     const manifests = [];
     for (const feature of features) {

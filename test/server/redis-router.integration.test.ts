@@ -5,7 +5,7 @@ import http from 'http';
 import { randomUUID } from 'crypto';
 import { createClient, type RedisClientType } from 'redis';
 import WebSocket from 'ws';
-import { attachRealtime, defineFeature, calls, notifications, presence, splitServiceChannel, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
+import { attachRealtime, defineFeature, calls, chat, notifications, presence, splitServiceChannel, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
 import { RedisPresenceStore } from '../../src/presence';
 import { RedisCallStateStore, type CallStateRedis } from '../../src/call';
 import type { NotificationService } from '../../src/notification';
@@ -36,10 +36,12 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
     let authorities: Map<string, Authority>;
     let members: Set<string>;
     let held: { id: string; entered: VoidDeferred; release: VoidDeferred; calls: number } | null;
+    let asks: Array<{ node: string; kind: string; userId: string; channel: string }>;
 
     async function boot(nodeId: string, ns = namespace, options: { fixedClientId?: string; dropReceipts?: boolean;
         registerGate?: VoidDeferred; disconnectGate?: VoidDeferred; disconnected?: VoidDeferred;
-        rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred; ended?: string[] } = {}): Promise<NativeNode> {
+        rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred; ended?: string[];
+        publishProofMaxAgeMs?: number; withChat?: boolean } = {}): Promise<NativeNode> {
         if (!redisUrl) throw new Error('REAL_ROUTER_REDIS_URL is required for real Redis acceptance');
         const command = createClient({ url: redisUrl, disableOfflineQueue: true, socket: { reconnectStrategy: false } });
         command.on('error', () => undefined);
@@ -72,12 +74,14 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
                 return async () => { await subscriber.unsubscribe(topic); };
             },
         };
-        const authorize = async ({ ctx, channel }: { ctx: any; channel: string }) => {
+        const authorize = async ({ ctx, channel, kind }: { ctx: any; channel: string; kind: string }) => {
+            asks.push({ node: nodeId, kind, userId: String(ctx?.userId), channel });
             const current = authorities.get(ctx?.userId);
             return !!current && current.epoch === ctx.epoch && current.org === ctx.org
                 && splitServiceChannel(channel).channel.startsWith(`${ctx.org}:`) && members.has(ctx.userId);
         };
         const router = new RedisRealtimeRouter({ redis: port, namespace: ns, nodeId, leaseMs: 900, requestTimeoutMs: 200,
+            ...(options.publishProofMaxAgeMs !== undefined ? { publishProofMaxAgeMs: options.publishProofMaxAgeMs } : {}),
             authorize, filterClientMessage: async ({ ctx, message }) => {
                 const frame = message as any;
                 if (held && frame.id === held.id && ctx?.userId === 'bob') {
@@ -118,7 +122,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
                 config: { onCallEnded: summary => { options.ended?.push(summary.callId); }, authorize: async clientId => {
                     const ctx = router.getClientData(clientId)?.userContext;
                     return !!ctx && authorities.get(String(ctx.userId))?.epoch === ctx.epoch;
-                } } }), notifications(), defineFeature({ manifest: { name: 'peer-test' } as any,
+                } } }), notifications(), ...(options.withChat ? [chat()] : []), defineFeature({ manifest: { name: 'peer-test' } as any,
                 create: () => ({ handleAction: async (clientId, action, data) => {
                     if (action === 'publish') await router.sendToChannel(String(data.channel),
                         { type: 'test', id: data.id }, null, { publisherClientId: clientId });
@@ -146,7 +150,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
     }
     beforeEach(() => {
         namespace = `acceptance-${randomUUID()}`;
-        clients = []; nodes = []; held = null;
+        clients = []; nodes = []; held = null; asks = [];
         authorities = new Map([['alice', { epoch: 0, org: 'orgiq' }], ['bob', { epoch: 0, org: 'orgiq' }],
             ['charlie', { epoch: 0, org: 'assessment' }]]);
         members = new Set(['alice', 'bob', 'charlie']);
@@ -238,6 +242,98 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         members.delete('alice');
         await a.router.sendToChannel('orgiq:room', { type: 'test', id: 'publisher-denied' }, null, { publisherClientId: alice.id });
         expect(a.published.some(entry => entry.frame.message?.id === 'publisher-denied')).toBe(false);
+    });
+
+    // 0.109 publish proofs (authorityScope.ts P1-P5) across two real nodes.
+    async function chatPair(maxAge: number | undefined) {
+        const opts = { withChat: true, ...(maxAge !== undefined ? { publishProofMaxAgeMs: maxAge } : {}) };
+        const a = await boot('a', namespace, opts), b = await boot('b', namespace, opts);
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        for (const c of [alice, bob]) {
+            c.ws.send(JSON.stringify({ service: 'chat', action: 'join', channel: 'orgiq:room' }));
+            await eventually(() => c.frames.some(f => f.type === 'chat' && f.action === 'joined'));
+        }
+        await delay(30);
+        asks.length = 0;
+        return { a, b, alice, bob };
+    }
+    async function chatSend(alice: Client, bob: Client, text: string) {
+        alice.ws.send(JSON.stringify({ service: 'chat', action: 'send', channel: 'orgiq:room', message: text }));
+        await eventually(() => alice.frames.some(f => f.type === 'chat' && f.action === 'sent'));
+        await eventually(() => bob.frames.some(f => f.type === 'chat' && f.action === 'message' && f.message?.message === text));
+        await delay(30);
+    }
+    const count = (node: string, kind: string) => asks.filter(x => x.node === node && x.kind === kind).length;
+
+    it('without publish proofs one cross-node chat send asks the sender publish check 7x on its origin and 1x on the peer', async () => {
+        const { alice, bob } = await chatPair(undefined);
+        await chatSend(alice, bob, 'before');
+        expect(count('a', 'publish')).toBe(7);
+        expect(count('b', 'publish')).toBe(1);
+        expect(count('b', 'subscribe')).toBe(1);
+    });
+
+    it('with publish proofs one cross-node chat send asks once on its origin, not again on the peer, and the peer still checks its recipient', async () => {
+        const { a, alice, bob } = await chatPair(2000);
+        await chatSend(alice, bob, 'after');
+        expect(count('a', 'publish')).toBe(1);
+        expect(count('b', 'publish')).toBe(0);
+        expect(count('b', 'subscribe')).toBe(1);
+        const frame = a.published.find(e => e.frame.kind === 'channel' && e.frame.message?.message?.message === 'after')?.frame;
+        expect(typeof frame?.publisher?.proofAt).toBe('number');
+        // The marker is one number; no claims, roles or identity ride along.
+        expect(Object.keys(frame.publisher).sort()).toEqual(['clientId', 'generation', 'proofAt']);
+    });
+
+    it('a fresh origin marker never admits a recipient the peer has revoked', async () => {
+        const { alice, bob } = await chatPair(2000);
+        authorities.set('bob', { epoch: 1, org: 'orgiq' }); // bob's directory epoch moves on the peer's authority
+        alice.ws.send(JSON.stringify({ service: 'chat', action: 'send', channel: 'orgiq:room', message: 'revoked-recipient' }));
+        await eventually(() => alice.frames.some(f => f.type === 'chat' && f.action === 'sent'));
+        await delay(100);
+        expect(count('b', 'publish')).toBe(0);
+        expect(count('b', 'subscribe')).toBe(1);
+        expect(bob.frames.some(f => f.message?.message === 'revoked-recipient')).toBe(false);
+    });
+
+    it('a peer with proofs off, or a stale / future / forged marker, re-checks the publisher and can refuse', async () => {
+        // Origin on, peer off: the peer asks.
+        const a = await boot('a', namespace, { withChat: true, publishProofMaxAgeMs: 2000 });
+        const b = await boot('b', namespace, { withChat: true });
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        for (const c of [alice, bob]) {
+            c.ws.send(JSON.stringify({ service: 'chat', action: 'join', channel: 'orgiq:room' }));
+            await eventually(() => c.frames.some(f => f.type === 'chat' && f.action === 'joined'));
+        }
+        await delay(30); asks.length = 0;
+        await chatSend(alice, bob, 'peer-off');
+        expect(count('b', 'publish')).toBe(1);
+
+        // Replays of a real channel frame with a rewritten marker into a peer with proofs ON.
+        const c = await boot('c', namespace, { withChat: true, publishProofMaxAgeMs: 500 });
+        const carol = await connect(c, 'bob');
+        carol.ws.send(JSON.stringify({ service: 'chat', action: 'join', channel: 'orgiq:room' }));
+        await eventually(() => carol.frames.some(f => f.type === 'chat' && f.action === 'joined'));
+        const real = a.published.find(e => e.frame.kind === 'channel' && e.frame.message?.message?.message === 'peer-off')!;
+        const replay = async (id: string, proofAt: unknown) => {
+            const frame = JSON.parse(real.payload);
+            frame.id = randomUUID(); frame.message.message.message = id;
+            if (proofAt === undefined) delete frame.publisher.proofAt; else frame.publisher.proofAt = proofAt;
+            asks.length = 0;
+            await a.command.publish(real.topic, JSON.stringify(frame));
+            await delay(80);
+            return count('c', 'publish');
+        };
+        expect(await replay('stale', Date.now() - 5_000)).toBe(1);
+        expect(await replay('future', Date.now() + 60_000)).toBe(1);
+        expect(await replay('forged', 'yes')).toBe(1);
+        expect(await replay('absent', undefined)).toBe(1);
+        expect(await replay('fresh', Date.now())).toBe(0);
+        // With the publisher revoked, a stale marker refuses delivery.
+        members.delete('alice');
+        await replay('stale-revoked', Date.now() - 5_000);
+        expect(carol.frames.some(f => f.message?.message === 'stale-revoked')).toBe(false);
+        expect(carol.frames.some(f => f.message?.message === 'stale')).toBe(true);
     });
 
     it('drops a held delivery after disconnect and suppresses in-flight duplicate frames', async () => {

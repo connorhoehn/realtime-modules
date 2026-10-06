@@ -27,7 +27,7 @@ export { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from '../server-
 export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
 export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';
-export { createAuthorityScope } from '../server-ws/authorityScope';
+export { createAuthorityScope, publishProofKey, revokePublishProofs, PUBLISH_PROOF_SKEW_MS } from '../server-ws/authorityScope';
 export { WorkGraphStreamService } from '../work-graph/streamService';
 export type { WorkGraphSource, WorkGraphStreamConfig, WorkGraphStreamScope, WorkGraphStreamSubscription, WorkGraphStreamTrigger, WorkGraphChannelContext, } from '../work-graph/streamService';
 export type { AuthorityScope } from '../server-ws/authorityScope';

@@ -93,9 +93,15 @@ class LocalRealtimeRouter {
     logger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
     pendingSubscriptions = new Map();
+    /** 0.109 publish proofs (see authorityScope.ts P1-P5); 0 = off. */
+    publishProofMaxAgeMs;
     redisAvailable = false;
     nodeId = 'local';
     constructor(opts = {}) {
+        const maxAge = opts.publishProofMaxAgeMs ?? 0;
+        if (!Number.isFinite(maxAge) || maxAge < 0)
+            throw new Error('publishProofMaxAgeMs must be a non-negative number');
+        this.publishProofMaxAgeMs = maxAge;
         this.plugins = opts.plugins ?? [];
         this.authorize = opts.authorize ?? null;
         this.filterClientMessage = opts.filterClientMessage ?? null;
@@ -252,9 +258,15 @@ class LocalRealtimeRouter {
         const context = this.ctxOf(clientId);
         const handle = this.handleRef;
         try {
-            const decision = this.authorize(scope?.active
+            const authorize = this.authorize;
+            const ask = () => authorize(scope?.active
                 ? { kind, clientId, channel, ctx: context, scope }
                 : { kind, clientId, channel, ctx: context });
+            // Only the sender-side publish decision is shared (P1); the
+            // fences below still run for this check.
+            const decision = kind === 'publish' && this.publishProofMaxAgeMs > 0 && scope?.active && context
+                ? (0, authorityScope_1.sharePublishProof)(scope, clientId, channel, context, this.publishProofMaxAgeMs, ask)
+                : ask();
             if (typeof decision === 'boolean')
                 return decision;
             return Promise.resolve(decision).then(allowed => allowed === true && this.handleRef === handle && (!handle || (context !== null && this.ctxOf(clientId) === context)), err => { this.logger.warn(`[realtime] authorize rejected for ${kind} ${channel}; refusing`, err); return false; });
@@ -266,6 +278,10 @@ class LocalRealtimeRouter {
     }
     hasChannelAuthorize() {
         return this.authorize !== null;
+    }
+    /** P5: the start time of this operation's live allowed publish proof. */
+    publishProofAt(scope, clientId, channel) {
+        return (0, authorityScope_1.publishProofStartedAt)(scope, clientId, channel, this.publishProofMaxAgeMs);
     }
     /**
      * The check every service runs before acting on a channel. On refusal

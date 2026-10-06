@@ -4,7 +4,7 @@ import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { LocalRealtimeRouter, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
-import { createAuthorityScope, scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
+import { acceptsOriginPublishProof, createAuthorityScope, scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
 
 /** Connected command/publish and dedicated subscriber clients. The host owns
  * connection setup, TLS/credentials, reconnect policy and final client close.
@@ -40,13 +40,21 @@ export interface RedisRealtimeRouterOptions {
     maxFrameBytes?: number;
     maxPendingRequests?: number;
     maxSeenFrames?: number;
+    /**
+     * 0.109, opt-in (authorityScope.ts P1-P5). > 0: one sender-side publish
+     * authorize per (client, channel) per operation on this node, and a
+     * content-free proof time carried to peers; a peer with its own value
+     * > 0 skips only the redundant publisher re-check while that time is
+     * younger than ITS max age. Recipient checks always run on every node.
+     */
+    publishProofMaxAgeMs?: number;
 }
 type Source = { nodeId: string; instance: string };
 type Registration = Source & { generation: string; ctx: WsAuthContext };
 type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'channel' | 'broadcast' | 'call-event' | 'peer-event' | 'subscription-check';
     clientId?: string; generation?: string; delivered?: boolean; channel?: string;
     eventTopic?: string;
-    excludeClientId?: string | null; publisher?: { clientId: string; generation: string }; message?: unknown };
+    excludeClientId?: string | null; publisher?: { clientId: string; generation: string; proofAt?: number }; message?: unknown };
 const NOOP_LOGGER: RouterLogger = { debug() {}, info() {}, warn() {}, error() {} };
 const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0";
 const REGISTER = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
@@ -145,7 +153,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs) throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
         this.local = new LocalRealtimeRouter({ authorize: opts.authorize, filterClientMessage: opts.filterClientMessage,
-            plugins: opts.plugins, logger: this.log });
+            plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
     }
     private nodeKey(nodeId = this.nodeId) { return `${this.prefix}node:${encodeURIComponent(nodeId)}`; }
     private clientKey(clientId: string) { return `${this.prefix}client:${encodeURIComponent(clientId)}`; }
@@ -388,8 +396,11 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (publisherId && (this.current(publisherId) !== ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true, scope }))) return;
         const registration = publisherId ? this.registrations.get(publisherId)?.registration : null;
         if (publisherId && !registration) return;
+        // P5: a content-free proof time, only for a live allowed proof.
+        const proofAt = publisherId ? this.local.publishProofAt(scope, publisherId, channel) : null;
         await this.publish(`${this.prefix}channels`, { v: 1, id: randomUUID(), source: this.source(), kind: 'channel',
-            channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration!.generation } } : {}) });
+            channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration!.generation,
+                ...(proofAt !== null ? { proofAt } : {}) } } : {}) });
     }
     async broadcastToAll(message: unknown, excludeClientId?: string): Promise<void> {
         await this.local.broadcastToAll(message, excludeClientId);
@@ -459,8 +470,11 @@ export class RedisRealtimeRouter implements RealtimeRouter {
                     if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string') return false;
                     const publisher = await this.registration(frame.publisher.clientId);
                     if (!publisher || publisher.instance !== frame.source.instance || publisher.generation !== frame.publisher.generation) return false;
-                    if (this.opts.authorize && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
-                        channel: frame.channel, ctx: publisher.ctx, scope })) return false;
+                    // P5: a fresh origin proof replaces ONLY this sender-side
+                    // re-check; every local recipient is still authorized below.
+                    if (this.opts.authorize && !acceptsOriginPublishProof(frame.publisher.proofAt, this.local.publishProofMaxAgeMs)
+                        && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
+                            channel: frame.channel, ctx: publisher.ctx, scope })) return false;
                 }
                 await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId, scope);
             } finally {

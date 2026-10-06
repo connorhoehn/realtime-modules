@@ -34,6 +34,46 @@ export declare function dmLobbyName(userIds: string[], opts?: {
     prefix?: string;
 }): string;
 /**
+ * The name prefix of a host's member-addressed DM lobbies:
+ * `dmLobbyPrefix()` → `dm:`, `dmLobbyPrefix({ prefix: 'social:' })` →
+ * `social:dm:`; `{ group: true }` gives the hashed form (`social:dmg:`).
+ * The same rule `dmLobbyName` writes, so a host never derives it by slicing
+ * a sample name.
+ */
+export declare function dmLobbyPrefix(opts?: {
+    prefix?: string;
+    group?: boolean;
+}): string;
+/** One DM lobby name, parsed (`parseDmLobby`). */
+export type ParsedDmLobby = {
+    kind: 'dm';
+    prefix: string;
+    members: string[];
+} | {
+    kind: 'dmg';
+    prefix: string;
+    hash: string;
+};
+/**
+ * Parse a DM lobby name into its tenant prefix and members (or group hash).
+ *
+ *   parseDmLobby('dm:alice:bob')                         → { kind: 'dm', prefix: '', members: ['alice', 'bob'] }
+ *   parseDmLobby('social:dm:alice:bob', { prefix: 'social:' }) → { kind: 'dm', prefix: 'social:', members: [...] }
+ *   parseDmLobby('social:dmg:<hash>', { prefix: 'social:' })   → { kind: 'dmg', prefix: 'social:', hash: '<hash>' }
+ *
+ * With `opts.prefix` (including `''`) the name must start with EXACTLY
+ * `<prefix>dm:` or `<prefix>dmg:` — another tenant's DM, or a longer prefix,
+ * is null. Without it, the tenant prefix is read with the same segment rule as
+ * `lobbyConversationKind` (everything before the first `dm`/`dmg`/`room`
+ * segment that is not the last). Null for anything that is not a well-formed
+ * DM: a room, fewer than two members, an empty member segment, an empty or
+ * `:`-bearing group hash. Members are returned in name order; a hashed group's
+ * members are not derivable from its name (see `dmLobbyMembers`).
+ */
+export declare function parseDmLobby(lobby: string | null | undefined, opts?: {
+    prefix?: string;
+}): ParsedDmLobby | null;
+/**
  * True for BOTH dm lobby forms — member-addressed (`dm:alice:bob`) and hashed
  * group (`dmg:<hash>`) — with or without a tenant prefix (`acme:dm:alice:bob`). The lobby-side twin of `isDmChatChannel`.
  *

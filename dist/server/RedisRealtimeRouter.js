@@ -112,7 +112,7 @@ class RedisRealtimeRouter {
             throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
         this.local = new router_1.LocalRealtimeRouter({ authorize: opts.authorize, filterClientMessage: opts.filterClientMessage,
-            plugins: opts.plugins, logger: this.log });
+            plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
     }
     nodeKey(nodeId = this.nodeId) { return `${this.prefix}node:${encodeURIComponent(nodeId)}`; }
     clientKey(clientId) { return `${this.prefix}client:${encodeURIComponent(clientId)}`; }
@@ -408,8 +408,11 @@ class RedisRealtimeRouter {
         const registration = publisherId ? this.registrations.get(publisherId)?.registration : null;
         if (publisherId && !registration)
             return;
+        // P5: a content-free proof time, only for a live allowed proof.
+        const proofAt = publisherId ? this.local.publishProofAt(scope, publisherId, channel) : null;
         await this.publish(`${this.prefix}channels`, { v: 1, id: (0, crypto_1.randomUUID)(), source: this.source(), kind: 'channel',
-            channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration.generation } } : {}) });
+            channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration.generation,
+                    ...(proofAt !== null ? { proofAt } : {}) } } : {}) });
     }
     async broadcastToAll(message, excludeClientId) {
         await this.local.broadcastToAll(message, excludeClientId);
@@ -505,8 +508,11 @@ class RedisRealtimeRouter {
                     const publisher = await this.registration(frame.publisher.clientId);
                     if (!publisher || publisher.instance !== frame.source.instance || publisher.generation !== frame.publisher.generation)
                         return false;
-                    if (this.opts.authorize && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
-                        channel: frame.channel, ctx: publisher.ctx, scope }))
+                    // P5: a fresh origin proof replaces ONLY this sender-side
+                    // re-check; every local recipient is still authorized below.
+                    if (this.opts.authorize && !(0, authorityScope_1.acceptsOriginPublishProof)(frame.publisher.proofAt, this.local.publishProofMaxAgeMs)
+                        && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
+                            channel: frame.channel, ctx: publisher.ctx, scope }))
                         return false;
                 }
                 await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId, scope);
