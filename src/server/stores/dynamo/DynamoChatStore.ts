@@ -60,6 +60,8 @@ export interface DynamoChatStoreOpts extends DynamoStoreClockOpts {
     channelIndexName?: string;
     /** Index-write and lookup failures are reported here (they never throw). */
     logger?: DynamoStoreLogger;
+    /** 0.110: see {@link DynamoConversationsStoreOpts.messageIndexWrites}. Default `'each'`. */
+    messageIndexWrites?: 'each' | 'transaction';
 }
 
 type HookInfo = { channel: string; members: string[]; message: ChatMessage };
@@ -114,6 +116,7 @@ export class DynamoChatStore implements ChatStore {
             tableName: this.tables.conversations,
             channelIndexName: opts.channelIndexName,
             logger: opts.logger,
+            ...(opts.messageIndexWrites ? { messageIndexWrites: opts.messageIndexWrites } : {}),
             ...clock,
         });
         this.members = new DynamoChatMembershipStore({ client, tableName: this.tables.members });

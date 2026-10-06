@@ -32,6 +32,8 @@ export interface DynamoChatStoreOpts extends DynamoStoreClockOpts {
     channelIndexName?: string;
     /** Index-write and lookup failures are reported here (they never throw). */
     logger?: DynamoStoreLogger;
+    /** 0.110: see {@link DynamoConversationsStoreOpts.messageIndexWrites}. Default `'each'`. */
+    messageIndexWrites?: 'each' | 'transaction';
 }
 type HookInfo = {
     channel: string;

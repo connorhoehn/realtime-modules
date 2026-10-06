@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { createClient, type RedisClientType } from 'redis';
 import WebSocket from 'ws';
 import { attachRealtime, defineFeature, calls, chat, notifications, presence, splitServiceChannel, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
+import { createAuthorityScope, type AuthorityScope } from '../../src/server-ws/authorityScope';
 import { RedisPresenceStore } from '../../src/presence';
 import { RedisCallStateStore, type CallStateRedis } from '../../src/call';
 import type { NotificationService } from '../../src/notification';
@@ -36,12 +37,12 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
     let authorities: Map<string, Authority>;
     let members: Set<string>;
     let held: { id: string; entered: VoidDeferred; release: VoidDeferred; calls: number } | null;
-    let asks: Array<{ node: string; kind: string; userId: string; channel: string }>;
+    let asks: Array<{ node: string; kind: string; userId: string; channel: string; scope?: AuthorityScope }>;
 
     async function boot(nodeId: string, ns = namespace, options: { fixedClientId?: string; dropReceipts?: boolean;
         registerGate?: VoidDeferred; disconnectGate?: VoidDeferred; disconnected?: VoidDeferred;
         rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred; ended?: string[];
-        publishProofMaxAgeMs?: number; withChat?: boolean } = {}): Promise<NativeNode> {
+        publishProofMaxAgeMs?: number; peerOperationLingerMs?: number; withChat?: boolean } = {}): Promise<NativeNode> {
         if (!redisUrl) throw new Error('REAL_ROUTER_REDIS_URL is required for real Redis acceptance');
         const command = createClient({ url: redisUrl, disableOfflineQueue: true, socket: { reconnectStrategy: false } });
         command.on('error', () => undefined);
@@ -74,14 +75,15 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
                 return async () => { await subscriber.unsubscribe(topic); };
             },
         };
-        const authorize = async ({ ctx, channel, kind }: { ctx: any; channel: string; kind: string }) => {
-            asks.push({ node: nodeId, kind, userId: String(ctx?.userId), channel });
+        const authorize = async ({ ctx, channel, kind, scope }: { ctx: any; channel: string; kind: string; scope?: AuthorityScope }) => {
+            asks.push({ node: nodeId, kind, userId: String(ctx?.userId), channel, ...(scope ? { scope } : {}) });
             const current = authorities.get(ctx?.userId);
             return !!current && current.epoch === ctx.epoch && current.org === ctx.org
                 && splitServiceChannel(channel).channel.startsWith(`${ctx.org}:`) && members.has(ctx.userId);
         };
         const router = new RedisRealtimeRouter({ redis: port, namespace: ns, nodeId, leaseMs: 900, requestTimeoutMs: 200,
             ...(options.publishProofMaxAgeMs !== undefined ? { publishProofMaxAgeMs: options.publishProofMaxAgeMs } : {}),
+            ...(options.peerOperationLingerMs !== undefined ? { peerOperationLingerMs: options.peerOperationLingerMs } : {}),
             authorize, filterClientMessage: async ({ ctx, message }) => {
                 const frame = message as any;
                 if (held && frame.id === held.id && ctx?.userId === 'bob') {
@@ -334,6 +336,90 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         await replay('stale-revoked', Date.now() - 5_000);
         expect(carol.frames.some(f => f.message?.message === 'stale-revoked')).toBe(false);
         expect(carol.frames.some(f => f.message?.message === 'stale')).toBe(true);
+    });
+
+    // 0.110 peer operation scopes (authorityScope.ts P6) across two real nodes.
+    async function probeThenFanOut(linger: number | undefined, between?: () => void) {
+        const opts = linger !== undefined ? { peerOperationLingerMs: linger } : {};
+        const a = await boot('a', namespace, opts), b = await boot('b', namespace, opts);
+        const alice = await connect(a, 'alice'), bob = await connect(b, 'bob');
+        const channel = 'orgiq:room';
+        expect(await a.router.subscribeToChannel(alice.id, channel)).toBe(true);
+        expect(await b.router.subscribeToChannel(bob.id, channel)).toBe(true);
+        asks.length = 0;
+        // One origin operation, as a chat send runs it: the notify plugin's
+        // readable-subscription probe, then the fan-out.
+        const scope = createAuthorityScope('chat.send');
+        const probed = await a.router.isClientSubscribed(bob.id, channel, { scope });
+        between?.();
+        await a.router.sendToChannel(channel, { type: 'test', id: 'p6' }, null, { publisherClientId: alice.id, scope });
+        scope.close();
+        await delay(60);
+        const peer = asks.filter(x => x.node === 'b' && x.kind === 'subscribe' && x.userId === 'bob');
+        return { a, b, bob, probed, peer, delivered: bob.frames.some(f => f.id === 'p6') };
+    }
+
+    it('P6 off: the probe and the fan-out reach the peer under separate scopes and carry no op number', async () => {
+        const { a, probed, peer, delivered } = await probeThenFanOut(undefined);
+        expect(probed).toBe(true); expect(delivered).toBe(true);
+        expect(peer).toHaveLength(2);
+        expect(peer[0].scope).toBeUndefined(); // the probe ran unscoped, as before
+        expect(peer[1].scope).toBeDefined();
+        for (const e of a.published.filter(x => x.frame.kind === 'subscription-check' || x.frame.kind === 'channel')) expect('op' in e.frame).toBe(false);
+    });
+
+    it('P6 on: one origin operation shares ONE peer scope across its probe and its fan-out, and still asks for every check', async () => {
+        const { a, probed, peer, delivered } = await probeThenFanOut(500);
+        expect(probed).toBe(true); expect(delivered).toBe(true);
+        expect(peer).toHaveLength(2); // never memoized by the router: both recipient checks asked
+        expect(peer[0].scope).toBeDefined();
+        expect(peer[1].scope).toBe(peer[0].scope);
+        const frames = a.published.filter(x => x.frame.kind === 'subscription-check' || (x.frame.kind === 'channel' && x.frame.message?.id === 'p6'));
+        expect(frames).toHaveLength(2);
+        expect(new Set(frames.map(x => x.frame.op)).size).toBe(1);
+        expect(typeof frames[0].frame.op).toBe('number');
+    });
+
+    it('P6 on: a recipient revoked between the probe and the fan-out is refused on the peer', async () => {
+        const { probed, peer, delivered } = await probeThenFanOut(500, () => { members.delete('bob'); });
+        expect(probed).toBe(true);
+        expect(peer).toHaveLength(2);
+        expect(delivered).toBe(false);
+    });
+
+    it('P6 on: the shared peer scope closes after its linger and on shutdown', async () => {
+        const { b, peer } = await probeThenFanOut(100);
+        const shared = peer[0].scope!;
+        expect(shared.active).toBe(true); // within the linger
+        await delay(200);
+        expect(shared.active).toBe(false);
+        expect((b.router as any).peerOps.size).toBe(0);
+        namespace = `acceptance-${randomUUID()}`; // a second pair, separate node owners
+        const again = await probeThenFanOut(1500);
+        expect(again.peer[0].scope!.active).toBe(true);
+        await again.b.router.shutdown();
+        expect(again.peer[0].scope!.active).toBe(false);
+    });
+
+    it('P6 ignores a forged or malformed op and rejects an out-of-range linger', async () => {
+        expect(() => new RedisRealtimeRouter({ redis: {} as any, namespace, nodeId: 'x', peerOperationLingerMs: 2001 })).toThrow('Invalid peer operation linger');
+        expect(() => new RedisRealtimeRouter({ redis: {} as any, namespace, nodeId: 'x', peerOperationLingerMs: -1 })).toThrow('Invalid peer operation linger');
+        const a = await boot('a', namespace, { peerOperationLingerMs: 500 }), b = await boot('b', namespace, { peerOperationLingerMs: 500 });
+        const bob = await connect(b, 'bob'); await b.router.subscribeToChannel(bob.id, 'orgiq:room');
+        asks.length = 0;
+        const original = a.port.publish;
+        a.port.publish = async (topic, payload) => {
+            const frame = JSON.parse(payload);
+            if (frame.kind === 'subscription-check') frame.op = 'not-a-number';
+            return original(topic, JSON.stringify(frame));
+        };
+        const scope = createAuthorityScope('probe');
+        try { expect(await a.router.isClientSubscribed(bob.id, 'orgiq:room', { scope })).toBe(true); }
+        finally { scope.close(); a.port.publish = original; }
+        const peer = asks.filter(x => x.node === 'b' && x.kind === 'subscribe');
+        expect(peer).toHaveLength(1);
+        expect(peer[0].scope).toBeUndefined();
+        expect((b.router as any).peerOps.size).toBe(0);
     });
 
     it('drops a held delivery after disconnect and suppresses in-flight duplicate frames', async () => {

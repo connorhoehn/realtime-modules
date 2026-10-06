@@ -59,6 +59,7 @@ class DynamoChatStore {
             tableName: this.tables.conversations,
             channelIndexName: opts.channelIndexName,
             logger: opts.logger,
+            ...(opts.messageIndexWrites ? { messageIndexWrites: opts.messageIndexWrites } : {}),
             ...clock,
         });
         this.members = new DynamoChatMembershipStore_1.DynamoChatMembershipStore({ client, tableName: this.tables.members });

@@ -48,13 +48,26 @@ export interface RedisRealtimeRouterOptions {
      * younger than ITS max age. Recipient checks always run on every node.
      */
     publishProofMaxAgeMs?: number;
+    /**
+     * 0.110, opt-in (authorityScope.ts P6). > 0: frames one origin operation
+     * sends to a peer (its `subscription-check` probes and its `channel`
+     * fan-out) carry a content-free operation number, and the peer runs
+     * them under ONE authority scope per (origin instance, operation),
+     * kept open at most this many ms after its last frame finishes. Every
+     * check still asks `authorize`; only host-shared proofs (one membership
+     * read per channel) are reused. 0 (default): one scope per frame, as
+     * before, and no operation number on the wire. Max 2000.
+     */
+    peerOperationLingerMs?: number;
 }
 type Source = { nodeId: string; instance: string };
 type Registration = Source & { generation: string; ctx: WsAuthContext };
 type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'channel' | 'broadcast' | 'call-event' | 'peer-event' | 'subscription-check';
     clientId?: string; generation?: string; delivered?: boolean; channel?: string;
     eventTopic?: string;
-    excludeClientId?: string | null; publisher?: { clientId: string; generation: string; proofAt?: number }; message?: unknown };
+    excludeClientId?: string | null; publisher?: { clientId: string; generation: string; proofAt?: number }; message?: unknown;
+    /** P6: the origin operation this frame belongs to (its scope id). */
+    op?: number };
 const NOOP_LOGGER: RouterLogger = { debug() {}, info() {}, warn() {}, error() {} };
 const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0";
 const REGISTER = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
@@ -100,6 +113,8 @@ export class RedisRealtimeRouter implements RealtimeRouter {
     private readonly pending = new Map<string, { target: Source; resolve: (delivered: boolean) => void }>();
     private readonly seen = new Map<string, { until: number; pending: boolean; result: Promise<boolean> }>();
     private activeDeliveries = 0;
+    private readonly peerLingerMs: number;
+    private readonly peerOps = new Map<string, { scope: AuthorityScope; refs: number; timer: ReturnType<typeof setTimeout> | null }>();
     private readonly cleanup = new Set<Promise<unknown>>();
     private readonly callHandlers = new Set<(payload: string) => void>();
     private readonly peerHandlers = new Map<string, Set<(payload: string) => void | Promise<void>>>();
@@ -149,6 +164,8 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         this.maxBytes = opts.maxFrameBytes ?? 1024 * 1024;
         this.maxPending = opts.maxPendingRequests ?? 1024;
         this.maxSeen = opts.maxSeenFrames ?? 10_000;
+        this.peerLingerMs = opts.peerOperationLingerMs ?? 0;
+        if (!Number.isSafeInteger(this.peerLingerMs) || this.peerLingerMs < 0 || this.peerLingerMs > 2000) throw new Error('Invalid peer operation linger');
         if (![this.leaseMs, this.timeoutMs, this.maxBytes, this.maxPending, this.maxSeen].every(n => Number.isSafeInteger(n) && n > 0)
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs) throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
@@ -168,6 +185,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         this.fenced = true; this.deadline = 0;
         if (this.timer) clearInterval(this.timer);
         for (const pending of this.pending.values()) pending.resolve(false);
+        this.closePeerOps();
         this.log.warn(`[realtime-cluster] ${reason}; routing permanently fenced`, error);
     }
     private source(): Source { return { nodeId: this.nodeId, instance: this.instance }; }
@@ -330,7 +348,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (!target || (previous && previous.generation !== target.generation) || this.pending.size >= this.maxPending) return false;
         return this.request(target, { kind: 'direct', clientId, generation: target.generation, message });
     }
-    private request(target: Registration, fields: Pick<Wire, 'kind' | 'clientId' | 'generation' | 'message' | 'channel'>): Promise<boolean> {
+    private request(target: Registration, fields: Pick<Wire, 'kind' | 'clientId' | 'generation' | 'message' | 'channel' | 'op'>): Promise<boolean> {
         const id = randomUUID();
         return new Promise<boolean>(resolve => {
             const timer = setTimeout(() => finish(false), this.timeoutMs);
@@ -375,7 +393,8 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         }
         const target = await this.registration(clientId, false);
         if (!target || target.instance === this.instance || this.pending.size >= this.maxPending) return false;
-        return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel });
+        const op = this.operationOf(opts.scope);
+        return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel, ...(op !== undefined ? { op } : {}) });
     }
     async sendToChannel(channel: string, message: unknown, excludeClientId?: string | null,
         opts?: { skipCoalesce?: boolean; publisherClientId?: string | null; scope?: AuthorityScope }): Promise<void> {
@@ -398,9 +417,10 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (publisherId && !registration) return;
         // P5: a content-free proof time, only for a live allowed proof.
         const proofAt = publisherId ? this.local.publishProofAt(scope, publisherId, channel) : null;
+        const op = this.operationOf(scope);
         await this.publish(`${this.prefix}channels`, { v: 1, id: randomUUID(), source: this.source(), kind: 'channel',
             channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration!.generation,
-                ...(proofAt !== null ? { proofAt } : {}) } } : {}) });
+                ...(proofAt !== null ? { proofAt } : {}) } } : {}), ...(op !== undefined ? { op } : {}) });
     }
     async broadcastToAll(message: unknown, excludeClientId?: string): Promise<void> {
         await this.local.broadcastToAll(message, excludeClientId);
@@ -455,16 +475,20 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             if (typeof frame.clientId !== 'string' || typeof frame.generation !== 'string') return false;
             const local = this.registrations.get(frame.clientId);
             if (!local || local.registration.generation !== frame.generation || this.current(frame.clientId) !== local.context) return false;
-            return frame.kind === 'subscription-check'
-                ? typeof frame.channel === 'string' && !!frame.channel && Buffer.byteLength(frame.channel) <= this.maxBytes
-                    && await this.local.isClientSubscribed(frame.clientId, frame.channel)
-                : this.local.sendToClient(frame.clientId, frame.message);
+            if (frame.kind !== 'subscription-check') return this.local.sendToClient(frame.clientId, frame.message);
+            if (typeof frame.channel !== 'string' || !frame.channel || Buffer.byteLength(frame.channel) > this.maxBytes) return false;
+            const shared = this.acquirePeerOperation(frame);
+            if (!shared) return this.local.isClientSubscribed(frame.clientId, frame.channel);
+            try { return await this.local.isClientSubscribed(frame.clientId, frame.channel, { scope: shared.scope }); }
+            finally { shared.release(); }
         }
         if (frame.kind === 'channel') {
             if (typeof frame.channel !== 'string' || !frame.channel) return false;
             // One authority scope per peer fan-out: the publisher's re-check
-            // and this node's recipient checks share it.
-            const scope = createAuthorityScope('fanout');
+            // and this node's recipient checks share it (P6: and, opted in,
+            // the same origin operation's subscription probes).
+            const shared = this.acquirePeerOperation(frame);
+            const scope = shared?.scope ?? createAuthorityScope('fanout');
             try {
                 if (frame.publisher) {
                     if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string') return false;
@@ -478,10 +502,49 @@ export class RedisRealtimeRouter implements RealtimeRouter {
                 }
                 await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId, scope);
             } finally {
-                scope.close();
+                if (shared) shared.release(); else scope.close();
             }
         } else await this.local.broadcastToAll(frame.message, frame.excludeClientId ?? undefined);
         return true;
+    }
+    /** P6, origin side: the operation number a peer frame carries, opted in. */
+    private operationOf(scope: AuthorityScope | null | undefined): number | undefined {
+        return this.peerLingerMs > 0 && scope?.active ? scope.id : undefined;
+    }
+    /**
+     * P6, peer side: one scope per (origin instance, operation) while any of
+     * its frames runs, closed `peerLingerMs` after the last one finishes.
+     * Null when off, unnumbered or over the bound (callers then use their
+     * own per-frame scope, as before 0.110).
+     */
+    private acquirePeerOperation(frame: Wire): { scope: AuthorityScope; release: () => void } | null {
+        if (!(this.peerLingerMs > 0) || typeof frame.op !== 'number' || !Number.isSafeInteger(frame.op) || frame.op < 1) return null;
+        const key = `${frame.source.instance}:${frame.op}`;
+        let entry = this.peerOps.get(key);
+        if (!entry || !entry.scope.active) {
+            if (this.peerOps.size >= this.maxPending) return null;
+            entry = { scope: createAuthorityScope(`peer:${frame.kind}`), refs: 0, timer: null };
+            this.peerOps.set(key, entry);
+        }
+        const held = entry;
+        if (held.timer) { clearTimeout(held.timer); held.timer = null; }
+        held.refs++;
+        let released = false;
+        return { scope: held.scope, release: () => {
+            if (released) return;
+            released = true;
+            if (--held.refs > 0) return;
+            held.timer = setTimeout(() => {
+                if (held.refs > 0) return;
+                if (this.peerOps.get(key) === held) this.peerOps.delete(key);
+                held.scope.close();
+            }, this.peerLingerMs);
+            held.timer.unref?.();
+        } };
+    }
+    private closePeerOps(): void {
+        for (const entry of this.peerOps.values()) { if (entry.timer) clearTimeout(entry.timer); entry.scope.close(); }
+        this.peerOps.clear();
     }
     removeClient(clientId: string): void {
         this.local.removeClient(clientId);
@@ -497,6 +560,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
     async shutdown(): Promise<void> {
         if (this.stopped) return;
         this.stopped = true;
+        this.closePeerOps();
         this.deadline = 0;
         if (this.timer) clearInterval(this.timer);
         for (const pending of this.pending.values()) pending.resolve(false);

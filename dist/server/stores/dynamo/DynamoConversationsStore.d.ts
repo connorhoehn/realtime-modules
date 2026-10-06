@@ -33,6 +33,15 @@ export interface DynamoConversationsStoreOpts extends DynamoStoreClockOpts {
     /** GSI keyed by `channel`. Default `channel-index`. */
     channelIndexName?: string;
     logger?: DynamoStoreLogger;
+    /**
+     * 0.110. How `recordMessage` writes one message's rows: `'each'`
+     * (default) — one UpdateItem per member, as before; `'transaction'` —
+     * the same UpdateItems in one TransactWriteItems request per 100
+     * members (one round trip instead of one per member). A transaction that
+     * fails (a concurrent write to the same row, a throttle) is retried as
+     * per-member writes, so the rows still heal the way they did.
+     */
+    messageIndexWrites?: 'each' | 'transaction';
 }
 /**
  * Who a conversations-index write is for when a message CHANGES (edited,
@@ -53,6 +62,7 @@ export declare class DynamoConversationsStore {
     private readonly logger?;
     private readonly now;
     private readonly ttlSeconds;
+    private readonly messageIndexWrites;
     constructor(opts: DynamoConversationsStoreOpts);
     /**
      * Upsert the row for EVERY member of the thread with the message's

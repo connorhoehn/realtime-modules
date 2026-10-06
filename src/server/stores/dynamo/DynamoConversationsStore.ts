@@ -25,7 +25,7 @@
 // Index writes are best-effort: failures are logged and swallowed, because
 // the message itself is already stored and the row heals on the next one.
 
-import { BatchGetItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import { BatchGetItemCommand, QueryCommand, TransactWriteItemsCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import type { ChatMessage } from '../../../chat/types';
 import { dmChannelMembers, isDmChatChannel } from '../../../chat/dmChannels';
 import {
@@ -75,6 +75,15 @@ export interface DynamoConversationsStoreOpts extends DynamoStoreClockOpts {
     /** GSI keyed by `channel`. Default `channel-index`. */
     channelIndexName?: string;
     logger?: DynamoStoreLogger;
+    /**
+     * 0.110. How `recordMessage` writes one message's rows: `'each'`
+     * (default) — one UpdateItem per member, as before; `'transaction'` —
+     * the same UpdateItems in one TransactWriteItems request per 100
+     * members (one round trip instead of one per member). A transaction that
+     * fails (a concurrent write to the same row, a throttle) is retried as
+     * per-member writes, so the rows still heal the way they did.
+     */
+    messageIndexWrites?: 'each' | 'transaction';
 }
 
 /**
@@ -104,6 +113,7 @@ export class DynamoConversationsStore {
     private readonly logger?: DynamoStoreLogger;
     private readonly now: () => number;
     private readonly ttlSeconds: number;
+    private readonly messageIndexWrites: 'each' | 'transaction';
 
     constructor(opts: DynamoConversationsStoreOpts) {
         this.client = requireClient('DynamoConversationsStore', opts?.client);
@@ -112,6 +122,9 @@ export class DynamoConversationsStore {
         this.logger = opts.logger;
         this.now = opts.now ?? Date.now;
         this.ttlSeconds = opts.ttlSeconds ?? CHAT_TTL_SECONDS;
+        const writes = opts.messageIndexWrites ?? 'each';
+        if (writes !== 'each' && writes !== 'transaction') throw new Error("DynamoConversationsStore: messageIndexWrites must be 'each' or 'transaction'");
+        this.messageIndexWrites = writes;
     }
 
     /**
@@ -125,31 +138,53 @@ export class DynamoConversationsStore {
         const preview = (message.message ?? '').slice(0, CONVERSATION_PREVIEW_MAX);
         const ttl = ttlFrom(this.now, this.ttlSeconds);
         const peersJson = JSON.stringify(members);
-        await Promise.all(members.map(async (userId) => {
+        // UpdateItem, not Put: the row also carries this person's own
+        // pinned / mutedUntil / unreadFrom / section.
+        const update = (userId: string) => ({
+            TableName: this.tableName,
+            Key: { userId: { S: userId }, channel: { S: channel } },
+            UpdateExpression:
+                'SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl'
+                + (senderUserId ? ', lastMessageUserId = :sender' : ''),
+            ExpressionAttributeNames: { '#ttl': 'ttl' },
+            ExpressionAttributeValues: {
+                ':peers': { S: peersJson },
+                ':at': { S: message.timestamp },
+                ':preview': { S: preview },
+                ':ttl': { N: ttl },
+                ...(senderUserId ? { ':sender': { S: senderUserId } } : {}),
+            },
+        });
+        const each = (userIds: string[]) => Promise.all(userIds.map(async (userId) => {
             try {
-                // UpdateItem, not Put: the row also carries this person's own
-                // pinned / mutedUntil / unreadFrom / section.
-                await this.client.send(new UpdateItemCommand({
-                    TableName: this.tableName,
-                    Key: { userId: { S: userId }, channel: { S: channel } },
-                    UpdateExpression:
-                        'SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl'
-                        + (senderUserId ? ', lastMessageUserId = :sender' : ''),
-                    ExpressionAttributeNames: { '#ttl': 'ttl' },
-                    ExpressionAttributeValues: {
-                        ':peers': { S: peersJson },
-                        ':at': { S: message.timestamp },
-                        ':preview': { S: preview },
-                        ':ttl': { N: ttl },
-                        ...(senderUserId ? { ':sender': { S: senderUserId } } : {}),
-                    },
-                }));
+                await this.client.send(new UpdateItemCommand(update(userId)));
             } catch (err) {
                 this.logger?.warn?.('conversations index write failed', {
                     channel,
                     userId,
                     error: (err as Error)?.message,
                 });
+            }
+        }));
+        const unique = Array.from(new Set(members));
+        if (this.messageIndexWrites !== 'transaction' || unique.length < 2) {
+            await each(members);
+            return;
+        }
+        const chunks: string[][] = [];
+        for (let i = 0; i < unique.length; i += 100) chunks.push(unique.slice(i, i + 100));
+        await Promise.all(chunks.map(async (chunk) => {
+            if (chunk.length < 2) { await each(chunk); return; }
+            try {
+                await this.client.send(new TransactWriteItemsCommand({
+                    TransactItems: chunk.map((userId) => ({ Update: update(userId) })),
+                }));
+            } catch (err) {
+                this.logger?.warn?.('conversations index transaction failed; writing rows one by one', {
+                    channel,
+                    error: (err as Error)?.message,
+                });
+                await each(chunk);
             }
         }));
     }

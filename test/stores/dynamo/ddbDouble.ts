@@ -83,6 +83,16 @@ export function makeDdbDouble(opts: { keys?: Record<string, [string, string]> } 
                 }
                 return { Responses: out };
             }
+            case 'TransactWriteItemsCommand': {
+                // All-or-nothing over Update items (the only kind the stores send).
+                for (const { Update: u } of input.TransactItems) {
+                    const id = k(u.TableName, u.Key);
+                    const item = { ...(table(u.TableName).get(id) ?? u.Key) };
+                    applyUpdate(item, u.UpdateExpression, u.ExpressionAttributeNames, u.ExpressionAttributeValues);
+                    table(u.TableName).set(id, item);
+                }
+                return {};
+            }
             default: return {};
         }
     };

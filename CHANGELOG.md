@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## 0.110.0 — 2026-10-06
+
+Two opt-in changes that cut DynamoDB/authority round trips per chat send;
+defaults are unchanged.
+
+- **Peer operation scopes (opt-in).** `new RedisRealtimeRouter({ peerOperationLingerMs })`
+  (0-2000, default 0). A cross-node chat send reached each peer as two frames,
+  the notify plugin's readable-subscription probe (`subscription-check`) and
+  the fan-out (`channel`), and the peer opened a separate authority scope for
+  each, so a host that shares one membership read per scope read the same
+  rows twice for one recipient. Opted in, the origin stamps both frames with
+  its operation's scope id (`op`, one number) and the peer runs every frame
+  of one (origin instance, op) under one scope, closed at most
+  `peerOperationLingerMs` after its last frame (or immediately on fence or
+  shutdown). Every check still calls `authorize`; recipient checks are never
+  memoized by the router; a host's shared proof must stay revocable for the
+  scope's life (point 2). Off: no `op` on the wire, per-frame scopes as
+  before. Contract P6 in `src/server-ws/authorityScope.ts`.
+- **Transactional conversations-index writes (opt-in).**
+  `new DynamoChatStore({ messageIndexWrites: 'transaction' })` /
+  `new DynamoConversationsStore({ messageIndexWrites })`: `recordMessage`
+  sends the same per-member UpdateItems as one `TransactWriteItems` request
+  per 100 members (duplicates collapse) instead of one request per member. A
+  failed transaction (a concurrent write to the same row, a throttle) is
+  logged and retried as per-member writes. Default `'each'`: unchanged.
+
 ## 0.109.0 — 2026-10-06
 
 - **Publish proofs (opt-in).** `attachRealtime({ publishProofMaxAgeMs })`,

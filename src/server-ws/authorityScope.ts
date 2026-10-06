@@ -193,6 +193,26 @@ export function scopeFor(existing: AuthorityScope | null | undefined, operation:
 //       denied whatever the marker says. An absent, stale, future or
 //       malformed marker, or a peer with the option off, re-checks the
 //       publisher exactly as before.
+//
+//   P6. Peer operation scopes (0.110, OPT-IN: `RedisRealtimeRouter`'s
+//       `peerOperationLingerMs` > 0). A cross-node chat send reached each
+//       peer as TWO frames — the notify plugin's readable-subscription probe
+//       (`subscription-check`) and the fan-out (`channel`) — and the peer
+//       opened a fresh scope for each, so the host read the same membership
+//       rows twice for one recipient a few ms apart. Opted in, the origin
+//       stamps both with its operation's scope id (`op`, one number), and
+//       the peer runs every frame of one (origin instance, op) under ONE
+//       scope. That scope is still bound to the operation: it opens with the
+//       first frame, stays open while any frame runs, and closes at most
+//       `peerOperationLingerMs` (<= 2000) after the last one finishes — or
+//       at once when the router fences or shuts down. It is a scope like any
+//       other: every check still calls `authorize` (directory, actor, policy
+//       per check), recipient `subscribe` checks are never shared (P1), the
+//       router's per-recipient fences still run, and a host's shared proof
+//       must stay revocable (point 2) for the scope's whole life, so a
+//       membership write or peer hint during the linger denies or rereads.
+//       A frame without `op`, an over-bound table or the option off gets a
+//       per-frame scope (fan-out) or none (probe), exactly as before.
 // ---------------------------------------------------------------------------
 
 /** Clock tolerance a peer allows for a publish proof stamped in its future. */

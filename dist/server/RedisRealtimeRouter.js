@@ -51,6 +51,8 @@ class RedisRealtimeRouter {
     pending = new Map();
     seen = new Map();
     activeDeliveries = 0;
+    peerLingerMs;
+    peerOps = new Map();
     cleanup = new Set();
     callHandlers = new Set();
     peerHandlers = new Map();
@@ -107,6 +109,9 @@ class RedisRealtimeRouter {
         this.maxBytes = opts.maxFrameBytes ?? 1024 * 1024;
         this.maxPending = opts.maxPendingRequests ?? 1024;
         this.maxSeen = opts.maxSeenFrames ?? 10_000;
+        this.peerLingerMs = opts.peerOperationLingerMs ?? 0;
+        if (!Number.isSafeInteger(this.peerLingerMs) || this.peerLingerMs < 0 || this.peerLingerMs > 2000)
+            throw new Error('Invalid peer operation linger');
         if (![this.leaseMs, this.timeoutMs, this.maxBytes, this.maxPending, this.maxSeen].every(n => Number.isSafeInteger(n) && n > 0)
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs)
             throw new Error('Invalid cluster bounds');
@@ -132,6 +137,7 @@ class RedisRealtimeRouter {
             clearInterval(this.timer);
         for (const pending of this.pending.values())
             pending.resolve(false);
+        this.closePeerOps();
         this.log.warn(`[realtime-cluster] ${reason}; routing permanently fenced`, error);
     }
     source() { return { nodeId: this.nodeId, instance: this.instance }; }
@@ -383,7 +389,8 @@ class RedisRealtimeRouter {
         const target = await this.registration(clientId, false);
         if (!target || target.instance === this.instance || this.pending.size >= this.maxPending)
             return false;
-        return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel });
+        const op = this.operationOf(opts.scope);
+        return this.request(target, { kind: 'subscription-check', clientId, generation: target.generation, channel, ...(op !== undefined ? { op } : {}) });
     }
     async sendToChannel(channel, message, excludeClientId, opts) {
         if (!this.live())
@@ -410,9 +417,10 @@ class RedisRealtimeRouter {
             return;
         // P5: a content-free proof time, only for a live allowed proof.
         const proofAt = publisherId ? this.local.publishProofAt(scope, publisherId, channel) : null;
+        const op = this.operationOf(scope);
         await this.publish(`${this.prefix}channels`, { v: 1, id: (0, crypto_1.randomUUID)(), source: this.source(), kind: 'channel',
             channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration.generation,
-                    ...(proofAt !== null ? { proofAt } : {}) } } : {}) });
+                    ...(proofAt !== null ? { proofAt } : {}) } } : {}), ...(op !== undefined ? { op } : {}) });
     }
     async broadcastToAll(message, excludeClientId) {
         await this.local.broadcastToAll(message, excludeClientId);
@@ -490,17 +498,28 @@ class RedisRealtimeRouter {
             const local = this.registrations.get(frame.clientId);
             if (!local || local.registration.generation !== frame.generation || this.current(frame.clientId) !== local.context)
                 return false;
-            return frame.kind === 'subscription-check'
-                ? typeof frame.channel === 'string' && !!frame.channel && Buffer.byteLength(frame.channel) <= this.maxBytes
-                    && await this.local.isClientSubscribed(frame.clientId, frame.channel)
-                : this.local.sendToClient(frame.clientId, frame.message);
+            if (frame.kind !== 'subscription-check')
+                return this.local.sendToClient(frame.clientId, frame.message);
+            if (typeof frame.channel !== 'string' || !frame.channel || Buffer.byteLength(frame.channel) > this.maxBytes)
+                return false;
+            const shared = this.acquirePeerOperation(frame);
+            if (!shared)
+                return this.local.isClientSubscribed(frame.clientId, frame.channel);
+            try {
+                return await this.local.isClientSubscribed(frame.clientId, frame.channel, { scope: shared.scope });
+            }
+            finally {
+                shared.release();
+            }
         }
         if (frame.kind === 'channel') {
             if (typeof frame.channel !== 'string' || !frame.channel)
                 return false;
             // One authority scope per peer fan-out: the publisher's re-check
-            // and this node's recipient checks share it.
-            const scope = (0, authorityScope_1.createAuthorityScope)('fanout');
+            // and this node's recipient checks share it (P6: and, opted in,
+            // the same origin operation's subscription probes).
+            const shared = this.acquirePeerOperation(frame);
+            const scope = shared?.scope ?? (0, authorityScope_1.createAuthorityScope)('fanout');
             try {
                 if (frame.publisher) {
                     if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string')
@@ -518,12 +537,67 @@ class RedisRealtimeRouter {
                 await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId, scope);
             }
             finally {
-                scope.close();
+                if (shared)
+                    shared.release();
+                else
+                    scope.close();
             }
         }
         else
             await this.local.broadcastToAll(frame.message, frame.excludeClientId ?? undefined);
         return true;
+    }
+    /** P6, origin side: the operation number a peer frame carries, opted in. */
+    operationOf(scope) {
+        return this.peerLingerMs > 0 && scope?.active ? scope.id : undefined;
+    }
+    /**
+     * P6, peer side: one scope per (origin instance, operation) while any of
+     * its frames runs, closed `peerLingerMs` after the last one finishes.
+     * Null when off, unnumbered or over the bound (callers then use their
+     * own per-frame scope, as before 0.110).
+     */
+    acquirePeerOperation(frame) {
+        if (!(this.peerLingerMs > 0) || typeof frame.op !== 'number' || !Number.isSafeInteger(frame.op) || frame.op < 1)
+            return null;
+        const key = `${frame.source.instance}:${frame.op}`;
+        let entry = this.peerOps.get(key);
+        if (!entry || !entry.scope.active) {
+            if (this.peerOps.size >= this.maxPending)
+                return null;
+            entry = { scope: (0, authorityScope_1.createAuthorityScope)(`peer:${frame.kind}`), refs: 0, timer: null };
+            this.peerOps.set(key, entry);
+        }
+        const held = entry;
+        if (held.timer) {
+            clearTimeout(held.timer);
+            held.timer = null;
+        }
+        held.refs++;
+        let released = false;
+        return { scope: held.scope, release: () => {
+                if (released)
+                    return;
+                released = true;
+                if (--held.refs > 0)
+                    return;
+                held.timer = setTimeout(() => {
+                    if (held.refs > 0)
+                        return;
+                    if (this.peerOps.get(key) === held)
+                        this.peerOps.delete(key);
+                    held.scope.close();
+                }, this.peerLingerMs);
+                held.timer.unref?.();
+            } };
+    }
+    closePeerOps() {
+        for (const entry of this.peerOps.values()) {
+            if (entry.timer)
+                clearTimeout(entry.timer);
+            entry.scope.close();
+        }
+        this.peerOps.clear();
     }
     removeClient(clientId) {
         this.local.removeClient(clientId);
@@ -541,6 +615,7 @@ class RedisRealtimeRouter {
         if (this.stopped)
             return;
         this.stopped = true;
+        this.closePeerOps();
         this.deadline = 0;
         if (this.timer)
             clearInterval(this.timer);

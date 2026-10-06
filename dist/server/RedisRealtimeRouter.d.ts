@@ -45,6 +45,17 @@ export interface RedisRealtimeRouterOptions {
      * younger than ITS max age. Recipient checks always run on every node.
      */
     publishProofMaxAgeMs?: number;
+    /**
+     * 0.110, opt-in (authorityScope.ts P6). > 0: frames one origin operation
+     * sends to a peer (its `subscription-check` probes and its `channel`
+     * fan-out) carry a content-free operation number, and the peer runs
+     * them under ONE authority scope per (origin instance, operation),
+     * kept open at most this many ms after its last frame finishes. Every
+     * check still asks `authorize`; only host-shared proofs (one membership
+     * read per channel) are reused. 0 (default): one scope per frame, as
+     * before, and no operation number on the wire. Max 2000.
+     */
+    peerOperationLingerMs?: number;
 }
 /** Opt-in Redis peer transport. Each destination uses LocalRealtimeRouter's
  * current recipient authorization/context/subscription fences. Directory
@@ -77,6 +88,8 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private readonly pending;
     private readonly seen;
     private activeDeliveries;
+    private readonly peerLingerMs;
+    private readonly peerOps;
     private readonly cleanup;
     private readonly callHandlers;
     private readonly peerHandlers;
@@ -138,6 +151,16 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     broadcastToAll(message: unknown, excludeClientId?: string): Promise<void>;
     private receive;
     private deliver;
+    /** P6, origin side: the operation number a peer frame carries, opted in. */
+    private operationOf;
+    /**
+     * P6, peer side: one scope per (origin instance, operation) while any of
+     * its frames runs, closed `peerLingerMs` after the last one finishes.
+     * Null when off, unnumbered or over the bound (callers then use their
+     * own per-frame scope, as before 0.110).
+     */
+    private acquirePeerOperation;
+    private closePeerOps;
     removeClient(clientId: string): void;
     shutdown(): Promise<void>;
 }

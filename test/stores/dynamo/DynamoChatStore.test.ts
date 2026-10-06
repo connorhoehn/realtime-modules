@@ -212,6 +212,44 @@ describe('conversations index', () => {
         await expect(store.conversations.recordMessage({ channel: 'g', members: ['a', 'b'], message: msg() })).resolves.toBeUndefined();
     });
 
+    it("messageIndexWrites 'transaction' writes the SAME member updates in one TransactWriteItems request (0.110)", async () => {
+        const each = makeStore();
+        const tx = makeStore({ messageIndexWrites: 'transaction' });
+        const info = { channel: 'room:design', members: ['dev-eve', 'dev-carol', 'dev-eve'], message: msg({ channel: 'room:design', userId: 'dev-carol' }) };
+        await each.store.conversations.recordMessage(info);
+        await tx.store.conversations.recordMessage(info);
+        expect(tx.ddb.sent.map((s) => s.name)).toEqual(['TransactWriteItemsCommand']);
+        // Duplicates collapse (a transaction may not name one item twice);
+        // each Update is exactly the per-member UpdateItem input.
+        const updates = tx.ddb.sent[0].input.TransactItems.map((i: any) => i.Update);
+        expect(updates).toEqual(each.ddb.sent.slice(0, 2).map((s) => s.input));
+        expect(tx.ddb.rows('chat-conversations')).toEqual(each.ddb.rows('chat-conversations'));
+    });
+
+    it("messageIndexWrites 'transaction' falls back to per-member writes when the transaction fails, and one member stays an UpdateItem", async () => {
+        const warn = jest.fn();
+        const { ddb, store } = makeStore({ messageIndexWrites: 'transaction', logger: { warn } });
+        ddb.failNext('TransactWriteItemsCommand', Object.assign(new Error('conflict'), { name: 'TransactionCanceledException' }));
+        await store.conversations.recordMessage({ channel: 'g', members: ['a', 'b'], message: msg({ channel: 'g' }) });
+        expect(ddb.sent.map((s) => s.name)).toEqual(['TransactWriteItemsCommand', 'UpdateItemCommand', 'UpdateItemCommand']);
+        expect(ddb.row('chat-conversations', 'a', 'g')).toBeDefined();
+        expect(ddb.row('chat-conversations', 'b', 'g')).toBeDefined();
+        expect(warn).toHaveBeenCalledWith('conversations index transaction failed; writing rows one by one', expect.objectContaining({ channel: 'g' }));
+        ddb.clear();
+        await store.conversations.recordMessage({ channel: 'solo', members: ['a'], message: msg({ channel: 'solo' }) });
+        expect(ddb.sent.map((s) => s.name)).toEqual(['UpdateItemCommand']);
+    });
+
+    it("messageIndexWrites splits more than 100 members into transactions of at most 100 and rejects unknown modes", async () => {
+        const { ddb, store } = makeStore({ messageIndexWrites: 'transaction' });
+        const members = Array.from({ length: 201 }, (_, i) => `u${i}`);
+        await store.conversations.recordMessage({ channel: 'big', members, message: msg({ channel: 'big' }) });
+        expect(ddb.sent.map((s) => s.name).sort()).toEqual(['TransactWriteItemsCommand', 'TransactWriteItemsCommand', 'UpdateItemCommand']);
+        expect(ddb.sent.filter((s) => s.name === 'TransactWriteItemsCommand').map((s) => s.input.TransactItems.length)).toEqual([100, 100]);
+        expect(ddb.rows('chat-conversations')).toHaveLength(201);
+        expect(() => new DynamoConversationsStore({ client: ddb, tableName: 't', messageIndexWrites: 'batch' } as any)).toThrow(/messageIndexWrites/);
+    });
+
     it('recordJoin seeds peers/joinedAt only if absent and refreshes ttl', async () => {
         const { ddb, store } = makeStore();
         await store.conversations.recordJoin('room:design', 'dev-eve');

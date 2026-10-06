@@ -59,6 +59,7 @@ class DynamoConversationsStore {
     logger;
     now;
     ttlSeconds;
+    messageIndexWrites;
     constructor(opts) {
         this.client = (0, common_1.requireClient)('DynamoConversationsStore', opts?.client);
         this.tableName = (0, common_1.requireTable)('DynamoConversationsStore', opts.tableName);
@@ -66,6 +67,10 @@ class DynamoConversationsStore {
         this.logger = opts.logger;
         this.now = opts.now ?? Date.now;
         this.ttlSeconds = opts.ttlSeconds ?? common_1.CHAT_TTL_SECONDS;
+        const writes = opts.messageIndexWrites ?? 'each';
+        if (writes !== 'each' && writes !== 'transaction')
+            throw new Error("DynamoConversationsStore: messageIndexWrites must be 'each' or 'transaction'");
+        this.messageIndexWrites = writes;
     }
     /**
      * Upsert the row for EVERY member of the thread with the message's
@@ -79,24 +84,25 @@ class DynamoConversationsStore {
         const preview = (message.message ?? '').slice(0, exports.CONVERSATION_PREVIEW_MAX);
         const ttl = (0, common_1.ttlFrom)(this.now, this.ttlSeconds);
         const peersJson = JSON.stringify(members);
-        await Promise.all(members.map(async (userId) => {
+        // UpdateItem, not Put: the row also carries this person's own
+        // pinned / mutedUntil / unreadFrom / section.
+        const update = (userId) => ({
+            TableName: this.tableName,
+            Key: { userId: { S: userId }, channel: { S: channel } },
+            UpdateExpression: 'SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl'
+                + (senderUserId ? ', lastMessageUserId = :sender' : ''),
+            ExpressionAttributeNames: { '#ttl': 'ttl' },
+            ExpressionAttributeValues: {
+                ':peers': { S: peersJson },
+                ':at': { S: message.timestamp },
+                ':preview': { S: preview },
+                ':ttl': { N: ttl },
+                ...(senderUserId ? { ':sender': { S: senderUserId } } : {}),
+            },
+        });
+        const each = (userIds) => Promise.all(userIds.map(async (userId) => {
             try {
-                // UpdateItem, not Put: the row also carries this person's own
-                // pinned / mutedUntil / unreadFrom / section.
-                await this.client.send(new client_dynamodb_1.UpdateItemCommand({
-                    TableName: this.tableName,
-                    Key: { userId: { S: userId }, channel: { S: channel } },
-                    UpdateExpression: 'SET peers = :peers, lastMessageAt = :at, lastMessagePreview = :preview, #ttl = :ttl'
-                        + (senderUserId ? ', lastMessageUserId = :sender' : ''),
-                    ExpressionAttributeNames: { '#ttl': 'ttl' },
-                    ExpressionAttributeValues: {
-                        ':peers': { S: peersJson },
-                        ':at': { S: message.timestamp },
-                        ':preview': { S: preview },
-                        ':ttl': { N: ttl },
-                        ...(senderUserId ? { ':sender': { S: senderUserId } } : {}),
-                    },
-                }));
+                await this.client.send(new client_dynamodb_1.UpdateItemCommand(update(userId)));
             }
             catch (err) {
                 this.logger?.warn?.('conversations index write failed', {
@@ -104,6 +110,32 @@ class DynamoConversationsStore {
                     userId,
                     error: err?.message,
                 });
+            }
+        }));
+        const unique = Array.from(new Set(members));
+        if (this.messageIndexWrites !== 'transaction' || unique.length < 2) {
+            await each(members);
+            return;
+        }
+        const chunks = [];
+        for (let i = 0; i < unique.length; i += 100)
+            chunks.push(unique.slice(i, i + 100));
+        await Promise.all(chunks.map(async (chunk) => {
+            if (chunk.length < 2) {
+                await each(chunk);
+                return;
+            }
+            try {
+                await this.client.send(new client_dynamodb_1.TransactWriteItemsCommand({
+                    TransactItems: chunk.map((userId) => ({ Update: update(userId) })),
+                }));
+            }
+            catch (err) {
+                this.logger?.warn?.('conversations index transaction failed; writing rows one by one', {
+                    channel,
+                    error: err?.message,
+                });
+                await each(chunk);
             }
         }));
     }

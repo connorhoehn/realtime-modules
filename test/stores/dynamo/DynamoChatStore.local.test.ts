@@ -131,6 +131,23 @@ const S = (AttributeName: string) => ({ AttributeName, AttributeType: 'S' as con
                 expect(await s.listMessages(ch, 10)).toHaveLength(3);
             });
 
+            it("messageIndexWrites 'transaction' leaves the same rows as per-member writes and keeps per-person state (0.110)", async () => {
+                const each = new DynamoChatStore({ client, tables });
+                const tx = new DynamoChatStore({ client, tables, messageIndexWrites: 'transaction' });
+                const a = `tx-each-${tag}`, b = `tx-txn-${tag}`;
+                await tx.conversations.setPinned('dev-eve', b, true);
+                const message = (channel: string) => ({ id: 'm', clientId: 'c', userId: 'dev-zed', channel, message: 'hi', timestamp: '2026-10-06T12:00:00.000Z' });
+                await each.conversations.recordMessage({ channel: a, members: ['dev-eve', 'dev-zed'], message: message(a) });
+                await tx.conversations.recordMessage({ channel: b, members: ['dev-eve', 'dev-zed'], message: message(b) });
+                for (const user of ['dev-eve', 'dev-zed']) {
+                    const rows = await tx.conversations.listForUser(user, 50);
+                    const strip = (r: any) => r && { peers: r.peers, lastMessageAt: r.lastMessageAt, lastMessagePreview: r.lastMessagePreview, lastMessageUserId: r.lastMessageUserId };
+                    expect(strip(rows.find((r) => r.channel === b))).toEqual(strip(rows.find((r) => r.channel === a)));
+                }
+                expect((await tx.conversations.listForUser('dev-eve', 50)).find((r) => r.channel === b)?.pinned).toBe(true);
+                expect((await tx.conversations.listUsersForChannel(b)).sort()).toEqual(['dev-eve', 'dev-zed']);
+            });
+
             it('keeps per-person conversation state across messages; section/mute/unread round-trip; the GSI answers the audience', async () => {
                 const s = store();
                 const c = `room:design-${tag}`;
