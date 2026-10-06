@@ -112,7 +112,7 @@ export type {
 // The auth context `auth` returns and `authorize` / `lobbyGuard` /
 // `resolveSender` receive — so a consumer types its callbacks from this entry.
 export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
-export { DEFAULT_WS_MAX_PAYLOAD } from '../server-ws/types';
+export { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from '../server-ws/types';
 export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 // Read the service prefix off a channel `authorize` receives.
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';

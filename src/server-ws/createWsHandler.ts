@@ -26,7 +26,7 @@
 // install `ws` themselves (peerDep style).
 
 import { attachWsHeartbeat, wsSend } from 'distributed-core/transport';
-import { DEFAULT_WS_MAX_PAYLOAD } from './types';
+import { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from './types';
 import type {
     WsAuthContext,
     WsHandlerHandle,
@@ -75,7 +75,9 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         generateClientId = defaultGenerateClientId,
         path,
         maxPayload = DEFAULT_WS_MAX_PAYLOAD,
+        independentServices: independentServiceNames = DEFAULT_INDEPENDENT_SERVICES,
     } = opts;
+    const independentServices = new Set(independentServiceNames);
 
     if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
         throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
@@ -228,10 +230,14 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         // A per-connection promise chain is the narrowest fix: this client's
         // frames serialise, other clients stay concurrent. The websocket
         // delivered them in order; honouring that is the service's job.
+        //
+        // `independentServices` (default presence) get a lane of their own:
+        // still ordered among themselves, but a slow presence `set` no longer
+        // holds this connection's next chat `send` behind it.
         let frameQueue: Promise<void> = Promise.resolve();
+        const lanes = new Map<string, Promise<void>>();
 
-        const handleFrame = async (raw: unknown): Promise<void> => {
-            const msg = safeParse(raw);
+        const handleFrame = async (msg: Record<string, unknown> | null): Promise<void> => {
             if (!msg) {
                 wsSend(ws, JSON.stringify({
                     type: 'error',
@@ -278,8 +284,14 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         };
 
         const enqueueFrame = (raw: unknown) => {
+            const msg = safeParse(raw);
+            const lane = msg && typeof msg.service === 'string' && independentServices.has(msg.service) ? msg.service : null;
             // A rejected frame must not poison the chain for the next one.
-            frameQueue = frameQueue.then(() => handleFrame(raw)).catch(() => undefined);
+            if (lane === null) {
+                frameQueue = frameQueue.then(() => handleFrame(msg)).catch(() => undefined);
+                return;
+            }
+            lanes.set(lane, (lanes.get(lane) ?? Promise.resolve()).then(() => handleFrame(msg)).catch(() => undefined));
         };
         ws.off('message', bufferInitialFrame);
         ws.on('message', enqueueFrame);
@@ -306,7 +318,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             // connection's cleanup open with it. Past the bound we tear down
             // anyway and accept the interleaving.
             await Promise.race([
-                frameQueue.catch(() => undefined),
+                Promise.all([frameQueue, ...lanes.values()]).catch(() => undefined),
                 new Promise<void>((resolve) => {
                     const t = setTimeout(resolve, FRAME_DRAIN_TIMEOUT_MS);
                     if (typeof t === 'object' && typeof t.unref === 'function') t.unref();

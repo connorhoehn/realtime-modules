@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+- **Presence frames keep their own per-connection lane.** `createWsHandler`
+  (and so `attachRealtime`) still serialises one connection's frames in
+  arrival order, but services named in the new `independentServices` option
+  (default `DEFAULT_INDEPENDENT_SERVICES` = `['presence']`, exported from
+  `/server` and `/server-ws`) serialise on a lane of their own. A slow
+  presence `set` (authorize, shared store, fan-out per channel) no longer
+  holds the same socket's next chat `send`: in aws-agentcore's two-node soak
+  the send's queue wait fell from 2.9–3.2 s to 1.3–1.4 s p95. Order within
+  each lane is unchanged, chat/call/other frames still share one lane, a
+  close still drains every lane before `onClientDisconnect`, and
+  `independentServices: []` restores the single lane.
+
 ## 0.108.0 — 2026-10-06
 
 - **Plugin authority scope.** Router `FeaturePlugin.onMessage` receives the

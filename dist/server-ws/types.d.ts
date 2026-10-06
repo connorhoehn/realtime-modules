@@ -89,7 +89,20 @@ export interface WsHandlerOptions {
      * frames can set this far lower (e.g. 256 KiB).
      */
     maxPayload?: number;
+    /**
+     * Services whose frames from one connection serialise on their own lane
+     * instead of the connection's shared one. Order is still kept WITHIN each
+     * lane, and a close still waits for every lane. Default
+     * {@link DEFAULT_INDEPENDENT_SERVICES} (`['presence']`): presence frames
+     * have no ordering dependency on chat or call frames, and under load a
+     * slow presence `set` (authorize + shared store + fan-out per channel)
+     * held every later chat `send` on the same socket behind it (measured
+     * 0.7–2.4 s p50 of a burst DM delivery). Pass `[]` for one shared lane.
+     */
+    independentServices?: readonly string[];
 }
+/** Default {@link WsHandlerOptions.independentServices}. */
+export declare const DEFAULT_INDEPENDENT_SERVICES: readonly string[];
 /** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 16 MiB. */
 export declare const DEFAULT_WS_MAX_PAYLOAD: number;
 export interface WsHandlerHandle {

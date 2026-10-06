@@ -303,6 +303,84 @@ describe('createWsHandler — frame ordering', () => {
     });
 });
 
+// Under load a presence `set` (authorize, shared store, fan-out per channel)
+// took ~0.9 s p50, and every later chat `send` on the same socket waited for
+// it: 0.7–2.4 s p50 of a burst DM delivery and ~3 s p95 of a soak were spent
+// queued behind presence (aws-agentcore capacity-latency, 2026-10-06).
+// Presence frames now keep their own per-connection lane.
+describe('createWsHandler — independent service lanes', () => {
+    function recorder(name: string, log: string[]): WsService {
+        return {
+            async handleAction(_clientId: string, action: string, data: Record<string, unknown>) {
+                log.push(`start:${name}.${action}`);
+                await new Promise((r) => setTimeout(r, Number(data.ms) || 0));
+                log.push(`end:${name}.${action}`);
+            },
+            onClientDisconnect() { log.push(`cleanup:${name}`); },
+        };
+    }
+
+    it('a slow presence frame does not hold a later chat frame', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0 });
+        const qc = connect(); await qc.open(); await qc.nextMessage();
+        qc.ws.send(JSON.stringify({ service: 'presence', action: 'set', ms: 150 }));
+        qc.ws.send(JSON.stringify({ service: 'chat', action: 'send', ms: 0 }));
+        await new Promise((r) => setTimeout(r, 400));
+        expect(log.indexOf('end:chat.send')).toBeLessThan(log.indexOf('end:presence.set'));
+    });
+
+    it('keeps order within the presence lane and within the shared lane', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log), call: recorder('call', log) }, pingIntervalMs: 0 });
+        const qc = connect(); await qc.open(); await qc.nextMessage();
+        for (const [service, action, ms] of [['presence', 'subscribe', 60], ['chat', 'join', 50], ['presence', 'set', 0], ['call', 'accepted', 0], ['chat', 'send', 0]] as const) {
+            qc.ws.send(JSON.stringify({ service, action, ms }));
+        }
+        await new Promise((r) => setTimeout(r, 500));
+        const ends = log.filter((l) => l.startsWith('end:'));
+        expect(ends.filter((l) => l.startsWith('end:presence'))).toEqual(['end:presence.subscribe', 'end:presence.set']);
+        // chat and call frames still share one lane, in arrival order.
+        expect(ends.filter((l) => !l.startsWith('end:presence'))).toEqual(['end:chat.join', 'end:call.accepted', 'end:chat.send']);
+    });
+
+    it('independentServices: [] restores one shared lane', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0, independentServices: [] });
+        const qc = connect(); await qc.open(); await qc.nextMessage();
+        qc.ws.send(JSON.stringify({ service: 'presence', action: 'set', ms: 80 }));
+        qc.ws.send(JSON.stringify({ service: 'chat', action: 'send', ms: 0 }));
+        await new Promise((r) => setTimeout(r, 300));
+        expect(log).toEqual(['start:presence.set', 'end:presence.set', 'start:chat.send', 'end:chat.send']);
+    });
+
+    it('cleanup still waits for an in-flight presence frame', async () => {
+        const log: string[] = [];
+        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0 });
+        const qc = connect(); await qc.open(); await qc.nextMessage();
+        qc.ws.send(JSON.stringify({ service: 'presence', action: 'set', ms: 120 }));
+        qc.ws.send(JSON.stringify({ service: 'chat', action: 'send', ms: 0 }));
+        setTimeout(() => qc.ws.terminate(), 20);
+        await new Promise((r) => setTimeout(r, 600));
+        const firstCleanup = log.findIndex((l) => l.startsWith('cleanup:'));
+        expect(firstCleanup).toBeGreaterThan(log.indexOf('end:presence.set'));
+        expect(firstCleanup).toBeGreaterThan(log.indexOf('end:chat.send'));
+    });
+
+    it('a throwing presence frame does not stall later presence frames', async () => {
+        const log: string[] = [];
+        const presence: WsService = {
+            async handleAction(_clientId: string, action: string) { if (action === 'boom') throw new Error('nope'); log.push(action); },
+        };
+        handle = createWsHandler({ server: httpServer, services: { presence }, pingIntervalMs: 0 });
+        const qc = connect(); await qc.open(); await qc.nextMessage();
+        qc.ws.send(JSON.stringify({ service: 'presence', action: 'boom' }));
+        qc.ws.send(JSON.stringify({ service: 'presence', action: 'after' }));
+        await new Promise((r) => setTimeout(r, 300));
+        expect(log).toEqual(['after']);
+    });
+});
+
 // A close is another event on the same connection, and it arrived after the
 // frames still in flight. Running cleanup first lets a frame complete for a
 // client every service has already forgotten — and re-register it.

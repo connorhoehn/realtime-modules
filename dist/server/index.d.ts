@@ -23,7 +23,7 @@ export { RedisRealtimeRouter } from './RedisRealtimeRouter';
 export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents } from './RedisRealtimeRouter';
 export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
-export { DEFAULT_WS_MAX_PAYLOAD } from '../server-ws/types';
+export { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from '../server-ws/types';
 export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
 export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';

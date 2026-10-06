@@ -7,11 +7,12 @@
 // ./client useWebSocket hook. Lazy-loads `ws` so consumers without
 // server-side code never pay the import cost.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_WS_MAX_PAYLOAD = exports.createWsHandler = void 0;
+exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.createWsHandler = void 0;
 var createWsHandler_1 = require("./createWsHandler");
 Object.defineProperty(exports, "createWsHandler", { enumerable: true, get: function () { return createWsHandler_1.createWsHandler; } });
 var types_1 = require("./types");
 Object.defineProperty(exports, "DEFAULT_WS_MAX_PAYLOAD", { enumerable: true, get: function () { return types_1.DEFAULT_WS_MAX_PAYLOAD; } });
+Object.defineProperty(exports, "DEFAULT_INDEPENDENT_SERVICES", { enumerable: true, get: function () { return types_1.DEFAULT_INDEPENDENT_SERVICES; } });
 var channelAccess_1 = require("./channelAccess");
 Object.defineProperty(exports, "splitServiceChannel", { enumerable: true, get: function () { return channelAccess_1.splitServiceChannel; } });
 Object.defineProperty(exports, "baseChannel", { enumerable: true, get: function () { return channelAccess_1.baseChannel; } });
