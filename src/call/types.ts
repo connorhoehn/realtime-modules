@@ -25,6 +25,12 @@
 /** Verbs allowed on the call WS surface. */
 export type CallAction =
     | 'invite'
+    /** Lobby join — client → server: "I am in this lobby's call". Seats the
+     *  sender in a call nobody was rung for (a page huddle): the first join
+     *  registers the call, later joins take an atomic seat in it (one seat
+     *  per person). Never fans out and never rings; the `authorize` hook
+     *  (`lobbyGuard`) decides admission like every other verb. */
+    | 'join'
     | 'accepted'
     | 'declined'
     | 'cancelled'
@@ -656,6 +662,7 @@ export interface ActiveCallState {
 /** Verbs accepted by `handleAction`. Exposed for consumer dispatch tables. */
 export const ALLOWED_CALL_ACTIONS: ReadonlySet<CallAction> = new Set<CallAction>([
     'invite',
+    'join',
     'accepted',
     'declined',
     'cancelled',

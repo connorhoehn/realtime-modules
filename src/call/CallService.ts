@@ -1512,6 +1512,13 @@ export class CallService {
             return;
         }
 
+        // A page huddle (a lobby call nobody is rung for): `join` seats the
+        // sender, signals no one.
+        if (action === 'join') {
+            await this.handleLobbyJoin(clientId, payload);
+            return;
+        }
+
         // F3 (2026-08-21) — `status` is a query, not a signaling verb:
         // reply to the SENDER ONLY with an `active-call` envelope and
         // stop. Lets a freshly-connected client (never invited, or
@@ -2339,6 +2346,100 @@ export class CallService {
             }
         }
         return true;
+    }
+
+    /**
+     * `join` — seat the sender in the lobby's call without ringing anyone.
+     *
+     * A page huddle has no invitees: whoever is in the lobby is in the call.
+     * The first join registers the call (the joiner is its caller); every
+     * later join, from anyone `authorize`/`lobbyGuard` admitted, takes an
+     * atomic accepted seat (`claimAcceptedSeat`, as 0.105's `accepted`), so a
+     * person holds one seat however many tabs join at once. The seat set is
+     * what a call-scoped consumer (huddle chat) admits. Leaving is the
+     * ordinary terminal `ended` verb. Nothing is fanned out: peers learn of
+     * the newcomer through their own `participant-state`/`status` flow.
+     */
+    private async handleLobbyJoin(clientId: string, payload: CallInvite): Promise<void> {
+        const callId = typeof payload.callId === 'string' ? payload.callId : '';
+        const lobbyName = typeof payload.lobbyName === 'string' ? payload.lobbyName : '';
+        if (!callId || !lobbyName) { this.sendError(clientId, 'callId and lobbyName are required on join'); return; }
+        const userId = await this.resolveActorUserId(clientId, payload, false);
+        if (!userId) { this.sendError(clientId, 'join needs an authenticated user', { code: 'unauthenticated', action: 'join', callId, lobbyName }); return; }
+        if (this.metaStore && await this.getDocumentMeta(callId)) { this.sendError(clientId, 'A document call is joined with its own verbs', { action: 'join', callId, lobbyName }); return; }
+        const existing = this.activeCalls.get(callId);
+        let view: import('./CallStateStore').ActiveCallStateView | null = null;
+        if (this.stateStore) { try { view = await this.stateStore.getCall(callId); } catch { /* local view stands */ } }
+        if ((existing && existing.lobbyName !== lobbyName) || (view && view.lobbyName !== lobbyName)) {
+            this.sendError(clientId, 'That call is in another lobby', { code: 'CALL_NOT_ACTIVE', action: 'join', callId, lobbyName });
+            return;
+        }
+        const refuseSecondSeat = async (winner: { clientId: string; callerId?: string }) => {
+            this.logger.info(`[CallService] refused second join of ${callId} from ${clientId}: ${userId} is already in the call on ${winner.clientId}`);
+            const envelope: CallEvent = {
+                type: 'call', action: 'ended',
+                data: { callId, callerId: winner.callerId || existing?.callerId || userId, lobbyName, userId, reason: 'answered-elsewhere' },
+                timestamp: new Date().toISOString(),
+            };
+            try { await Promise.resolve(this.messageRouter.sendToClient(clientId, envelope)); } catch { /* socket gone */ }
+        };
+        const elsewhere = this.sameUserSeatedElsewhere(clientId, callId, view);
+        if (elsewhere) { await refuseSecondSeat(elsewhere); return; }
+        let claimed = false;
+        if (this.stateStore?.claimAcceptedSeat) {
+            const claim = async (departed?: string) => this.stateStore!.claimAcceptedSeat!(callId, clientId, userId, lobbyName, departed);
+            let result = await claim();
+            if (!result.accepted && !result.winnerClientId && !view) {
+                // No call yet: this join creates it, then takes its seat the
+                // same way every later join does.
+                await this.stateStore.registerParticipant(callId, clientId, userId, lobbyName, []);
+                result = await claim();
+            }
+            if (!result.accepted && result.winnerClientId && this.isClientAliveHook
+                && await this.isClientAliveHook(result.winnerClientId) === false) {
+                if (this.messageRouter.isReady?.() === false) return;
+                result = await claim(result.winnerClientId);
+            }
+            if (this.messageRouter.isReady?.() === false) return;
+            if (!result.accepted) {
+                if (result.winnerClientId && result.winnerClientId !== clientId) {
+                    // Lost a same-person race that the create step had already
+                    // listed this socket in: take it back out.
+                    try { await this.stateStore.removeParticipant(callId, clientId); } catch { /* best-effort */ }
+                    await refuseSecondSeat({ clientId: result.winnerClientId });
+                } else {
+                    this.sendError(clientId, 'The call is no longer active', { code: 'CALL_NOT_ACTIVE', action: 'join', callId, lobbyName });
+                }
+                return;
+            }
+            claimed = true;
+        }
+        const write = this.registerParticipant(callId, clientId, existing?.callerId || view?.callerId || userId, lobbyName, [], !claimed);
+        if (claimed) this.storeMirrored.add(callId);
+        this.participantUserIds.set(clientId, userId);
+        const seated = this.activeCalls.get(callId);
+        if (seated) {
+            (seated.seatedUserIds ??= new Set()).add(userId);
+            if (view) seated.callerId = view.callerId;
+        }
+        await write;
+        if (this.stateStore) {
+            if (typeof this.stateStore.registerUserCall === 'function') {
+                void this.stateStore.registerUserCall(userId, callId, CallService.ACCEPTED_CALL_TTL_SEC)
+                    .catch((e: any) => this.logger.warn(`[CallService] registerUserCall failed for ${userId}/${callId}: ${e?.message ?? e}`));
+            }
+            if (typeof this.stateStore.registerLobbyCall === 'function') {
+                void this.stateStore.registerLobbyCall(lobbyName, callId, CallService.ACCEPTED_CALL_TTL_SEC)
+                    .catch((e: any) => this.logger.warn(`[CallService] registerLobbyCall failed for ${lobbyName}/${callId}: ${e?.message ?? e}`));
+            }
+            // A lobby call is live while anyone is seated: resume and
+            // status must treat it as accepted, not as an unanswered invite.
+            if (typeof this.stateStore.markAccepted === 'function') {
+                await this.stateStore.markAccepted(callId, CallService.ACCEPTED_CALL_TTL_SEC);
+            }
+        }
+        this.acceptedCallIds.add(callId);
+        this.recordCallActionMetric('join', 'targeted');
     }
 
     /**

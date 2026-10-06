@@ -340,8 +340,22 @@ function useConversationCall(opts) {
             callId, role: 'caller', host: o.self.userId, audioOnly, targets: ring,
             sessionId: null, stageToken: null, participantId: null, startedAt: null, media: joinMedia(audioOnly),
         });
-        if (!ok || ring.length === 0)
+        if (!ok)
             return;
+        if (ring.length === 0) {
+            // A page huddle rings nobody. Seat yourself in the lobby's call so the
+            // gateway knows who is in it (call-scoped chat admits exactly the seats).
+            send({
+                service: 'call',
+                action: 'join',
+                callId,
+                lobbyName: o.lobbyName,
+                callerId: o.self.userId,
+                callerName: o.self.displayName,
+                ...(channelRef.current ? { channel: channelRef.current } : {}),
+            });
+            return;
+        }
         // Ring while media connects, not after: the callee's phone should not wait on our WHIP.
         send({
             service: 'call',

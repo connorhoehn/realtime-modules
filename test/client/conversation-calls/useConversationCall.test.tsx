@@ -57,6 +57,15 @@ describe('useConversationCall — caller', () => {
     expect(dmLobbyName(['b', 'a', 'a', ''])).toBe('dm:a:b');
   });
 
+  it('start([]) rings nobody but seats you: one targetless-by-design join, never an invite', async () => {
+    const { g, hook } = setup({ lobbyName: 'assessment:team:T-1', channel: undefined });
+    await act(async () => { await hook.result.current.start([]); });
+    expect(g.callFrames('invite')).toHaveLength(0);
+    const [join] = g.callFrames('join');
+    expect(join).toMatchObject({ lobbyName: 'assessment:team:T-1', callerId: 'u-alice', callerName: 'Alice Chen' });
+    expect(String(join.callId)).toMatch(/^call-/);
+  });
+
   it('start → PA session on the verbatim lobby, a targeted invite, phase calling', async () => {
     const { g, pa, hook } = setup();
     expect(g.callFrames('status')[0]).toMatchObject({ lobbyName: LOBBY });

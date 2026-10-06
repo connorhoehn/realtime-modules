@@ -296,6 +296,19 @@ export declare class CallService {
      */
     private rejoinSeat;
     /**
+     * `join` — seat the sender in the lobby's call without ringing anyone.
+     *
+     * A page huddle has no invitees: whoever is in the lobby is in the call.
+     * The first join registers the call (the joiner is its caller); every
+     * later join, from anyone `authorize`/`lobbyGuard` admitted, takes an
+     * atomic accepted seat (`claimAcceptedSeat`, as 0.105's `accepted`), so a
+     * person holds one seat however many tabs join at once. The seat set is
+     * what a call-scoped consumer (huddle chat) admits. Leaving is the
+     * ordinary terminal `ended` verb. Nothing is fanned out: peers learn of
+     * the newcomer through their own `participant-state`/`status` flow.
+     */
+    private handleLobbyJoin;
+    /**
      * The live socket of the sender's own user that is already a participant
      * of `callId`, other than the sender — or null. A socket this node knows
      * to be closed (isClientLive false) does not count, so a refresh whose

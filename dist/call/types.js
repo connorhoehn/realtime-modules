@@ -32,6 +32,7 @@ function isParticipantStateBroadcast(p) {
 /** Verbs accepted by `handleAction`. Exposed for consumer dispatch tables. */
 exports.ALLOWED_CALL_ACTIONS = new Set([
     'invite',
+    'join',
     'accepted',
     'declined',
     'cancelled',

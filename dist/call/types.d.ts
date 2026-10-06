@@ -1,5 +1,11 @@
 /** Verbs allowed on the call WS surface. */
-export type CallAction = 'invite' | 'accepted' | 'declined' | 'cancelled' | 'ended'
+export type CallAction = 'invite'
+/** Lobby join — client → server: "I am in this lobby's call". Seats the
+ *  sender in a call nobody was rung for (a page huddle): the first join
+ *  registers the call, later joins take an atomic seat in it (one seat
+ *  per person). Never fans out and never rings; the `authorize` hook
+ *  (`lobbyGuard`) decides admission like every other verb. */
+ | 'join' | 'accepted' | 'declined' | 'cancelled' | 'ended'
 /** In-call broadcast: peer publishes displayName + screen-sharing flag.
  *  Receivers merge into their remoteParticipantState map so the grid
  *  tile renders real names instead of opaque participantIds. */

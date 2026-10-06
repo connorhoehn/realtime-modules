@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## 0.111.0 — 2026-10-06
+
+- **Page huddles are registered calls (`join`).** A lobby call nobody is rung
+  for (a footer Huddle on a team, run or initiative page) used to send no
+  gateway frame, so the gateway knew no call and no seats. `useConversationCall`
+  `start([])` now sends `{ service: 'call', action: 'join', callId, lobbyName }`
+  and `CallService` seats the sender without ringing or fanning out: the first
+  join registers the call (the joiner is its caller), later joins (by `join`,
+  or `accepted` after `status` discovery) take an atomic accepted seat
+  (`claimAcceptedSeat`, as 0.105), so one person holds one seat across tabs and
+  nodes. `calls({ lobbyGuard })` / `authorize` decide admission as for every
+  verb; leaving is the terminal `ended` aimed at yourself. A call-scoped
+  consumer can admit exactly the seated participants. New `CallAction`
+  `'join'`; additive.
+
 ## 0.110.0 — 2026-10-06
 
 Two opt-in changes that cut DynamoDB/authority round trips per chat send;
