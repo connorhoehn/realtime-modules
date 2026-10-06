@@ -6,9 +6,12 @@
 // host that embeds the chat gets live agent-run cards without copying app code.
 //
 // Two sources, merged per run:
-//   - Live: the gateway's `pipeline:event` frames. The firehose (`pipeline:all`)
-//     is subscribed as well as each run's own channel, because a per-run
-//     subscription lands AFTER the run has started and misses its first frames.
+//   - Live: the gateway's `pipeline:event` frames on each run's own channel.
+//     The cross-run firehose (`pipeline:all`) is subscribed only with
+//     `subscribeFirehose: true`: it catches a run's first frames, which a
+//     per-run subscription made after the run started misses, but it carries
+//     every run on the server and servers refuse it by default. Without it the
+//     snapshot read covers the frames a late subscription missed.
 //   - Durable: `GET {apiBaseUrl}/api/pipelines/:pipelineId/runs/:runId`, once
 //     on mount and then, while the run is not terminal, every `pollMs` with no
 //     live transport or every `livePollMs` (30 s) with one — the frames carry a
@@ -780,6 +783,7 @@ function usePipelineRunStatus(runs, opts) {
     const pollMs = opts.pollMs ?? exports.DEFAULT_POLL_MS;
     const livePollMs = Math.max(opts.livePollMs ?? exports.DEFAULT_LIVE_POLL_MS, pollMs);
     const reviewPollMs = opts.reviewPollMs ?? exports.DEFAULT_REVIEW_POLL_MS;
+    const firehose = opts.subscribeFirehose === true;
     // Hooks cannot be conditional, so the context is always read; it is only
     // USED when the host handed in no transport of its own.
     const gateway = (0, GatewaySocketProvider_1.useGatewayOptional)();
@@ -829,7 +833,8 @@ function usePipelineRunStatus(runs, opts) {
         if (runs.length === 0 || !send || !onMessage)
             return;
         const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
-        send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
+        if (firehose)
+            send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
         for (const id of channels)
             send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
         const cardOf = (frameRunId) => {
@@ -875,7 +880,7 @@ function usePipelineRunStatus(runs, opts) {
                 send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, executorKey, send, onMessage]);
+    }, [key, executorKey, send, onMessage, firehose]);
     // Once (and on every tick): the durable answer, for anyone arriving late.
     (0, react_1.useEffect)(() => {
         if (!idToken)

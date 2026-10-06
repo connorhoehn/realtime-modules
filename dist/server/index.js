@@ -37,7 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.exportCanvasProjection = exports.createCanvasSeed = exports.SERVICE_CHANNEL_PREFIXES = exports.splitServiceChannel = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.exportCanvasProjection = exports.createCanvasSeed = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -109,7 +109,10 @@ Object.defineProperty(exports, "DEFAULT_WS_MAX_PAYLOAD", { enumerable: true, get
 // Read the service prefix off a channel `authorize` receives.
 var channelAccess_1 = require("../server-ws/channelAccess");
 Object.defineProperty(exports, "splitServiceChannel", { enumerable: true, get: function () { return channelAccess_1.splitServiceChannel; } });
+Object.defineProperty(exports, "baseChannel", { enumerable: true, get: function () { return channelAccess_1.baseChannel; } });
 Object.defineProperty(exports, "SERVICE_CHANNEL_PREFIXES", { enumerable: true, get: function () { return channelAccess_1.SERVICE_CHANNEL_PREFIXES; } });
+var authorityScope_1 = require("../server-ws/authorityScope");
+Object.defineProperty(exports, "createAuthorityScope", { enumerable: true, get: function () { return authorityScope_1.createAuthorityScope; } });
 __exportStar(require("./documentGrant"), exports);
 var canvasSeed_1 = require("./canvasSeed");
 Object.defineProperty(exports, "createCanvasSeed", { enumerable: true, get: function () { return canvasSeed_1.createCanvasSeed; } });

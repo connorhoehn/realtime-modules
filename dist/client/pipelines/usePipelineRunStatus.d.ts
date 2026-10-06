@@ -110,6 +110,12 @@ export interface UsePipelineRunStatusOptions {
      * `0` disables it (frames only).
      */
     reviewPollMs?: number;
+    /**
+     * Also subscribe the cross-run `pipeline:all` firehose. Default false: the
+     * library's `pipeline()` feature refuses it unless the server enables
+     * `firehoses.all`, and it carries every run's events, not just these.
+     */
+    subscribeFirehose?: boolean;
 }
 /** The narration people see while a step runs, keyed by step id. */
 export declare const DEFAULT_STEP_LABELS: Record<string, string>;

@@ -2,6 +2,7 @@ import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
+import { type AuthorityScope } from '../server-ws/authorityScope';
 /** Connected command/publish and dedicated subscriber clients. The host owns
  * connection setup, TLS/credentials, reconnect policy and final client close.
  * Ports deliberately avoid a mandatory Redis client dependency. */
@@ -117,11 +118,15 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void;
-    isClientSubscribed(clientId: string, channel: string): Promise<boolean>;
+    isClientSubscribed(clientId: string, channel: string, opts?: {
+        scope?: AuthorityScope;
+    }): Promise<boolean>;
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
+        scope?: AuthorityScope;
     }): Promise<void>;
+    private sendToChannelScoped;
     broadcastToAll(message: unknown, excludeClientId?: string): Promise<void>;
     private receive;
     private deliver;

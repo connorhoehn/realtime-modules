@@ -26,10 +26,14 @@
 // `attachRealtime` exposes it as `handle.services.notification`. See
 // docs/recipes/notifications.md.
 //
-// This hook is receive-only on purpose: it never sends. `markAsRead` moves a
+// By default this hook is receive-only: it never sends. `markAsRead` moves a
 // mark in local storage, so read state does not follow the user to another
-// device. The service has markRead / markAllRead actions for that; nothing
-// here calls them.
+// device. Pass `syncReads: true` to also send the service's own actions —
+//   { service:'notification', action:'markRead', id }
+//   { service:'notification', action:'markAllRead' }
+// (the names NotificationService.handleAction accepts) — so the server store
+// and every other tab follow. Frames are sent only while the socket is
+// `connected`; a mark made offline stays local and is not queued or replayed.
 //
 // ──────────────────────────────────────────────────────────────────────────────
 // Design notes:
@@ -68,7 +72,22 @@ function useNotifications(options = {}) {
     // `undefined` means "not specified" and takes the global; `null` means the
     // caller asked for no persistence at all. They are not the same answer.
     const storage = options.storage === undefined ? defaultStorage() : options.storage;
-    const { onMessage } = (0, GatewaySocketProvider_1.useGateway)();
+    const syncReads = options.syncReads === true;
+    const { onMessage, send, connectionState } = (0, GatewaySocketProvider_1.useGateway)();
+    // Read through a ref so the action callbacks stay stable across reconnects.
+    const syncRef = (0, react_1.useRef)({ syncReads, send, connectionState });
+    syncRef.current = { syncReads, send, connectionState };
+    const sendReadAction = (0, react_1.useCallback)((frame) => {
+        const { syncReads: on, send: sendFrame, connectionState: state } = syncRef.current;
+        if (!on || state !== 'connected' || typeof sendFrame !== 'function')
+            return;
+        try {
+            sendFrame({ service: 'notification', ...frame });
+        }
+        catch {
+            // A send that throws (socket closing under us) leaves the local mark.
+        }
+    }, []);
     // ------------------------------------------------------------------
     // Restore persisted read-state from localStorage on first mount.
     // We store a plain object { [id]: true } so refresh doesn't lose marks.
@@ -164,7 +183,8 @@ function useNotifications(options = {}) {
         readMapRef.current = { ...readMapRef.current, [id]: true };
         persistReadMap(readMapRef.current);
         setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-    }, [persistReadMap]);
+        sendReadAction({ action: 'markRead', id });
+    }, [persistReadMap, sendReadAction]);
     const markAllRead = (0, react_1.useCallback)(() => {
         setNotifications((prev) => {
             const next = prev.map((n) => ({ ...n, read: true }));
@@ -175,7 +195,8 @@ function useNotifications(options = {}) {
             persistReadMap(map);
             return next;
         });
-    }, [persistReadMap]);
+        sendReadAction({ action: 'markAllRead' });
+    }, [persistReadMap, sendReadAction]);
     const remove = (0, react_1.useCallback)((id) => {
         setNotifications((prev) => prev.filter((n) => n.id !== id));
     }, []);

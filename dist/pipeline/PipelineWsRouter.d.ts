@@ -1,4 +1,4 @@
-import type { PipelineBusEnvelope, PipelineLogger, PipelineMessageRouter, PipelineMetricsCollector, PipelineWsRouterOptions } from './types';
+import type { PipelineBusEnvelope, PipelineConfig, PipelineLogger, PipelineMessageRouter, PipelineMetricsCollector, PipelineWsRouterOptions } from './types';
 /**
  * In-memory subscription tracker — `clientId → Set<channelId>`.
  *
@@ -45,6 +45,15 @@ export declare class PipelineWsRouter {
     metricsCollector: PipelineMetricsCollector | null;
     clientChannels: SubscriptionTracker;
     maxChannelLength: number;
+    /** Host mapping from wire channel to router channel (identity when unset). */
+    channelFor: PipelineConfig['channelFor'] | null;
+    /** Which firehoses a client may subscribe (both off by default). */
+    firehoses: {
+        all: boolean;
+        approvals: boolean;
+    };
+    /** clientId → wire channel → router channel, recorded at subscribe. */
+    private readonly routedChannels;
     constructor(opts: PipelineWsRouterOptions);
     /**
      * Dispatch an incoming action to its handler. Only subscribe /
@@ -56,18 +65,28 @@ export declare class PipelineWsRouter {
     /**
      * Subscribe a client to a pipeline channel. Valid formats:
      *   - pipeline:run:{runId}
-     *   - pipeline:all
-     *   - pipeline:approvals
+     *   - pipeline:all        (only with `firehoses.all`)
+     *   - pipeline:approvals  (only with `firehoses.approvals`)
+     *
+     * The wire channel is mapped through `config.channelFor` (identity by
+     * default) and the ROUTER channel is subscribed, so the router's
+     * `authorize` judges the host's name. Acks echo the wire channel.
      */
     handleSubscribe(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
     /**
      * Unsubscribe a client from a previously-subscribed pipeline channel.
+     * Uses the router channel recorded at subscribe; with `channelFor`
+     * configured, a channel never subscribed is acknowledged without
+     * touching the router.
      */
     handleUnsubscribe(clientId: string, { channel }: {
         channel?: string;
     }): Promise<void>;
+    _firehoseAllowed(channel: string): boolean;
+    _routerChannelFor(clientId: string, channel: string): Promise<string | null>;
+    _sendRefused(clientId: string, channel: string, reason: string): void;
     /**
      * Project a BusEvent into a `pipeline:event` frame and broadcast it to
      * all subscribers of the given channel. Called by the gateway-side

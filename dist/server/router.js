@@ -20,6 +20,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalRealtimeRouter = void 0;
 const channelAccess_1 = require("../server-ws/channelAccess");
+const authorityScope_1 = require("../server-ws/authorityScope");
 function firePlugin(name, fn) {
     try {
         const r = fn();
@@ -138,11 +139,20 @@ class LocalRealtimeRouter {
             .map(clientId => this.sendToClient(clientId, message)));
     }
     async sendToChannel(channel, message, excludeClientId, opts) {
+        const { scope, owned } = (0, authorityScope_1.scopeFor)(opts?.scope, 'fanout');
+        try {
+            await this.sendToChannelScoped(channel, message, excludeClientId, opts?.publisherClientId ?? null, scope);
+        }
+        finally {
+            if (owned)
+                scope.close();
+        }
+    }
+    async sendToChannelScoped(channel, message, excludeClientId, publisher, scope) {
         // M3 publish authz: runs whenever a publisher is named, independent
         // of echo exclusion.
-        const publisher = opts?.publisherClientId ?? null;
         const publisherContext = publisher ? this.ctxOf(publisher) : null;
-        if (publisher && !(await this.allows('publish', publisher, channel))) {
+        if (publisher && !(await this.allows('publish', publisher, channel, scope))) {
             this.logger.info(`[realtime] publish to ${channel} denied for ${publisher}`);
             return;
         }
@@ -158,14 +168,25 @@ class LocalRealtimeRouter {
                 }
             }
         }
-        await this.sendToLocalChannel(channel, message, excludeClientId);
+        await this.sendToLocalChannel(channel, message, excludeClientId, scope);
     }
     /** Trusted peer fanout: local recipient authorization and generation
-     * fences still run; origin plugins/publish hooks are not fired twice. */
-    async sendToLocalChannel(channel, message, excludeClientId) {
+     * fences still run; origin plugins/publish hooks are not fired twice.
+     * Every recipient check of one fan-out shares one authority scope. */
+    async sendToLocalChannel(channel, message, excludeClientId, scopeIn) {
         const members = this.channelMembers.get(channel);
         if (!members || members.size === 0)
             return;
+        const { scope, owned } = (0, authorityScope_1.scopeFor)(scopeIn, 'fanout');
+        try {
+            await this.fanOut(channel, message, members, excludeClientId, scope);
+        }
+        finally {
+            if (owned)
+                scope.close();
+        }
+    }
+    async fanOut(channel, message, members, excludeClientId, scope) {
         // Admission is not a lasting grant. Recheck every recipient, even for
         // server-originated updates, and do not revive a subscription removed
         // while asynchronous authorization was resolving.
@@ -174,7 +195,7 @@ class LocalRealtimeRouter {
                 return;
             const context = this.ctxOf(clientId);
             const token = this.subscriptionTokens.get(channel)?.get(clientId);
-            if (!(await this.allows('subscribe', clientId, channel)))
+            if (!(await this.allows('subscribe', clientId, channel, scope)))
                 return;
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token)
                 return;
@@ -184,13 +205,15 @@ class LocalRealtimeRouter {
     }
     // ---- authz -----------------------------------------------------------
     /** Preserve synchronous decisions; rejected async decisions fail closed. */
-    allows(kind, clientId, channel) {
+    allows(kind, clientId, channel, scope) {
         if (!this.authorize)
             return true;
         const context = this.ctxOf(clientId);
         const handle = this.handleRef;
         try {
-            const decision = this.authorize({ kind, clientId, channel, ctx: context });
+            const decision = this.authorize(scope?.active
+                ? { kind, clientId, channel, ctx: context, scope }
+                : { kind, clientId, channel, ctx: context });
             if (typeof decision === 'boolean')
                 return decision;
             return Promise.resolve(decision).then(allowed => allowed === true && this.handleRef === handle && (!handle || (context !== null && this.ctxOf(clientId) === context)), err => { this.logger.warn(`[realtime] authorize rejected for ${kind} ${channel}; refusing`, err); return false; });
@@ -208,7 +231,7 @@ class LocalRealtimeRouter {
      * the client is told (AUTHZ_CHANNEL_DENIED) and false comes back.
      */
     checkChannel(kind, clientId, channel, opts = {}) {
-        const decision = this.allows(kind, clientId, channel);
+        const decision = this.allows(kind, clientId, channel, opts.scope);
         return typeof decision === 'boolean' ? this.channelDecision(decision, kind, clientId, channel, opts)
             : decision.then(allowed => this.channelDecision(allowed, kind, clientId, channel, opts));
     }
@@ -246,12 +269,12 @@ class LocalRealtimeRouter {
                 this.pendingSubscriptions.delete(clientId);
         });
     }
-    async isClientSubscribed(clientId, channel) {
+    async isClientSubscribed(clientId, channel, opts = {}) {
         const context = this.ctxOf(clientId);
         const token = this.subscriptionTokens.get(channel)?.get(clientId);
         if (!context || !token)
             return false;
-        const allowed = await this.checkChannel('subscribe', clientId, channel, { silent: true });
+        const allowed = await this.checkChannel('subscribe', clientId, channel, { silent: true, ...(opts.scope ? { scope: opts.scope } : {}) });
         return allowed && this.ctxOf(clientId) === context
             && this.subscriptionTokens.get(channel)?.get(clientId) === token;
     }

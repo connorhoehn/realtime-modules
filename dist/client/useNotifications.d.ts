@@ -49,6 +49,17 @@ export interface UseNotificationsOptions {
      * SSR and for privacy modes where a write would throw anyway.
      */
     storage?: Storage | null;
+    /**
+     * Also persist read marks on the server: `markAsRead(id)` sends
+     * `{ service: 'notification', action: 'markRead', id }` and `markAllRead()`
+     * sends `{ service: 'notification', action: 'markAllRead' }`, the actions
+     * `NotificationService` accepts. Sent only while `connectionState` is
+     * `'connected'`; offline marks stay local (no queue, no replay). The local
+     * mark is applied either way, and the server's `notification:read` echo is
+     * idempotent.
+     * @default false
+     */
+    syncReads?: boolean;
 }
 export interface UseNotificationsResult {
     /** All in-memory notifications, oldest first. */

@@ -25,8 +25,10 @@ export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ClientMessageFilte
 export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
 export { DEFAULT_WS_MAX_PAYLOAD } from '../server-ws/types';
 export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
-export { splitServiceChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
+export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
 export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';
+export { createAuthorityScope } from '../server-ws/authorityScope';
+export type { AuthorityScope } from '../server-ws/authorityScope';
 export * from "./documentGrant";
 export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";
 //# sourceMappingURL=index.d.ts.map

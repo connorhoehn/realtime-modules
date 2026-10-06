@@ -33,6 +33,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ActivityService = void 0;
 const ActivityHistoryStore_1 = require("./ActivityHistoryStore");
+const channelAccess_1 = require("../server-ws/channelAccess");
 // ---- Inlined config (gateway/config/constants.ts replacements) ------------
 const DEFAULT_MAX_HISTORY_ITEMS = 200;
 const DEFAULT_MAX_CHANNEL_ID_LENGTH = 100;
@@ -93,6 +94,8 @@ class ActivityService {
     clientChannels;
     maxHistoryItems;
     maxChannelIdLength;
+    allowClientPublish;
+    autoSubscribeBroadcast;
     constructor(opts) {
         if (!opts || !opts.logger) {
             throw new Error('ActivityService: logger is required');
@@ -103,6 +106,8 @@ class ActivityService {
         const cfg = opts.config ?? {};
         this.maxHistoryItems = cfg.maxHistoryItems ?? DEFAULT_MAX_HISTORY_ITEMS;
         this.maxChannelIdLength = cfg.maxChannelIdLength ?? DEFAULT_MAX_CHANNEL_ID_LENGTH;
+        this.allowClientPublish = cfg.allowClientPublish === true;
+        this.autoSubscribeBroadcast = cfg.autoSubscribeBroadcast === true;
         this.historyStore = opts.historyStore ?? new ActivityHistoryStore_1.InMemoryActivityHistoryStore(this.maxHistoryItems);
         this.clientChannels = new SubscriptionTracker();
     }
@@ -168,6 +173,16 @@ class ActivityService {
         this.logger.info('Client unsubscribed from activity channel', { clientId, channelId });
     }
     async handlePublish(clientId, data) {
+        if (!this.allowClientPublish) {
+            this.sendToClient(clientId, {
+                type: 'error',
+                service: 'activity',
+                code: 'ACTIVITY_PUBLISH_DISABLED',
+                message: 'Activity events are produced by the server',
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
         const { event } = data ?? {};
         if (!event || typeof event !== 'object') {
             this.sendError(clientId, 'event object is required');
@@ -196,6 +211,7 @@ class ActivityService {
         };
         const broadcastMessage = {
             type: 'activity:event',
+            channel: ActivityService.BROADCAST_CHANNEL,
             payload: enrichedPayload,
         };
         // Persist event to history store (non-blocking).
@@ -223,10 +239,12 @@ class ActivityService {
     }
     /**
      * Auto-subscribe a newly connected client to the global
-     * activity:broadcast channel. Called by the server on connection
-     * setup.
+     * activity:broadcast channel, only with `config.autoSubscribeBroadcast`.
+     * Called by the server on connection setup.
      */
     async onClientConnect(clientId) {
+        if (!this.autoSubscribeBroadcast)
+            return;
         try {
             await this.handleSubscribe(clientId, { channelId: ActivityService.BROADCAST_CHANNEL });
             this.logger.debug('Client auto-subscribed to broadcast channel', {
@@ -241,6 +259,40 @@ class ActivityService {
                 errorMessage: error && error.message,
             });
         }
+    }
+    /**
+     * Server-side producer: record `event` in `channel`'s history and deliver
+     * it to that channel's subscribers as
+     * `{ type: 'activity:event', channel, payload }`. The router's recipient
+     * checks still apply to every subscriber. Use this instead of client
+     * publishes; it never touches `activity:broadcast` unless asked to.
+     */
+    async publish(channel, event) {
+        if (typeof channel !== 'string' || !channel || channel.length > this.maxChannelIdLength)
+            return null;
+        if (!event || typeof event.eventType !== 'string' || !event.eventType)
+            return null;
+        const payload = {
+            eventType: event.eventType,
+            detail: event.detail ?? {},
+            timestamp: event.timestamp ?? new Date().toISOString(),
+            userId: event.userId ?? null,
+            displayName: event.displayName ?? event.userId ?? 'System',
+        };
+        try {
+            await this.historyStore.append(channel, payload);
+        }
+        catch (err) {
+            this.logger.error('Failed to persist activity event', { channel, errorMessage: err && err.message });
+        }
+        const frame = { type: 'activity:event', channel, payload };
+        if (this.messageRouter && this.messageRouter.sendToChannel) {
+            await this.messageRouter.sendToChannel(channel, frame);
+        }
+        else {
+            this._broadcastToLocalSubscribers(channel, frame);
+        }
+        return payload;
     }
     /**
      * Broadcast a message to all local subscribers of a channel
@@ -258,6 +310,24 @@ class ActivityService {
     async handleGetHistory(clientId, data) {
         const limit = Math.min(Math.max(parseInt(data?.limit, 10) || 50, 1), this.maxHistoryItems);
         const channelId = data?.channelId || ActivityService.BROADCAST_CHANNEL;
+        if (typeof channelId !== 'string' || channelId.length > this.maxChannelIdLength) {
+            this.sendError(clientId, `channelId must be a string (max ${this.maxChannelIdLength} chars)`);
+            return;
+        }
+        // History is channel state: the router's read check decides, exactly
+        // as for a subscribe. A router that cannot answer (no checkChannel)
+        // proves nothing, so it gets nothing.
+        if (!this.messageRouter || typeof this.messageRouter.checkChannel !== 'function'
+            || !(await (0, channelAccess_1.routerPermits)(this.messageRouter, 'subscribe', clientId, channelId, { service: 'activity', clientChannel: channelId }))) {
+            this.sendToClient(clientId, {
+                type: 'activity',
+                action: 'history',
+                events: [],
+                channelId,
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
         try {
             const events = await this.historyStore.list(channelId, limit);
             this.sendToClient(clientId, {

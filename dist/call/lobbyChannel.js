@@ -26,6 +26,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.lobbyForChannel = lobbyForChannel;
 exports.channelForLobby = channelForLobby;
+exports.lobbyForChatLobbyChannel = lobbyForChatLobbyChannel;
+exports.dmLobbyName = dmLobbyName;
 exports.isDmLobby = isDmLobby;
 exports.lobbyConversationKind = lobbyConversationKind;
 exports.dmLobbyMembers = dmLobbyMembers;
@@ -58,6 +60,47 @@ function channelForLobby(lobby) {
     if (lobby.startsWith('room:'))
         return lobby;
     return null;
+}
+/**
+ * The inverse of `channelForLobby`'s `chat:` wrapping, read past a host's
+ * tenant prefix: `chat:dm:a:b` → `dm:a:b`, `chat:dmg:<hash>` → `dmg:<hash>`,
+ * `chat:acme:dm:a:b` → `acme:dm:a:b`. Anything else → null (`chat:general`,
+ * `room:design`, `activity:broadcast`).
+ *
+ * `baseChannel` (`/server`) uses this to strip the `chat:` lobby form. It
+ * lives HERE, next to `channelForLobby`, so the wrapping and its unwrapping
+ * are one rule: if `channelForLobby` ever wraps another lobby kind in `chat:`,
+ * this must unwrap it too, and the round-trip test in
+ * test/call/lobbyChannel.test.ts fails until it does.
+ */
+function lobbyForChatLobbyChannel(channel) {
+    if (!channel || !channel.startsWith('chat:'))
+        return null;
+    const rest = channel.slice('chat:'.length);
+    const found = lobbyKindSegment(rest);
+    if (!found || found.kind === 'room')
+        return null;
+    return rest;
+}
+/**
+ * `dmLobbyName(['bob', 'alice'])` → `dm:alice:bob`;
+ * `dmLobbyName(['bob', 'alice'], { prefix: 'acme:' })` → `acme:dm:alice:bob`.
+ * Duplicates and empty ids are dropped; include yourself in `userIds`.
+ * An id containing `:` throws: `:` separates the members, so `['a', 'b:c']`
+ * and `['a:b', 'c']` would name the same lobby — two different calls, one
+ * room — and the server's DM membership rule would read the wrong members.
+ *
+ * Pure and React-free: exported from `/call` for servers and from
+ * `/client/video` for the conversation-call hooks. It never produces the
+ * hashed `dmg:` form — that comes only from chat's `dmChatChannelFor` when a
+ * member-addressed channel would exceed its length cap.
+ */
+function dmLobbyName(userIds, opts = {}) {
+    const ids = Array.from(new Set(userIds.filter((u) => typeof u === 'string' && u.length > 0))).sort();
+    const bad = ids.find((u) => u.includes(':'));
+    if (bad !== undefined)
+        throw new Error(`dmLobbyName: user id ${JSON.stringify(bad)} contains ':', the lobby's member separator`);
+    return `${opts.prefix ?? ''}dm:${ids.join(':')}`;
 }
 /**
  * True for BOTH dm lobby forms — member-addressed (`dm:alice:bob`) and hashed
@@ -121,10 +164,31 @@ function lobbyConversationKind(lobby) {
  * as "not private". Pair it with `isDmLobby` and take the CLOSED branch:
  * private, membership unknown ⇒ ask to be let in.
  */
-function dmLobbyMembers(lobby) {
+function dmLobbyMembers(lobby, opts = {}) {
     // Tenant prefix allowed: `acme:dm:alice:bob` → ['alice', 'bob'].
     const found = lobbyKindSegment(lobby);
-    if (!found || found.kind !== 'dm')
+    if (!found)
+        return null;
+    if (found.kind === 'dmg') {
+        // A hashed group cannot be read from its name. A host that keeps the
+        // group's roster (a conversations index) may answer through
+        // `resolveGroup`; without it, or when it does not know, the answer stays
+        // null — "private, membership unknown", which callers must treat closed.
+        if (!opts.resolveGroup || !lobby)
+            return null;
+        let resolved;
+        try {
+            resolved = opts.resolveGroup(lobby);
+        }
+        catch {
+            return null;
+        }
+        if (!Array.isArray(resolved))
+            return null;
+        const ids = Array.from(new Set(resolved.filter((u) => typeof u === 'string' && u.length > 0)));
+        return ids.length >= 2 ? ids.sort() : null;
+    }
+    if (found.kind !== 'dm')
         return null;
     const members = found.segments.slice(found.index + 1).filter(Boolean);
     return members.length >= 2 ? members : null;

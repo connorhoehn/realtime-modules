@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.107.0 — 2026-10-05
+
+- **Per-operation authority scope.** `ChannelAuthorize` receives an optional
+  `scope` (`AuthorityScope`, exported from `/server` with
+  `createAuthorityScope`). One scope covers one fan-out (the publisher check
+  and every recipient check, locally and on each Redis peer) or one inbound
+  chat action (router pre-check, membership gate, the three post-persist
+  publish rechecks, fan-out, join history checks, the unread-recipient list
+  and the `onDmMessage` / `onChannelMessage` tail). `ChatMembershipStore.listMembers`
+  receives `{ scope }`, `sendToChannel` accepts `opts.scope`, and
+  `isClientSubscribed(clientId, channel, { scope })` lets unread probes join
+  the send's operation. A host may resolve one proof per channel per
+  operation with `scope.share(key, compute)`. The scope closes when the
+  operation ends (it is never a settled cache); a memoizing host must keep
+  each proof revocable for the rest of the operation (observe writes/peer
+  hints from before the read; on a signal, `scope.invalidate(key)` or answer
+  deny). Hosts that ignore `scope` keep the previous per-check behaviour.
+  The final history-authority read on join/history stays outside any scope.
+- **Breaking defaults, `activity()`:** client `publish` is refused
+  (`ACTIVITY_PUBLISH_DISABLED`) unless `allowClientPublish`; connections are
+  not auto-subscribed to `activity:broadcast` unless `autoSubscribeBroadcast`;
+  `getHistory` (including the default broadcast history) is answered only when
+  the router's `checkChannel('subscribe')` admits the channel and is empty
+  when the router has no `checkChannel`. New server-side
+  `ActivityService.publish(channel, event)` writes per-channel history and
+  delivers `{ type: 'activity:event', channel, payload }`; client broadcast
+  frames carry `channel` too.
+- **Breaking defaults, `pipeline()`:** `pipeline:all` and `pipeline:approvals`
+  are refused (`PIPELINE_CHANNEL_REFUSED`) unless enabled with
+  `firehoses: { all, approvals }`. New `channelFor(wire, { clientId, runId,
+  userContext })` maps a wire channel to the router channel subscribed and
+  authorized; unsubscribe/disconnect reuse the recorded mapping.
+  `usePipelineRunStatus` subscribes `pipeline:all` only with
+  `subscribeFirehose: true` (the snapshot read covers early frames).
+  `usePipelineCatalog` / work-list hooks are unchanged.
+- `/server`: `baseChannel(name)` strips the presence/reactions/cursor wrapper
+  and the `chat:` form `channelForLobby` puts around a dm lobby
+  (`chat:social:dm:a:b` → `social:dm:a:b`); other namespaces such as
+  `activity:broadcast` are left alone. `SERVICE_CHANNEL_PREFIXES` is unchanged.
+- `/call`: exports `dmLobbyName` (React-free; `/client/video` re-exports the
+  same function) and `lobbyForChatLobbyChannel`. `dmLobbyMembers(lobby,
+  { resolveGroup })` can resolve hashed `dmg:` lobbies through a host roster;
+  without a resolver it still returns null.
+- `/client`: `useNotifications({ syncReads: true })` sends
+  `{ service: 'notification', action: 'markRead', id }` / `markAllRead` while
+  connected. Default unchanged (local only).
+
 ## 0.106.0 — 2026-10-05
 
 - Expose `RealtimeRouter.isClientSubscribed` to check an actual readable

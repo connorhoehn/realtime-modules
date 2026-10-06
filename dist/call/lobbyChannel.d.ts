@@ -5,6 +5,35 @@ export declare function lobbyForChannel(channel: string | null | undefined): str
  *  `room:design` → `room:design`. */
 export declare function channelForLobby(lobby: string | null | undefined): string | null;
 /**
+ * The inverse of `channelForLobby`'s `chat:` wrapping, read past a host's
+ * tenant prefix: `chat:dm:a:b` → `dm:a:b`, `chat:dmg:<hash>` → `dmg:<hash>`,
+ * `chat:acme:dm:a:b` → `acme:dm:a:b`. Anything else → null (`chat:general`,
+ * `room:design`, `activity:broadcast`).
+ *
+ * `baseChannel` (`/server`) uses this to strip the `chat:` lobby form. It
+ * lives HERE, next to `channelForLobby`, so the wrapping and its unwrapping
+ * are one rule: if `channelForLobby` ever wraps another lobby kind in `chat:`,
+ * this must unwrap it too, and the round-trip test in
+ * test/call/lobbyChannel.test.ts fails until it does.
+ */
+export declare function lobbyForChatLobbyChannel(channel: string | null | undefined): string | null;
+/**
+ * `dmLobbyName(['bob', 'alice'])` → `dm:alice:bob`;
+ * `dmLobbyName(['bob', 'alice'], { prefix: 'acme:' })` → `acme:dm:alice:bob`.
+ * Duplicates and empty ids are dropped; include yourself in `userIds`.
+ * An id containing `:` throws: `:` separates the members, so `['a', 'b:c']`
+ * and `['a:b', 'c']` would name the same lobby — two different calls, one
+ * room — and the server's DM membership rule would read the wrong members.
+ *
+ * Pure and React-free: exported from `/call` for servers and from
+ * `/client/video` for the conversation-call hooks. It never produces the
+ * hashed `dmg:` form — that comes only from chat's `dmChatChannelFor` when a
+ * member-addressed channel would exceed its length cap.
+ */
+export declare function dmLobbyName(userIds: string[], opts?: {
+    prefix?: string;
+}): string;
+/**
  * True for BOTH dm lobby forms — member-addressed (`dm:alice:bob`) and hashed
  * group (`dmg:<hash>`) — with or without a tenant prefix (`acme:dm:alice:bob`). The lobby-side twin of `isDmChatChannel`.
  *
@@ -40,7 +69,9 @@ export declare function lobbyConversationKind(lobby: string | null | undefined):
  * as "not private". Pair it with `isDmLobby` and take the CLOSED branch:
  * private, membership unknown ⇒ ask to be let in.
  */
-export declare function dmLobbyMembers(lobby: string | null | undefined): string[] | null;
+export declare function dmLobbyMembers(lobby: string | null | undefined, opts?: {
+    resolveGroup?: (lobby: string) => string[] | null | undefined;
+}): string[] | null;
 /**
  * Should `userId` knock to be let into `lobby`, rather than walking in?
  *

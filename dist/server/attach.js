@@ -148,12 +148,31 @@ function reactions(opts = {}) {
         },
     });
 }
+/**
+ * The activity feed. Secure by default (0.107): clients cannot `publish`
+ * (`allowClientPublish`), connections are not auto-subscribed to the
+ * tenant-blind `activity:broadcast` (`autoSubscribeBroadcast`), and
+ * `getHistory` is answered only when the router's `checkChannel` admits a
+ * `subscribe` of that channel — a router without `checkChannel` gets no
+ * history. The server produces events with
+ * `handle.services.activity.publish(channel, event)`, which writes that
+ * channel's history and delivers `{ type: 'activity:event', channel, payload }`.
+ */
 function activity(opts = {}) {
     return defineFeature({
         manifest: require('../activity/manifest').ActivityManifest,
         create: ({ router, logger }) => {
             const { ActivityService } = require('../activity/ActivityService');
-            return new ActivityService({ messageRouter: router, logger: logger, historyStore: opts.historyStore });
+            return new ActivityService({
+                messageRouter: router,
+                logger: logger,
+                historyStore: opts.historyStore,
+                config: {
+                    ...(opts.config ?? {}),
+                    ...(opts.allowClientPublish !== undefined ? { allowClientPublish: opts.allowClientPublish } : {}),
+                    ...(opts.autoSubscribeBroadcast !== undefined ? { autoSubscribeBroadcast: opts.autoSubscribeBroadcast } : {}),
+                },
+            });
         },
     });
 }
@@ -231,6 +250,14 @@ function ingest(opts = {}) {
         },
     });
 }
+/**
+ * Pipeline run events. Clients subscribe `pipeline:run:<id>`; the cross-run
+ * firehoses (`pipeline:all`, `pipeline:approvals`) are refused unless enabled
+ * with `firehoses` (0.107). `channelFor(wire, { clientId, runId, userContext })`
+ * maps a wire channel to the router channel actually subscribed (a tenant
+ * partition), which the router's `authorize` then judges; producers emit to
+ * that router channel through `handle.services.pipeline.emitEvent`.
+ */
 function pipeline(opts = {}) {
     return defineFeature({
         manifest: require('../pipeline/manifest').PipelineWsManifest,

@@ -11,7 +11,7 @@
 // onSweepSkipped) so the library stays dependency-light. The gateway keeps
 // its DDB session-binding repository, Redis wiring and HTTP routes.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CallManifest = exports.shouldKnockToJoin = exports.dmLobbyMembers = exports.lobbyConversationKind = exports.isDmLobby = exports.channelForLobby = exports.lobbyForChannel = exports.RedisDocumentCallMetaStore = exports.InMemoryDocumentCallMetaStore = exports.RedisCallStateStore = exports.InMemoryCallStateStore = exports.isParticipantStateBroadcast = exports.ALLOWED_CALL_ACTIONS = exports.CallService = void 0;
+exports.CallManifest = exports.shouldKnockToJoin = exports.lobbyForChatLobbyChannel = exports.dmLobbyName = exports.dmLobbyMembers = exports.lobbyConversationKind = exports.isDmLobby = exports.channelForLobby = exports.lobbyForChannel = exports.RedisDocumentCallMetaStore = exports.InMemoryDocumentCallMetaStore = exports.RedisCallStateStore = exports.InMemoryCallStateStore = exports.isParticipantStateBroadcast = exports.ALLOWED_CALL_ACTIONS = exports.CallService = void 0;
 var CallService_1 = require("./CallService");
 Object.defineProperty(exports, "CallService", { enumerable: true, get: function () { return CallService_1.CallService; } });
 var types_1 = require("./types");
@@ -32,6 +32,8 @@ Object.defineProperty(exports, "channelForLobby", { enumerable: true, get: funct
 Object.defineProperty(exports, "isDmLobby", { enumerable: true, get: function () { return lobbyChannel_1.isDmLobby; } });
 Object.defineProperty(exports, "lobbyConversationKind", { enumerable: true, get: function () { return lobbyChannel_1.lobbyConversationKind; } });
 Object.defineProperty(exports, "dmLobbyMembers", { enumerable: true, get: function () { return lobbyChannel_1.dmLobbyMembers; } });
+Object.defineProperty(exports, "dmLobbyName", { enumerable: true, get: function () { return lobbyChannel_1.dmLobbyName; } });
+Object.defineProperty(exports, "lobbyForChatLobbyChannel", { enumerable: true, get: function () { return lobbyChannel_1.lobbyForChatLobbyChannel; } });
 Object.defineProperty(exports, "shouldKnockToJoin", { enumerable: true, get: function () { return lobbyChannel_1.shouldKnockToJoin; } });
 var manifest_1 = require("./manifest");
 Object.defineProperty(exports, "CallManifest", { enumerable: true, get: function () { return manifest_1.CallManifest; } });

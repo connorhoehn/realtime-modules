@@ -1,5 +1,6 @@
 import type { WsHandlerHandle, WsAuthContext } from '../server-ws/types';
 import { type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
+import { type AuthorityScope } from '../server-ws/authorityScope';
 /**
  * Logger contract shared by the router and every feature. All four methods
  * are required — services declare their own narrower logger types and some
@@ -67,12 +68,22 @@ export interface RouterLogger {
  * The per-service `authorizeChannel` hooks (`presence({ authorizeChannel })`
  * and friends) are an additional layer: both must pass. When `authorize` is
  * absent everything is allowed — the single-tenant default.
+ *
+ * `scope` (0.107) names the OPERATION the check belongs to: one channel
+ * fan-out (every recipient's `subscribe` check and the publisher's `publish`
+ * check share it), or one inbound action (chat's pre-check, membership gate,
+ * post-persist publish rechecks, fan-out and unread probes for one send).
+ * A host may resolve one proof per channel in `scope.share(key, …)`. The
+ * scope is closed when the operation ends and is never a settled cache; a
+ * host that memoizes in it must keep each proof revocable for the rest of
+ * the operation (see `AuthorityScope`). Ignoring it is always correct.
  */
 export type ChannelAuthorize = (args: {
     kind: 'subscribe' | 'publish';
     clientId: string;
     channel: string;
     ctx: WsAuthContext | null;
+    scope?: AuthorityScope;
 }) => boolean | Promise<boolean>;
 /** Last-mile recipient filter for the local router, including direct user
  * delivery, broadcast and channel fanout. Return the original/filtered frame
@@ -134,6 +145,7 @@ export interface RealtimeRouter {
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
+        scope?: AuthorityScope;
     }): Promise<void> | void;
     /**
      * Subscribe a client to a channel. Returns `false` when authz denies —
@@ -143,7 +155,9 @@ export interface RealtimeRouter {
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     /** Current readable subscription, fenced across actor replacement,
      * disconnect and unsubscribe/resubscribe. Peer transports may await it. */
-    isClientSubscribed?(clientId: string, channel: string): boolean | Promise<boolean>;
+    isClientSubscribed?(clientId: string, channel: string, opts?: {
+        scope?: AuthorityScope;
+    }): boolean | Promise<boolean>;
     /**
      * Ask the channel authz without subscribing or publishing — services run
      * it before a write (presence `set`, reaction `send`, chat `send`) or a
@@ -235,10 +249,14 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     sendToChannel(channel: string, message: unknown, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
+        scope?: AuthorityScope;
     }): Promise<void>;
+    private sendToChannelScoped;
     /** Trusted peer fanout: local recipient authorization and generation
-     * fences still run; origin plugins/publish hooks are not fired twice. */
-    sendToLocalChannel(channel: string, message: unknown, excludeClientId?: string | null): Promise<void>;
+     * fences still run; origin plugins/publish hooks are not fired twice.
+     * Every recipient check of one fan-out shares one authority scope. */
+    sendToLocalChannel(channel: string, message: unknown, excludeClientId?: string | null, scopeIn?: AuthorityScope): Promise<void>;
+    private fanOut;
     /** Preserve synchronous decisions; rejected async decisions fail closed. */
     private allows;
     hasChannelAuthorize(): boolean;
@@ -249,7 +267,9 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     private channelDecision;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
-    isClientSubscribed(clientId: string, channel: string): Promise<boolean>;
+    isClientSubscribed(clientId: string, channel: string, opts?: {
+        scope?: AuthorityScope;
+    }): Promise<boolean>;
     private addSubscription;
     unsubscribeFromChannel(clientId: string, channel: string): void;
     removeClient(clientId: string): void;

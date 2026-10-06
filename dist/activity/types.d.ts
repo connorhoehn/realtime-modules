@@ -35,5 +35,16 @@ export interface ActivityEventConfig {
     publishBackoffBaseMs?: number;
     /** Max length of a subscribe/unsubscribe channelId. Default 100. */
     maxChannelIdLength?: number;
+    /**
+     * Let clients `publish` into `activity:broadcast`. Default false: the
+     * server is the producer (`ActivityService.publish`), and a client
+     * publish reaches every connection on the node's broadcast channel.
+     */
+    allowClientPublish?: boolean;
+    /**
+     * Subscribe every new connection to `activity:broadcast`. Default false:
+     * that channel carries no tenant partition.
+     */
+    autoSubscribeBroadcast?: boolean;
 }
 //# sourceMappingURL=types.d.ts.map

@@ -39,8 +39,20 @@ export interface PipelineFrame {
 export interface PipelineMessageRouter {
     sendToClient(clientId: string, message: unknown): void;
     sendToChannel(channel: string, message: unknown): void | Promise<void>;
-    subscribeToChannel(clientId: string, channel: string): void | Promise<void>;
+    subscribeToChannel(clientId: string, channel: string): void | boolean | Promise<void | boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void | Promise<void>;
+    /** Auth context accessor, handed to `channelFor` as `userContext`. */
+    getClientData?(clientId: string): {
+        userContext?: Record<string, unknown>;
+    } | null | undefined;
+}
+/** What `PipelineConfig.channelFor` is told about the subscriber. */
+export interface PipelineChannelContext {
+    clientId: string;
+    /** The run id for a `pipeline:run:<id>` wire channel; null for a firehose. */
+    runId: string | null;
+    /** The socket's authenticated context (`router.getClientData(...).userContext`). */
+    userContext: Record<string, unknown> | null;
 }
 /**
  * Logger contract. Matches the project's pino-like surface; pass a
@@ -67,6 +79,29 @@ export interface PipelineMetricsCollector {
 export interface PipelineConfig {
     /** Max length of an accepted channel name. Default 100. */
     maxChannelLength?: number;
+    /**
+     * Map the wire channel a client named (`pipeline:run:<id>`, or an enabled
+     * firehose) to the ROUTER channel the socket is actually subscribed to,
+     * e.g. a tenant-partitioned `acme:pipelines:run:<id>`. The router's
+     * `authorize` then judges the mapped name. Return null/undefined (or
+     * throw) to refuse; the client gets a `PIPELINE_CHANNEL_REFUSED` error.
+     *
+     * Unsubscribe and disconnect use the mapping recorded at subscribe, so
+     * the hook is asked once per subscription. Producers must emit with
+     * `emitEvent(<router channel>, …)`; frames carry that router channel.
+     * Default: identity (the wire name is the router channel).
+     */
+    channelFor?: (channel: string, ctx: PipelineChannelContext) => string | null | undefined | Promise<string | null | undefined>;
+    /**
+     * Opt in to the cross-run firehoses. `pipeline:all` carries every run's
+     * events and `pipeline:approvals` every approval — neither has a tenant
+     * or run partition, so both are refused (`PIPELINE_CHANNEL_REFUSED`)
+     * unless enabled here. Default: both off.
+     */
+    firehoses?: {
+        all?: boolean;
+        approvals?: boolean;
+    };
 }
 /**
  * Options bag for the PipelineWsRouter constructor. Replaces the

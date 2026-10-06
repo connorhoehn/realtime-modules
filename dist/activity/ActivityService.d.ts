@@ -1,5 +1,6 @@
 import { type ActivityHistoryStore } from './ActivityHistoryStore';
-import type { ActivityEventConfig } from './types';
+import type { ActivityEvent, ActivityEventConfig } from './types';
+import { type ChannelAccessRouter } from '../server-ws/channelAccess';
 export interface ActivityLogger {
     debug(...args: any[]): void;
     info(...args: any[]): void;
@@ -9,7 +10,12 @@ export interface ActivityLogger {
 export interface ActivityMessageRouter {
     sendToClient(clientId: string, message: any): void;
     sendToChannel?(channel: string, message: any): Promise<void> | void;
-    subscribeToChannel?(clientId: string, channel: string): Promise<void> | void;
+    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
+    /**
+     * The router's channel authz without subscribing. `getHistory` asks it
+     * (`'subscribe'`); a router without it gets no history (fail closed).
+     */
+    checkChannel?: ChannelAccessRouter['checkChannel'];
     unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
     getClientData?(clientId: string): any;
 }
@@ -56,6 +62,8 @@ export declare class ActivityService {
     clientChannels: SubscriptionTracker;
     readonly maxHistoryItems: number;
     readonly maxChannelIdLength: number;
+    readonly allowClientPublish: boolean;
+    readonly autoSubscribeBroadcast: boolean;
     constructor(opts: ActivityServiceOpts);
     handleAction(clientId: string, action: string, data: any): Promise<void>;
     handleSubscribe(clientId: string, { channelId }: {
@@ -67,10 +75,24 @@ export declare class ActivityService {
     handlePublish(clientId: string, data: any): Promise<void>;
     /**
      * Auto-subscribe a newly connected client to the global
-     * activity:broadcast channel. Called by the server on connection
-     * setup.
+     * activity:broadcast channel, only with `config.autoSubscribeBroadcast`.
+     * Called by the server on connection setup.
      */
     onClientConnect(clientId: string): Promise<void>;
+    /**
+     * Server-side producer: record `event` in `channel`'s history and deliver
+     * it to that channel's subscribers as
+     * `{ type: 'activity:event', channel, payload }`. The router's recipient
+     * checks still apply to every subscriber. Use this instead of client
+     * publishes; it never touches `activity:broadcast` unless asked to.
+     */
+    publish(channel: string, event: {
+        eventType: string;
+        detail?: Record<string, unknown>;
+        userId?: string | null;
+        displayName?: string;
+        timestamp?: string;
+    }): Promise<ActivityEvent | null>;
     /**
      * Broadcast a message to all local subscribers of a channel
      * (local-only / no-router fallback).

@@ -5,6 +5,7 @@ const crypto_1 = require("crypto");
 const perf_hooks_1 = require("perf_hooks");
 const router_1 = require("./router");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const authorityScope_1 = require("../server-ws/authorityScope");
 const NOOP_LOGGER = { debug() { }, info() { }, warn() { }, error() { } };
 const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0";
 const REGISTER = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
@@ -355,7 +356,9 @@ class RedisRealtimeRouter {
             return false;
         let allowed = false;
         try {
-            allowed = !this.opts.authorize || await this.opts.authorize({ kind, clientId, channel, ctx: before.ctx });
+            allowed = !this.opts.authorize || await this.opts.authorize(opts.scope?.active
+                ? { kind, clientId, channel, ctx: before.ctx, scope: opts.scope }
+                : { kind, clientId, channel, ctx: before.ctx });
         }
         catch { /* fail closed */ }
         const after = await this.registration(clientId);
@@ -370,11 +373,11 @@ class RedisRealtimeRouter {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
     }
     unsubscribeFromChannel(clientId, channel) { this.local.unsubscribeFromChannel(clientId, channel); }
-    async isClientSubscribed(clientId, channel) {
+    async isClientSubscribed(clientId, channel, opts = {}) {
         if (!this.live() || typeof channel !== 'string' || !channel || Buffer.byteLength(channel) > this.maxBytes)
             return false;
         if (this.current(clientId)) {
-            const subscribed = await this.local.isClientSubscribed(clientId, channel);
+            const subscribed = await this.local.isClientSubscribed(clientId, channel, opts);
             return this.live() && subscribed;
         }
         const target = await this.registration(clientId, false);
@@ -385,12 +388,22 @@ class RedisRealtimeRouter {
     async sendToChannel(channel, message, excludeClientId, opts) {
         if (!this.live())
             throw new Error('Cluster routing is not ready');
+        const { scope, owned } = (0, authorityScope_1.scopeFor)(opts?.scope, 'fanout');
+        try {
+            await this.sendToChannelScoped(channel, message, excludeClientId, opts, scope);
+        }
+        finally {
+            if (owned)
+                scope.close();
+        }
+    }
+    async sendToChannelScoped(channel, message, excludeClientId, opts, scope) {
         const publisherId = opts?.publisherClientId ?? null;
         const ctx = publisherId ? this.current(publisherId) : null;
-        if (publisherId && (!ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true })))
+        if (publisherId && (!ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true, scope })))
             return;
-        await this.local.sendToChannel(channel, message, excludeClientId, opts);
-        if (publisherId && (this.current(publisherId) !== ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true })))
+        await this.local.sendToChannel(channel, message, excludeClientId, { ...opts, scope });
+        if (publisherId && (this.current(publisherId) !== ctx || !await this.checkChannel('publish', publisherId, channel, { silent: true, scope })))
             return;
         const registration = publisherId ? this.registrations.get(publisherId)?.registration : null;
         if (publisherId && !registration)
@@ -482,17 +495,25 @@ class RedisRealtimeRouter {
         if (frame.kind === 'channel') {
             if (typeof frame.channel !== 'string' || !frame.channel)
                 return false;
-            if (frame.publisher) {
-                if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string')
-                    return false;
-                const publisher = await this.registration(frame.publisher.clientId);
-                if (!publisher || publisher.instance !== frame.source.instance || publisher.generation !== frame.publisher.generation)
-                    return false;
-                if (this.opts.authorize && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
-                    channel: frame.channel, ctx: publisher.ctx }))
-                    return false;
+            // One authority scope per peer fan-out: the publisher's re-check
+            // and this node's recipient checks share it.
+            const scope = (0, authorityScope_1.createAuthorityScope)('fanout');
+            try {
+                if (frame.publisher) {
+                    if (typeof frame.publisher.clientId !== 'string' || typeof frame.publisher.generation !== 'string')
+                        return false;
+                    const publisher = await this.registration(frame.publisher.clientId);
+                    if (!publisher || publisher.instance !== frame.source.instance || publisher.generation !== frame.publisher.generation)
+                        return false;
+                    if (this.opts.authorize && !await this.opts.authorize({ kind: 'publish', clientId: frame.publisher.clientId,
+                        channel: frame.channel, ctx: publisher.ctx, scope }))
+                        return false;
+                }
+                await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId, scope);
             }
-            await this.local.sendToLocalChannel(frame.channel, frame.message, frame.excludeClientId);
+            finally {
+                scope.close();
+            }
         }
         else
             await this.local.broadcastToAll(frame.message, frame.excludeClientId ?? undefined);

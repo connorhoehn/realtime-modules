@@ -31,8 +31,23 @@ export declare function chat(opts?: Omit<import('../chat/ChatService').ChatServi
 export declare function presence(opts?: import('../presence/types').PresenceConfig): RealtimeFeature;
 export declare function cursor(opts?: import('../cursor/types').CursorConfig): RealtimeFeature;
 export declare function reactions(opts?: import('../reactions/types').ReactionConfig): RealtimeFeature;
+/**
+ * The activity feed. Secure by default (0.107): clients cannot `publish`
+ * (`allowClientPublish`), connections are not auto-subscribed to the
+ * tenant-blind `activity:broadcast` (`autoSubscribeBroadcast`), and
+ * `getHistory` is answered only when the router's `checkChannel` admits a
+ * `subscribe` of that channel — a router without `checkChannel` gets no
+ * history. The server produces events with
+ * `handle.services.activity.publish(channel, event)`, which writes that
+ * channel's history and delivers `{ type: 'activity:event', channel, payload }`.
+ */
 export declare function activity(opts?: {
     historyStore?: import('../activity/ActivityHistoryStore').ActivityHistoryStore;
+    config?: import('../activity/types').ActivityEventConfig;
+    /** Shorthand for `config.allowClientPublish`. Default false. */
+    allowClientPublish?: boolean;
+    /** Shorthand for `config.autoSubscribeBroadcast`. Default false. */
+    autoSubscribeBroadcast?: boolean;
 }): RealtimeFeature;
 export declare function social(opts?: import('../social/types').SocialConfig): RealtimeFeature;
 export declare function calls(opts?: {
@@ -72,6 +87,14 @@ export declare function calls(opts?: {
     crossNodePubSub?: import('../call/types').CallCrossNodePubSub;
 }): RealtimeFeature;
 export declare function ingest(opts?: import('../ingest/types').IngestConfig): RealtimeFeature;
+/**
+ * Pipeline run events. Clients subscribe `pipeline:run:<id>`; the cross-run
+ * firehoses (`pipeline:all`, `pipeline:approvals`) are refused unless enabled
+ * with `firehoses` (0.107). `channelFor(wire, { clientId, runId, userContext })`
+ * maps a wire channel to the router channel actually subscribed (a tenant
+ * partition), which the router's `authorize` then judges; producers emit to
+ * that router channel through `handle.services.pipeline.emitEvent`.
+ */
 export declare function pipeline(opts?: import('../pipeline/types').PipelineConfig): RealtimeFeature;
 export declare function typedDocuments(opts?: import('../typed-documents/types').DocumentEventsConfig): RealtimeFeature;
 export declare function rooms(opts?: {

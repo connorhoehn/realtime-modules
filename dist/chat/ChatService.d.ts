@@ -6,6 +6,7 @@ import { type ChatMember, type ChatMemberView, type ChatMembershipStore } from '
 import type { ChatMessage } from './types';
 import { type ResolveSender } from '../server-ws/senderIdentity';
 import { type ChannelAccessRouter } from '../server-ws/channelAccess';
+import { type AuthorityScope } from '../server-ws/authorityScope';
 export interface ChatLogger {
     debug(...args: any[]): void;
     info(...args: any[]): void;
@@ -23,6 +24,8 @@ export interface ChatMessageRouter {
     sendToChannel(channel: string, message: any, excludeClientId?: string | null, opts?: {
         skipCoalesce?: boolean;
         publisherClientId?: string | null;
+        /** The send's authority scope, shared with the fan-out's checks. */
+        scope?: AuthorityScope;
     }): Promise<void> | void;
     /**
      * Subscribe a client to a channel. Returns `false` when operator-pushed
@@ -37,6 +40,19 @@ export interface ChatMessageRouter {
     getClientData?(clientId: string): any;
     /** Optional flag — when explicitly `false`, broadcast warns about Redis. */
     redisAvailable?: boolean;
+}
+/**
+ * What `onDmMessage` / `onChannelMessage` receive. `scope` is the send's
+ * authority scope: pass it to `router.isClientSubscribed(…, { scope })` (an
+ * unread probe) so those checks share the send's per-channel proof. It stays
+ * open until a returned promise settles, then closes; after that it is a
+ * pass-through (fresh checks). Absent when the send had no scope.
+ */
+export interface ChatMessageHookInfo {
+    channel: string;
+    members: string[];
+    message: ChatMessage;
+    scope?: AuthorityScope;
 }
 /**
  * Sender identity as resolved from a connection id. `userId` is the
@@ -147,11 +163,7 @@ export interface ChatServiceOpts {
      * their own index). The gateway uses this seam to maintain a
      * conversations index and fire notifications.
      */
-    onDmMessage?: (info: {
-        channel: string;
-        members: string[];
-        message: ChatMessage;
-    }) => void;
+    onDmMessage?: (info: ChatMessageHookInfo) => void | Promise<void>;
     /**
      * Fires after every stored message on a NON-dm channel, with who should
      * hear about it: a closed channel's current members, an open channel's
@@ -159,11 +171,7 @@ export interface ChatServiceOpts {
      * turns it into unread counts / notifications; dm channels stay on
      * `onDmMessage`. Exceptions never fail the send.
      */
-    onChannelMessage?: (info: {
-        channel: string;
-        members: string[];
-        message: ChatMessage;
-    }) => void;
+    onChannelMessage?: (info: ChatMessageHookInfo) => void | Promise<void>;
     /**
      * A stored message changed after the fact — edited or deleted by its
      * author. The host keeps its previews (the conversations index) honest
@@ -225,16 +233,8 @@ export declare class ChatService {
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
-    onDmMessage: ((info: {
-        channel: string;
-        members: string[];
-        message: ChatMessage;
-    }) => void) | null;
-    onChannelMessage: ((info: {
-        channel: string;
-        members: string[];
-        message: ChatMessage;
-    }) => void) | null;
+    onDmMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
+    onChannelMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
     onMessageChanged: ((info: {
         channel: string;
         kind: 'edited' | 'deleted';
@@ -267,7 +267,7 @@ export declare class ChatService {
     handleJoinChannel(clientId: string, { channel, metadata: _metadata }: {
         channel: string;
         metadata?: any;
-    }): Promise<void>;
+    }, scope?: AuthorityScope): Promise<void>;
     handleLeaveChannel(clientId: string, { channel }: {
         channel: string;
     }): Promise<void>;
@@ -310,7 +310,13 @@ export declare class ChatService {
         channel: string;
         message: string;
         metadata?: any;
-    }): Promise<void>;
+    }, scope?: AuthorityScope): Promise<void>;
+    /**
+     * Fire-and-forget hook call that keeps the send's authority scope open
+     * until a returned promise settles (its unread probes are the tail of the
+     * same operation). Exceptions and rejections are logged, never thrown.
+     */
+    private _runMessageHook;
     /**
      * The stored message behind an edit or a delete: the channel cache
      * first, the store when the cache has turned over. Null when unknown.
@@ -366,7 +372,7 @@ export declare class ChatService {
     getChannelCache(channelId: string): LRUCache<string, ChatMessage>;
     addToChannelHistory(channel: string, messageData: ChatMessage): void;
     getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]>;
-    sendChannelHistory(clientId: string, channel: string, userId?: string): Promise<void>;
+    sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope): Promise<void>;
     /** Refilter an already fetched tail when a leave/rejoin tightened its floor. */
     private historyForDelivery;
     /** Sensitive direct replies must not use a decision from before a store read. */
@@ -377,9 +383,9 @@ export declare class ChatService {
      * subscribed users (the only ones this node can name — an open channel
      * keeps no roster).
      */
-    _channelMessageRecipients(channel: string, senderUserId: string | undefined): Promise<string[]>;
+    _channelMessageRecipients(channel: string, senderUserId: string | undefined, scope?: AuthorityScope): Promise<string[]>;
     /** Every row for the channel; [] when there is no store or the channel is open. */
-    _membershipRows(channel: string): Promise<ChatMember[]>;
+    _membershipRows(channel: string, scope?: AuthorityScope): Promise<ChatMember[]>;
     /**
      * The channel's members as the wire reports them. A dm channel's members
      * are in its name; a channel with no rows is open (everyone may read).
@@ -393,13 +399,13 @@ export declare class ChatService {
      * dm channel (the dm gate owns those), or the sender is an active member.
      * FAIL-CLOSED on a closed channel: no resolvable userId ⇒ refused.
      */
-    _checkMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): Promise<boolean>;
+    _checkMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null, scope?: AuthorityScope): Promise<boolean>;
     /**
      * History for a PERSON: what the channel holds, from their `historyFrom`
      * on. A closed channel shows a non-member nothing; an open channel and a
      * dm channel show everything (the dm gate has already run).
      */
-    getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number): Promise<ChatMessage[]>;
+    getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number, scope?: AuthorityScope): Promise<ChatMessage[]>;
     private filterMemberHistory;
     /** `{action:'members', channel}` → who is in it, to the sender. */
     handleMembers(clientId: string, { channel }: {
@@ -540,7 +546,7 @@ export declare class ChatService {
         channel: string;
         typing?: unknown;
     }): Promise<void>;
-    broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string): Promise<void>;
+    broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string, scope?: AuthorityScope): Promise<void>;
     /**
      * Resolve the sender identity for a connection, or null. A throwing
      * resolver is logged and treated as "no identity" — which the dm gate
