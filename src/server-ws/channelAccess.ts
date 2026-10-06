@@ -12,6 +12,8 @@
 // fan-out and no data handed back. The router sends the refused client the
 // AUTHZ_CHANNEL_DENIED error frame.
 
+import { lobbyForChatLobbyChannel } from '../call/lobbyChannel';
+
 /**
  * Services that wrap the consumer's channel name in a prefix of their own
  * before handing it to the router. Every other service (chat, activity,
@@ -36,6 +38,31 @@ export function splitServiceChannel(name: string): { service: ServiceChannelPref
         }
     }
     return { service: null, channel: name };
+}
+
+/**
+ * The channel a host's tenant/membership rule should judge: the router name
+ * with a service wrapper (`presence:`/`reactions:`/`cursor:`, see
+ * `SERVICE_CHANNEL_PREFIXES`) removed, and then the `chat:` wrapping that
+ * `channelForLobby` (`/call`) puts around a dm lobby removed too.
+ *
+ *   presence:acme:lobby     → acme:lobby
+ *   chat:social:dm:a:b      → social:dm:a:b
+ *   chat:dmg:<hash>         → dmg:<hash>
+ *   social:ch:general       → social:ch:general   (unchanged)
+ *   activity:broadcast      → activity:broadcast  (unchanged — NOT `broadcast`)
+ *   chat:general            → chat:general        (unchanged — not a lobby form)
+ *
+ * Deliberately narrow: a generic "strip any `word:`" rule turns
+ * `activity:broadcast` into `broadcast` and `chat:acme:x` into a tenant
+ * channel the chat service never used, so a tenant guard written over it
+ * admits names it should refuse. The `chat:` half is
+ * `lobbyForChatLobbyChannel`, defined next to `channelForLobby` so the two
+ * cannot drift. `SERVICE_CHANNEL_PREFIXES` stays service-only.
+ */
+export function baseChannel(name: string): string {
+    const unwrapped = splitServiceChannel(name).channel;
+    return lobbyForChatLobbyChannel(unwrapped) ?? unwrapped;
 }
 
 export type ChannelAccessKind = 'subscribe' | 'publish';

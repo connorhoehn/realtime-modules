@@ -61,6 +61,8 @@ export {
   isDmLobby,
   lobbyConversationKind,
   dmLobbyMembers,
+  dmLobbyName,
+  lobbyForChatLobbyChannel,
   shouldKnockToJoin,
 } from './lobbyChannel';
 
