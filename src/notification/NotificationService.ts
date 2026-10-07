@@ -188,6 +188,25 @@ export class NotificationService {
         }
     }
 
+    /**
+     * Server-side read (0.115): the host marks `ids` read for `userId` — say,
+     * a "new messages" item once that person has read the thread — exactly as
+     * if one of their tabs had sent `markRead`: persisted, then echoed as one
+     * `notification:read` per id to every live tab. Unknown ids are harmless.
+     */
+    async markReadForUser(userId: string, ids: readonly string[]): Promise<void> {
+        if (!userId || typeof userId !== 'string') return;
+        for (const id of new Set(ids)) {
+            if (typeof id === 'string' && id) await this.handleMarkRead(userId, { id });
+        }
+    }
+
+    /** The user's stored notifications, oldest first, read state reconciled (0.115: for host-side reads such as an unread index). */
+    async listForUser(userId: string): Promise<NotificationRecord[]> {
+        if (!userId || typeof userId !== 'string') return [];
+        return this.store.list(userId);
+    }
+
     private async handleMarkRead(userId: string, data: any): Promise<void> {
         const id = typeof data?.id === 'string' ? data.id : null;
         if (!id) {

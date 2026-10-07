@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## 0.115.0 — 2026-10-07
+
+- **Read cursors on open page discussions (`chat({ cursorMode, currentReaders })`).**
+  Receipts were kept only where a roster is nameable (dms, closed channels), so
+  a page discussion — open, admitted per request by the host's page read gate —
+  had no cursor and no unread divider (`enabled:false, reason:'open-channel'`).
+  `cursorMode(channel) => 'readers'` keeps a cursor per (user, channel) on such
+  an OPEN channel without inventing members: `read` is admitted by the router's
+  `subscribe` authority on every frame (a cursor is reader state, not content)
+  and asked again after the store write, so a reader revoked mid-session stores
+  or broadcasts nothing; the `readReceipt` frame fans out with no publisher, so
+  the router's per-recipient check limits it to current readers; listed cursors
+  pass through `currentReaders(channel, userIds)` (fail closed), so someone who
+  lost access is never reported as "seen by". The `receipts` frame says
+  `mode:'readers'`; there is no member cap. Default `'members'` is unchanged, a
+  channel with membership rows keeps the members rule, dms never change.
+- **`NotificationService.markReadForUser(userId, ids)` and `listForUser(userId)`.**
+  A host can clear an item server-side (a "new messages" item once its thread is
+  read) with the same persist + per-tab `notification:read` echo as a tab's own
+  `markRead`, and read a user's stored inbox.
+
 ## 0.114.0 — 2026-10-07
 
 - **Cursor identity is the server's, not the frame's.** `CursorService` copied

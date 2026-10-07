@@ -220,7 +220,51 @@ export interface ChatServiceOpts {
     cacheCleanupIntervalMs?: number;
     /** Largest channel that keeps read receipts. See DEFAULT_RECEIPTS_MAX_MEMBERS. */
     receiptsMaxMembers?: number;
+    /**
+     * Per-channel cursor mode (0.115). `'members'` (the default, and the only
+     * behaviour before 0.115) keeps cursors where the roster is nameable and
+     * small: a member-addressed dm or a closed channel. `'readers'` ALSO keeps
+     * them on an OPEN channel (no membership rows) whose readers the host
+     * decides per request — a page discussion whose audience is "whoever may
+     * read the page right now", which no static roster describes. In that mode:
+     *
+     *   - `read` is admitted by the router's `subscribe` authority (a cursor is
+     *     the reader's own state, not content), asked on every frame; a reader
+     *     revoked mid-session is refused there, and is asked again after the
+     *     store write so a revocation during it broadcasts nothing;
+     *   - the `readReceipt` frame names no publisher: the router's per-recipient
+     *     `subscribe` re-check at fan-out is what limits it to current readers;
+     *   - the listed cursors are filtered through `currentReaders` (when given),
+     *     so someone who lost access is not reported as "seen by";
+     *   - there is no `too-many-members` cap — there is no roster to count.
+     *
+     * A channel that HAS membership rows is closed and keeps the members rule
+     * whatever this returns. Never consulted for dm channels.
+     */
+    cursorMode?: (channel: string) => ChatCursorMode;
+    /**
+     * `'readers'` channels only: which of `userIds` (cursor holders) may read
+     * `channel` NOW. Rows for anyone else are left in the store but never
+     * listed. Errors and a missing hook list every row.
+     */
+    currentReaders?: (channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>;
 }
+/** See `ChatServiceOpts.cursorMode`. */
+export type ChatCursorMode = 'members' | 'readers';
+/** Who a channel's read receipts are kept for, and why not when they are off. */
+export type ChatReceiptsAudience = {
+    enabled: true;
+    mode: 'members';
+    members: string[];
+} | {
+    enabled: true;
+    mode: 'readers';
+    members: null;
+} | {
+    enabled: false;
+    members: null;
+    reason: 'disabled' | 'open-channel' | 'unknown-roster' | 'too-many-members';
+};
 export declare class ChatService {
     messageRouter: ChatMessageRouter;
     logger: ChatLogger;
@@ -249,6 +293,8 @@ export declare class ChatService {
         userId: string;
     }) => void) | null;
     channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
+    cursorMode: ((channel: string) => ChatCursorMode) | null;
+    currentReaders: ((channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>) | null;
     clientChannels: SubscriptionTracker;
     channelCaches: Map<string, LRUCache<string, ChatMessage>>;
     readonly maxMessagesPerChannel: number;
@@ -473,14 +519,9 @@ export declare class ChatService {
      *     rather than deleted (nothing is served while the channel is over
      *     the line, and removing someone puts it honestly back).
      */
-    _receiptsAudience(channel: string): Promise<{
-        enabled: true;
-        members: string[];
-    } | {
-        enabled: false;
-        members: null;
-        reason: 'disabled' | 'open-channel' | 'unknown-roster' | 'too-many-members';
-    }>;
+    _receiptsAudience(channel: string): Promise<ChatReceiptsAudience>;
+    /** Does the host name `channel` a readers-mode channel? Never a dm; a throwing hook is `members`. */
+    _readersModeName(channel: string): boolean;
     /**
      * The channel's cursors, newest reader first, filtered to people who are
      * still in the channel. The filter is belt-and-braces over

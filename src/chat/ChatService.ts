@@ -362,7 +362,44 @@ export interface ChatServiceOpts {
     cacheCleanupIntervalMs?: number;
     /** Largest channel that keeps read receipts. See DEFAULT_RECEIPTS_MAX_MEMBERS. */
     receiptsMaxMembers?: number;
+    /**
+     * Per-channel cursor mode (0.115). `'members'` (the default, and the only
+     * behaviour before 0.115) keeps cursors where the roster is nameable and
+     * small: a member-addressed dm or a closed channel. `'readers'` ALSO keeps
+     * them on an OPEN channel (no membership rows) whose readers the host
+     * decides per request — a page discussion whose audience is "whoever may
+     * read the page right now", which no static roster describes. In that mode:
+     *
+     *   - `read` is admitted by the router's `subscribe` authority (a cursor is
+     *     the reader's own state, not content), asked on every frame; a reader
+     *     revoked mid-session is refused there, and is asked again after the
+     *     store write so a revocation during it broadcasts nothing;
+     *   - the `readReceipt` frame names no publisher: the router's per-recipient
+     *     `subscribe` re-check at fan-out is what limits it to current readers;
+     *   - the listed cursors are filtered through `currentReaders` (when given),
+     *     so someone who lost access is not reported as "seen by";
+     *   - there is no `too-many-members` cap — there is no roster to count.
+     *
+     * A channel that HAS membership rows is closed and keeps the members rule
+     * whatever this returns. Never consulted for dm channels.
+     */
+    cursorMode?: (channel: string) => ChatCursorMode;
+    /**
+     * `'readers'` channels only: which of `userIds` (cursor holders) may read
+     * `channel` NOW. Rows for anyone else are left in the store but never
+     * listed. Errors and a missing hook list every row.
+     */
+    currentReaders?: (channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>;
 }
+
+/** See `ChatServiceOpts.cursorMode`. */
+export type ChatCursorMode = 'members' | 'readers';
+
+/** Who a channel's read receipts are kept for, and why not when they are off. */
+export type ChatReceiptsAudience =
+    | { enabled: true; mode: 'members'; members: string[] }
+    | { enabled: true; mode: 'readers'; members: null }
+    | { enabled: false; members: null; reason: 'disabled' | 'open-channel' | 'unknown-roster' | 'too-many-members' };
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -459,6 +496,8 @@ export class ChatService {
     onReadReceipt: ((info: { channel: string; receipt: ChatReadReceipt }) => void) | null;
     onChannelJoin: ((info: { channel: string; userId: string }) => void) | null;
     channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
+    cursorMode: ((channel: string) => ChatCursorMode) | null;
+    currentReaders: ((channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>) | null;
 
     clientChannels: SubscriptionTracker;
     channelCaches: Map<string, LRUCache<string, ChatMessage>>;
@@ -517,6 +556,8 @@ export class ChatService {
         this.joinHistoryLimit = opts.joinHistoryLimit ?? DEFAULT_JOIN_HISTORY_LIMIT;
         this.cacheCleanupIntervalMs = opts.cacheCleanupIntervalMs ?? DEFAULT_CACHE_CLEANUP_INTERVAL_MS;
         this.receiptsMaxMembers = opts.receiptsMaxMembers ?? DEFAULT_RECEIPTS_MAX_MEMBERS;
+        this.cursorMode = opts.cursorMode ?? null;
+        this.currentReaders = opts.currentReaders ?? null;
 
         // Local state management
         this.clientChannels = new SubscriptionTracker();
@@ -551,8 +592,11 @@ export class ChatService {
             // The router's channel authz, for every action that reads or
             // writes a named channel. `join` asks through subscribeToChannel;
             // `leave` needs no permission. A refusal has told the client.
-            const kind = Object.prototype.hasOwnProperty.call(CHAT_ACTION_ACCESS, action) ? CHAT_ACTION_ACCESS[action] : undefined;
             const channel = data?.channel;
+            let kind = Object.prototype.hasOwnProperty.call(CHAT_ACTION_ACCESS, action) ? CHAT_ACTION_ACCESS[action] : undefined;
+            // A readers-mode cursor is the reader's own state: `read` asks the
+            // read authority, not the content-publish one (cursorMode, 0.115).
+            if (action === 'read' && typeof channel === 'string' && this._readersModeName(channel)) kind = 'subscribe';
             if (kind && typeof channel === 'string' && channel.length > 0
                 && !(await routerPermits(this.messageRouter, kind, clientId, channel, { service: 'chat', clientChannel: channel, scope }))) {
                 return;
@@ -1745,22 +1789,34 @@ export class ChatService {
      *     rather than deleted (nothing is served while the channel is over
      *     the line, and removing someone puts it honestly back).
      */
-    async _receiptsAudience(channel: string): Promise<
-        { enabled: true; members: string[] }
-        | { enabled: false; members: null; reason: 'disabled' | 'open-channel' | 'unknown-roster' | 'too-many-members' }
-    > {
+    async _receiptsAudience(channel: string): Promise<ChatReceiptsAudience> {
         if (!this.readReceiptStore) return { enabled: false, members: null, reason: 'disabled' };
         if (isDmChatChannel(channel)) {
             const ids = dmChannelMembers(channel);
             if (!ids) return { enabled: false, members: null, reason: 'unknown-roster' };
             if (ids.length > this.receiptsMaxMembers) return { enabled: false, members: null, reason: 'too-many-members' };
-            return { enabled: true, members: ids };
+            return { enabled: true, mode: 'members', members: ids };
         }
         const rows = await this._membershipRows(channel);
         const active = rows.filter((r) => r.removedAt == null).map((r) => r.userId);
-        if (active.length === 0) return { enabled: false, members: null, reason: 'open-channel' };
+        if (active.length === 0) {
+            // An open channel whose host decides its readers per request (cursorMode).
+            if (rows.length === 0 && this._readersModeName(channel)) return { enabled: true, mode: 'readers', members: null };
+            return { enabled: false, members: null, reason: 'open-channel' };
+        }
         if (active.length > this.receiptsMaxMembers) return { enabled: false, members: null, reason: 'too-many-members' };
-        return { enabled: true, members: active };
+        return { enabled: true, mode: 'members', members: active };
+    }
+
+    /** Does the host name `channel` a readers-mode channel? Never a dm; a throwing hook is `members`. */
+    _readersModeName(channel: string): boolean {
+        if (!this.cursorMode || isDmChatChannel(channel)) return false;
+        try {
+            return this.cursorMode(channel) === 'readers';
+        } catch (err: any) {
+            this.logger.error('cursorMode hook threw (members assumed):', err && err.message);
+            return false;
+        }
     }
 
     /**
@@ -1779,9 +1835,22 @@ export class ChatService {
             this.logger.error('ChatReadReceiptStore list failed:', err && err.message);
             return [];
         }
-        const allowed = new Set(audience.members);
+        let allowed: Set<string> | null;
+        if (audience.mode === 'members') {
+            allowed = new Set(audience.members);
+        } else if (!this.currentReaders || rows.length === 0) {
+            allowed = null;
+        } else {
+            try {
+                allowed = new Set(await this.currentReaders(channel, [...new Set(rows.map((r) => r.userId))]));
+            } catch (err: any) {
+                // Fail closed: a host that cannot say who reads now lists nobody.
+                this.logger.error('currentReaders hook failed (no cursors listed):', err && err.message);
+                return [];
+            }
+        }
         return rows
-            .filter((r) => allowed.has(r.userId))
+            .filter((r) => allowed === null || allowed.has(r.userId))
             .sort((a, b) => (a.readAt === b.readAt ? (a.userId < b.userId ? -1 : 1) : a.readAt < b.readAt ? 1 : -1));
     }
 
@@ -1825,10 +1894,13 @@ export class ChatService {
             return;
         }
         const userId = identity?.userId;
-        if (!userId || !audience.members.includes(userId)) {
+        // Readers mode: the router's `subscribe` check in handleAction admitted
+        // this reader; an anonymous connection has no cursor to keep.
+        if (!userId || (audience.mode === 'members' && !audience.members.includes(userId))) {
             this.sendError(clientId, 'You are not a member of this channel', ErrorCodes.CHAT_NOT_A_MEMBER, channel);
             return;
         }
+        const context = this.messageRouter.getClientData?.(clientId)?.userContext;
 
         const now = new Date();
         const namedMessage = typeof messageId === 'string' && messageId.length > 0;
@@ -1869,10 +1941,7 @@ export class ChatService {
         }
         if (!stored) return; // already at or past this point — nothing happened
 
-        // To the whole channel INCLUDING the reader, the way an edit goes
-        // out: their other tabs need the accepted (clamped, monotonic) value
-        // rather than whatever each of them believed it sent.
-        await this._broadcastFrame(channel, {
+        const frame = {
             type: 'chat',
             action: 'readReceipt',
             channel,
@@ -1881,7 +1950,21 @@ export class ChatService {
             readAt: stored.readAt,
             updatedAt: stored.updatedAt,
             timestamp: stored.updatedAt,
-        }, clientId);
+        };
+        if (audience.mode === 'readers') {
+            // The store write can outlive a revocation: ask the reader's read
+            // authority once more, then fan out with no publisher — every
+            // recipient (the reader's own tabs included) is re-checked by the
+            // router, so a "seen by" never reaches someone who lost access.
+            if (this.messageRouter.getClientData && this.messageRouter.getClientData(clientId)?.userContext !== context) return;
+            if (!(await routerPermits(this.messageRouter, 'subscribe', clientId, channel, { service: 'chat', clientChannel: channel }))) return;
+            await this.messageRouter.sendToChannel(channel, frame);
+        } else {
+            // To the whole channel INCLUDING the reader, the way an edit goes
+            // out: their other tabs need the accepted (clamped, monotonic) value
+            // rather than whatever each of them believed it sent.
+            await this._broadcastFrame(channel, frame, clientId);
+        }
 
         if (this.onReadReceipt) {
             try {
@@ -1920,6 +2003,7 @@ export class ChatService {
             channel,
             enabled: audience.enabled,
             ...(audience.enabled ? {} : { reason: audience.reason }),
+            ...(audience.enabled && audience.mode === 'readers' ? { mode: 'readers' } : {}),
             limit: this.receiptsMaxMembers,
             receipts: audience.enabled
                 ? (await this.listReadReceipts(channel)).map((r) => ({
