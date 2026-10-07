@@ -304,8 +304,11 @@ export declare class CallService {
      * atomic accepted seat (`claimAcceptedSeat`, as 0.105's `accepted`), so a
      * person holds one seat however many tabs join at once. The seat set is
      * what a call-scoped consumer (huddle chat) admits. Leaving is the
-     * ordinary terminal `ended` verb. Nothing is fanned out: peers learn of
-     * the newcomer through their own `participant-state`/`status` flow.
+     * ordinary terminal `ended` verb aimed at yourself (it releases only the
+     * leaver's seat; the last seat out ends the call). A join into a lobby
+     * whose page huddle is already live adopts that call's id; seated peers
+     * get `user-status: in-call` and the joiner an `active-call` naming the
+     * real id and who is there.
      */
     private handleLobbyJoin;
     /**

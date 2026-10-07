@@ -1386,6 +1386,9 @@ export class CallService {
                 data.startedAt = new Date(startedAt).toISOString();
             }
             data.participantUserIds = Array.from(userIds);
+            // A call nobody was rung for (a page huddle): a later `join`
+            // seats into it, and its clients keep running with one person.
+            if (!docMeta && targetUserIds.length === 0 && lobbyConversationKind(lobbyName) === null) data.pageHuddle = true;
             // People, not connections: two tabs of one person count once.
             data.participantCount = docMeta ? userIds.size : participantClientIds.length;
             // Someone whose socket dropped is not a participant (above); while
@@ -2357,15 +2360,28 @@ export class CallService {
      * atomic accepted seat (`claimAcceptedSeat`, as 0.105's `accepted`), so a
      * person holds one seat however many tabs join at once. The seat set is
      * what a call-scoped consumer (huddle chat) admits. Leaving is the
-     * ordinary terminal `ended` verb. Nothing is fanned out: peers learn of
-     * the newcomer through their own `participant-state`/`status` flow.
+     * ordinary terminal `ended` verb aimed at yourself (it releases only the
+     * leaver's seat; the last seat out ends the call). A join into a lobby
+     * whose page huddle is already live adopts that call's id; seated peers
+     * get `user-status: in-call` and the joiner an `active-call` naming the
+     * real id and who is there.
      */
     private async handleLobbyJoin(clientId: string, payload: CallInvite): Promise<void> {
-        const callId = typeof payload.callId === 'string' ? payload.callId : '';
+        const askedCallId = typeof payload.callId === 'string' ? payload.callId : '';
         const lobbyName = typeof payload.lobbyName === 'string' ? payload.lobbyName : '';
-        if (!callId || !lobbyName) { this.sendError(clientId, 'callId and lobbyName are required on join'); return; }
+        if (!askedCallId || !lobbyName) { this.sendError(clientId, 'callId and lobbyName are required on join'); return; }
         const userId = await this.resolveActorUserId(clientId, payload, false);
-        if (!userId) { this.sendError(clientId, 'join needs an authenticated user', { code: 'unauthenticated', action: 'join', callId, lobbyName }); return; }
+        if (!userId) { this.sendError(clientId, 'join needs an authenticated user', { code: 'unauthenticated', action: 'join', callId: askedCallId, lobbyName }); return; }
+        // One huddle per lobby: a client whose status query predates the first
+        // join minted its own call id. Seat it in the lobby's live page huddle
+        // instead of registering a second call, and tell it the real id.
+        let callId = askedCallId;
+        if (!(this.metaStore && await this.getDocumentMeta(askedCallId))) {
+            try {
+                const live = await this.buildActiveCallData(lobbyName);
+                if (live.active === true && live.pageHuddle === true && typeof live.callId === 'string' && live.callId) callId = live.callId;
+            } catch { /* the asked id stands */ }
+        }
         if (this.metaStore && await this.getDocumentMeta(callId)) { this.sendError(clientId, 'A document call is joined with its own verbs', { action: 'join', callId, lobbyName }); return; }
         const existing = this.activeCalls.get(callId);
         let view: import('./CallStateStore').ActiveCallStateView | null = null;
@@ -2378,7 +2394,7 @@ export class CallService {
             this.logger.info(`[CallService] refused second join of ${callId} from ${clientId}: ${userId} is already in the call on ${winner.clientId}`);
             const envelope: CallEvent = {
                 type: 'call', action: 'ended',
-                data: { callId, callerId: winner.callerId || existing?.callerId || userId, lobbyName, userId, reason: 'answered-elsewhere' },
+                data: { callId: askedCallId, callerId: winner.callerId || existing?.callerId || userId, lobbyName, userId, reason: 'answered-elsewhere' },
                 timestamp: new Date().toISOString(),
             };
             try { await Promise.resolve(this.messageRouter.sendToClient(clientId, envelope)); } catch { /* socket gone */ }
@@ -2439,6 +2455,33 @@ export class CallService {
             }
         }
         this.acceptedCallIds.add(callId);
+        // Everyone already seated hears the newcomer (their roster), and the
+        // newcomer is told the call it is really in and who is there.
+        try {
+            const seatedNow = this.activeCalls.get(callId);
+            const others = new Set<string>(seatedNow ? seatedNow.participantClientIds : []);
+            if (this.stateStore) { try { for (const c of (await this.stateStore.getCall(callId))?.participantClientIds ?? []) others.add(c); } catch { /* local view */ } }
+            others.delete(clientId);
+            if (others.size > 0) {
+                await this.sendToClients(Array.from(others), {
+                    type: 'call', action: 'user-status',
+                    data: {
+                        callId, callerId: userId, userId, lobbyName, status: 'in-call',
+                        ...(typeof payload.callerName === 'string' && payload.callerName ? { displayName: payload.callerName } : {}),
+                    },
+                    timestamp: new Date().toISOString(),
+                });
+            }
+            if (callId !== askedCallId || others.size > 0) {
+                await this.sendToClients([clientId], {
+                    type: 'call', action: 'active-call',
+                    data: await this.buildActiveCallData(lobbyName),
+                    timestamp: new Date().toISOString(),
+                });
+            }
+        } catch (e: any) {
+            this.logger.warn(`[CallService] join roster push failed for ${callId}: ${e?.message ?? e}`);
+        }
         this.recordCallActionMetric('join', 'targeted');
     }
 

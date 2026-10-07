@@ -139,6 +139,9 @@ interface ActiveCall {
   stageToken: string | null;
   participantId: string | null;
   startedAt: number | null;
+  /** A page huddle: nobody was rung, whoever is in the lobby is in it, and it
+   *  goes on while anyone is left — one person leaving never ends it for the rest. */
+  pageHuddle?: boolean;
   /** Rendered at join so a changed preference does not re-open the camera mid-call. */
   media: MediaStreamConstraints;
 }
@@ -203,7 +206,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   const [incoming, setIncomingState] = useState<IncomingConversationCall | null>(null);
   const incomingRef = useRef<IncomingConversationCall | null>(null);
   const setIncoming = useCallback((v: IncomingConversationCall | null) => { incomingRef.current = v; setIncomingState(v); }, []);
-  const [discovered, setDiscovered] = useState<{ callId: string; userIds: string[] } | null>(null);
+  const [discovered, setDiscovered] = useState<{ callId: string; userIds: string[]; pageHuddle?: boolean } | null>(null);
   const discoveredRef = useRef(discovered);
   discoveredRef.current = discovered;
   const [roster, setRosterState] = useState<Record<string, RosterEntry>>({});
@@ -446,6 +449,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const ok = await enter({
       callId, role: 'caller', host: o.self.userId, audioOnly, targets: ring,
       sessionId: null, stageToken: null, participantId: null, startedAt: null, media: joinMedia(audioOnly),
+      ...(ring.length === 0 ? { pageHuddle: true } : {}),
     });
     if (!ok) return;
     if (ring.length === 0) {
@@ -543,12 +547,20 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     setRoster(() => Object.fromEntries(others.map((u) => [u, { status: 'in-call' as const }])));
     const startedAt = Date.now();
     // Registers you with the call on the server (an accept of the live call).
-    if (others.length > 0) {
+    if (d.pageHuddle) {
+      // A page huddle seats you with `join`; the gateway answers with who is there.
+      send({
+        service: 'call', action: 'join', callId: d.callId, lobbyName: o.lobbyName,
+        callerId: o.self.userId, callerName: o.self.displayName,
+        ...(channelRef.current ? { channel: channelRef.current } : {}),
+      });
+    } else if (others.length > 0) {
       send({ service: 'call', action: 'accepted', callId: d.callId, callerId: o.self.userId, userId: o.self.userId, displayName: o.self.displayName, targetUserIds: others, lobbyName: o.lobbyName });
     }
     const ok = await enter({
       callId: d.callId, role: 'joiner', host: others[0] ?? '', audioOnly: false, targets: [],
       sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(false),
+      ...(d.pageHuddle ? { pageHuddle: true } : {}),
     });
     if (ok) {
       setDiscovered(null);
@@ -630,11 +642,24 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       switch (f.action) {
         case 'active-call': {
           if (d.lobbyName !== o.lobbyName) return;
+          if (a?.pageHuddle && d.active === true && callId) {
+            // The gateway seated us in the lobby's one huddle (our own id was
+            // minted before we knew it): take its id and its people.
+            const others = (Array.isArray(d.participantUserIds) ? (d.participantUserIds as unknown[]) : [])
+              .filter((u): u is string => typeof u === 'string' && !!u && u !== me);
+            const adopted = callId !== a.callId;
+            if (adopted) setActive((cur) => (cur ? { ...cur, callId, host: str(d.callerId) && str(d.callerId) !== me ? str(d.callerId)! : cur.host } : cur));
+            const fresh = others.filter((u) => !rosterRef.current[u]);
+            if (fresh.length > 0) setRoster((r) => ({ ...r, ...Object.fromEntries(fresh.filter((u) => !r[u]).map((u) => [u, { status: 'in-call' as const }])) }));
+            // Peers only learn of us from this announcement (once, on our own join).
+            announceSelf();
+            return;
+          }
           if (d.active === true && callId && callId !== a?.callId) {
             const ids = Array.isArray(d.participantUserIds)
               ? Array.from(new Set((d.participantUserIds as unknown[]).filter((u): u is string => typeof u === 'string' && !!u)))
               : [];
-            setDiscovered({ callId, userIds: ids });
+            setDiscovered({ callId, userIds: ids, ...(d.pageHuddle === true ? { pageHuddle: true } : {}) });
           } else if (d.active !== true) {
             setDiscovered(null);
           }
@@ -728,7 +753,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
             setAcceptedState(acceptedRef.current);
             // The last other person hung up: a call with only you on it is over.
             const othersLeft = Object.keys(rosterRef.current).length;
-            if (hadPeer && othersLeft === 0 && activeRef.current?.startedAt) teardown('peer-left');
+            if (hadPeer && othersLeft === 0 && activeRef.current?.startedAt && !activeRef.current.pageHuddle) teardown('peer-left');
             return;
           }
           if (status === 'in-call' || d.inCall === true) {

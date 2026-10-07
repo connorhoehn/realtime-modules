@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## 0.113.0 — 2026-10-07
+
+- **One page huddle per lobby; one leaver never ends it for the rest.** A page
+  huddle's second joiner usually minted its own call id (its `status` query
+  predated the first `join`), so the lobby ended up with two calls and no
+  signalling mesh: people who had not heard of each other tore the huddle
+  down when the first one left. Now `join` into a lobby whose page huddle is
+  live adopts that call (one atomic seat in the existing id), seated peers get
+  `user-status: in-call`, and the joiner gets an `active-call` naming the real
+  id and who is there (`pageHuddle: true` marks such calls in every
+  `active-call`). `useConversationCall` marks its call a page huddle
+  (`start([])`, or `rejoin()` of a `pageHuddle` discovery, which now sends
+  `join`), adopts the id from that `active-call`, announces itself to everyone
+  listed, and no longer ends the huddle when its last other peer leaves.
+  Leaving is unchanged and already participant-grain: `ended` aimed at
+  yourself releases only your seat, the last seat out ends the call, DM/ring
+  calls behave as before, and a re-join takes a fresh seat. Additive.
+
 ## 0.112.0 — 2026-10-06
 
 - **New server-side subpath `./deck` — the deck engine, extracted.** Moved

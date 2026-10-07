@@ -129,3 +129,43 @@ describe.each(storeCases)('lobby join over sockets ($name)', (sc) => {
     expect((await status(lobby)).active).toBe(false);
   });
 });
+
+describe('page huddle seats: three people, one leaves (Redis double, two nodes)', () => {
+  it('a late joiner adopts the live call; one leaver releases only its seat; the last out ends it; a re-join takes a fresh seat', async () => {
+    const c = makeCluster({ rejoinGraceMs: 0 });
+    c.connect('a-ana', 'u-ana', 'A'); c.connect('b-bea', 'u-bea', 'B'); c.connect('a-cy', 'u-cy', 'A');
+    const store = new RedisCallStateStore(c.redis as any);
+    await c.A.svc.handleCallEvent('a-ana', 'join', { callId: 'h-ana', lobbyName: LOBBY, callerId: 'u-ana', callerName: 'Ana' });
+    // Bea's status query predated Ana's join, so she mints her own id: she is seated in Ana's call, told so, and Ana hears her.
+    await c.B.svc.handleCallEvent('b-bea', 'join', { callId: 'h-bea', lobbyName: LOBBY, callerId: 'u-bea', callerName: 'Bea' });
+    await flush();
+    expect(await store.getCall('h-bea')).toBeNull();
+    expect((await store.getCall('h-ana'))!.participantClientIds.sort()).toEqual(['a-ana', 'b-bea']);
+    expect(c.frames('b-bea', 'active-call')[0].data).toMatchObject({ active: true, callId: 'h-ana', pageHuddle: true });
+    expect(c.frames('a-ana', 'user-status')[0].data).toMatchObject({ callId: 'h-ana', userId: 'u-bea', status: 'in-call' });
+    await c.A.svc.handleCallEvent('a-cy', 'join', { callId: 'h-cy', lobbyName: LOBBY, callerId: 'u-cy', callerName: 'Cy' });
+    await flush();
+    expect((await store.getCall('h-ana'))!.participantClientIds.sort()).toEqual(['a-ana', 'a-cy', 'b-bea']);
+    // Bea leaves (the ordinary `ended`, aimed at herself): two seats remain and nobody is told the call ended.
+    await c.B.svc.handleCallEvent('b-bea', 'ended', { callId: 'h-ana', lobbyName: LOBBY, callerId: 'u-bea', targetUserIds: ['u-bea'] });
+    await flush();
+    expect((await store.getCall('h-ana'))!.participantClientIds.sort()).toEqual(['a-ana', 'a-cy']);
+    expect(c.frames('a-ana', 'ended')).toHaveLength(0);
+    expect(c.frames('a-cy', 'ended')).toHaveLength(0);
+    // A re-join after leaving takes a fresh seat in the same live call.
+    await c.B.svc.handleCallEvent('b-bea', 'join', { callId: 'h-bea-2', lobbyName: LOBBY, callerId: 'u-bea' });
+    await flush();
+    expect((await store.getCall('h-ana'))!.participantClientIds.sort()).toEqual(['a-ana', 'a-cy', 'b-bea']);
+    // Everyone out: the last release ends the call.
+    for (const [cid, node, uid] of [['b-bea', c.B, 'u-bea'], ['a-cy', c.A, 'u-cy'], ['a-ana', c.A, 'u-ana']] as const) {
+      await node.svc.handleCallEvent(cid, 'ended', { callId: 'h-ana', lobbyName: LOBBY, callerId: uid, targetUserIds: [uid] });
+      await flush();
+    }
+    expect(await store.getCall('h-ana')).toBeNull();
+    // After it ended, a join starts a new huddle rather than adopting the dead one.
+    await c.A.svc.handleCallEvent('a-ana', 'join', { callId: 'h-new', lobbyName: LOBBY, callerId: 'u-ana' });
+    await flush();
+    expect(await store.getCall('h-new')).toMatchObject({ participantClientIds: ['a-ana'] });
+    await c.dispose();
+  });
+});

@@ -66,6 +66,25 @@ describe('useConversationCall — caller', () => {
     expect(String(join.callId)).toMatch(/^call-/);
   });
 
+  it('a page huddle adopts the id the gateway seats it in, and survives its last peer leaving', async () => {
+    const lobby = 'assessment:team:T-1';
+    const { g, m, hook, onCallEnded } = setup({ lobbyName: lobby, channel: undefined });
+    await act(async () => { await hook.result.current.start([]); });
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    // Someone else's huddle was already live: the gateway answers our join with its id and its people.
+    act(() => { g.push('active-call', { lobbyName: lobby, active: true, callId: 'call-live', callerId: 'u-bob', participantUserIds: ['u-bob', 'u-alice'], pageHuddle: true }); });
+    expect(hook.result.current.call!.callId).toBe('call-live');
+    expect(hook.result.current.call!.participants.map((p) => p.userId)).toContain('u-bob');
+    expect(g.callFrames('participant-state').some((f) => f.callId === 'call-live' && (f.targetUserIds as string[]).includes('u-bob'))).toBe(true);
+    // Bob leaves: a huddle with only you in it is still a huddle.
+    act(() => { g.push('user-status', { callId: 'call-live', userId: 'u-bob', status: 'left', reason: 'hung-up', lobbyName: lobby }); });
+    expect(hook.result.current.phase).not.toBe('ended');
+    expect(onCallEnded).not.toHaveBeenCalled();
+    // Leaving releases only your seat: `ended` aimed at yourself, with the adopted id.
+    await act(async () => { await hook.result.current.leave(); });
+    expect(g.callFrames('ended').at(-1)).toMatchObject({ callId: 'call-live', targetUserIds: ['u-alice'] });
+  });
+
   it('start → PA session on the verbatim lobby, a targeted invite, phase calling', async () => {
     const { g, pa, hook } = setup();
     expect(g.callFrames('status')[0]).toMatchObject({ lobbyName: LOBBY });

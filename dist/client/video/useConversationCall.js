@@ -339,6 +339,7 @@ function useConversationCall(opts) {
         const ok = await enter({
             callId, role: 'caller', host: o.self.userId, audioOnly, targets: ring,
             sessionId: null, stageToken: null, participantId: null, startedAt: null, media: joinMedia(audioOnly),
+            ...(ring.length === 0 ? { pageHuddle: true } : {}),
         });
         if (!ok)
             return;
@@ -446,12 +447,21 @@ function useConversationCall(opts) {
         setRoster(() => Object.fromEntries(others.map((u) => [u, { status: 'in-call' }])));
         const startedAt = Date.now();
         // Registers you with the call on the server (an accept of the live call).
-        if (others.length > 0) {
+        if (d.pageHuddle) {
+            // A page huddle seats you with `join`; the gateway answers with who is there.
+            send({
+                service: 'call', action: 'join', callId: d.callId, lobbyName: o.lobbyName,
+                callerId: o.self.userId, callerName: o.self.displayName,
+                ...(channelRef.current ? { channel: channelRef.current } : {}),
+            });
+        }
+        else if (others.length > 0) {
             send({ service: 'call', action: 'accepted', callId: d.callId, callerId: o.self.userId, userId: o.self.userId, displayName: o.self.displayName, targetUserIds: others, lobbyName: o.lobbyName });
         }
         const ok = await enter({
             callId: d.callId, role: 'joiner', host: others[0] ?? '', audioOnly: false, targets: [],
             sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(false),
+            ...(d.pageHuddle ? { pageHuddle: true } : {}),
         });
         if (ok) {
             setDiscovered(null);
@@ -533,11 +543,26 @@ function useConversationCall(opts) {
                 case 'active-call': {
                     if (d.lobbyName !== o.lobbyName)
                         return;
+                    if (a?.pageHuddle && d.active === true && callId) {
+                        // The gateway seated us in the lobby's one huddle (our own id was
+                        // minted before we knew it): take its id and its people.
+                        const others = (Array.isArray(d.participantUserIds) ? d.participantUserIds : [])
+                            .filter((u) => typeof u === 'string' && !!u && u !== me);
+                        const adopted = callId !== a.callId;
+                        if (adopted)
+                            setActive((cur) => (cur ? { ...cur, callId, host: str(d.callerId) && str(d.callerId) !== me ? str(d.callerId) : cur.host } : cur));
+                        const fresh = others.filter((u) => !rosterRef.current[u]);
+                        if (fresh.length > 0)
+                            setRoster((r) => ({ ...r, ...Object.fromEntries(fresh.filter((u) => !r[u]).map((u) => [u, { status: 'in-call' }])) }));
+                        // Peers only learn of us from this announcement (once, on our own join).
+                        announceSelf();
+                        return;
+                    }
                     if (d.active === true && callId && callId !== a?.callId) {
                         const ids = Array.isArray(d.participantUserIds)
                             ? Array.from(new Set(d.participantUserIds.filter((u) => typeof u === 'string' && !!u)))
                             : [];
-                        setDiscovered({ callId, userIds: ids });
+                        setDiscovered({ callId, userIds: ids, ...(d.pageHuddle === true ? { pageHuddle: true } : {}) });
                     }
                     else if (d.active !== true) {
                         setDiscovered(null);
@@ -646,7 +671,7 @@ function useConversationCall(opts) {
                         setAcceptedState(acceptedRef.current);
                         // The last other person hung up: a call with only you on it is over.
                         const othersLeft = Object.keys(rosterRef.current).length;
-                        if (hadPeer && othersLeft === 0 && activeRef.current?.startedAt)
+                        if (hadPeer && othersLeft === 0 && activeRef.current?.startedAt && !activeRef.current.pageHuddle)
                             teardown('peer-left');
                         return;
                     }
