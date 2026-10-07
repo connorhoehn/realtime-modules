@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## 0.114.0 — 2026-10-07
+
+- **Cursor identity is the server's, not the frame's.** `CursorService` copied
+  the client's `metadata` straight into every broadcast, so any socket could
+  show a cursor under another person's name and colour. As 0.98.5 did for chat
+  senders, an authenticated connection's cursor now carries `userId`,
+  `displayName`, derived initials and a colour derived from the user id, all
+  taken from the socket's auth context (`cursor({ resolveIdentity })` maps the
+  context like `chat({ resolveSender })`); the frame's copies and every other
+  metadata key are dropped unless listed in `cursor({ metadataAllowlist })`
+  (list `userColor` to let clients choose their own). `trustFrameMetadata: true`
+  restores the old behaviour; anonymous connections are unchanged. Behaviour
+  change for authenticated connections: arbitrary client metadata no longer
+  rides cursors by default.
+
 ## 0.113.0 — 2026-10-07
 
 - **One page huddle per lobby; one leaver never ends it for the rest.** A page

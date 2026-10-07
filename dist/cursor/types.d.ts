@@ -66,6 +66,28 @@ export interface CursorConfig {
      * policy they like (RBAC, OAuth scopes, room ownership, etc.).
      */
     authorizeChannel?: (clientId: string, channel: string) => boolean;
+    /**
+     * Map the connection's auth context to the identity stamped on its
+     * cursors (`userId`, `displayName`, and the initials derived from it).
+     * Default: `userId`, `displayName ?? name` straight off the context. Runs
+     * only for an authenticated connection; return null to treat it as
+     * anonymous. Same contract as `chat({ resolveSender })`.
+     */
+    resolveIdentity?: import('../server-ws/senderIdentity').ResolveSender;
+    /**
+     * Client `metadata` keys that may ride an authenticated connection's
+     * cursor (besides the server's identity and `mode`). Default `[]`: the
+     * frame's `userId`, `displayName`, `userInitials`, `userColor` and every
+     * other key are dropped, and the colour is derived from the user id.
+     * List `userColor` here to let the client choose its own.
+     */
+    metadataAllowlist?: readonly string[];
+    /**
+     * Let the frame's `metadata` stand as before 0.114 for authenticated
+     * connections too. Default false. Anonymous connections (no auth context
+     * with a userId) are unaffected either way.
+     */
+    trustFrameMetadata?: boolean;
 }
 /**
  * The MessageRouter slice CursorService needs. Kept narrow on purpose: the

@@ -30,6 +30,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CursorService = void 0;
 const distributed_core_1 = require("distributed-core");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const senderIdentity_1 = require("../server-ws/senderIdentity");
 const types_1 = require("./types");
 class CursorService {
     messageRouter;
@@ -45,6 +46,9 @@ class CursorService {
     cleanupSweep;
     supportedModes;
     authorizeChannel;
+    resolveIdentity;
+    metadataAllowlist;
+    trustFrameMetadata;
     constructor(opts) {
         if (!opts || !opts.logger) {
             throw new Error('CursorService: logger is required');
@@ -63,6 +67,9 @@ class CursorService {
             ? { ...config.supportedModes }
             : { ...types_1.DEFAULT_SUPPORTED_MODES };
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
+        this.resolveIdentity = config.resolveIdentity ?? null;
+        this.metadataAllowlist = new Set(config.metadataAllowlist ?? []);
+        this.trustFrameMetadata = config.trustFrameMetadata === true;
         this.clientCursors = new Map();
         this.channelCursors = new Map();
         this.cursorUpdateThrottle = new Map();
@@ -167,16 +174,41 @@ class CursorService {
         if (!this.shouldUpdateCursor(clientId)) {
             return;
         }
-        const cursorData = {
-            clientId,
-            channel,
-            position,
-            metadata: {
+        const sender = this.trustFrameMetadata
+            ? null
+            : (0, senderIdentity_1.resolveAuthSender)(this.messageRouter, clientId, { channel, position, metadata, mode }, this.resolveIdentity, (err) => this.logger.error(`resolveIdentity threw for client ${clientId}:`, err));
+        let stamped;
+        if (sender) {
+            // An authenticated connection speaks as the server knows it: the
+            // frame's identity fields and any key off the allowlist are gone.
+            const kept = {};
+            for (const key of this.metadataAllowlist) {
+                if (Object.prototype.hasOwnProperty.call(metadata, key))
+                    kept[key] = metadata[key];
+            }
+            const name = sender.displayName || sender.userId;
+            stamped = {
+                ...kept,
+                mode: effectiveMode,
+                userId: sender.userId,
+                ...(sender.displayName ? { displayName: sender.displayName } : {}),
+                userInitials: this.initialsOf(name),
+                userColor: (typeof kept.userColor === 'string' && kept.userColor) || this.generateUserColor(sender.userId),
+            };
+        }
+        else {
+            stamped = {
                 ...metadata,
                 mode: effectiveMode,
                 userInitials: metadata.userInitials || this.generateInitials(clientId),
                 userColor: metadata.userColor || this.generateUserColor(clientId),
-            },
+            };
+        }
+        const cursorData = {
+            clientId,
+            channel,
+            position,
+            metadata: stamped,
             timestamp: new Date().toISOString(),
         };
         await this.storeCursorData(clientId, channel, cursorData);
@@ -216,6 +248,12 @@ class CursorService {
             default:
                 return false;
         }
+    }
+    /** Two letters from a display name: first+last initials, or the first two characters. */
+    initialsOf(name) {
+        const parts = name.trim().split(/\s+/).filter(Boolean);
+        const letters = parts.length > 1 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : (parts[0] ?? '').slice(0, 2);
+        return letters.toUpperCase() || '?';
     }
     generateInitials(clientId) {
         return clientId.substring(0, 2).toUpperCase();

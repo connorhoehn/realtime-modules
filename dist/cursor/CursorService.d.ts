@@ -13,6 +13,9 @@ export declare class CursorService {
     private readonly cleanupSweep;
     supportedModes: Record<string, CursorModeConfig>;
     private authorizeChannel;
+    private readonly resolveIdentity;
+    private readonly metadataAllowlist;
+    private readonly trustFrameMetadata;
     constructor(opts: CursorServiceOptions);
     /**
      * Discard cursor positions and the active cursor map for a room.
@@ -31,6 +34,8 @@ export declare class CursorService {
     storeCursorData(clientId: string, channel: string, cursorData: CursorData): Promise<void>;
     storeLocalCursorData(clientId: string, channel: string, cursorData: CursorData): void;
     validatePositionForMode(position: any, mode: string): boolean;
+    /** Two letters from a display name: first+last initials, or the first two characters. */
+    private initialsOf;
     generateInitials(clientId: string): string;
     generateUserColor(clientId: string): string;
     handleGetModes(clientId: string, _data: unknown): Promise<void>;

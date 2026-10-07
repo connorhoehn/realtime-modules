@@ -28,6 +28,7 @@
 
 import { PeriodicSweep } from 'distributed-core';
 import { routerPermits } from '../server-ws/channelAccess';
+import { resolveAuthSender, type ResolveSender } from '../server-ws/senderIdentity';
 
 import {
     DEFAULT_CLEANUP_INTERVAL_MS,
@@ -61,6 +62,9 @@ export class CursorService {
     supportedModes: Record<string, CursorModeConfig>;
 
     private authorizeChannel: (clientId: string, channel: string) => boolean;
+    private readonly resolveIdentity: ResolveSender | null;
+    private readonly metadataAllowlist: ReadonlySet<string>;
+    private readonly trustFrameMetadata: boolean;
 
     constructor(opts: CursorServiceOptions) {
         if (!opts || !opts.logger) {
@@ -81,6 +85,9 @@ export class CursorService {
             ? { ...config.supportedModes }
             : { ...DEFAULT_SUPPORTED_MODES };
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
+        this.resolveIdentity = config.resolveIdentity ?? null;
+        this.metadataAllowlist = new Set(config.metadataAllowlist ?? []);
+        this.trustFrameMetadata = config.trustFrameMetadata === true;
 
         this.clientCursors = new Map();
         this.channelCursors = new Map();
@@ -205,16 +212,41 @@ export class CursorService {
             return;
         }
 
-        const cursorData: CursorData = {
-            clientId,
-            channel,
-            position,
-            metadata: {
+        const sender = this.trustFrameMetadata
+            ? null
+            : resolveAuthSender(this.messageRouter, clientId, { channel, position, metadata, mode }, this.resolveIdentity, (err) =>
+                this.logger.error(`resolveIdentity threw for client ${clientId}:`, err));
+        let stamped: Record<string, unknown>;
+        if (sender) {
+            // An authenticated connection speaks as the server knows it: the
+            // frame's identity fields and any key off the allowlist are gone.
+            const kept: Record<string, unknown> = {};
+            for (const key of this.metadataAllowlist) {
+                if (Object.prototype.hasOwnProperty.call(metadata, key)) kept[key] = (metadata as any)[key];
+            }
+            const name = sender.displayName || sender.userId;
+            stamped = {
+                ...kept,
+                mode: effectiveMode,
+                userId: sender.userId,
+                ...(sender.displayName ? { displayName: sender.displayName } : {}),
+                userInitials: this.initialsOf(name),
+                userColor: (typeof kept.userColor === 'string' && kept.userColor) || this.generateUserColor(sender.userId),
+            };
+        } else {
+            stamped = {
                 ...(metadata as any),
                 mode: effectiveMode,
                 userInitials: (metadata as any).userInitials || this.generateInitials(clientId),
                 userColor: (metadata as any).userColor || this.generateUserColor(clientId),
-            },
+            };
+        }
+
+        const cursorData: CursorData = {
+            clientId,
+            channel,
+            position,
+            metadata: stamped as CursorData['metadata'],
             timestamp: new Date().toISOString(),
         };
 
@@ -262,6 +294,13 @@ export class CursorService {
             default:
                 return false;
         }
+    }
+
+    /** Two letters from a display name: first+last initials, or the first two characters. */
+    private initialsOf(name: string): string {
+        const parts = name.trim().split(/\s+/).filter(Boolean);
+        const letters = parts.length > 1 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : (parts[0] ?? '').slice(0, 2);
+        return letters.toUpperCase() || '?';
     }
 
     generateInitials(clientId: string): string {
