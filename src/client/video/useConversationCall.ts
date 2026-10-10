@@ -74,6 +74,9 @@ export interface UseConversationCallOptions {
   recordingProfile?: 'hangout' | 'broadcast' | 'dm' | 'none';
   /** Opt in when platform-api supports verified participant-to-call recording bindings. */
   bindRecordingCall?: boolean;
+  /** Untrusted source hint for document lobbies. Native authority validates the
+   * source and canonical lobby before acknowledging its durable association. */
+  documentSourceId?: string;
   /** Someone answered (caller side) or you joined (callee side). */
   onCallStarted?(e: ConversationCallEvent & { startedAt: number }): void;
   /** A call that had started is over for you. */
@@ -100,7 +103,8 @@ export interface UseConversationCallOptions {
 export interface ConversationCallResult {
   phase: ConversationCallPhase;
   /** Independent of call/media health. Only a durable native ACK can mark this bound. */
-  recordingBinding?: { status: 'disabled' | 'pending' | 'bound' | 'unavailable'; callId?: string; error?: string };
+  recordingBinding?: { status: 'disabled' | 'pending' | 'bound' | 'unavailable'; callId?: string; error?: string;
+    documentContext?: { tenant: 'assessment'; sourceId: string; lobbyName: string } };
   /** The call you are in — or, while idle, a live call in this lobby you could join (`rejoin()`). */
   call: ConversationCall | null;
   /** A ring for THIS lobby (the app-wide toast uses useIncomingConversationCalls). */
@@ -929,6 +933,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     }
     const abort = new AbortController(); let retry: ReturnType<typeof setTimeout> | undefined; let attempts = 0;
     const failed = () => setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed.' });
+    const documentSourceId = opts.documentSourceId;
+    if (documentSourceId !== undefined && (!documentSourceId || documentSourceId.length > 1024 || /[\u0000-\u001f\u007f]/.test(documentSourceId))) { failed(); return; }
     setRecordingBinding({ status: 'pending', callId: a.callId });
     const deadline = setTimeout(() => { failed(); abort.abort(); }, 15000);
     const bind = async () => {
@@ -936,14 +942,20 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       try {
         const result = await api(`/api/video/sessions/${encodeURIComponent(a.sessionId!)}/call-binding`, {
           lobbyName, callId: a.callId, participantId: a.participantId, clientId,
+          ...(documentSourceId !== undefined ? { documentSourceId } : {}),
         }, abort.signal);
         if (abort.signal.aborted) return;
         if (result.bound !== true || result.callId !== a.callId || result.sessionId !== a.sessionId
           || result.participantId !== a.participantId || result.clientId !== clientId || result.lobbyName !== lobbyName || !str(result.channelArn)) {
           clearTimeout(deadline); failed(); return;
         }
+        const context = result.documentContext as Record<string, unknown> | undefined;
+        if (documentSourceId !== undefined
+          ? !context || context.tenant !== 'assessment' || context.sourceId !== documentSourceId || context.lobbyName !== lobbyName
+          : context !== undefined) { clearTimeout(deadline); failed(); return; }
         clearTimeout(deadline);
-        setRecordingBinding({ status: 'bound', callId: a.callId });
+        setRecordingBinding({ status: 'bound', callId: a.callId,
+          ...(documentSourceId !== undefined ? { documentContext: { tenant: 'assessment', sourceId: documentSourceId, lobbyName } as const } : {}) });
       } catch (error) {
         if (abort.signal.aborted) return;
         const status = (error as { status?: number }).status;
@@ -955,7 +967,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     };
     void bind();
     return () => { abort.abort(); clearTimeout(deadline); clearTimeout(retry); };
-  }, [opts.bindRecordingCall, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
+  }, [opts.bindRecordingCall, opts.documentSourceId, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
     active?.gatewayClientId, active?.pageHuddle, active?.startedAt, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
 
   // A remote tile arriving is an answer too (a callee who skipped `accepted`).

@@ -29,6 +29,9 @@ export interface UseConversationCallOptions {
     recordingProfile?: 'hangout' | 'broadcast' | 'dm' | 'none';
     /** Opt in when platform-api supports verified participant-to-call recording bindings. */
     bindRecordingCall?: boolean;
+    /** Untrusted source hint for document lobbies. Native authority validates the
+     * source and canonical lobby before acknowledging its durable association. */
+    documentSourceId?: string;
     /** Someone answered (caller side) or you joined (callee side). */
     onCallStarted?(e: ConversationCallEvent & {
         startedAt: number;
@@ -65,6 +68,11 @@ export interface ConversationCallResult {
         status: 'disabled' | 'pending' | 'bound' | 'unavailable';
         callId?: string;
         error?: string;
+        documentContext?: {
+            tenant: 'assessment';
+            sourceId: string;
+            lobbyName: string;
+        };
     };
     /** The call you are in — or, while idle, a live call in this lobby you could join (`rejoin()`). */
     call: ConversationCall | null;

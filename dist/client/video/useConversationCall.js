@@ -870,6 +870,11 @@ function useConversationCall(opts) {
         let retry;
         let attempts = 0;
         const failed = () => setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed.' });
+        const documentSourceId = opts.documentSourceId;
+        if (documentSourceId !== undefined && (!documentSourceId || documentSourceId.length > 1024 || /[\u0000-\u001f\u007f]/.test(documentSourceId))) {
+            failed();
+            return;
+        }
         setRecordingBinding({ status: 'pending', callId: a.callId });
         const deadline = setTimeout(() => { failed(); abort.abort(); }, 15000);
         const bind = async () => {
@@ -877,6 +882,7 @@ function useConversationCall(opts) {
             try {
                 const result = await api(`/api/video/sessions/${encodeURIComponent(a.sessionId)}/call-binding`, {
                     lobbyName, callId: a.callId, participantId: a.participantId, clientId,
+                    ...(documentSourceId !== undefined ? { documentSourceId } : {}),
                 }, abort.signal);
                 if (abort.signal.aborted)
                     return;
@@ -886,8 +892,17 @@ function useConversationCall(opts) {
                     failed();
                     return;
                 }
+                const context = result.documentContext;
+                if (documentSourceId !== undefined
+                    ? !context || context.tenant !== 'assessment' || context.sourceId !== documentSourceId || context.lobbyName !== lobbyName
+                    : context !== undefined) {
+                    clearTimeout(deadline);
+                    failed();
+                    return;
+                }
                 clearTimeout(deadline);
-                setRecordingBinding({ status: 'bound', callId: a.callId });
+                setRecordingBinding({ status: 'bound', callId: a.callId,
+                    ...(documentSourceId !== undefined ? { documentContext: { tenant: 'assessment', sourceId: documentSourceId, lobbyName } } : {}) });
             }
             catch (error) {
                 if (abort.signal.aborted)
@@ -905,7 +920,7 @@ function useConversationCall(opts) {
         };
         void bind();
         return () => { abort.abort(); clearTimeout(deadline); clearTimeout(retry); };
-    }, [opts.bindRecordingCall, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
+    }, [opts.bindRecordingCall, opts.documentSourceId, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
         active?.gatewayClientId, active?.pageHuddle, active?.startedAt, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
     // A remote tile arriving is an answer too (a callee who skipped `accepted`).
     (0, react_1.useEffect)(() => {

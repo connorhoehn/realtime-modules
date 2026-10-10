@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useConversationCall } from '../../../src/client/video/useConversationCall';
 import { makeFakeGateway, makeFakeMedia, makeFakePlatformApi } from './fakes';
 const lobbyName = 'orgiq:initiative:owned-project';
-function setup(reply?: (body: Record<string, string>, signal?: AbortSignal) => Promise<unknown>) {
+function setup(reply?: (body: Record<string, string>, signal?: AbortSignal) => Promise<unknown>, documentSourceId?: string) {
   const g = makeFakeGateway(); const gateway = Object.assign(g.gw, { clientId: 'socket-owned' });
   const m = makeFakeMedia(), pa = makeFakePlatformApi(); const bindings: Record<string, string>[] = [];
   const fetchImpl = (async (url: string, init: RequestInit = {}) => {
@@ -15,12 +15,28 @@ function setup(reply?: (body: Record<string, string>, signal?: AbortSignal) => P
     return pa.fetchImpl(url, init);
   }) as typeof fetch;
   const hook = renderHook(() => useConversationCall({ lobbyName, self: { userId: 'reader', displayName: 'Reader' },
-    gateway, platformApi: pa.platformApi, fetch: fetchImpl, useMedia: m.useFakeMedia, deviceStorage: null, bindRecordingCall: true }));
+    gateway, platformApi: pa.platformApi, fetch: fetchImpl, useMedia: m.useFakeMedia, deviceStorage: null, bindRecordingCall: true, documentSourceId }));
   const start = async () => { await act(async () => { await hook.result.current.start([]); }); };
   const joined = () => act(() => m.set({ isJoined: true, connectionState: 'connected' }));
   return { g, gateway, m, pa, hook, bindings, start, joined };
 }
 describe('verified recording call association', () => {
+  it.each(['missing', 'wrong-source', 'wrong-tenant', 'wrong-lobby'])('rejects %s document context without disrupting media', async mismatch => {
+    const context = { tenant: 'assessment', sourceId: mismatch === 'wrong-source' ? 'other' : 'page:owned', lobbyName };
+    if (mismatch === 'wrong-tenant') context.tenant = 'orgiq';
+    if (mismatch === 'wrong-lobby') context.lobbyName = 'assessment:doc:other';
+    const s = setup(async body => ({ ok: true, status: 200, json: async () => ({ ...body, bound: true, sessionId: 'sess-1', channelArn: 'arn:owned', ...(mismatch === 'missing' ? {} : { documentContext: context }) }) }), 'page:owned');
+    await s.start(); s.joined();
+    await waitFor(() => expect(s.hook.result.current.recordingBinding?.status).toBe('unavailable'));
+    expect(s.bindings[0]!.documentSourceId).toBe('page:owned');
+    expect(s.hook.result.current.phase).toBe('live');
+  });
+  it('exposes only the exact native acknowledged document source', async () => {
+    const documentContext = { tenant: 'assessment', sourceId: 'page:owned', lobbyName };
+    const s = setup(async body => ({ ok: true, status: 200, json: async () => ({ ...body, bound: true, sessionId: 'sess-1', channelArn: 'arn:owned', documentContext }) }), 'page:owned');
+    await s.start(); s.joined();
+    await waitFor(() => expect(s.hook.result.current.recordingBinding).toMatchObject({ status: 'bound', documentContext }));
+  });
   it('passes actual socket identity at join and waits for media plus a durable matching native ACK', async () => {
     const s = setup(); await s.start();
     expect(s.pa.calls.find(row => row.path.endsWith('/join'))?.body.clientId).toBe('socket-owned');

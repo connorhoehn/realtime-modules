@@ -100,10 +100,10 @@ class InMemoryCallStateStore {
         this.acceptedCalls.delete(callId);
         return true;
     }
-    async registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds) {
+    async registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds, channel) {
         let state = this.activeCalls.get(callId);
         if (!state) {
-            state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set() };
+            state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set(), ...(validCallChannel(channel) ? { channel } : {}) };
             this.activeCalls.set(callId, state);
         }
         state.participantClientIds.add(clientId);
@@ -136,6 +136,7 @@ class InMemoryCallStateStore {
         return {
             callerId: state.callerId,
             lobbyName: state.lobbyName,
+            ...(state.channel !== undefined ? { channel: state.channel } : {}),
             targetUserIds: state.targetUserIds,
             participantClientIds: Array.from(state.participantClientIds),
             invitedAt: state.invitedAt ?? null,
@@ -323,6 +324,7 @@ class InMemoryCallStateStore {
                 lobbyName: state.lobbyName,
                 targetUserIds: state.targetUserIds,
                 participantClientIds: new Set(state.participantClientIds),
+                ...(validCallChannel(state.channel) ? { channel: state.channel } : {}),
             };
             this.activeCalls.set(callId, entry);
         }
@@ -493,10 +495,12 @@ class RedisCallStateStore {
         const result = await this.script(FORGET_UNCHANGED, [this.callKey(callId), this.participantsKey(callId), `${ACCEPTED_KEY_PREFIX}${callId}`], [expected.callerId, expected.lobbyName, expected.invitedAt == null ? '' : String(expected.invitedAt), JSON.stringify(expected.participantClientIds), callId, CLIENT_KEY_PREFIX]);
         return Number(result) === 1;
     }
-    async registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds) {
+    async registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds, channel) {
         const callKey = this.callKey(callId);
         const participantsKey = this.participantsKey(callId);
         const clientKey = this.clientKey(clientId);
+        if (validCallChannel(channel))
+            await this.script(CREATE_CALL_CHANNEL, [callKey], [callerId, lobbyName, JSON.stringify(targetUserIds), channel, TTL_SECONDS]);
         // HSETNX is atomic + only-if-not-exists, so the first-write
         // values for callerId/lobby/targetUserIds win without a
         // racy hgetall→hset compare.
@@ -647,6 +651,7 @@ class RedisCallStateStore {
         return {
             callerId: hash.callerId,
             lobbyName: hash.lobbyName ?? '',
+            ...(typeof hash.channel === 'string' ? { channel: hash.channel } : {}),
             targetUserIds,
             participantClientIds,
             invitedAt,
@@ -918,6 +923,8 @@ class RedisCallStateStore {
     async setCall(callId, state, ttlSec) {
         const callKey = this.callKey(callId);
         const participantsKey = this.participantsKey(callId);
+        if (validCallChannel(state.channel))
+            await this.script(CREATE_CALL_CHANNEL, [callKey], [state.callerId, state.lobbyName, JSON.stringify(state.targetUserIds ?? []), state.channel, ttlSec]);
         // Authoritative write — overwrites prior values (this is the
         // explicit "I know the full state" path; the registerParticipant
         // HSETNX path is for racy concurrent inserts).
@@ -1180,4 +1187,18 @@ class RedisDocumentCallMetaStore {
     }
 }
 exports.RedisDocumentCallMetaStore = RedisDocumentCallMetaStore;
+/** A channel is a source hint, never authorization. Consumers still resolve the
+ * exact document and verify the active actor's read authority. */
+function validCallChannel(channel) {
+    return typeof channel === 'string' && channel.length > 0 && channel.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(channel);
+}
+// Capture caller/lobby/channel together. HSETNX on the channel alone would let
+// a later join fill a legacy call's missing context or race a different creator.
+const CREATE_CALL_CHANNEL = `-- call-create-channel-v1
+if redis.call('HEXISTS', KEYS[1], 'callerId') == 0 then
+  redis.call('HSET', KEYS[1], 'callerId', ARGV[1], 'lobbyName', ARGV[2], 'targetUserIds', ARGV[3], 'channel', ARGV[4])
+  redis.call('EXPIRE', KEYS[1], ARGV[5])
+end
+return 1
+`;
 //# sourceMappingURL=CallStateStore.js.map

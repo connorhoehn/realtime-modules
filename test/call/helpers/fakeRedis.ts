@@ -15,6 +15,13 @@ export class FakeRedis {
     const keys = values.slice(0, count).map(String);
     const args = values.slice(count).map(String);
     const hash = this.hashes.get(keys[0]);
+    if (script.startsWith('-- call-create-channel-v1')) {
+      if (!hash?.has('callerId')) {
+        this.hashes.set(keys[0], new Map([['callerId', args[0]], ['lobbyName', args[1]], ['targetUserIds', args[2]], ['channel', args[3]]]));
+        this.ttls.set(keys[0], Number(args[4]));
+      }
+      return 1;
+    }
     if (script.startsWith('-- call-claim-accepted-seat-v1')) {
       if (!hash || hash.get('lobbyName') !== args[0]) return [0, ''];
       const members = this.sets.get(keys[1]) ?? new Set<string>();
