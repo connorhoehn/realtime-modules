@@ -44,6 +44,8 @@ import type {
   ConversationCallDeclineReason,
   ConversationCallEvent,
   ConversationCallGateway,
+  ConversationCallInvitationRequest,
+  ConversationCallInviteResult,
   ConversationCallParticipant,
   ConversationCallPhase,
   DevicePreferences,
@@ -64,6 +66,8 @@ export interface UseConversationCallOptions {
   gateway?: ConversationCallGateway | null;
   /** Initial device preferences; the hook keeps them (see `devices`). */
   devices?: DevicePreferences;
+  /** Capture intent read before start/accept/rejoin. Defaults to both on. */
+  initialMedia?: { micOn: boolean; cameraOn: boolean };
   /** Where device preferences persist. Default localStorage; null = memory only. */
   deviceStorage?: StorageLike | null;
   /** LVS base URL, when there is no <LVSProvider> above. */
@@ -108,6 +112,12 @@ export interface ConversationCallResult {
   self: { audioOn: boolean; cameraOn: boolean; screenSharing: boolean };
   /** Ring these people into a new call in this lobby (none = an open call nobody is rung into). */
   start(targets: { userId: string; displayName?: string }[], opts?: { audioOnly?: boolean }): Promise<void>;
+  /** Request these people into the existing live call; never creates or rejoins media. */
+  inviteUsers(targets: { userId: string; displayName?: string }[]): ConversationCallInviteResult;
+  /** Locally requested people, separate from the authoritative in-call roster. */
+  invitationRequests: ConversationCallInvitationRequest[];
+  /** A correlated rejection, or an unscoped legacy gateway failure (delivery stays unconfirmed). */
+  invitationError: string | null;
   /** Answer `incoming` (or a ring handed over from the app-wide toast). */
   accept(ring?: IncomingConversationCall): Promise<void>;
   decline(reason?: ConversationCallDeclineReason): void;
@@ -222,6 +232,18 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   const [outcomes, setOutcomes] = useState<Record<string, 'declined' | 'busy'>>({});
   const outcomesRef = useRef(outcomes);
   outcomesRef.current = outcomes;
+  const [invitationRequests, setInvitationRequestsState] = useState<ConversationCallInvitationRequest[]>([]);
+  const invitationRequestsRef = useRef(invitationRequests);
+  const invitationSequence = useRef(0);
+  const [invitationError, setInvitationError] = useState<string | null>(null);
+  const setInvitationRequests = useCallback((update: (rows: ConversationCallInvitationRequest[]) => ConversationCallInvitationRequest[]) => {
+    invitationRequestsRef.current = update(invitationRequestsRef.current);
+    setInvitationRequestsState(invitationRequestsRef.current);
+  }, []);
+  const settleInvitation = useCallback((callId: string, userId: string, state: ConversationCallInvitationRequest['state']) => {
+    setInvitationRequests(rows => rows.map(row => row.callId === callId && row.userId === userId
+      ? { ...row, state, error: undefined } : row));
+  }, [setInvitationRequests]);
   const [self, setSelfState] = useState({ audioOn: true, cameraOn: true, screenSharing: false });
   const selfRef = useRef(self);
   const setSelf = useCallback((patch: Partial<typeof self>) => {
@@ -361,9 +383,11 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     acceptedRef.current = [];
     setAcceptedState([]);
     setOutcomes({});
+    setInvitationRequests(() => []);
+    setInvitationError(null);
     setSelf({ screenSharing: false });
     setEnded({ at, reason, durationMs });
-  }, [endPlatformSession, eventBase, setActive, setRoster, setSelf]);
+  }, [endPlatformSession, eventBase, setActive, setRoster, setSelf, setInvitationRequests]);
 
   /** Tell the others (and your other tabs) you are gone, then tear down. */
   const hangUp = useCallback((reason: string) => {
@@ -434,7 +458,15 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     }
   }, [api, endPlatformSession, setActive]);
 
-  const joinMedia = useCallback((audioOnly: boolean): MediaStreamConstraints => deviceConstraints(prefsRef.current, { video: !audioOnly }), []);
+  const joinMedia = useCallback((audioOnly: boolean): MediaStreamConstraints => deviceConstraints(prefsRef.current, {
+    audio: optsRef.current.initialMedia?.micOn !== false,
+    video: !audioOnly && optsRef.current.initialMedia?.cameraOn !== false,
+  }), []);
+  const joinSelf = useCallback((audioOnly: boolean) => setSelf({
+    audioOn: optsRef.current.initialMedia?.micOn !== false,
+    cameraOn: !audioOnly && optsRef.current.initialMedia?.cameraOn !== false,
+    screenSharing: false,
+  }), [setSelf]);
 
   const start = useCallback(async (targets: { userId: string; displayName?: string }[], o2?: { audioOnly?: boolean }) => {
     if (activeRef.current) return;
@@ -444,7 +476,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       .filter((t) => t.userId && t.userId !== o.self.userId)
       .map((t) => ({ userId: t.userId, displayName: t.displayName || t.userId }));
     const callId = mintCallId();
-    setSelf({ audioOn: true, cameraOn: !audioOnly, screenSharing: false });
+    joinSelf(audioOnly);
     setOutcomes({});
     const ok = await enter({
       callId, role: 'caller', host: o.self.userId, audioOnly, targets: ring,
@@ -478,7 +510,46 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       ...(audioOnly ? { audioOnly: true } : {}),
       ...(channelRef.current ? { channel: channelRef.current } : {}),
     });
-  }, [enter, joinMedia, send, setSelf]);
+  }, [enter, joinMedia, joinSelf, send]);
+
+  const inviteUsers = useCallback((targets: { userId: string; displayName?: string }[]): ConversationCallInviteResult => {
+    const a = activeRef.current;
+    const g = gwRef.current;
+    const m = mediaRef.current;
+    if (!a?.stageToken || !m.isJoined || m.error || m.connectionState !== 'connected') {
+      return { requestedUserIds: [], reason: 'Join a connected call before inviting someone.' };
+    }
+    const emit = g?.send ?? g?.sendMessage;
+    if (!emit || g?.connectionState !== 'connected') {
+      return { requestedUserIds: [], reason: 'Reconnect to request a call invitation.' };
+    }
+    const o = optsRef.current;
+    const seen = new Set([o.self.userId, ...acceptedRef.current, ...Object.keys(rosterRef.current),
+      ...a.targets.map(t => t.userId), ...invitationRequestsRef.current.filter(r => r.callId === a.callId && r.state === 'requested').map(r => r.userId)]);
+    const requested = targets.filter(t => {
+      if (!t.userId || t.userId.length > 256 || seen.has(t.userId)) return false;
+      seen.add(t.userId); return true;
+    });
+    if (!requested.length) return { requestedUserIds: [], reason: 'Choose someone who is not already in or requested to this call.' };
+    if (requested.length > 50) return { requestedUserIds: [], reason: 'Request at most 50 people at a time.' };
+    const at = Date.now();
+    const requestId = `invite-${at}-${++invitationSequence.current}`;
+    setInvitationError(null);
+    setInvitationRequests(rows => [...rows.filter(row => !requested.some(t => t.userId === row.userId)),
+      ...requested.map(t => ({ requestId, callId: a.callId, userId: t.userId, displayName: t.displayName || t.userId, requestedAt: at, state: 'requested' as const }))]);
+    try {
+      emit({ service: 'call', action: 'invite', requestId, callId: a.callId, lobbyName: o.lobbyName,
+        callerId: o.self.userId, callerName: o.self.displayName, targetUserIds: requested.map(t => t.userId),
+        ...(a.audioOnly ? { audioOnly: true } : {}), ...(channelRef.current ? { channel: channelRef.current } : {}) });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'The invitation request could not be sent.';
+      setInvitationError(reason);
+      setInvitationRequests(rows => rows.map(row => row.requestId === requestId && row.state === 'requested'
+        ? { ...row, state: 'failed', error: reason } : row));
+      return { requestedUserIds: [], reason };
+    }
+    return { requestedUserIds: requested.map(t => t.userId), requestId };
+  }, [setInvitationRequests]);
 
   const accept = useCallback(async (ringArg?: IncomingConversationCall) => {
     const ring = ringArg ?? incomingRef.current;
@@ -498,7 +569,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       targetUserIds: [ring.callerId],
       lobbyName: ring.lobbyName || o.lobbyName,
     });
-    setSelf({ audioOn: true, cameraOn: !ring.audioOnly, screenSharing: false });
+    joinSelf(ring.audioOnly);
     // The caller is in the call they rang you into.
     setRoster((r) => ({ ...r, [ring.callerId]: { ...(r[ring.callerId] ?? {}), displayName: ring.callerName, status: 'in-call' } }));
     const startedAt = Date.now();
@@ -507,7 +578,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(ring.audioOnly),
     });
     if (ok) optsRef.current.onCallStarted?.({ ...eventBase(ring.callId), startedAt });
-  }, [enter, eventBase, hangUp, joinMedia, send, setIncoming, setRoster, setSelf]);
+  }, [enter, eventBase, hangUp, joinMedia, joinSelf, send, setIncoming, setRoster]);
 
   const decline = useCallback((reason?: ConversationCallDeclineReason) => {
     const ring = incomingRef.current;
@@ -536,14 +607,16 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     if (a) {
       // Lost the call: a fresh session in the same call.
       try { mediaRef.current.leave(); } catch { /* */ }
-      await enter({ ...a, sessionId: null, stageToken: null, participantId: null });
+      setSelf({ screenSharing: false });
+      await enter({ ...a, sessionId: null, stageToken: null, participantId: null,
+        media: deviceConstraints(prefsRef.current, { audio: selfRef.current.audioOn, video: selfRef.current.cameraOn }) });
       return;
     }
     const d = discoveredRef.current;
     if (!d) return;
     const o = optsRef.current;
     const others = d.userIds.filter((u) => u !== o.self.userId);
-    setSelf({ audioOn: true, cameraOn: true, screenSharing: false });
+    joinSelf(false);
     setRoster(() => Object.fromEntries(others.map((u) => [u, { status: 'in-call' as const }])));
     const startedAt = Date.now();
     // Registers you with the call on the server (an accept of the live call).
@@ -566,28 +639,44 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       setDiscovered(null);
       optsRef.current.onCallStarted?.({ ...eventBase(d.callId), startedAt });
     }
-  }, [enter, eventBase, joinMedia, send, setRoster, setSelf]);
+  }, [enter, eventBase, joinMedia, joinSelf, send, setRoster, setSelf]);
 
   // ---- self controls -----------------------------------------------------------------
-  const cameraPublished = useRef(false);
+  const micToggleInFlight = useRef(false);
+  const cameraToggleInFlight = useRef(false);
   const toggleMic = useCallback(() => {
+    if (micToggleInFlight.current) return;
     const on = !selfRef.current.audioOn;
-    try { mediaRef.current.toggleMute(!on); } catch { /* */ }
-    setSelf({ audioOn: on });
-    announceSelf();
+    const m = mediaRef.current;
+    const a = activeRef.current;
+    // Older injectable media hooks retain their existing mute contract.
+    if (!on || !m.setMicrophoneEnabled) {
+      try { m.toggleMute(!on); } catch { return; }
+      setSelf({ audioOn: on }); announceSelf(); return;
+    }
+    micToggleInFlight.current = true;
+    const constraints = deviceConstraints(prefsRef.current, { video: false }).audio;
+    void m.setMicrophoneEnabled(true, typeof constraints === 'object' ? constraints : undefined).then(() => {
+      if (!a || activeRef.current?.callId !== a.callId || activeRef.current?.participantId !== a.participantId) return;
+      setSelf({ audioOn: true }); announceSelf();
+    }).catch(() => undefined).finally(() => { micToggleInFlight.current = false; });
   }, [announceSelf, setSelf]);
 
   const toggleCamera = useCallback(() => {
+    if (cameraToggleInFlight.current) return;
     const on = !selfRef.current.cameraOn;
     const m = mediaRef.current;
     const a = activeRef.current;
-    // An audio-only join has no video sender: turning the camera on re-publishes.
-    const p = on && a?.audioOnly && !cameraPublished.current
-      ? m.enableCamera().then(() => { cameraPublished.current = true; })
-      : m.setCameraEnabled(on);
-    void Promise.resolve(p).catch(() => undefined);
-    setSelf({ cameraOn: on });
-    announceSelf();
+    if (!on) {
+      void Promise.resolve(m.setCameraEnabled(false)).catch(() => undefined);
+      setSelf({ cameraOn: false }); announceSelf(); return;
+    }
+    cameraToggleInFlight.current = true;
+    const constraints = deviceConstraints(prefsRef.current, { video: true }).video;
+    void m.setCameraEnabled(true, typeof constraints === 'object' ? constraints : undefined).then(() => {
+      if (!a || activeRef.current?.callId !== a.callId || activeRef.current?.participantId !== a.participantId) return;
+      setSelf({ cameraOn: true }); announceSelf();
+    }).catch(() => undefined).finally(() => { cameraToggleInFlight.current = false; });
   }, [announceSelf, setSelf]);
 
   const toggleScreenShare = useCallback(() => {
@@ -629,6 +718,21 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   useEffect(() => {
     if (!onMessage) return;
     return onMessage((msg: GatewayMessage) => {
+      const failure = msg as unknown as { type?: string; service?: string; action?: string; callId?: string; requestId?: string; message?: string };
+      if (failure.type === 'error' && failure.service === 'call') {
+        const a = activeRef.current;
+        if (!a || (failure.callId && failure.callId !== a.callId)) return;
+        if (!invitationRequestsRef.current.some(row => row.callId === a.callId && row.state === 'requested')) return;
+        if (failure.action && failure.action !== 'invite') return;
+        const reason = failure.message || 'The gateway refused the invitation request.';
+        setInvitationError(reason);
+        // Older gateways omit correlation: expose the error without claiming which invitation failed.
+        if (failure.action === 'invite' && failure.callId === a.callId && failure.requestId) {
+          setInvitationRequests(rows => rows.map(row => row.callId === a.callId && row.requestId === failure.requestId && row.state === 'requested'
+            ? { ...row, state: 'failed', error: reason } : row));
+        }
+        return;
+      }
       const f = asCallFrame(msg);
       if (!f) return;
       const d = f.data;
@@ -682,6 +786,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
             return;
           }
           if (!inThisCall) return;
+          settleInvitation(callId, uid, 'accepted');
           setRoster((r) => ({ ...r, [uid]: { ...(r[uid] ?? {}), ...(str(d.displayName) ? { displayName: str(d.displayName) } : {}), status: 'in-call' } }));
           markAccepted(uid);
           announceSelf();
@@ -689,6 +794,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         }
         case 'declined': {
           const uid = str(d.callerId) ?? str(d.userId);
+          if (inThisCall && uid && uid !== me) settleInvitation(callId!, uid, 'declined');
           if (!inThisCall || !uid || uid === me || a!.role !== 'caller') return;
           const next = { ...outcomesRef.current, [uid]: 'declined' as const };
           outcomesRef.current = next;
@@ -726,6 +832,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
           if (!inThisCall && !(d.lobbyName === o.lobbyName && !callId)) return;
           const status = str(d.status);
           if (status === 'busy') {
+            if (inThisCall) settleInvitation(callId!, uid, 'busy');
             const next = { ...outcomesRef.current, [uid]: 'busy' as const };
             outcomesRef.current = next;
             setOutcomes(next);
@@ -757,6 +864,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
             return;
           }
           if (status === 'in-call' || d.inCall === true) {
+            if (inThisCall) settleInvitation(callId!, uid, 'accepted');
             setRoster((r) => ({ ...r, [uid]: { ...(r[uid] ?? {}), status: 'in-call' } }));
           }
           return;
@@ -765,6 +873,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
           const uid = str(d.userId) ?? str(d.callerId);
           if (!a || !uid || uid === me || !inThisCall) return;
           if (str(d.status) === 'left') return;
+          settleInvitation(callId!, uid, 'accepted');
           const wasAbsent = !rosterRef.current[uid];
           setRoster((r) => {
             const prev = r[uid] ?? { status: 'in-call' as const };
@@ -785,7 +894,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         default:
       }
     });
-  }, [onMessage, announceSelf, eventBase, hangUp, markAccepted, peerIds, setIncoming, setRoster, teardown]);
+  }, [onMessage, announceSelf, eventBase, hangUp, markAccepted, peerIds, setIncoming, setRoster, teardown, settleInvitation, setInvitationRequests]);
 
   // Rings answered by another hook in this page (the app-wide toast).
   useEffect(() => onRingSettled(({ callId }) => {
@@ -820,7 +929,6 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   const mediaUp = !!active?.stageToken && media.isJoined;
   useEffect(() => {
     if (!mediaUp) return;
-    cameraPublished.current = !activeRef.current?.audioOnly;
     if (!selfRef.current.audioOn) { try { mediaRef.current.toggleMute(true); } catch { /* */ } }
     announceSelf();
   }, [mediaUp, announceSelf]);
@@ -922,7 +1030,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         screenStream: local?.screenStream ?? null,
       });
     }
-    const targetName = (uid: string) => active?.targets.find((t) => t.userId === uid)?.displayName;
+    const targetName = (uid: string) => active?.targets.find((t) => t.userId === uid)?.displayName
+      ?? invitationRequests.find(row => row.callId === active?.callId && row.userId === uid)?.displayName;
     const byPid = new Map<string, string>();
     for (const [uid, r] of Object.entries(roster)) if (r.participantId) byPid.set(r.participantId, uid);
     // The SFU stamps each producer with the stage token's `sub`: when that is
@@ -997,7 +1106,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl]);
+  }, [active, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, invitationRequests]);
 
   const participantCount = participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length;
 
@@ -1044,6 +1153,9 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     callingTo,
     self,
     start,
+    inviteUsers,
+    invitationRequests,
+    invitationError,
     accept,
     decline,
     leave,

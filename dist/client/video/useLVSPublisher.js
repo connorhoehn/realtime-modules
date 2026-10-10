@@ -76,6 +76,10 @@ function useLVSPublisher(opts) {
     // Refs avoid re-renders on every stats tick + give callbacks fresh
     // access to the latest PC / resource handle without stale-closure bugs.
     const pcRef = (0, react_1.useRef)(null);
+    const publishEpochRef = (0, react_1.useRef)(0);
+    const startingEpochRef = (0, react_1.useRef)(null);
+    const publishIdentityRef = (0, react_1.useRef)({ channelArn, participantId });
+    publishIdentityRef.current = { channelArn, participantId };
     const whipResourceRef = (0, react_1.useRef)(null);
     // When set, `start()` will use this stream INSTEAD of the `stream`
     // prop. Set by `republish(newStream)` so callers can swap kinds
@@ -212,6 +216,8 @@ function useLVSPublisher(opts) {
         }
     }, []);
     const stop = (0, react_1.useCallback)(async () => {
+        publishEpochRef.current += 1;
+        streamOverrideRef.current = null;
         cancelReconnect();
         reconnectingRef.current = false;
         // Reset retry budget on an explicit stop — a subsequent start() is
@@ -227,13 +233,13 @@ function useLVSPublisher(opts) {
         // but the duplicate is unnecessary load + log spam.
         whipResourceRef.current = null;
         authTokenRef.current = null;
-        if (resource && token) {
-            // Best-effort DELETE; teardown happens regardless.
-            await (0, transport_1.whipTeardown)(resource, token).catch(() => { });
-        }
+        // Close this operation before awaiting DELETE: a late response must not
+        // tear down a newer start that has already adopted its own peer connection.
         teardownLocal();
         setPhase('idle');
         setError(null);
+        if (resource && token)
+            await (0, transport_1.whipTeardown)(resource, token).catch(() => { });
     }, [teardownLocal, cancelReconnect]);
     // Forward-declared via ref so scheduleReconnect (referenced by
     // connectionstatechange listeners installed in start()) can call back
@@ -292,6 +298,7 @@ function useLVSPublisher(opts) {
             if (resource && token) {
                 void (0, transport_1.whipTeardown)(resource, token).catch(() => { });
             }
+            publishEpochRef.current += 1;
             teardownLocal();
             // start() reads from `stream` prop (or streamOverrideRef) so the
             // active media stream is reused. ICE servers re-fetch inside start.
@@ -305,10 +312,12 @@ function useLVSPublisher(opts) {
             });
         }, RECONNECT_DEBOUNCE_MS);
     }, [teardownLocal]);
-    const start = (0, react_1.useCallback)(async () => {
+    const start = (0, react_1.useCallback)(async (mustPublish = false) => {
         if (!resolved) {
             setError('[lvs] useLVSPublisher requires <LVSProvider> or per-hook baseUrl + getAuthToken overrides.');
             setPhase('error');
+            if (mustPublish)
+                throw new Error('Publisher configuration is unavailable.');
             return;
         }
         // republish() sets streamOverrideRef so the next start() uses the
@@ -318,17 +327,32 @@ function useLVSPublisher(opts) {
         if (!activeStream) {
             setError('No stream — pass a MediaStream to useLVSPublisher before calling start().');
             setPhase('error');
+            if (mustPublish)
+                throw new Error('No stream to publish.');
             return;
         }
-        if (pcRef.current) {
+        if (pcRef.current || startingEpochRef.current === publishEpochRef.current) {
             // Already publishing or mid-connect. Idempotent — bail.
+            if (mustPublish)
+                throw new Error('Another publish is already in progress.');
             return;
         }
         const { baseUrl, getAuthToken, log } = resolved;
+        const epoch = ++publishEpochRef.current;
+        startingEpochRef.current = epoch;
+        const valid = () => !unmountedRef.current && publishEpochRef.current === epoch
+            && publishIdentityRef.current.channelArn === channelArn && publishIdentityRef.current.participantId === participantId;
+        const check = () => { if (!valid())
+            throw new Error('Publishing cancelled because the call changed or ended.'); };
+        let ownedPc = null;
+        let ownedResource = null;
+        let resourceAdopted = false;
+        let token = '';
         setError(null);
         setPhase('connecting');
         try {
-            const token = await getAuthToken();
+            token = await getAuthToken();
+            check();
             authTokenRef.current = token;
             // JWT expiry preemption — fail fast on already-expired tokens
             // rather than letting WHIP 401 cascade through the publish path.
@@ -341,10 +365,14 @@ function useLVSPublisher(opts) {
                 log(`stage token expires in ${ttl}s — refresh recommended`, 'warn');
             }
             const ice = await (0, transport_1.fetchIceServers)(baseUrl);
+            check();
             log(`fetched ${ice.length} ICE server(s)`, 'info');
             const pc = new RTCPeerConnection({ iceServers: ice });
+            ownedPc = pc;
             pcRef.current = pc;
             pc.addEventListener('connectionstatechange', () => {
+                if (!valid() || pcRef.current !== pc)
+                    return;
                 const s = pc.connectionState;
                 log(`connectionState -> ${s}`, 'info');
                 setConnState(s);
@@ -363,6 +391,8 @@ function useLVSPublisher(opts) {
                 }
             });
             pc.addEventListener('iceconnectionstatechange', () => {
+                if (!valid() || pcRef.current !== pc)
+                    return;
                 const s = pc.iceConnectionState;
                 log(`iceConnectionState -> ${s}`, 'info');
                 setIceState(s);
@@ -376,7 +406,7 @@ function useLVSPublisher(opts) {
             // Watchdog: if no bytes flow + ICE never connects within 20s,
             // surface an actionable error. Caller decides whether to stop().
             watchdogTimerRef.current = setTimeout(() => {
-                if (pcRef.current !== pc)
+                if (!valid() || pcRef.current !== pc)
                     return;
                 const iceOk = pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed';
                 const bytes = lastStatsRef.current.bytes;
@@ -388,9 +418,12 @@ function useLVSPublisher(opts) {
             for (const t of activeStream.getTracks())
                 pc.addTrack(t, activeStream);
             const offer = await pc.createOffer();
+            check();
             await pc.setLocalDescription(offer);
+            check();
             // LVS doesn't support trickle ICE — batch candidates into the offer.
             await (0, sdp_1.waitForIceGather)(pc, ICE_GATHER_TIMEOUT_MS);
+            check();
             const offerSdp = pc.localDescription?.sdp;
             if (!offerSdp)
                 throw new Error('failed to generate local SDP');
@@ -401,10 +434,14 @@ function useLVSPublisher(opts) {
                 participantId,
                 baseUrl,
             });
+            ownedResource = location;
+            check();
             whipResourceRef.current = location;
+            resourceAdopted = true;
             setWhipResource(location);
             setSfuNode(node);
             await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+            check();
             // connectionstatechange listener flips phase->live once the PC
             // actually establishes. Stats polling starts immediately so the
             // first tick lands within ~1s of the answer.
@@ -412,12 +449,33 @@ function useLVSPublisher(opts) {
         }
         catch (e) {
             const msg = errMessage(e);
-            resolved.log(`publish failed: ${msg}`, 'err');
-            setError(msg);
-            setPhase('error');
-            // Local teardown only — there's no WHIP resource to DELETE if the
-            // POST never completed (and if it did, the server will GC on its own).
-            teardownLocal();
+            const ownsCurrent = ownedPc !== null && pcRef.current === ownedPc;
+            const retireResource = valid() || !resourceAdopted || ownsCurrent;
+            if (valid()) {
+                resolved.log(`publish failed: ${msg}`, 'err');
+                setError(msg);
+                setPhase('error');
+                teardownLocal();
+            }
+            else if (ownsCurrent) {
+                teardownLocal();
+            }
+            else {
+                try {
+                    ownedPc?.close();
+                }
+                catch { /* ignore */ }
+            }
+            // A cancelled POST can still have created a producer. Retire only its
+            // exact returned resource, including when a newer publisher is active.
+            if (ownedResource && token && retireResource)
+                await (0, transport_1.whipTeardown)(ownedResource, token).catch(() => { });
+            if (mustPublish)
+                throw e;
+        }
+        finally {
+            if (startingEpochRef.current === epoch)
+                startingEpochRef.current = null;
         }
     }, [
         resolved, stream, channelArn, participantId,
@@ -487,12 +545,15 @@ function useLVSPublisher(opts) {
         // up the correct stream. The republishingRef guard suppresses the
         // autoStart's start() entirely so we don't double-WHIP.
         republishingRef.current = true;
-        streamOverrideRef.current = newStream;
         try {
+            const expectedEpoch = publishEpochRef.current + 1;
             // Order matters: stop FIRST so the WHIP resource is released
             // server-side, then re-start with the override.
             await stop();
-            await start();
+            if (unmountedRef.current || publishEpochRef.current !== expectedEpoch)
+                throw new Error('Publishing cancelled because the call ended.');
+            streamOverrideRef.current = newStream;
+            await start(true);
         }
         finally {
             republishingRef.current = false;
@@ -539,6 +600,8 @@ function useLVSPublisher(opts) {
         unmountedRef.current = false;
         return () => {
             unmountedRef.current = true;
+            publishEpochRef.current += 1;
+            streamOverrideRef.current = null;
             cancelReconnect();
             const resource = whipResourceRef.current;
             const token = authTokenRef.current;
@@ -563,6 +626,7 @@ function useLVSPublisher(opts) {
         if (typeof window === 'undefined')
             return;
         const onPageHide = () => {
+            publishEpochRef.current += 1;
             const resource = whipResourceRef.current;
             const token = authTokenRef.current;
             if (resource && token) {

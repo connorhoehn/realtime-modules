@@ -1,5 +1,5 @@
 export interface UseLVSHlsPlayerOptions {
-    /** Channel ARN — the recording's source channel. Null = idle. */
+    /** Channel ARN for DVR playback. Null = idle. */
     channelArn: string | null;
     /** Time window for the DVR playlist. Required — LVS defaults are
      *  `now - 1h` / `now` which is rarely what consumers want. */

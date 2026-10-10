@@ -1,6 +1,6 @@
 import { type UseLVSHangoutOptions, type UseLVSHangoutResult } from './useLVSHangout';
 import { type UseMediaDevicesResult } from './useMediaDevices';
-import type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallPhase, DevicePreferences, IncomingConversationCall } from './conversationCallTypes';
+import type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallInvitationRequest, ConversationCallInviteResult, ConversationCallPhase, DevicePreferences, IncomingConversationCall } from './conversationCallTypes';
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 export interface UseConversationCallOptions {
     /** Verbatim lobby name — never rewritten. Tenant prefixes are the caller's (`<tenant>:dm:<a>:<b>`). */
@@ -21,6 +21,11 @@ export interface UseConversationCallOptions {
     gateway?: ConversationCallGateway | null;
     /** Initial device preferences; the hook keeps them (see `devices`). */
     devices?: DevicePreferences;
+    /** Capture intent read before start/accept/rejoin. Defaults to both on. */
+    initialMedia?: {
+        micOn: boolean;
+        cameraOn: boolean;
+    };
     /** Where device preferences persist. Default localStorage; null = memory only. */
     deviceStorage?: StorageLike | null;
     /** LVS base URL, when there is no <LVSProvider> above. */
@@ -88,6 +93,15 @@ export interface ConversationCallResult {
     }[], opts?: {
         audioOnly?: boolean;
     }): Promise<void>;
+    /** Request these people into the existing live call; never creates or rejoins media. */
+    inviteUsers(targets: {
+        userId: string;
+        displayName?: string;
+    }[]): ConversationCallInviteResult;
+    /** Locally requested people, separate from the authoritative in-call roster. */
+    invitationRequests: ConversationCallInvitationRequest[];
+    /** A correlated rejection, or an unscoped legacy gateway failure (delivery stays unconfirmed). */
+    invitationError: string | null;
     /** Answer `incoming` (or a ring handed over from the app-wide toast). */
     accept(ring?: IncomingConversationCall): Promise<void>;
     decline(reason?: ConversationCallDeclineReason): void;

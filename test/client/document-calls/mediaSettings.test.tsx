@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useMediaDevices, toDeviceOptions } from '../../../src/client/video/useMediaDevices';
 import { useAudioVideoSettings, audioVideoConstraints, readAudioVideoSettings } from '../../../src/client/video/useAudioVideoSettings';
@@ -93,5 +93,33 @@ describe('useAudioVideoSettings', () => {
     rerender({ preview: false });
     await waitFor(() => expect(result.current.previewStream).toBeNull());
     expect(stopped).toBe(1);
+  });
+});
+
+
+describe('prejoin preview capture intentions', () => {
+  it('both-off never captures; enabling camera requests video only, enabling mic requests audio only', async () => {
+    const calls: MediaStreamConstraints[] = [];
+    const stopped = jest.fn();
+    const md = { getUserMedia: async (constraints: MediaStreamConstraints) => {
+      calls.push(constraints); return { getTracks: () => [{ stop: stopped }], getAudioTracks: () => [] } as any;
+    } };
+    const { result, rerender } = renderHook((p: { mic: boolean; cam: boolean }) => useAudioVideoSettings({
+      storage: null, mediaDevices: md, preview: true, previewAudio: p.mic, previewVideo: p.cam,
+    }), { initialProps: { mic: false, cam: false } });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual([]);
+    expect(result.current.previewStream).toBeNull();
+    rerender({ mic: false, cam: true });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({ audio: false, video: expect.any(Object) });
+    rerender({ mic: true, cam: false });
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]).toMatchObject({ audio: expect.any(Object), video: false });
+    expect(stopped).toHaveBeenCalledTimes(1);
+    rerender({ mic: false, cam: false });
+    await waitFor(() => expect(result.current.previewStream).toBeNull());
+    expect(calls).toHaveLength(2);
+    expect(stopped).toHaveBeenCalledTimes(2);
   });
 });

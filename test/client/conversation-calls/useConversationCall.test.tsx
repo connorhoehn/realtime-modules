@@ -408,3 +408,63 @@ describe('useConversationCall — room calls name tiles from the SFU', () => {
     ]);
   });
 });
+
+
+describe('useConversationCall initial device capture', () => {
+  it('start captures neither device and advertises both off from the first join', async () => {
+    const { hook, m, g } = setup({ initialMedia: { micOn: false, cameraOn: false } });
+    await act(async () => { await hook.result.current.start([]); });
+    expect(m.lastOpts.current!.media).toEqual({ audio: false, video: false });
+    expect(hook.result.current.self).toMatchObject({ audioOn: false, cameraOn: false });
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    expect(hook.result.current.phase).toBe('live');
+    act(() => { g.push('active-call', { lobbyName: LOBBY, active: true, callId: hook.result.current.call!.callId, participantUserIds: ['u-bob', alice.userId], pageHuddle: true }); });
+    expect(g.callFrames('participant-state').at(-1)).toMatchObject({ audioOn: false, cameraOn: false });
+  });
+  it('accept preserves both-off and never overrides an audio-only incoming call', async () => {
+    const { hook, m } = setup({ initialMedia: { micOn: false, cameraOn: true } });
+    await act(async () => { await hook.result.current.accept({ callId: 'incoming-no-media', lobbyName: LOBBY, channel: null, kind: 'invite', callerId: 'u-bob', callerName: 'Bob', audioOnly: true, targeted: true, receivedAt: 1 }); });
+    expect(m.lastOpts.current!.media).toEqual({ audio: false, video: false });
+    expect(hook.result.current.self).toMatchObject({ audioOn: false, cameraOn: false });
+  });
+  it('joining a discovered huddle captures only the selected microphone', async () => {
+    const { hook, m, g } = setup({ initialMedia: { micOn: true, cameraOn: false }, devices: { microphoneId: 'chosen-mic' } });
+    act(() => { g.push('active-call', { lobbyName: LOBBY, active: true, callId: 'discovered', participantUserIds: ['u-bob'], pageHuddle: true }); });
+    await act(async () => { await hook.result.current.rejoin(); });
+    expect(m.lastOpts.current!.media).toEqual({ audio: { deviceId: { ideal: 'chosen-mic' } }, video: false });
+    expect(hook.result.current.self).toMatchObject({ audioOn: true, cameraOn: false });
+  });
+  it('rejoining a lost active call keeps current muted/off states, without reacquiring either device', async () => {
+    const { hook, m } = setup();
+    await act(async () => { await hook.result.current.start([]); });
+    act(() => { hook.result.current.toggleMic(); hook.result.current.toggleCamera(); });
+    await act(async () => { await hook.result.current.rejoin(); });
+    expect(m.lastOpts.current!.media).toEqual({ audio: false, video: false });
+    expect(hook.result.current.self).toMatchObject({ audioOn: false, cameraOn: false });
+  });
+  it('denied later camera/microphone acquisition keeps flags off and the active call live', async () => {
+    const m = makeFakeMedia();
+    const requests: Array<{ kind: string; constraints: unknown }> = [];
+    const { hook } = setup({ initialMedia: { micOn: false, cameraOn: false }, devices: { microphoneId: 'mic-2', cameraId: 'cam-2' }, useMedia: opts => ({ ...m.useFakeMedia(opts),
+      setMicrophoneEnabled: async (_on, constraints) => { requests.push({ kind: 'audio', constraints }); throw new Error('denied'); },
+      setCameraEnabled: async (_on, constraints) => { requests.push({ kind: 'video', constraints }); throw new Error('denied'); },
+    }) });
+    await act(async () => { await hook.result.current.start([]); });
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    await act(async () => { hook.result.current.toggleMic(); hook.result.current.toggleCamera(); await Promise.resolve(); });
+    expect(requests).toEqual([{ kind: 'audio', constraints: { deviceId: { ideal: 'mic-2' } } }, { kind: 'video', constraints: expect.objectContaining({ deviceId: { ideal: 'cam-2' } }) }]);
+    expect(hook.result.current.self).toMatchObject({ audioOn: false, cameraOn: false });
+    expect(hook.result.current.phase).toBe('live');
+    expect(hook.result.current.error).toBeNull();
+  });
+  it('late enabled-device receipt from a departed call cannot change the next call', async () => {
+    const m = makeFakeMedia();
+    let resolve!: () => void;
+    const { hook } = setup({ initialMedia: { micOn: false, cameraOn: false }, useMedia: opts => ({ ...m.useFakeMedia(opts), setCameraEnabled: () => new Promise<void>(done => { resolve = done; }) }) });
+    await act(async () => { await hook.result.current.start([]); });
+    act(() => { hook.result.current.toggleCamera(); });
+    await act(async () => { await hook.result.current.leave(); await hook.result.current.start([]); });
+    await act(async () => { resolve(); await Promise.resolve(); });
+    expect(hook.result.current.self.cameraOn).toBe(false);
+  });
+});

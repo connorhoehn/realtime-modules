@@ -28,6 +28,8 @@ export interface UseAudioVideoSettingsOptions {
   preview?: boolean;
   /** Include the camera in the preview. Default true. */
   previewVideo?: boolean;
+  /** Include the microphone in the preview. Default true. Both false never request capture. */
+  previewAudio?: boolean;
   /** Injectable for tests. Defaults to navigator.mediaDevices. */
   mediaDevices?: Pick<MediaDevices, 'getUserMedia'>;
 }
@@ -149,16 +151,18 @@ export function useAudioVideoSettings(opts: UseAudioVideoSettingsOptions = {}): 
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const wantVideo = opts.previewVideo !== false;
+  const wantAudio = opts.previewAudio !== false;
   const acquireKey = useMemo(
     () => JSON.stringify([
       settings.microphoneId, settings.cameraId, settings.quality, settings.frameRate,
-      settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo,
+      settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo, wantAudio,
     ]),
     [settings.microphoneId, settings.cameraId, settings.quality, settings.frameRate,
-      settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo],
+      settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo, wantAudio],
   );
   useEffect(() => {
-    if (!opts.preview || !md) {
+    if (!opts.preview || !md || (!wantAudio && !wantVideo)) {
+      setPreviewError(null);
       setPreviewStream(null);
       return;
     }
@@ -166,7 +170,7 @@ export function useAudioVideoSettings(opts: UseAudioVideoSettingsOptions = {}): 
     let acquired: MediaStream | null = null;
     (async () => {
       try {
-        acquired = await md.getUserMedia(audioVideoConstraints(settingsRef.current, wantVideo));
+        acquired = await md.getUserMedia({ ...audioVideoConstraints(settingsRef.current, wantVideo), ...(!wantAudio ? { audio: false } : {}) });
         if (cancelled) { acquired.getTracks().forEach((t) => t.stop()); return; }
         setPreviewError(null);
         setPreviewStream(acquired);
@@ -181,7 +185,7 @@ export function useAudioVideoSettings(opts: UseAudioVideoSettingsOptions = {}): 
       cancelled = true;
       acquired?.getTracks().forEach((t) => t.stop());
     };
-  }, [opts.preview, md, acquireKey, wantVideo]);
+  }, [opts.preview, md, acquireKey, wantVideo, wantAudio]);
 
   // ---- mic level ------------------------------------------------------
   const [micLevel, setMicLevel] = useState(0);

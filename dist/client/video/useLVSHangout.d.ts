@@ -129,6 +129,10 @@ export interface UseLVSHangoutResult {
      *  subscriber. Drives the "Reconnecting…" banner in HangoutOverlay. */
     connectionState: HangoutConnectionState;
     toggleMute: (muted: boolean) => void;
+    /** Nonfatal device capture failure: remote media and the call remain connected. */
+    captureError?: string | null;
+    /** Enable an existing microphone or acquire audio only after an explicit action. */
+    setMicrophoneEnabled?: (on: boolean, constraints?: MediaTrackConstraints) => Promise<void>;
     /** Flip the local camera track's `enabled` flag — no SDP churn.
      *  Remote will see a black frame / frozen last frame. Use this for
      *  mid-call mute. For ADD/REMOVE of the video track itself (true
@@ -151,7 +155,7 @@ export interface UseLVSHangoutResult {
      *  `RTCRtpSender.replaceTrack` — no WHIP renegotiation, peers keep
      *  their subscription. Concurrency-guarded so a double-tap doesn't
      *  spawn two getUserMedia calls. */
-    setCameraEnabled: (on: boolean) => Promise<void>;
+    setCameraEnabled: (on: boolean, constraints?: MediaTrackConstraints) => Promise<void>;
     startScreenShare: () => Promise<void>;
     stopScreenShare: () => void;
     leave: () => void;

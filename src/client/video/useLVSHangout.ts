@@ -177,6 +177,7 @@ export interface LocalMediaOutcome {
 export async function acquireLocalMedia(
   constraints: MediaStreamConstraints,
 ): Promise<LocalMediaOutcome> {
+  if (!constraints.audio && !constraints.video) return { stream: null, videoUnavailable: null, error: null };
   try {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     return { stream, videoUnavailable: null, error: null };
@@ -219,6 +220,10 @@ export interface UseLVSHangoutResult {
    *  subscriber. Drives the "Reconnecting…" banner in HangoutOverlay. */
   connectionState: HangoutConnectionState;
   toggleMute: (muted: boolean) => void;
+  /** Nonfatal device capture failure: remote media and the call remain connected. */
+  captureError?: string | null;
+  /** Enable an existing microphone or acquire audio only after an explicit action. */
+  setMicrophoneEnabled?: (on: boolean, constraints?: MediaTrackConstraints) => Promise<void>;
   /** Flip the local camera track's `enabled` flag — no SDP churn.
    *  Remote will see a black frame / frozen last frame. Use this for
    *  mid-call mute. For ADD/REMOVE of the video track itself (true
@@ -241,7 +246,7 @@ export interface UseLVSHangoutResult {
    *  `RTCRtpSender.replaceTrack` — no WHIP renegotiation, peers keep
    *  their subscription. Concurrency-guarded so a double-tap doesn't
    *  spawn two getUserMedia calls. */
-  setCameraEnabled: (on: boolean) => Promise<void>;
+  setCameraEnabled: (on: boolean, constraints?: MediaTrackConstraints) => Promise<void>;
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => void;
   leave: () => void;
@@ -326,6 +331,18 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // recomputes hasAudio/hasVideo without us re-rendering the streams ref.
   const [localFlagsTick, setLocalFlagsTick] = useState(0);
 
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [discoveryReceipt, setDiscoveryReceipt] = useState<{ channelArn: string; participantId: string; joined: boolean; everJoined: boolean } | null>(null);
+  const [captureIntent, setCaptureIntent] = useState<{ channelArn: string; participantId: string; receiveOnly: boolean } | null>(null);
+  const sameDiscovery = discoveryReceipt?.channelArn === channelArn && discoveryReceipt?.participantId === participantId;
+  const discoveryJoined = sameDiscovery && discoveryReceipt?.joined === true;
+  const discoverySeenBefore = sameDiscovery && discoveryReceipt?.everJoined === true;
+  const receiveOnlyReady = captureIntent?.channelArn === channelArn && captureIntent?.participantId === participantId && captureIntent?.receiveOnly === true;
+  const devicePublishQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const microphoneToggleInFlightRef = useRef(false);
+  const captureEpochRef = useRef(0);
+  const captureIdentityRef = useRef({ channelArn, participantId });
+  captureIdentityRef.current = { channelArn, participantId };
   const localStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null); // preserved across screen-share for restore
   const screenShareTrackRef = useRef<MediaStreamTrack | null>(null);
@@ -477,7 +494,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // it, pc.close() ends the receiver tracks but participants[i].streams[0]
   // still points at the now-dead MediaStream and the tile shows
   // permanent-black.
-  const cleanupPcRef = useRef<((fullPid: string, forceDeleteBase?: boolean) => void) | null>(null);
+  const cleanupPcRef = useRef<((fullPid: string) => void) | null>(null);
 
   // Render-time "now" — bumped every 1s so the `subscriberMs` field in
   // the participants memo recomputes without callers having to mount
@@ -511,11 +528,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // A new session in the same hook instance (a second call from one
     // conversation, or a rejoin after leave()): leave() must work again.
     leftRef.current = false;
+    const epoch = ++captureEpochRef.current;
     setError(null);
+    setCaptureError(null);
     const constraints = media ?? DEFAULT_MEDIA;
+    setCaptureIntent({ channelArn, participantId, receiveOnly: !constraints.audio && !constraints.video });
 
     const adopt = (stream: MediaStream) => {
-      if (cancelled) {
+      if (cancelled || leftRef.current || captureEpochRef.current !== epoch) {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
@@ -525,8 +545,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     };
 
     setVideoUnavailable(null);
+    if (!constraints.audio && !constraints.video) {
+      localStreamRef.current = null;
+      cameraStreamRef.current = null;
+      setLocalStream(null);
+      return () => { cancelled = true; captureEpochRef.current += 1; };
+    }
     void acquireLocalMedia(constraints).then((outcome) => {
-      if (cancelled) {
+      if (cancelled || leftRef.current || captureEpochRef.current !== epoch) {
         outcome.stream?.getTracks().forEach((t) => t.stop());
         return;
       }
@@ -540,6 +566,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
 
     return () => {
       cancelled = true;
+      captureEpochRef.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelArn, participantId]);
@@ -610,57 +637,37 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     const myEpoch = effectEpochRef.current;
 
     let cancelled = false;
+    setDiscoveryReceipt(null);
     let ws: WebSocket | null = null;
     // Reconnect-ladder state — see WS setup further down.
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // forceDeleteBase=true means "even if other media (camera streams or
-    // screen) remain on the participant entry, scrub the basePid entirely
-    // from remoteParticipants and firstSeenAtRef". The all-tracks-ended
-    // auto-recovery path uses this so the next openPcFor sees a clean
-    // slate and creates a fresh MediaStream — without it, a stale entry
-    // could linger (e.g. screenStream still present from a different PC)
-    // and prevent the consumer's <video> element from re-binding to the
-    // fresh stream id. For producer.removed and StrictMode cleanup paths,
-    // the historical "preserve sibling media" semantics still apply.
-    const cleanupPc = (fullPid: string, forceDeleteBase = false) => {
+    // A camera and its screen have separate consumer transports. Teardown
+    // and recovery must release only the media owned by this fullPid;
+    // deleting the base participant would stop the healthy sibling PC.
+    const cleanupPc = (fullPid: string) => {
       // Cancel any in-flight open for this pid so the open body bails
       // before it can publish a new entry to remoteSubscribersRef.
       const inflight = inFlightOpensRef.current.get(fullPid);
       if (inflight) {
         console.info('[remote-pc] cleanupPc — cancelling in-flight open', {
           fullPid,
-          forceDeleteBase,
           inflightEpoch: inflight.epoch,
         });
         inflight.cancelled = true;
         inFlightOpensRef.current.delete(fullPid);
       }
       const entry = remoteSubscribersRef.current.get(fullPid);
-      if (!entry) {
-        // No PC to close, but if forceDeleteBase is set we still want
-        // to scrub the participant entry (covers the case where the
-        // PC was already torn down by a prior sweep).
-        if (forceDeleteBase) {
-          const basePid = fullPid.split(':')[0] ?? fullPid;
-          setRemoteParticipants((prev) => {
-            if (!prev.has(basePid)) return prev;
-            const next = new Map(prev);
-            next.delete(basePid);
-            return next;
-          });
-          firstSeenAtRef.current.delete(basePid);
-        }
-        return;
-      }
+      if (!entry) return;
+      // Relinquish ownership before close() can deliver ended callbacks.
+      remoteSubscribersRef.current.delete(fullPid);
       // Permanent diagnostic — paired with the open log so we can grep
       // open/close transitions when remote tiles inevitably regress.
       console.info('[remote-pc] close', {
         fullPid,
         kind: entry.kind,
         epoch: entry.epoch,
-        forceDeleteBase,
         receiverStates: entry.pc.getReceivers().map(r => ({
           kind: r.track?.kind,
           ready: r.track?.readyState,
@@ -679,7 +686,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       if (entry.resourceUrl && entry.authToken) {
         void whepTeardown(entry.resourceUrl, entry.authToken).catch(() => { /* */ });
       }
-      remoteSubscribersRef.current.delete(fullPid);
       // Drop the per-PC connectionState snapshot so the aggregate doesn't
       // keep reporting 'reconnecting' for a PC that no longer exists.
       whepConnStatesRef.current.delete(fullPid);
@@ -690,32 +696,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         const next = new Map(prev);
         const e = next.get(basePid);
         if (!e) return prev;
-        if (forceDeleteBase) {
-          // Auto-recovery path — scrub everything for this basePid so the
-          // next openPcFor creates a brand-new participant entry +
-          // MediaStream. Stop any lingering tracks so the consumer's
-          // <video> element drops the stale frame.
-          for (const s of e.streams) {
-            for (const t of s.getTracks()) {
-              try { t.stop(); } catch { /* */ }
-            }
-          }
+        if (isScreen) {
+          // Screen-kind teardown — drop screenStream only.
           if (e.screenStream) {
             for (const t of e.screenStream.getTracks()) {
               try { t.stop(); } catch { /* */ }
             }
-          }
-          next.delete(basePid);
-          firstSeenAtRef.current.delete(basePid);
-          return next;
-        }
-        if (isScreen) {
-          // Screen-kind teardown — drop screenStream only.
-          if (e.screenStream) {
             next.set(basePid, { ...e, screenStream: undefined });
           }
           // Don't delete the entry if camera-kind streams remain.
-          if (!e.screenStream && e.streams.length === 0) {
+          if (e.streams.length === 0) {
             next.delete(basePid);
             // Last producer for this peer gone — drop the first-seen
             // entry so a rejoin under the same pid starts a fresh timer
@@ -977,19 +967,19 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         // fires within ~1s of the actual failure instead of waiting on
         // the 5s health sweep).
         pc.addEventListener('connectionstatechange', () => {
-          if (cancelled) return;
+          if (cancelled || remoteSubscribersRef.current.get(fullPid)?.pc !== pc) return;
           const s = pc.connectionState;
           whepConnStatesRef.current.set(fullPid, s);
           setWhepHealthTick((n) => n + 1);
           if (s === 'failed' && knownProducersRef.current.has(fullPid)) {
             console.info('[remote-pc] connectionState=failed — triggering recovery', { fullPid });
-            cleanupPc(fullPid, /* forceDeleteBase */ true);
+            cleanupPc(fullPid);
             scheduleRetry(fullPid);
           }
         });
 
         pc.addEventListener('track', (ev) => {
-          if (cancelled) return;
+          if (cancelled || remoteSubscribersRef.current.get(fullPid)?.pc !== pc) return;
           const track = ev.track;
           const basePid = fullPid.split(':')[0] ?? fullPid;
           console.info('[remote-pc] track', {
@@ -1067,15 +1057,13 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           // any track is still live, we leave the PC alone and let the
           // SFU drive the eventual teardown via producer.removed.
           //
-          // All-tracks-ended path (sticky-stale-state fix): when every
-          // receiver is dead the consumer transport was reaped by the
-          // SFU mid-call (transient ICE/DTLS blip). Fully scrub the
-          // participant entry via forceDeleteBase so the avatar fallback
-          // doesn't stick on a stale stream, then schedule an auto-
-          // recovery retry — the producer is likely still alive on the
-          // SFU and a fresh openPcFor will rebind the tile within ~1s.
+          // All-ended recovery clears only this transport's stream so
+          // the retry binds fresh media without interrupting its sibling.
           track.addEventListener('ended', () => {
             const current = remoteSubscribersRef.current.get(fullPid);
+            // An old PC can deliver queued events after replacement. It
+            // no longer owns either the ref or the replacement streams.
+            if (cancelled || (current && current.pc !== pc)) return;
             const receiverStates = current
               ? current.pc.getReceivers().map(r => ({
                   kind: r.track?.kind,
@@ -1091,34 +1079,34 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
               receiverStates,
             });
             if (!current) {
-              // Ref entry already gone (silent bail or earlier cleanup).
-              // The ontrack handler had already pushed this track into
-              // setRemoteParticipants, so the React tile is bound to a
-              // MediaStream whose tracks are now `ended`. Scrub the
-              // basePid from React state so the avatar fallback renders
-              // instead of a permanently black <video>.
-              const basePid = fullPid.split(':')[0] ?? fullPid;
-              console.info('[remote-pc] track-ended on orphan ref — scrubbing React state', { fullPid, basePid });
+              // Cleanup already removed the transport. Clear only a
+              // surviving stream containing this exact orphaned track;
+              // queued callbacks must not scrub sibling or newer media.
+              console.info('[remote-pc] track-ended on orphan ref — scrubbing owned media', { fullPid, basePid, kind });
               setRemoteParticipants((prev) => {
-                if (!prev.has(basePid)) return prev;
-                const next = new Map(prev);
-                const e = next.get(basePid);
-                if (e) {
-                  for (const s of e.streams) {
-                    for (const t of s.getTracks()) {
-                      try { t.stop(); } catch { /* */ }
-                    }
-                  }
-                  if (e.screenStream) {
-                    for (const t of e.screenStream.getTracks()) {
-                      try { t.stop(); } catch { /* */ }
-                    }
+                const e = prev.get(basePid);
+                if (!e) return prev;
+                const ownsTrack = (stream: MediaStream) => stream.getTracks().some(t => t.id === track.id);
+                const owned = kind === 'screen'
+                  ? (e.screenStream && ownsTrack(e.screenStream) ? [e.screenStream] : [])
+                  : e.streams.filter(ownsTrack);
+                if (owned.length === 0) return prev;
+                for (const stream of owned) {
+                  for (const t of stream.getTracks()) {
+                    try { t.stop(); } catch { /* */ }
                   }
                 }
-                next.delete(basePid);
+                const streams = kind === 'screen' ? e.streams : e.streams.filter(s => !owned.includes(s));
+                const screenStream = kind === 'screen' ? undefined : e.screenStream;
+                const next = new Map(prev);
+                if (streams.length === 0 && !screenStream) {
+                  next.delete(basePid);
+                  firstSeenAtRef.current.delete(basePid);
+                } else {
+                  next.set(basePid, { ...e, streams, streamIds: new Set(streams.map(s => s.id)), screenStream });
+                }
                 return next;
               });
-              firstSeenAtRef.current.delete(basePid);
               return;
             }
             const stillLive = current.pc.getReceivers().some((r) => {
@@ -1133,11 +1121,11 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
               });
               return;
             }
-            console.info('[remote-pc] all tracks ended — full scrub + retry', {
+            console.info('[remote-pc] all tracks ended — owned media scrub + retry', {
               fullPid,
               endedKind: track.kind,
             });
-            cleanupPc(fullPid, /* forceDeleteBase */ true);
+            cleanupPc(fullPid);
             scheduleRetry(fullPid);
           }, { once: true });
         });
@@ -1300,6 +1288,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           // time of the change, not on reconnect), so the local UI
           // showed stale tiles until the ~5s health sweep reaped them.
           if (msg && msg.type === 'subscribed' && Array.isArray(msg.producers)) {
+            if (leftRef.current || ws !== socket) return;
+            setDiscoveryReceipt({ channelArn, participantId, joined: true, everJoined: true });
             const snapshotPids = new Set<string>();
             for (const p of msg.producers) {
               if (!p || typeof p.participantId !== 'string') continue;
@@ -1470,7 +1460,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         } catch { /* malformed frame — ignore */ }
       });
       socket.addEventListener('close', () => {
-        if (cancelled) return;
+        if (cancelled || ws !== socket) return;
+        setDiscoveryReceipt(previous => previous?.channelArn === channelArn && previous.participantId === participantId ? { ...previous, joined: false } : previous);
         // Unexpected close — reconnect. We don't try to dedupe vs.
         // intentional close because cancelled-guard above covers that.
         scheduleReconnect();
@@ -1502,7 +1493,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             fullPid: k,
             kind: entry.kind,
           });
-          cleanupPc(k, /* forceDeleteBase */ true);
+          cleanupPc(k);
           scheduleRetry(k);
         }
       }
@@ -1586,7 +1577,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
               muted: r.track?.muted,
             })),
           });
-          // Route through cleanupPc(forceDeleteBase=true) so React state
+          // Route through cleanupPc so this transport's React media state
           // gets scrubbed alongside the ref + PC close — otherwise
           // participants[i].streams[0] keeps pointing at the just-killed
           // MediaStream (tracks transition to `ended` synchronously when
@@ -1595,7 +1586,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           // Falls back to the inline scrub if cleanupPc isn't published
           // (effect torn down).
           if (cleanupPcRef.current) {
-            cleanupPcRef.current(k, /* forceDeleteBase */ true);
+            cleanupPcRef.current(k);
           } else {
             try { entry.pc.close(); } catch { /* */ }
             remoteSubscribersRef.current.delete(k);
@@ -1687,42 +1678,6 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   }, []);
 
   /**
-   * Acquire camera + re-publish with audio + video. Used when the
-   * call started audio-only and the user wants to turn video on. The
-   * existing audio track is preserved (taken from the current local
-   * stream); only the video track is freshly captured.
-   */
-  const enableCamera = useCallback(async () => {
-    const existing = localStreamRef.current;
-    const alreadyHasVideo = existing?.getVideoTracks().some((t) => t.readyState === 'live');
-    if (alreadyHasVideo) return; // idempotent
-    try {
-      const camStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      const videoTrack = camStream.getVideoTracks()[0];
-      if (!videoTrack) {
-        camStream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      // Build the new combined stream: keep existing audio (if any) +
-      // the new video track.
-      const merged = new MediaStream();
-      if (existing) {
-        for (const t of existing.getAudioTracks()) merged.addTrack(t);
-      }
-      merged.addTrack(videoTrack);
-      localStreamRef.current = merged;
-      cameraStreamRef.current = merged;
-      setLocalStream(merged);
-      await publisher.republish(merged);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(`Failed to enable camera: ${msg}`);
-    }
-  }, [publisher]);
-
-  /**
    * Drop the camera track + re-publish audio-only. Used to downgrade
    * mid-call. Stops the video track to release the device + LED.
    */
@@ -1740,104 +1695,86 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     cameraStreamRef.current = audioOnly;
     setLocalStream(audioOnly);
     try {
-      await publisher.republish(audioOnly);
+      if (audioOnly.getTracks().length) await publisher.republish(audioOnly);
+      else await publisher.stop();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(`Failed to disable camera: ${msg}`);
     }
   }, [publisher]);
 
-  /**
-   * Unified camera-toggle that survives a `.stop()`'d (ended) track.
-   *
-   * Three cases:
-   *   1. Track is live, just disabled → flip `enabled` back on. Cheapest
-   *      path; equivalent to `toggleCamera(false)`. Local preview lights
-   *      up immediately; peers' inbound video resumes from black/freeze.
-   *   2. Track is live, currently enabled, caller passed `on=false` →
-   *      flip `enabled = false`. Same as `toggleCamera(true)`. We
-   *      DELIBERATELY do NOT `.stop()` here — leaving the track live
-   *      means the next setCameraEnabled(true) is the cheap case (1)
-   *      with no getUserMedia permission re-prompt.
-   *   3. No video track at all, or the only video track is `ended` /
-   *      stopped (camera was hard-released earlier, e.g. by an upstream
-   *      consumer or by `disableCamera()`) → re-run getUserMedia for
-   *      video, swap onto the existing video RTCRtpSender via
-   *      `publisher.replaceStream()` (RTCRtpSender.replaceTrack under
-   *      the hood, no WHIP renegotiation). Peers see the producer keep
-   *      flowing — no `producer.removed` / `producer.added` flicker.
-   *      The localStream reference is updated so the UI's
-   *      `<video srcObject={localStream}>` picks up the new track.
-   *
-   * Guarded by `cameraToggleInFlightRef` so a double-tap during the
-   * re-acquire path doesn't kick off two concurrent getUserMedia calls.
-   *
-   * Falls back to `enableCamera()` (full re-WHIP) when no video sender
-   * exists yet on the publisher — that happens when the call started
-   * audio-only and there's no video transceiver to replaceTrack onto.
-   */
-  const setCameraEnabled = useCallback(async (on: boolean) => {
-    if (cameraToggleInFlightRef.current) return;
+  // Live tracks toggle without reacquiring. Missing kinds capture independently,
+  // then merge/publish in order so simultaneous microphone/camera actions cannot
+  // lose a track. Denied permission is nonfatal and never tears down receiving.
+  const setDeviceEnabled = useCallback(async (kind: 'audio' | 'video', on: boolean, constraints?: MediaTrackConstraints) => {
+    const flight = kind === 'audio' ? microphoneToggleInFlightRef : cameraToggleInFlightRef;
+    if (flight.current) throw new Error('A device change is already in progress.');
     const existing = localStreamRef.current;
-    const videoTracks = existing ? existing.getVideoTracks() : [];
-    const liveVideo = videoTracks.find((t) => t.readyState === 'live');
-
-    // Case 1 + 2: a live track exists — just flip enabled. No async work.
-    if (liveVideo) {
-      for (const t of videoTracks) {
-        if (t.readyState === 'live') t.enabled = on;
-      }
-      setLocalFlagsTick((n) => n + 1);
-      return;
+    const tracks = existing?.getTracks().filter(t => t.kind === kind) ?? [];
+    const live = tracks.find(t => t.readyState === 'live');
+    if (live) {
+      tracks.filter(t => t.readyState === 'live').forEach(t => { t.enabled = on; });
+      setLocalFlagsTick(n => n + 1); return;
     }
-
-    // Disabling and there's no live track anyway → nothing to do.
-    if (!on) {
-      setLocalFlagsTick((n) => n + 1);
-      return;
-    }
-
-    // Case 3: re-acquire + replaceTrack.
-    cameraToggleInFlightRef.current = true;
+    if (!on) return;
+    if (leftRef.current || !channelArn || !participantId) throw new Error('Join a call before enabling a device.');
+    const epoch = captureEpochRef.current;
+    const valid = () => !leftRef.current && captureEpochRef.current === epoch
+      && captureIdentityRef.current.channelArn === channelArn && captureIdentityRef.current.participantId === participantId;
+    flight.current = true;
+    setCaptureError(null);
+    let acquired: MediaStream | null = null;
     try {
-      const camStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      const preferred = constraints ?? (kind === 'audio' ? media?.audio : media?.video);
+      acquired = await navigator.mediaDevices.getUserMedia(kind === 'audio'
+        ? { audio: preferred || true, video: false }
+        : { audio: false, video: preferred || DEFAULT_MEDIA.video });
+      if (!valid()) throw new Error('The call ended while enabling the device.');
+      const track = acquired.getTracks().find(t => t.kind === kind && t.readyState === 'live');
+      if (!track) throw new Error(`No ${kind === 'audio' ? 'microphone' : 'camera'} track was acquired.`);
+      const captured = acquired;
+      const publish = devicePublishQueueRef.current.catch(() => undefined).then(async () => {
+        if (!valid()) throw new Error('The call ended while enabling the device.');
+        const previous = localStreamRef.current;
+        const previousTracks = previous?.getTracks() ?? [];
+        const merged = new MediaStream();
+        previousTracks.filter(t => t.kind !== kind).forEach(t => merged.addTrack(t));
+        merged.addTrack(track);
+        localStreamRef.current = merged;
+        cameraStreamRef.current = merged;
+        setLocalStream(merged);
+        try {
+          // Adding a missing kind needs a real sender, not replaceStream's no-op.
+          if (previousTracks.some(t => t.kind === kind)) await publisher.replaceStream(merged);
+          else await publisher.republish(merged);
+          if (!valid()) throw new Error('The call ended while enabling the device.');
+        } catch (error) {
+          if (valid() && localStreamRef.current === merged) {
+            localStreamRef.current = previous; cameraStreamRef.current = previous;
+            setLocalStream(previous);
+            // A failed first publisher must not cost a connected receiver.
+            if (!previous?.getTracks().length) await publisher.stop();
+          }
+          throw error;
+        }
+        previousTracks.filter(t => t.kind === kind).forEach(t => { try { t.stop(); } catch { /* */ } });
+        captured.getTracks().filter(t => t !== track).forEach(t => { try { t.stop(); } catch { /* */ } });
+        setCaptureError(null);
+        if (kind === 'video') setVideoUnavailable(null);
+        setLocalFlagsTick(n => n + 1);
       });
-      const videoTrack = camStream.getVideoTracks()[0];
-      if (!videoTrack) {
-        camStream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      // Drop any prior ended video tracks from the merged stream we're
-      // about to publish + show locally.
-      const merged = new MediaStream();
-      if (existing) {
-        for (const t of existing.getAudioTracks()) merged.addTrack(t);
-      }
-      merged.addTrack(videoTrack);
-      localStreamRef.current = merged;
-      cameraStreamRef.current = merged;
-      setLocalStream(merged);
-
-      // Try the cheap path first: swap onto the existing video sender.
-      // replaceStream() warns + skips when no video sender exists; in
-      // that case fall back to a full re-WHIP via republish() so the
-      // SFU actually gets a video producer.
-      try {
-        await publisher.replaceStream(merged);
-      } catch {
-        // replaceStream throws when called before start() — fall through
-        // to republish which handles the no-PC case internally.
-        await publisher.republish(merged);
-      }
-      setLocalFlagsTick((n) => n + 1);
+      devicePublishQueueRef.current = publish.catch(() => undefined);
+      await publish;
+      acquired = null; // ownership passed to this call
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(`Failed to enable camera: ${msg}`);
-    } finally {
-      cameraToggleInFlightRef.current = false;
-    }
-  }, [publisher]);
+      acquired?.getTracks().forEach(t => { try { t.stop(); } catch { /* */ } });
+      if (valid()) setCaptureError(`Failed to enable ${kind === 'audio' ? 'microphone' : 'camera'}: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    } finally { flight.current = false; }
+  }, [channelArn, participantId, media, publisher]);
+  const setCameraEnabled = useCallback((on: boolean, constraints?: MediaTrackConstraints) => setDeviceEnabled('video', on, constraints), [setDeviceEnabled]);
+  const enableCamera = useCallback(() => setCameraEnabled(true), [setCameraEnabled]);
+  const setMicrophoneEnabled = useCallback((on: boolean, constraints?: MediaTrackConstraints) => setDeviceEnabled('audio', on, constraints), [setDeviceEnabled]);
 
   const leave = useCallback(() => {
     // Idempotent — a second leave() (StrictMode double-invoke, double-
@@ -1845,6 +1782,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // thrash that re-fires setState on a torn-down tree.
     if (leftRef.current) return;
     leftRef.current = true;
+    captureEpochRef.current += 1;
+    setDiscoveryReceipt(null);
 
     // Stop the screen-share track first so its `ended` handler doesn't
     // race the publisher teardown.
@@ -2006,12 +1945,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [participantId, userId, remoteParticipants, remoteIdentities, localStream, localScreenStream, localFlagsTick, nowTick]);
 
-  // isJoined: publisher live is the primary signal — we've successfully
+  // isJoined: a both-off receiver joins only after authenticated discovery ack.
+  // Otherwise publisher live is the primary signal — we've successfully
   // pushed bytes to the SFU. Parallel WHEPs may legitimately be absent
   // when alone in the lobby (no remote producers yet), so we don't gate
   // on them. This matches the legacy useHangoutEmbed UX where the UI
   // mounts as soon as Stage joined, regardless of who was already there.
-  const isJoined = publisher.phase === 'live';
+  const receiveOnly = !!channelArn && !!participantId && (receiveOnlyReady || !!localStream && localStream.getTracks().length === 0) && !localStream?.getTracks().length;
+  const isJoined = publisher.phase === 'live' || (receiveOnly && discoveryJoined);
 
   // Aggregate transport health. Order of precedence (worst → best):
   //   1. publisher.phase='error' → 'failed' (retry budget exhausted)
@@ -2031,14 +1972,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         break;
       }
     }
-    if (publisher.phase === 'reconnecting' || anyWhepUnhealthy) return 'reconnecting';
-    if (publisher.phase === 'live') return 'connected';
-    if (publisher.phase === 'connecting') return 'connecting';
+    if (publisher.phase === 'reconnecting' || anyWhepUnhealthy || (receiveOnly && discoverySeenBefore && !discoveryJoined)) return 'reconnecting';
+    if (publisher.phase === 'live' || (receiveOnly && discoveryJoined)) return 'connected';
+    if (publisher.phase === 'connecting' || (receiveOnly && channelArn && !leftRef.current)) return 'connecting';
     return 'idle';
     // whepHealthTick is the re-render trigger; the ref read above
     // captures the latest map values when it does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [publisher.phase, whepHealthTick]);
+  }, [publisher.phase, whepHealthTick, receiveOnly, discoveryJoined, discoverySeenBefore, channelArn]);
 
   // Camera state: did the local participant actually publish a live
   // video track? Drives the in-call "Turn on camera" button visibility.
@@ -2079,12 +2020,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     error: composedError,
     /** Set when the call is up but the camera could not be opened. */
     videoUnavailable,
+    captureError,
     connectionState,
     toggleMute,
     toggleCamera,
     enableCamera,
     disableCamera,
     setCameraEnabled,
+    setMicrophoneEnabled,
     startScreenShare,
     stopScreenShare,
     leave,

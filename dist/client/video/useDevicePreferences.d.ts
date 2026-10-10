@@ -13,6 +13,7 @@ export declare function useDevicePreferences(storage?: StorageLike | null, initi
 /** getUserMedia constraints honouring the preference, falling back to any device. */
 export declare function deviceConstraints(p: DevicePreferences, opts: {
     video: boolean;
+    audio?: boolean;
 }): MediaStreamConstraints;
 export {};
 //# sourceMappingURL=useDevicePreferences.d.ts.map

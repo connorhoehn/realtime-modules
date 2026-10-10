@@ -166,15 +166,15 @@ function installFetchMock(): FetchHandle {
 interface PubHandle { result: ReturnType<typeof useLVSPublisher> | null }
 
 function PublisherHarness(
-  { stream, handle }: { stream: MediaStream | null; handle: PubHandle },
+  { stream, handle, getAuthToken = () => 'tok', autoStart = true }: { stream: MediaStream | null; handle: PubHandle; getAuthToken?: () => string | Promise<string>; autoStart?: boolean },
 ) {
   const r = useLVSPublisher({
     channelArn: 'arn:test:channel/abc',
     stream,
     participantId: 'me-pid-1',
-    autoStart: true,
+    autoStart,
     baseUrl: 'http://localhost:3901',
-    getAuthToken: () => 'tok',
+    getAuthToken,
   });
   handle.result = r;
   return null;
@@ -524,4 +524,79 @@ describe('useLVSHangout — visibilitychange triggers recovery on hidden→visib
     const s = handle.result!.connectionState;
     expect(['idle', 'connecting', 'connected', 'reconnecting', 'failed']).toContain(s);
   });
+});
+
+
+describe('publisher pending operation cancellation', () => {
+  it('stop while token is pending prevents any PC or WHIP creation', async () => {
+    const handle: PubHandle = { result: null };
+    let resolve!: (token: string) => void;
+    const token = new Promise<string>(done => { resolve = done; });
+    render(<PublisherHarness stream={null} handle={handle} autoStart={false} getAuthToken={() => token} />);
+    let completed!: Promise<unknown>;
+    act(() => { completed = handle.result!.republish(makeStream()).then(() => null, error => error); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await handle.result!.stop(); resolve('tok'); await completed; await flush(); });
+    expect(await completed).toBeInstanceOf(Error);
+    expect(pcInstances).toEqual([]);
+    expect(fetchHandle.whipCalls).toEqual([]);
+    expect(handle.result!.phase).toBe('idle');
+    expect(handle.result!.error).toBeNull();
+  });
+  it('explicit republish rejects a failed WHIP rather than returning a successful receipt', async () => {
+    const handle: PubHandle = { result: null };
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => String(url).includes('/whip') && init?.method === 'POST'
+      ? makeResponse('forbidden', { status: 403 }) : previousFetch(url, init)) as typeof fetch;
+    render(<PublisherHarness stream={null} handle={handle} autoStart={false} />);
+    await act(async () => { await expect(handle.result!.republish(makeStream())).rejects.toThrow(); await flush(); });
+    expect(handle.result!.phase).toBe('error');
+    expect(pcInstances).toHaveLength(1);
+    expect(pcInstances[0]!.closed).toBe(true);
+  });
+  it('stop while ICE configuration is pending prevents later PC and WHIP creation', async () => {
+    const handle: PubHandle = { result: null };
+    const previousFetch = globalThis.fetch;
+    let resolve!: (response: Response) => void;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => String(url).includes('/api/ice-servers')
+      ? new Promise<Response>(done => { resolve = done; }) : previousFetch(url, init)) as typeof fetch;
+    render(<PublisherHarness stream={null} handle={handle} autoStart={false} />);
+    let completed!: Promise<unknown>;
+    act(() => { completed = handle.result!.republish(makeStream()).then(() => null, error => error); });
+    await act(async () => { await flush(); });
+    expect(resolve).toBeDefined();
+    await act(async () => { await handle.result!.stop(); resolve(makeResponse(JSON.stringify({ iceServers: [] }))); await completed; await flush(); });
+    expect(await completed).toBeInstanceOf(Error);
+    expect(pcInstances).toEqual([]);
+    expect(fetchHandle.whipCalls).toEqual([]);
+    expect(handle.result!.phase).toBe('idle');
+  });
+  it('a stale WHIP receipt is deleted without touching a newer accepted publisher', async () => {
+    const handle: PubHandle = { result: null };
+    const previousFetch = globalThis.fetch;
+    let resolve!: (response: Response) => void;
+    let posts = 0;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => {
+      if (String(url).includes('/whip') && init?.method === 'POST' && ++posts === 1) return new Promise<Response>(done => { resolve = done; });
+      return previousFetch(url, init);
+    }) as typeof fetch;
+    render(<PublisherHarness stream={null} handle={handle} autoStart={false} />);
+    let stale!: Promise<unknown>;
+    act(() => { stale = handle.result!.republish(makeStream()).then(() => null, error => error); });
+    await act(async () => { await flush(); });
+    const oldPc = pcInstances[0]!;
+    await act(async () => { await handle.result!.stop(); await handle.result!.republish(makeStream()); await flush(); });
+    const currentPc = pcInstances[1]!;
+    act(() => { currentPc.setConnectionState('connected'); });
+    expect(handle.result!.phase).toBe('live');
+    await act(async () => { resolve(makeResponse('v=0\r\n', { status: 201, headers: { Location: '/whip/stale' } })); await stale; await flush(); });
+    expect(await stale).toBeInstanceOf(Error);
+    expect(oldPc.closed).toBe(true);
+    expect(oldPc.setRemoteDescription).not.toHaveBeenCalled();
+    expect(currentPc.closed).toBe(false);
+    expect(handle.result!.phase).toBe('live');
+    expect(handle.result!.whipResource).toMatch(/\/whip\/x$/);
+    expect(fetchHandle.whipCalls.some(c => c.url.endsWith('/whip/stale') && c.method === 'DELETE')).toBe(true);
+  });
+
 });

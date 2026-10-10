@@ -128,13 +128,15 @@ function useAudioVideoSettings(opts = {}) {
     const [previewStream, setPreviewStream] = (0, react_1.useState)(null);
     const [previewError, setPreviewError] = (0, react_1.useState)(null);
     const wantVideo = opts.previewVideo !== false;
+    const wantAudio = opts.previewAudio !== false;
     const acquireKey = (0, react_1.useMemo)(() => JSON.stringify([
         settings.microphoneId, settings.cameraId, settings.quality, settings.frameRate,
-        settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo,
+        settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo, wantAudio,
     ]), [settings.microphoneId, settings.cameraId, settings.quality, settings.frameRate,
-        settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo]);
+        settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, wantVideo, wantAudio]);
     (0, react_1.useEffect)(() => {
-        if (!opts.preview || !md) {
+        if (!opts.preview || !md || (!wantAudio && !wantVideo)) {
+            setPreviewError(null);
             setPreviewStream(null);
             return;
         }
@@ -142,7 +144,7 @@ function useAudioVideoSettings(opts = {}) {
         let acquired = null;
         (async () => {
             try {
-                acquired = await md.getUserMedia(audioVideoConstraints(settingsRef.current, wantVideo));
+                acquired = await md.getUserMedia({ ...audioVideoConstraints(settingsRef.current, wantVideo), ...(!wantAudio ? { audio: false } : {}) });
                 if (cancelled) {
                     acquired.getTracks().forEach((t) => t.stop());
                     return;
@@ -162,7 +164,7 @@ function useAudioVideoSettings(opts = {}) {
             cancelled = true;
             acquired?.getTracks().forEach((t) => t.stop());
         };
-    }, [opts.preview, md, acquireKey, wantVideo]);
+    }, [opts.preview, md, acquireKey, wantVideo, wantAudio]);
     // ---- mic level ------------------------------------------------------
     const [micLevel, setMicLevel] = (0, react_1.useState)(0);
     (0, react_1.useEffect)(() => {

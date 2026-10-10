@@ -80,6 +80,8 @@ class FakePeerConnection {
   remoteDescription: { type: string; sdp: string } | null = null;
   iceGatheringState: 'new' | 'gathering' | 'complete' = 'complete';
   signalingState = 'stable';
+  connectionState: RTCPeerConnectionState = 'connected';
+  connectionStateListeners: Array<() => void> = [];
   closed = false;
   receivers: Array<{ track: FakeTrack }> = [];
   trackListeners: Array<(ev: { track: FakeTrack; streams: MediaStream[] }) => void> = [];
@@ -91,6 +93,9 @@ class FakePeerConnection {
     pcInstances.push(this);
   }
 
+  senders: Array<{ track: FakeTrack; replaceTrack: jest.Mock<(next: FakeTrack) => Promise<void>> }> = [];
+  addTrack = jest.fn((track: FakeTrack) => { this.senders.push({ track, replaceTrack: jest.fn(async (next: FakeTrack) => { track = next; }) }); });
+  getSenders = () => this.senders;
   isRecvOnly = false;
   addTransceiver = jest.fn((kind: string, init?: { direction?: string }) => {
     if (init?.direction === 'recvonly') this.isRecvOnly = true;
@@ -98,6 +103,7 @@ class FakePeerConnection {
   });
   addEventListener = jest.fn((evt: string, cb: unknown) => {
     if (evt === 'track') this.trackListeners.push(cb as never);
+    if (evt === 'connectionstatechange') this.connectionStateListeners.push(cb as never);
     if (evt === 'icegatheringstatechange') this.gatheringStateListeners.push(cb as never);
   });
   removeEventListener = jest.fn();
@@ -113,6 +119,11 @@ class FakePeerConnection {
     this.closed = true;
     this.closeMock();
   };
+
+  emitConnectionState(state: RTCPeerConnectionState) {
+    this.connectionState = state;
+    for (const callback of this.connectionStateListeners) callback();
+  }
 
   // Test helper: drive an onTrack event into the hook.
   emitTrack(kind: 'audio' | 'video', trackId: string, streamId: string): FakeTrack {
@@ -301,12 +312,13 @@ interface HarnessHandle {
   result: ReturnType<typeof useLVSHangout> | null;
 }
 
-function Harness({ token, pid, handle }: { token: string; pid: string; handle: HarnessHandle }) {
+function Harness({ token, pid, handle, media }: { token: string; pid: string; handle: HarnessHandle; media?: MediaStreamConstraints }) {
   const r = useLVSHangout({
     stageToken: token,
     participantId: pid,
     userId: 'me',
     baseUrl: 'http://localhost:3901',
+    ...(media ? { media } : {}),
   });
   handle.result = r;
   return null;
@@ -360,6 +372,141 @@ async function flush() {
     await new Promise<void>((r) => setTimeout(r, 0));
   }
 }
+
+async function cameraAndScreen() {
+  const handle: HarnessHandle = { result: null };
+  await act(async () => { render(<Harness token={TOKEN} pid={PID} handle={handle} />); await flush(); });
+  const ws = wsInstances[wsInstances.length - 1]!;
+  await act(async () => {
+    ws.triggerOpen();
+    ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' });
+    ws.triggerMessage({ type: 'producer.added', participantId: `${REMOTE_PID}:screen`, kind: 'video' });
+    await flush();
+  });
+  const [camera, screen] = whepPcs();
+  let cameraVideo!: FakeTrack, cameraAudio!: FakeTrack, screenVideo!: FakeTrack;
+  await act(async () => {
+    cameraVideo = camera!.emitTrack('video', 'camera-video', 'camera-stream');
+    cameraAudio = camera!.emitTrack('audio', 'camera-audio', 'camera-stream');
+    screenVideo = screen!.emitTrack('video', 'screen-video', 'screen-stream');
+    await flush();
+  });
+  return { handle, ws, camera: camera!, screen: screen!, cameraVideo, cameraAudio, screenVideo };
+}
+
+function endTrack(track: FakeTrack) {
+  track.readyState = 'ended';
+  for (const callback of track._endedListeners) callback();
+}
+
+describe('useLVSHangout — camera and screen teardown isolation', () => {
+  it('normal screen removal and its delayed orphan-ended callback preserve the camera PC and tracks', async () => {
+    const f = await cameraAndScreen();
+    const cameraStream = f.handle.result!.participants.find(p => !p.isLocal)!.streams[0];
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'producer.removed', participantId: `${REMOTE_PID}:screen`, kind: 'video' });
+      await flush();
+      endTrack(f.screenVideo); // Browser delivers this after cleanup removed the ref.
+      await flush();
+    });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream).toBeUndefined();
+    expect(f.camera.closed).toBe(false);
+    expect(f.cameraVideo.stop).not.toHaveBeenCalled();
+    expect(f.cameraAudio.stop).not.toHaveBeenCalled();
+    expect(f.cameraVideo.readyState).toBe('live');
+    expect(f.cameraAudio.readyState).toBe('live');
+  });
+
+  it('all-ended screen recovery replaces only the screen and preserves the camera throughout retry', async () => {
+    const f = await cameraAndScreen();
+    const cameraStream = f.handle.result!.participants.find(p => !p.isLocal)!.streams[0];
+    await act(async () => { endTrack(f.screenVideo); await flush(); });
+    let peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream).toBeUndefined();
+    expect(f.screen.closed).toBe(true);
+    expect(f.camera.closed).toBe(false);
+    expect(f.cameraVideo.stop).not.toHaveBeenCalled();
+    expect(f.cameraAudio.stop).not.toHaveBeenCalled();
+    await act(async () => { await new Promise(done => setTimeout(done, 1600)); await flush(); });
+    const replacement = whepPcs().find(p => p !== f.camera && p !== f.screen)!;
+    expect(replacement).toBeDefined();
+    await act(async () => { replacement.emitTrack('video', 'screen-recovered', 'new-screen'); await flush(); });
+    peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream!.getVideoTracks()[0]!.id).toBe('screen-recovered');
+    expect(f.cameraVideo.readyState).toBe('live');
+  });
+
+  it('failed screen connection recovery preserves the healthy camera transport', async () => {
+    const f = await cameraAndScreen();
+    const cameraStream = f.handle.result!.participants.find(p => !p.isLocal)!.streams[0];
+    await act(async () => { f.screen.emitConnectionState('failed'); await flush(); });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream).toBeUndefined();
+    expect(f.screen.closed).toBe(true);
+    expect(f.camera.closed).toBe(false);
+    expect(f.cameraAudio.stop).not.toHaveBeenCalled();
+    expect(f.cameraVideo.stop).not.toHaveBeenCalled();
+  });
+
+  it('real camera end removes its own streams while retaining an independent live screen', async () => {
+    const f = await cameraAndScreen();
+    const screenStream = f.handle.result!.participants.find(p => !p.isLocal)!.screenStream;
+    await act(async () => { endTrack(f.cameraAudio); endTrack(f.cameraVideo); await flush(); });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams).toEqual([]);
+    expect(peer.screenStream).toBe(screenStream);
+    expect(f.camera.closed).toBe(true);
+    expect(f.screen.closed).toBe(false);
+    expect(f.screenVideo.stop).not.toHaveBeenCalled();
+  });
+
+  it('a delayed orphan camera-ended callback cannot remove the remaining screen', async () => {
+    const f = await cameraAndScreen();
+    const screenStream = f.handle.result!.participants.find(p => !p.isLocal)!.screenStream;
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'producer.removed', participantId: REMOTE_PID, kind: 'video' });
+      await flush(); endTrack(f.cameraVideo); endTrack(f.cameraAudio); await flush();
+    });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams).toEqual([]);
+    expect(peer.screenStream).toBe(screenStream);
+    expect(f.screenVideo.stop).not.toHaveBeenCalled();
+    expect(f.screen.closed).toBe(false);
+  });
+
+  it.each(['camera', 'screen'] as const)('a stale %s callback cannot close or scrub the replacement PC', async kind => {
+    const f = await cameraAndScreen();
+    const pid = kind === 'screen' ? `${REMOTE_PID}:screen` : REMOTE_PID;
+    const oldTrack = kind === 'screen' ? f.screenVideo : f.cameraVideo;
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'producer.removed', participantId: pid, kind: 'video' });
+      await flush();
+      f.ws.triggerMessage({ type: 'producer.added', participantId: pid, kind: 'video' });
+      await flush();
+    });
+    const replacement = whepPcs().find(p => p !== f.camera && p !== f.screen)!;
+    let replacementTrack!: FakeTrack;
+    await act(async () => { replacementTrack = replacement.emitTrack('video', `${kind}-new`, 'new-stream'); await flush(); });
+    // A pending replacement has not received live tracks yet. The old callback
+    // must be rejected by PC ownership even if all new receivers look ended.
+    replacementTrack.readyState = 'ended';
+    await act(async () => {
+      endTrack(oldTrack);
+      (kind === 'screen' ? f.screen : f.camera).emitConnectionState('failed');
+      await flush();
+    });
+    expect(replacement.closed).toBe(false);
+    expect(replacementTrack.stop).not.toHaveBeenCalled();
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    const owned = kind === 'screen' ? peer.screenStream : peer.streams[0];
+    expect(owned!.getVideoTracks()[0]).toBe(replacementTrack);
+  });
+});
 
 describe('useLVSHangout — StrictMode safety', () => {
   it('opens exactly ONE RTCPeerConnection per remote producer under StrictMode double-invoke', async () => {
@@ -945,4 +1092,192 @@ describe('useLVSHangout — remote tiles carry the SFU-stamped name', () => {
     expect(remote.displayName).toBe(REMOTE_PID);
     expect(remote.appUserId).toBeUndefined();
   });
+});
+
+
+describe('useLVSHangout — explicit initial capture intent', () => {
+  async function receiver() {
+    const handle: HarnessHandle = { result: null };
+    const mounted = render(<Harness token={TOKEN} pid={PID} handle={handle} media={{ audio: false, video: false }} />);
+    await act(async () => { await flush(); });
+    const ws = wsInstances.at(-1)!;
+    await act(async () => { ws.triggerOpen(); await flush(); });
+    return { handle, ws, ...mounted };
+  }
+  function captured(kind: 'audio' | 'video') {
+    const stream = new FakeMediaStream();
+    const track = { id: `local-${kind}`, kind, readyState: 'live', enabled: true,
+      stop: jest.fn(() => { track.readyState = 'ended'; }), addEventListener: jest.fn() };
+    stream.addTrack(track);
+    return { stream: stream as unknown as MediaStream, track };
+  }
+  it('both-off uses no getUserMedia or WHIP; joins only on subscribed ack and receives a peer', async () => {
+    const f = await receiver();
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    expect(fetchHandle.calls.filter(c => c.url.includes('/whip'))).toHaveLength(0);
+    expect(f.handle.result!.isJoined).toBe(false);
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    expect(f.handle.result!.isJoined).toBe(true);
+    expect(f.handle.result!.connectionState).toBe('connected');
+    expect(f.handle.result!.participants[0]).toMatchObject({ hasAudio: false, hasVideo: false, streams: [] });
+    await act(async () => { f.ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' }); await flush(); });
+    await act(async () => { whepPcs()[0]!.emitTrack('audio', 'received-sound', 'peer'); await flush(); });
+    expect(f.handle.result!.participants.find(p => !p.isLocal)!.hasAudio).toBe(true);
+    await act(async () => { f.ws.triggerCloseUnexpected(); await flush(); });
+    expect(f.handle.result!.isJoined).toBe(false);
+    expect(f.handle.result!.connectionState).toBe('reconnecting');
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+  it.each(['audio', 'video'] as const)('later enabling %s asks only for that kind and publishes it', async kind => {
+    const f = await receiver();
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    const c = captured(kind);
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async () => c.stream);
+    await act(async () => {
+      await (kind === 'audio' ? f.handle.result!.setMicrophoneEnabled!(true, { deviceId: { ideal: 'chosen' } })
+        : f.handle.result!.setCameraEnabled(true, { deviceId: { ideal: 'chosen' } }));
+      await flush();
+    });
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith(kind === 'audio'
+      ? { audio: { deviceId: { ideal: 'chosen' } }, video: false }
+      : { audio: false, video: { deviceId: { ideal: 'chosen' } } });
+    expect(fetchHandle.calls.some(c => c.url.includes('/whip') && c.init?.method === 'POST')).toBe(true);
+    expect(f.handle.result!.participants[0]![kind === 'audio' ? 'hasAudio' : 'hasVideo']).toBe(true);
+    expect(f.handle.result!.captureError).toBeNull();
+  });
+  it.each(['audio', 'video'] as const)('denied later %s permission leaves the receiver connected', async kind => {
+    const f = await receiver();
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); });
+    await act(async () => {
+      await expect(kind === 'audio' ? f.handle.result!.setMicrophoneEnabled!(true) : f.handle.result!.setCameraEnabled(true)).rejects.toThrow('Permission denied');
+    });
+    expect(f.handle.result!.error).toBeNull();
+    expect(f.handle.result!.captureError).toMatch(/Permission denied/);
+    expect(f.handle.result!.isJoined).toBe(true);
+    expect(f.handle.result!.connectionState).toBe('connected');
+    expect(fetchHandle.calls.filter(c => c.url.includes('/whip'))).toHaveLength(0);
+  });
+  it('late enabled-camera capture after leaving stops its track and never publishes', async () => {
+    const f = await receiver();
+    const c = captured('video');
+    let resolve!: (stream: MediaStream) => void;
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(() => new Promise<MediaStream>(done => { resolve = done; }));
+    let pending!: Promise<void>;
+    act(() => { pending = f.handle.result!.setCameraEnabled(true); });
+    act(() => { f.handle.result!.leave(); });
+    await act(async () => { resolve(c.stream); await expect(pending).rejects.toThrow('call ended'); await flush(); });
+    expect(c.track.stop).toHaveBeenCalled();
+    expect(f.handle.result!.participants[0]!.streams).toEqual([]);
+    expect(fetchHandle.calls.filter(c => c.url.includes('/whip'))).toHaveLength(0);
+    expect(f.handle.result!.isJoined).toBe(false);
+  });
+  it('simultaneous mic/camera capture retains both tracks with serial publisher updates', async () => {
+    const f = await receiver();
+    const audio = captured('audio'), video = captured('video');
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async (constraints: any) => constraints.audio ? audio.stream : video.stream);
+    await act(async () => { await Promise.all([f.handle.result!.setMicrophoneEnabled!(true), f.handle.result!.setCameraEnabled(true)]); await flush(); });
+    const me = f.handle.result!.participants[0]!;
+    expect(me.streams[0]!.getTracks()).toEqual(expect.arrayContaining([audio.track, video.track]));
+    expect(me).toMatchObject({ hasAudio: true, hasVideo: true });
+    expect(audio.track.stop).not.toHaveBeenCalled();
+    expect(video.track.stop).not.toHaveBeenCalled();
+  });
+  it('enabling camera while receiving camera and screen never closes their WHEP transports', async () => {
+    const f = await receiver();
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'subscribed', producers: [{ participantId: REMOTE_PID, kind: 'video' }, { participantId: `${REMOTE_PID}:screen`, kind: 'video' }] }); await flush();
+    });
+    const [camera, screen] = whepPcs();
+    let cameraTrack!: FakeTrack, screenTrack!: FakeTrack;
+    await act(async () => { cameraTrack = camera!.emitTrack('video', 'peer-camera', 'peer-cam'); screenTrack = screen!.emitTrack('video', 'peer-screen', 'peer-screen'); await flush(); });
+    const before = f.handle.result!.participants.find(p => !p.isLocal)!;
+    const c = captured('video');
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async () => c.stream);
+    await act(async () => { await f.handle.result!.setCameraEnabled(true); await flush(); });
+    const after = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(after.streams[0]).toBe(before.streams[0]);
+    expect(after.screenStream).toBe(before.screenStream);
+    expect(camera!.closed).toBe(false); expect(screen!.closed).toBe(false);
+    expect(cameraTrack.stop).not.toHaveBeenCalled(); expect(screenTrack.stop).not.toHaveBeenCalled();
+    expect(fetchHandle.whepDeleteCalls).toEqual([]);
+  });
+  it('screen share and stop share on a both-off call never acquire mic/camera or stop the receiver', async () => {
+    const f = await receiver();
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    const c = captured('video');
+    (navigator.mediaDevices.getDisplayMedia as jest.Mock).mockImplementation(async () => c.stream);
+    await act(async () => { await f.handle.result!.startScreenShare(); await flush(); });
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    expect(f.handle.result!.participants[0]!.screenStream).toBe(c.stream);
+    expect(fetchHandle.calls.filter(c => c.url.includes('/whip') && c.init?.method === 'POST').every(c => c.url.includes(encodeURIComponent(`${PID}:screen`)))).toBe(true);
+    await act(async () => { f.handle.result!.stopScreenShare(); await flush(); });
+    expect(c.track.stop).toHaveBeenCalled();
+    expect(f.handle.result!.participants[0]!.screenStream).toBeUndefined();
+    expect(f.handle.result!.participants[0]!.streams).toEqual([]);
+    expect(f.handle.result!.isJoined).toBe(true);
+    expect(f.handle.result!.connectionState).toBe('connected');
+  });
+  it('an old session subscription receipt cannot connect a new both-off join', async () => {
+    const f = await receiver();
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    expect(f.handle.result!.isJoined).toBe(true);
+    f.rerender(<Harness token={TOKEN} pid="new-session-pid" handle={f.handle} media={{ audio: false, video: false }} />);
+    expect(f.handle.result!.isJoined).toBe(false);
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    expect(f.handle.result!.isJoined).toBe(false);
+    const newWs = wsInstances.at(-1)!;
+    await act(async () => { newWs.triggerOpen(); await flush(); newWs.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    expect(f.handle.result!.isJoined).toBe(true);
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('leave during pending WHIP retires its late resource without resurrecting PC/track', async () => {
+    const f = await receiver();
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    const c = captured('video');
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async () => c.stream);
+    const previousFetch = globalThis.fetch;
+    let resolve!: (response: Response) => void;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => {
+      if (String(url).includes('/whip') && init?.method === 'POST') return new Promise<Response>(done => { resolve = done; });
+      return previousFetch(url, init);
+    }) as typeof fetch;
+    let completed!: Promise<unknown>;
+    act(() => { completed = f.handle.result!.setCameraEnabled(true).then(() => null, error => error); });
+    await act(async () => { await flush(); });
+    expect(resolve).toBeDefined();
+    const pc = pcInstances.find(p => !p.isRecvOnly)!;
+    expect(pc).toBeDefined();
+    act(() => { f.handle.result!.leave(); });
+    expect(pc.closed).toBe(true);
+    await act(async () => { resolve(makeResponse('v=0\r\n', { status: 201, headers: { Location: '/whip/late-cancelled' } })); await completed; await flush(); });
+    expect(await completed).toBeInstanceOf(Error);
+    expect(pc.setRemoteDescription).not.toHaveBeenCalled();
+    expect(pcInstances.filter(p => !p.isRecvOnly)).toEqual([pc]);
+    expect(c.track.stop).toHaveBeenCalled();
+    expect(fetchHandle.calls.some(c => c.url.endsWith('/whip/late-cancelled') && c.init?.method === 'DELETE')).toBe(true);
+    await act(async () => { pc.emitConnectionState('connected'); await flush(); });
+    expect(f.handle.result!.isJoined).toBe(false);
+    expect(f.handle.result!.participants[0]!.streams).toEqual([]);
+  });
+  it('a rejected first publisher does not claim enabled media or terminate receiving', async () => {
+    const f = await receiver();
+    await act(async () => { f.ws.triggerMessage({ type: 'subscribed', producers: [] }); await flush(); });
+    const c = captured('video');
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async () => c.stream);
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => String(url).includes('/whip') && init?.method === 'POST'
+      ? makeResponse('Publish denied', { status: 403 }) : previousFetch(url, init)) as typeof fetch;
+    await act(async () => { await expect(f.handle.result!.setCameraEnabled(true)).rejects.toThrow(); await flush(); });
+    expect(f.handle.result!.captureError).toMatch(/Failed to enable camera/);
+    expect(f.handle.result!.error).toBeNull();
+    expect(f.handle.result!.isJoined).toBe(true);
+    expect(f.handle.result!.connectionState).toBe('connected');
+    expect(f.handle.result!.participants[0]!.hasVideo).toBe(false);
+    expect(f.handle.result!.participants[0]!.streams).toEqual([]);
+    expect(c.track.stop).toHaveBeenCalled();
+    expect(pcInstances.filter(p => !p.isRecvOnly).every(p => p.closed)).toBe(true);
+  });
+
 });

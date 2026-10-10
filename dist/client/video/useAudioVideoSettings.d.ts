@@ -11,6 +11,8 @@ export interface UseAudioVideoSettingsOptions {
     preview?: boolean;
     /** Include the camera in the preview. Default true. */
     previewVideo?: boolean;
+    /** Include the microphone in the preview. Default true. Both false never request capture. */
+    previewAudio?: boolean;
     /** Injectable for tests. Defaults to navigator.mediaDevices. */
     mediaDevices?: Pick<MediaDevices, 'getUserMedia'>;
 }

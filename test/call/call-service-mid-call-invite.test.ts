@@ -55,6 +55,31 @@ function invitesTo(router: ReturnType<typeof makeRouter>, clientId: string) {
 }
 
 describe('CallService — mid-call invite', () => {
+  it('returns a sender-only correlated authorization rejection for flat and nested invitation requests', async () => {
+    for (const nested of [false, true]) {
+      const router = makeRouter();
+      const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, config: { authorize: () => false } });
+      const payload = { callId: 'call-live', lobbyName: 'orgiq:initiative:p-observability', callerId: 'u-alice', targetUserIds: ['u-carol'], requestId: 'request-denied' };
+      await svc.handleAction('c-alice', 'invite', nested ? { data: payload } : payload);
+      expect(router.sent).toEqual([{ clientId: 'c-alice', message: expect.objectContaining({ type: 'error', service: 'call', action: 'invite',
+        callId: 'call-live', lobbyName: payload.lobbyName, requestId: 'request-denied' }) }]);
+      expect(svc.getStats().activeCalls).toBe(0);
+    }
+  });
+
+  it('keeps invitation policy failure correlated and does not imply fan-out or acceptance', async () => {
+    for (const throws of [false, true]) {
+      const router = makeRouter();
+      const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any,
+        config: { canCall: () => { if (throws) throw new Error('Policy unavailable'); return false; } } });
+      await svc.handleAction('c-alice', 'invite', { callId: 'call-live', lobbyName: 'orgiq:initiative:p-observability', callerId: 'u-alice',
+        targetUserIds: ['u-carol'], requestId: 'request-policy' });
+      expect(router.sent).toEqual([{ clientId: 'c-alice', message: expect.objectContaining({ type: 'error', service: 'call', action: 'invite',
+        callId: 'call-live', requestId: 'request-policy', message: throws ? 'Authorization check failed' : 'Not authorized to call those users' }) }]);
+      expect(svc.getStats().activeCalls).toBe(0);
+    }
+  });
+
   it('rings a new person on an existing callId inside the dedup window', async () => {
     const router = makeRouter();
     const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });

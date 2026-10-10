@@ -3,7 +3,9 @@
 // endpoint with auto-fetch on mount + refetch helper.
 //
 // Pure data-layer — does NOT touch the DOM, does NOT mint playback
-// tokens (that's `useLVSHlsPlayer`'s job). Designed to compose with
+// tokens. Archived playback requires the recording-scoped authorization and
+// URLs returned by platform-api; `useLVSHlsPlayer` composes channel DVR only.
+// Designed to compose with
 // list-view shells like `<RecordingList>` from ui-components.
 //
 // Recording shape mirrors the LVS-side record persisted by

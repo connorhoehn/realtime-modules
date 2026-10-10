@@ -74,7 +74,7 @@ function useDevicePreferences(storage, initial) {
 /** getUserMedia constraints honouring the preference, falling back to any device. */
 function deviceConstraints(p, opts) {
     return {
-        audio: p.microphoneId ? { deviceId: { ideal: p.microphoneId } } : true,
+        audio: opts.audio === false ? false : p.microphoneId ? { deviceId: { ideal: p.microphoneId } } : true,
         // Same floor as useLVSHangout's default: a clean tile under any decoder budget.
         video: opts.video
             ? {

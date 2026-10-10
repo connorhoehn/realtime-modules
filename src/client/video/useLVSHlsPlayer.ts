@@ -6,8 +6,9 @@
 //
 // Auth flow: for PUBLIC channels (default), the playlist URL is open
 // and `playbackToken` is unnecessary. For PRIVATE channels, callers
-// pass a JWT minted by `POST /api/channels/:arn/playback-tokens` (or
-// via the platform-api `/api/recordings/:id/playback-token` helper).
+// pass a channel DVR JWT minted by `POST /api/channels/:arn/playback-tokens`.
+// Archived recording capabilities and their returned recording URLs are a
+// separate contract; a recording token does not authorize this channel DVR URL.
 // The hook adds `?token=<jwt>` to the URL transparently.
 //
 // JWT expiry: we decode the token's exp claim and surface `expiresAt`
@@ -21,7 +22,7 @@ import { useSafeLVSContext } from './LVSProvider';
 import { jwtSecondsRemaining } from './lib/jwt';
 
 export interface UseLVSHlsPlayerOptions {
-  /** Channel ARN — the recording's source channel. Null = idle. */
+  /** Channel ARN for DVR playback. Null = idle. */
   channelArn: string | null;
   /** Time window for the DVR playlist. Required — LVS defaults are
    *  `now - 1h` / `now` which is rarely what consumers want. */

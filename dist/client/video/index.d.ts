@@ -19,7 +19,7 @@ export { conversationCallDockProps, DOCK_PHASE, type ConversationCallDockState, 
 export { useDevicePreferences, readDevicePreferences, deviceConstraints, DEVICE_PREFERENCES_KEY, } from './useDevicePreferences';
 export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChannel, isDmLobby } from './conversationLobby';
 export type { ParsedDmLobby } from './conversationLobby';
-export type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallParticipant, ConversationCallPhase, DevicePreferences, IncomingConversationCall, } from './conversationCallTypes';
+export type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallInvitationRequest, ConversationCallInviteResult, ConversationCallParticipant, ConversationCallPhase, DevicePreferences, IncomingConversationCall, } from './conversationCallTypes';
 export { DEFAULT_AUDIO_VIDEO_SETTINGS, type AudioVideoSettings, type CallQuality, type DeviceOption, type DocumentCallAwarenessParticipant, type DocumentCallInvite, type DocumentCallMediaMember, type DocumentCallMeta, type DocumentCallParticipant, type DocumentCallParticipantState, type DocumentCallPresenting, type DocumentCallSession, type MediaPermission, } from './documentCallTypes';
 export { whipPublish, whepPublish, fetchIceServers, resolveResourceLocation, LVSApiError, } from './lib/transport';
 export type { TransportLog } from './lib/transport';

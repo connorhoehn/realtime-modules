@@ -546,6 +546,8 @@ export interface CallErrorFrame {
     action?: string;
     callId?: string;
     lobbyName?: string;
+    /** Echo of the sender's invitation request, for rejection correlation only. */
+    requestId?: string;
     timestamp: string;
 }
 /**
