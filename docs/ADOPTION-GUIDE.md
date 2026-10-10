@@ -392,7 +392,7 @@ app.listen(3000);
 
 ## 7. ui-components composition
 
-When `@connorhoehn/ui-components/integrations/realtime-modules` ships,
+When `@connorhoehnslalom/ui-components/integrations/realtime-modules` ships,
 it will re-export pre-composed components (e.g. `<ChatPanel>`,
 `<PresenceAvatarStack>`) that wire the hooks automatically. Until then,
 compose directly against the hooks:

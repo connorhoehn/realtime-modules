@@ -82,6 +82,7 @@ function useConversationCall(opts) {
         setActiveState(v);
     }, []);
     const [busy, setBusy] = (0, react_1.useState)(null);
+    const [recordingBinding, setRecordingBinding] = (0, react_1.useState)({ status: 'disabled' });
     const [error, setError] = (0, react_1.useState)(null);
     const [ended, setEnded] = (0, react_1.useState)(null);
     const [incoming, setIncomingState] = (0, react_1.useState)(null);
@@ -131,14 +132,17 @@ function useConversationCall(opts) {
         return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
     }, []);
     const lastHeaders = (0, react_1.useRef)({});
-    const api = (0, react_1.useCallback)(async (path, body) => {
+    const api = (0, react_1.useCallback)(async (path, body, signal) => {
         const f = fetchRef.current;
         if (!f)
             throw new Error('fetch is not available');
         const headers = await authHeaders();
+        if (signal?.aborted)
+            throw new DOMException('Aborted', 'AbortError');
         lastHeaders.current = headers;
         const res = await f(`${optsRef.current.platformApi.baseUrl.replace(/\/$/, '')}${path}`, {
             method: 'POST',
+            ...(signal ? { signal } : {}),
             headers,
             body: JSON.stringify(body),
         });
@@ -311,17 +315,19 @@ function useConversationCall(opts) {
             if (activeRef.current?.callId !== a.callId)
                 return false; // hung up meanwhile
             setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId } : cur));
+            const gatewayClientId = str(gwRef.current?.clientId);
             const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
                 lobbyName: o.lobbyName,
                 documentId: o.lobbyName,
                 displayName: o.self.displayName,
+                ...(gatewayClientId ? { clientId: gatewayClientId } : {}),
             });
             if (activeRef.current?.callId !== a.callId) {
                 endPlatformSession({ ...a, sessionId, participantId: str(joined.participantId) ?? null });
                 return false;
             }
             setActive((cur) => (cur && cur.callId === a.callId
-                ? { ...cur, sessionId, stageToken: str(joined.token) ?? null, participantId: str(joined.participantId) ?? null }
+                ? { ...cur, sessionId, gatewayClientId, stageToken: str(joined.token) ?? null, participantId: str(joined.participantId) ?? null }
                 : cur));
             setBusy(null);
             return true;
@@ -879,6 +885,80 @@ function useConversationCall(opts) {
         }
         announceSelf();
     }, [mediaUp, announceSelf]);
+    // The native endpoint checks the gateway's current accepted seat and writes
+    // an immutable media-participant binding. Local joins/roster frames alone
+    // are never authority. A missing binding must not terminate a working call.
+    (0, react_1.useEffect)(() => {
+        if (!opts.bindRecordingCall) {
+            setRecordingBinding({ status: 'disabled' });
+            return;
+        }
+        const a = active;
+        if (!a || !mediaUp || !(a.pageHuddle || a.startedAt !== null)) {
+            setRecordingBinding({ status: 'pending' });
+            return;
+        }
+        const clientId = str(gw?.clientId);
+        if (!clientId || clientId !== a.gatewayClientId || gw?.connectionState !== 'connected' || !a.sessionId || !a.participantId) {
+            setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed for this connection.' });
+            return;
+        }
+        const abort = new AbortController();
+        let retry;
+        let attempts = 0;
+        const failed = () => setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed.' });
+        const documentSourceId = opts.documentSourceId;
+        if (documentSourceId !== undefined && (!documentSourceId || documentSourceId.length > 1024 || /[\u0000-\u001f\u007f]/.test(documentSourceId))) {
+            failed();
+            return;
+        }
+        setRecordingBinding({ status: 'pending', callId: a.callId });
+        const deadline = setTimeout(() => { failed(); abort.abort(); }, 15000);
+        const bind = async () => {
+            attempts++;
+            try {
+                const result = await api(`/api/video/sessions/${encodeURIComponent(a.sessionId)}/call-binding`, {
+                    lobbyName, callId: a.callId, participantId: a.participantId, clientId,
+                    ...(documentSourceId !== undefined ? { documentSourceId } : {}),
+                }, abort.signal);
+                if (abort.signal.aborted)
+                    return;
+                if (result.bound !== true || result.callId !== a.callId || result.sessionId !== a.sessionId
+                    || result.participantId !== a.participantId || result.clientId !== clientId || result.lobbyName !== lobbyName || !str(result.channelArn)) {
+                    clearTimeout(deadline);
+                    failed();
+                    return;
+                }
+                const context = result.documentContext;
+                if (documentSourceId !== undefined
+                    ? !context || context.tenant !== 'assessment' || context.sourceId !== documentSourceId || context.lobbyName !== lobbyName
+                    : context !== undefined) {
+                    clearTimeout(deadline);
+                    failed();
+                    return;
+                }
+                clearTimeout(deadline);
+                setRecordingBinding({ status: 'bound', callId: a.callId,
+                    ...(documentSourceId !== undefined ? { documentContext: { tenant: 'assessment', sourceId: documentSourceId, lobbyName } } : {}) });
+            }
+            catch (error) {
+                if (abort.signal.aborted)
+                    return;
+                const status = error.status;
+                // A gateway registration race can return403; retries never confer access.
+                if (attempts < 4 && (status === undefined || status === 403 || status === 429 || status >= 500)) {
+                    retry = setTimeout(() => { void bind(); }, [250, 1000, 2500][attempts - 1]);
+                }
+                else {
+                    clearTimeout(deadline);
+                    failed();
+                }
+            }
+        };
+        void bind();
+        return () => { abort.abort(); clearTimeout(deadline); clearTimeout(retry); };
+    }, [opts.bindRecordingCall, opts.documentSourceId, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
+        active?.gatewayClientId, active?.pageHuddle, active?.startedAt, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
     // A remote tile arriving is an answer too (a callee who skipped `accepted`).
     (0, react_1.useEffect)(() => {
         const a = activeRef.current;
@@ -1105,6 +1185,7 @@ function useConversationCall(opts) {
     const devices = (0, react_1.useMemo)(() => ({ prefs, set: setPrefs, list: deviceList }), [prefs, setPrefs, deviceList]);
     return {
         phase,
+        recordingBinding,
         call,
         incoming,
         error,
