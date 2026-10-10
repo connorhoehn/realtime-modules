@@ -1,6 +1,6 @@
 import { type UseLVSHangoutOptions, type UseLVSHangoutResult } from './useLVSHangout';
 import { type UseMediaDevicesResult } from './useMediaDevices';
-import type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallPhase, DevicePreferences, IncomingConversationCall } from './conversationCallTypes';
+import type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallInvitationRequest, ConversationCallInviteResult, ConversationCallPhase, DevicePreferences, IncomingConversationCall } from './conversationCallTypes';
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 export interface UseConversationCallOptions {
     /** Verbatim lobby name — never rewritten. Tenant prefixes are the caller's (`<tenant>:dm:<a>:<b>`). */
@@ -27,6 +27,8 @@ export interface UseConversationCallOptions {
     lvsBaseUrl?: string;
     /** platform-api recording profile for sessions this hook creates. Omitted = the server's default. */
     recordingProfile?: 'hangout' | 'broadcast' | 'dm' | 'none';
+    /** Opt in when platform-api supports verified participant-to-call recording bindings. */
+    bindRecordingCall?: boolean;
     /** Someone answered (caller side) or you joined (callee side). */
     onCallStarted?(e: ConversationCallEvent & {
         startedAt: number;
@@ -58,6 +60,12 @@ export interface UseConversationCallOptions {
 }
 export interface ConversationCallResult {
     phase: ConversationCallPhase;
+    /** Independent of call/media health. Only a durable native ACK can mark this bound. */
+    recordingBinding?: {
+        status: 'disabled' | 'pending' | 'bound' | 'unavailable';
+        callId?: string;
+        error?: string;
+    };
     /** The call you are in — or, while idle, a live call in this lobby you could join (`rejoin()`). */
     call: ConversationCall | null;
     /** A ring for THIS lobby (the app-wide toast uses useIncomingConversationCalls). */
@@ -88,6 +96,15 @@ export interface ConversationCallResult {
     }[], opts?: {
         audioOnly?: boolean;
     }): Promise<void>;
+    /** Request these people into the existing live call; never creates or rejoins media. */
+    inviteUsers(targets: {
+        userId: string;
+        displayName?: string;
+    }[]): ConversationCallInviteResult;
+    /** Locally requested people, separate from the authoritative in-call roster. */
+    invitationRequests: ConversationCallInvitationRequest[];
+    /** A correlated rejection, or an unscoped legacy gateway failure (delivery stays unconfirmed). */
+    invitationError: string | null;
     /** Answer `incoming` (or a ring handed over from the app-wide toast). */
     accept(ring?: IncomingConversationCall): Promise<void>;
     decline(reason?: ConversationCallDeclineReason): void;

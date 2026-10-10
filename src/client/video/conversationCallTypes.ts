@@ -99,6 +99,24 @@ export interface IncomingConversationCall {
 
 export type ConversationCallDeclineReason = 'not-now' | 'busy';
 
+/** A mid-call request is not proof that a recipient was rung or notified. */
+export interface ConversationCallInvitationRequest {
+  requestId: string;
+  callId: string;
+  userId: string;
+  displayName: string;
+  requestedAt: number;
+  state: 'requested' | 'accepted' | 'declined' | 'busy' | 'failed';
+  error?: string;
+}
+
+/** Local dispatch outcome; accepted/joined state arrives separately over the gateway. */
+export interface ConversationCallInviteResult {
+  requestedUserIds: string[];
+  requestId?: string;
+  reason?: string;
+}
+
 /** What the client-side lifecycle callbacks receive. */
 export interface ConversationCallEvent {
   callId: string;

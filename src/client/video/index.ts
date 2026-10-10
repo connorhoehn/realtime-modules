@@ -166,6 +166,8 @@ export type {
   ConversationCallDeclineReason,
   ConversationCallEvent,
   ConversationCallGateway,
+  ConversationCallInvitationRequest,
+  ConversationCallInviteResult,
   ConversationCallParticipant,
   ConversationCallPhase,
   DevicePreferences,

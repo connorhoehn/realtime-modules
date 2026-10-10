@@ -67,6 +67,20 @@ import { lobbyConversationKind } from './lobbyChannel';
 const _noopSpan = { setAttribute: () => {} };
 const _passthroughWithSpan: CallWithSpan = async (_name, _attrs, fn) => fn(_noopSpan);
 
+type CallErrorDetail = Pick<CallErrorFrame, 'code' | 'action' | 'callId' | 'lobbyName' | 'requestId'>;
+/** A refusal goes only to its sender; it does not assert recipient delivery. */
+function inviteErrorDetail(action: string, data: CallInvite | null | undefined): CallErrorDetail | undefined {
+    if (action !== 'invite') return undefined;
+    let payload = data ?? {};
+    const nested = payload.data;
+    if (payload.callId == null && payload.lobbyName == null && nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        payload = { ...(nested as CallInvite), ...payload };
+    }
+    return { action, ...(typeof payload.callId === 'string' ? { callId: payload.callId } : {}),
+        ...(typeof payload.lobbyName === 'string' ? { lobbyName: payload.lobbyName } : {}),
+        ...(typeof payload.requestId === 'string' && payload.requestId.length <= 128 ? { requestId: payload.requestId } : {}) };
+}
+
 /** Topic for cross-node disconnect notifications. Single dedicated
  *  channel keeps the topic surface minimal; the payload encodes who
  *  left and which call (when known). */
@@ -1435,7 +1449,7 @@ export class CallService {
                     if (this.messageRouter.getClientData && (!context || this.messageRouter.getClientData(clientId)?.userContext !== context)) authorized = false;
                     if (!authorized) {
                         span.setAttribute('call.outcome', 'unauthorized');
-                        this.sendError(clientId, `Not authorized for call action: ${typedAction}`);
+                        this.sendError(clientId, `Not authorized for call action: ${typedAction}`, inviteErrorDetail(action, data));
                         return;
                     }
                     await this.handleCallEvent(clientId, typedAction, data);
@@ -1455,7 +1469,7 @@ export class CallService {
                         lobbyName: (data && data.lobbyName) ?? null,
                         errorMessage: error && error.message ? error.message : String(error),
                     });
-                    this.sendError(clientId, 'Internal server error');
+                    this.sendError(clientId, 'Internal server error', inviteErrorDetail(action, data));
                 }
             },
             { tracerName: 'gateway' },
@@ -1490,7 +1504,7 @@ export class CallService {
         const targetUserIds = this.normalizeTargetUserIds(payload);
 
         if (action === 'invite' && (!callId || !lobbyName)) {
-            this.sendError(clientId, 'callId and lobbyName are required on invite');
+            this.sendError(clientId, 'callId and lobbyName are required on invite', inviteErrorDetail(action, payload));
             return;
         }
 
@@ -1507,6 +1521,7 @@ export class CallService {
         ) {
             this.logger.warn(`[CallService] refused untargeted invite from ${clientId} (callId=${callId} lobby=${lobbyName})`);
             this.sendError(clientId, 'invite needs targetUserIds: an untargeted invite would ring every connected client', {
+                ...inviteErrorDetail(action, payload),
                 code: 'untargeted-invite',
                 action,
                 callId,
@@ -1739,14 +1754,14 @@ export class CallService {
                     this.logger.warn(
                         `[CallService.canCall] DENIED invite from ${callerForPolicy} to [${targetUserIds.join(', ') || 'broadcast'}]`,
                     );
-                    this.sendError(clientId, 'Not authorized to call those users');
+                    this.sendError(clientId, 'Not authorized to call those users', inviteErrorDetail(action, payload));
                     return;
                 }
             } catch (e: any) {
                 this.logger.error(
                     `[CallService.canCall] policy check threw — denying invite as fail-closed: ${e?.message ?? e}`,
                 );
-                this.sendError(clientId, 'Authorization check failed');
+                this.sendError(clientId, 'Authorization check failed', inviteErrorDetail(action, payload));
                 return;
             }
         }
@@ -3784,7 +3799,7 @@ export class CallService {
         }
     }
 
-    sendError(clientId: string, message: string, detail?: Pick<CallErrorFrame, 'code' | 'action' | 'callId' | 'lobbyName'>): void {
+    sendError(clientId: string, message: string, detail?: CallErrorDetail): void {
         if (!this.messageRouter) return;
         const frame: CallErrorFrame = {
             type: 'error',

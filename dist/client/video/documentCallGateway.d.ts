@@ -8,6 +8,8 @@ export interface DocumentCallGateway {
     connectionState?: string;
     /** Bumps on every new gateway session; drives the reconnect re-sends. */
     sessionEpoch?: number;
+    /** Actual authenticated socket id; never a user id or a generated fallback. */
+    clientId?: string | null;
 }
 export declare function useDocumentCallGateway(explicit?: DocumentCallGateway | null): DocumentCallGateway | null;
 export declare function gatewaySend(gw: DocumentCallGateway | null, msg: Record<string, unknown>): void;

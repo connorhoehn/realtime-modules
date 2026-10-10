@@ -80,6 +80,8 @@ class FakePeerConnection {
   remoteDescription: { type: string; sdp: string } | null = null;
   iceGatheringState: 'new' | 'gathering' | 'complete' = 'complete';
   signalingState = 'stable';
+  connectionState: RTCPeerConnectionState = 'connected';
+  connectionStateListeners: Array<() => void> = [];
   closed = false;
   receivers: Array<{ track: FakeTrack }> = [];
   trackListeners: Array<(ev: { track: FakeTrack; streams: MediaStream[] }) => void> = [];
@@ -98,6 +100,7 @@ class FakePeerConnection {
   });
   addEventListener = jest.fn((evt: string, cb: unknown) => {
     if (evt === 'track') this.trackListeners.push(cb as never);
+    if (evt === 'connectionstatechange') this.connectionStateListeners.push(cb as never);
     if (evt === 'icegatheringstatechange') this.gatheringStateListeners.push(cb as never);
   });
   removeEventListener = jest.fn();
@@ -113,6 +116,11 @@ class FakePeerConnection {
     this.closed = true;
     this.closeMock();
   };
+
+  emitConnectionState(state: RTCPeerConnectionState) {
+    this.connectionState = state;
+    for (const callback of this.connectionStateListeners) callback();
+  }
 
   // Test helper: drive an onTrack event into the hook.
   emitTrack(kind: 'audio' | 'video', trackId: string, streamId: string): FakeTrack {
@@ -360,6 +368,141 @@ async function flush() {
     await new Promise<void>((r) => setTimeout(r, 0));
   }
 }
+
+async function cameraAndScreen() {
+  const handle: HarnessHandle = { result: null };
+  await act(async () => { render(<Harness token={TOKEN} pid={PID} handle={handle} />); await flush(); });
+  const ws = wsInstances[wsInstances.length - 1]!;
+  await act(async () => {
+    ws.triggerOpen();
+    ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' });
+    ws.triggerMessage({ type: 'producer.added', participantId: `${REMOTE_PID}:screen`, kind: 'video' });
+    await flush();
+  });
+  const [camera, screen] = whepPcs();
+  let cameraVideo!: FakeTrack, cameraAudio!: FakeTrack, screenVideo!: FakeTrack;
+  await act(async () => {
+    cameraVideo = camera!.emitTrack('video', 'camera-video', 'camera-stream');
+    cameraAudio = camera!.emitTrack('audio', 'camera-audio', 'camera-stream');
+    screenVideo = screen!.emitTrack('video', 'screen-video', 'screen-stream');
+    await flush();
+  });
+  return { handle, ws, camera: camera!, screen: screen!, cameraVideo, cameraAudio, screenVideo };
+}
+
+function endTrack(track: FakeTrack) {
+  track.readyState = 'ended';
+  for (const callback of track._endedListeners) callback();
+}
+
+describe('useLVSHangout — camera and screen teardown isolation', () => {
+  it('normal screen removal and its delayed orphan-ended callback preserve the camera PC and tracks', async () => {
+    const f = await cameraAndScreen();
+    const cameraStream = f.handle.result!.participants.find(p => !p.isLocal)!.streams[0];
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'producer.removed', participantId: `${REMOTE_PID}:screen`, kind: 'video' });
+      await flush();
+      endTrack(f.screenVideo); // Browser delivers this after cleanup removed the ref.
+      await flush();
+    });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream).toBeUndefined();
+    expect(f.camera.closed).toBe(false);
+    expect(f.cameraVideo.stop).not.toHaveBeenCalled();
+    expect(f.cameraAudio.stop).not.toHaveBeenCalled();
+    expect(f.cameraVideo.readyState).toBe('live');
+    expect(f.cameraAudio.readyState).toBe('live');
+  });
+
+  it('all-ended screen recovery replaces only the screen and preserves the camera throughout retry', async () => {
+    const f = await cameraAndScreen();
+    const cameraStream = f.handle.result!.participants.find(p => !p.isLocal)!.streams[0];
+    await act(async () => { endTrack(f.screenVideo); await flush(); });
+    let peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream).toBeUndefined();
+    expect(f.screen.closed).toBe(true);
+    expect(f.camera.closed).toBe(false);
+    expect(f.cameraVideo.stop).not.toHaveBeenCalled();
+    expect(f.cameraAudio.stop).not.toHaveBeenCalled();
+    await act(async () => { await new Promise(done => setTimeout(done, 1600)); await flush(); });
+    const replacement = whepPcs().find(p => p !== f.camera && p !== f.screen)!;
+    expect(replacement).toBeDefined();
+    await act(async () => { replacement.emitTrack('video', 'screen-recovered', 'new-screen'); await flush(); });
+    peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream!.getVideoTracks()[0]!.id).toBe('screen-recovered');
+    expect(f.cameraVideo.readyState).toBe('live');
+  });
+
+  it('failed screen connection recovery preserves the healthy camera transport', async () => {
+    const f = await cameraAndScreen();
+    const cameraStream = f.handle.result!.participants.find(p => !p.isLocal)!.streams[0];
+    await act(async () => { f.screen.emitConnectionState('failed'); await flush(); });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams[0]).toBe(cameraStream);
+    expect(peer.screenStream).toBeUndefined();
+    expect(f.screen.closed).toBe(true);
+    expect(f.camera.closed).toBe(false);
+    expect(f.cameraAudio.stop).not.toHaveBeenCalled();
+    expect(f.cameraVideo.stop).not.toHaveBeenCalled();
+  });
+
+  it('real camera end removes its own streams while retaining an independent live screen', async () => {
+    const f = await cameraAndScreen();
+    const screenStream = f.handle.result!.participants.find(p => !p.isLocal)!.screenStream;
+    await act(async () => { endTrack(f.cameraAudio); endTrack(f.cameraVideo); await flush(); });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams).toEqual([]);
+    expect(peer.screenStream).toBe(screenStream);
+    expect(f.camera.closed).toBe(true);
+    expect(f.screen.closed).toBe(false);
+    expect(f.screenVideo.stop).not.toHaveBeenCalled();
+  });
+
+  it('a delayed orphan camera-ended callback cannot remove the remaining screen', async () => {
+    const f = await cameraAndScreen();
+    const screenStream = f.handle.result!.participants.find(p => !p.isLocal)!.screenStream;
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'producer.removed', participantId: REMOTE_PID, kind: 'video' });
+      await flush(); endTrack(f.cameraVideo); endTrack(f.cameraAudio); await flush();
+    });
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    expect(peer.streams).toEqual([]);
+    expect(peer.screenStream).toBe(screenStream);
+    expect(f.screenVideo.stop).not.toHaveBeenCalled();
+    expect(f.screen.closed).toBe(false);
+  });
+
+  it.each(['camera', 'screen'] as const)('a stale %s callback cannot close or scrub the replacement PC', async kind => {
+    const f = await cameraAndScreen();
+    const pid = kind === 'screen' ? `${REMOTE_PID}:screen` : REMOTE_PID;
+    const oldTrack = kind === 'screen' ? f.screenVideo : f.cameraVideo;
+    await act(async () => {
+      f.ws.triggerMessage({ type: 'producer.removed', participantId: pid, kind: 'video' });
+      await flush();
+      f.ws.triggerMessage({ type: 'producer.added', participantId: pid, kind: 'video' });
+      await flush();
+    });
+    const replacement = whepPcs().find(p => p !== f.camera && p !== f.screen)!;
+    let replacementTrack!: FakeTrack;
+    await act(async () => { replacementTrack = replacement.emitTrack('video', `${kind}-new`, 'new-stream'); await flush(); });
+    // A pending replacement has not received live tracks yet. The old callback
+    // must be rejected by PC ownership even if all new receivers look ended.
+    replacementTrack.readyState = 'ended';
+    await act(async () => {
+      endTrack(oldTrack);
+      (kind === 'screen' ? f.screen : f.camera).emitConnectionState('failed');
+      await flush();
+    });
+    expect(replacement.closed).toBe(false);
+    expect(replacementTrack.stop).not.toHaveBeenCalled();
+    const peer = f.handle.result!.participants.find(p => !p.isLocal)!;
+    const owned = kind === 'screen' ? peer.screenStream : peer.streams[0];
+    expect(owned!.getVideoTracks()[0]).toBe(replacementTrack);
+  });
+});
 
 describe('useLVSHangout — StrictMode safety', () => {
   it('opens exactly ONE RTCPeerConnection per remote producer under StrictMode double-invoke', async () => {

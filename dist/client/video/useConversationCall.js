@@ -82,6 +82,7 @@ function useConversationCall(opts) {
         setActiveState(v);
     }, []);
     const [busy, setBusy] = (0, react_1.useState)(null);
+    const [recordingBinding, setRecordingBinding] = (0, react_1.useState)({ status: 'disabled' });
     const [error, setError] = (0, react_1.useState)(null);
     const [ended, setEnded] = (0, react_1.useState)(null);
     const [incoming, setIncomingState] = (0, react_1.useState)(null);
@@ -104,6 +105,18 @@ function useConversationCall(opts) {
     const [outcomes, setOutcomes] = (0, react_1.useState)({});
     const outcomesRef = (0, react_1.useRef)(outcomes);
     outcomesRef.current = outcomes;
+    const [invitationRequests, setInvitationRequestsState] = (0, react_1.useState)([]);
+    const invitationRequestsRef = (0, react_1.useRef)(invitationRequests);
+    const invitationSequence = (0, react_1.useRef)(0);
+    const [invitationError, setInvitationError] = (0, react_1.useState)(null);
+    const setInvitationRequests = (0, react_1.useCallback)((update) => {
+        invitationRequestsRef.current = update(invitationRequestsRef.current);
+        setInvitationRequestsState(invitationRequestsRef.current);
+    }, []);
+    const settleInvitation = (0, react_1.useCallback)((callId, userId, state) => {
+        setInvitationRequests(rows => rows.map(row => row.callId === callId && row.userId === userId
+            ? { ...row, state, error: undefined } : row));
+    }, [setInvitationRequests]);
     const [self, setSelfState] = (0, react_1.useState)({ audioOn: true, cameraOn: true, screenSharing: false });
     const selfRef = (0, react_1.useRef)(self);
     const setSelf = (0, react_1.useCallback)((patch) => {
@@ -119,14 +132,17 @@ function useConversationCall(opts) {
         return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
     }, []);
     const lastHeaders = (0, react_1.useRef)({});
-    const api = (0, react_1.useCallback)(async (path, body) => {
+    const api = (0, react_1.useCallback)(async (path, body, signal) => {
         const f = fetchRef.current;
         if (!f)
             throw new Error('fetch is not available');
         const headers = await authHeaders();
+        if (signal?.aborted)
+            throw new DOMException('Aborted', 'AbortError');
         lastHeaders.current = headers;
         const res = await f(`${optsRef.current.platformApi.baseUrl.replace(/\/$/, '')}${path}`, {
             method: 'POST',
+            ...(signal ? { signal } : {}),
             headers,
             body: JSON.stringify(body),
         });
@@ -250,9 +266,11 @@ function useConversationCall(opts) {
         acceptedRef.current = [];
         setAcceptedState([]);
         setOutcomes({});
+        setInvitationRequests(() => []);
+        setInvitationError(null);
         setSelf({ screenSharing: false });
         setEnded({ at, reason, durationMs });
-    }, [endPlatformSession, eventBase, setActive, setRoster, setSelf]);
+    }, [endPlatformSession, eventBase, setActive, setRoster, setSelf, setInvitationRequests]);
     /** Tell the others (and your other tabs) you are gone, then tear down. */
     const hangUp = (0, react_1.useCallback)((reason) => {
         const a = activeRef.current;
@@ -297,17 +315,19 @@ function useConversationCall(opts) {
             if (activeRef.current?.callId !== a.callId)
                 return false; // hung up meanwhile
             setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId } : cur));
+            const gatewayClientId = str(gwRef.current?.clientId);
             const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
                 lobbyName: o.lobbyName,
                 documentId: o.lobbyName,
                 displayName: o.self.displayName,
+                ...(gatewayClientId ? { clientId: gatewayClientId } : {}),
             });
             if (activeRef.current?.callId !== a.callId) {
                 endPlatformSession({ ...a, sessionId, participantId: str(joined.participantId) ?? null });
                 return false;
             }
             setActive((cur) => (cur && cur.callId === a.callId
-                ? { ...cur, sessionId, stageToken: str(joined.token) ?? null, participantId: str(joined.participantId) ?? null }
+                ? { ...cur, sessionId, gatewayClientId, stageToken: str(joined.token) ?? null, participantId: str(joined.participantId) ?? null }
                 : cur));
             setBusy(null);
             return true;
@@ -370,6 +390,49 @@ function useConversationCall(opts) {
             ...(channelRef.current ? { channel: channelRef.current } : {}),
         });
     }, [enter, joinMedia, send, setSelf]);
+    const inviteUsers = (0, react_1.useCallback)((targets) => {
+        const a = activeRef.current;
+        const g = gwRef.current;
+        const m = mediaRef.current;
+        if (!a?.stageToken || !m.isJoined || m.error || m.connectionState !== 'connected') {
+            return { requestedUserIds: [], reason: 'Join a connected call before inviting someone.' };
+        }
+        const emit = g?.send ?? g?.sendMessage;
+        if (!emit || g?.connectionState !== 'connected') {
+            return { requestedUserIds: [], reason: 'Reconnect to request a call invitation.' };
+        }
+        const o = optsRef.current;
+        const seen = new Set([o.self.userId, ...acceptedRef.current, ...Object.keys(rosterRef.current),
+            ...a.targets.map(t => t.userId), ...invitationRequestsRef.current.filter(r => r.callId === a.callId && r.state === 'requested').map(r => r.userId)]);
+        const requested = targets.filter(t => {
+            if (!t.userId || t.userId.length > 256 || seen.has(t.userId))
+                return false;
+            seen.add(t.userId);
+            return true;
+        });
+        if (!requested.length)
+            return { requestedUserIds: [], reason: 'Choose someone who is not already in or requested to this call.' };
+        if (requested.length > 50)
+            return { requestedUserIds: [], reason: 'Request at most 50 people at a time.' };
+        const at = Date.now();
+        const requestId = `invite-${at}-${++invitationSequence.current}`;
+        setInvitationError(null);
+        setInvitationRequests(rows => [...rows.filter(row => !requested.some(t => t.userId === row.userId)),
+            ...requested.map(t => ({ requestId, callId: a.callId, userId: t.userId, displayName: t.displayName || t.userId, requestedAt: at, state: 'requested' }))]);
+        try {
+            emit({ service: 'call', action: 'invite', requestId, callId: a.callId, lobbyName: o.lobbyName,
+                callerId: o.self.userId, callerName: o.self.displayName, targetUserIds: requested.map(t => t.userId),
+                ...(a.audioOnly ? { audioOnly: true } : {}), ...(channelRef.current ? { channel: channelRef.current } : {}) });
+        }
+        catch (error) {
+            const reason = error instanceof Error ? error.message : 'The invitation request could not be sent.';
+            setInvitationError(reason);
+            setInvitationRequests(rows => rows.map(row => row.requestId === requestId && row.state === 'requested'
+                ? { ...row, state: 'failed', error: reason } : row));
+            return { requestedUserIds: [], reason };
+        }
+        return { requestedUserIds: requested.map(t => t.userId), requestId };
+    }, [setInvitationRequests]);
     const accept = (0, react_1.useCallback)(async (ringArg) => {
         const ring = ringArg ?? incomingRef.current;
         if (!ring)
@@ -529,6 +592,24 @@ function useConversationCall(opts) {
         if (!onMessage)
             return;
         return onMessage((msg) => {
+            const failure = msg;
+            if (failure.type === 'error' && failure.service === 'call') {
+                const a = activeRef.current;
+                if (!a || (failure.callId && failure.callId !== a.callId))
+                    return;
+                if (!invitationRequestsRef.current.some(row => row.callId === a.callId && row.state === 'requested'))
+                    return;
+                if (failure.action && failure.action !== 'invite')
+                    return;
+                const reason = failure.message || 'The gateway refused the invitation request.';
+                setInvitationError(reason);
+                // Older gateways omit correlation: expose the error without claiming which invitation failed.
+                if (failure.action === 'invite' && failure.callId === a.callId && failure.requestId) {
+                    setInvitationRequests(rows => rows.map(row => row.callId === a.callId && row.requestId === failure.requestId && row.state === 'requested'
+                        ? { ...row, state: 'failed', error: reason } : row));
+                }
+                return;
+            }
             const f = (0, documentCallGateway_1.asCallFrame)(msg);
             if (!f)
                 return;
@@ -592,6 +673,7 @@ function useConversationCall(opts) {
                     }
                     if (!inThisCall)
                         return;
+                    settleInvitation(callId, uid, 'accepted');
                     setRoster((r) => ({ ...r, [uid]: { ...(r[uid] ?? {}), ...(str(d.displayName) ? { displayName: str(d.displayName) } : {}), status: 'in-call' } }));
                     markAccepted(uid);
                     announceSelf();
@@ -599,6 +681,8 @@ function useConversationCall(opts) {
                 }
                 case 'declined': {
                     const uid = str(d.callerId) ?? str(d.userId);
+                    if (inThisCall && uid && uid !== me)
+                        settleInvitation(callId, uid, 'declined');
                     if (!inThisCall || !uid || uid === me || a.role !== 'caller')
                         return;
                     const next = { ...outcomesRef.current, [uid]: 'declined' };
@@ -643,6 +727,8 @@ function useConversationCall(opts) {
                         return;
                     const status = str(d.status);
                     if (status === 'busy') {
+                        if (inThisCall)
+                            settleInvitation(callId, uid, 'busy');
                         const next = { ...outcomesRef.current, [uid]: 'busy' };
                         outcomesRef.current = next;
                         setOutcomes(next);
@@ -676,6 +762,8 @@ function useConversationCall(opts) {
                         return;
                     }
                     if (status === 'in-call' || d.inCall === true) {
+                        if (inThisCall)
+                            settleInvitation(callId, uid, 'accepted');
                         setRoster((r) => ({ ...r, [uid]: { ...(r[uid] ?? {}), status: 'in-call' } }));
                     }
                     return;
@@ -686,6 +774,7 @@ function useConversationCall(opts) {
                         return;
                     if (str(d.status) === 'left')
                         return;
+                    settleInvitation(callId, uid, 'accepted');
                     const wasAbsent = !rosterRef.current[uid];
                     setRoster((r) => {
                         const prev = r[uid] ?? { status: 'in-call' };
@@ -714,7 +803,7 @@ function useConversationCall(opts) {
                 default:
             }
         });
-    }, [onMessage, announceSelf, eventBase, hangUp, markAccepted, peerIds, setIncoming, setRoster, teardown]);
+    }, [onMessage, announceSelf, eventBase, hangUp, markAccepted, peerIds, setIncoming, setRoster, teardown, settleInvitation, setInvitationRequests]);
     // Rings answered by another hook in this page (the app-wide toast).
     (0, react_1.useEffect)(() => (0, useIncomingConversationCalls_1.onRingSettled)(({ callId }) => {
         if (incomingRef.current?.callId === callId)
@@ -759,6 +848,65 @@ function useConversationCall(opts) {
         }
         announceSelf();
     }, [mediaUp, announceSelf]);
+    // The native endpoint checks the gateway's current accepted seat and writes
+    // an immutable media-participant binding. Local joins/roster frames alone
+    // are never authority. A missing binding must not terminate a working call.
+    (0, react_1.useEffect)(() => {
+        if (!opts.bindRecordingCall) {
+            setRecordingBinding({ status: 'disabled' });
+            return;
+        }
+        const a = active;
+        if (!a || !mediaUp || !(a.pageHuddle || a.startedAt !== null)) {
+            setRecordingBinding({ status: 'pending' });
+            return;
+        }
+        const clientId = str(gw?.clientId);
+        if (!clientId || clientId !== a.gatewayClientId || gw?.connectionState !== 'connected' || !a.sessionId || !a.participantId) {
+            setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed for this connection.' });
+            return;
+        }
+        const abort = new AbortController();
+        let retry;
+        let attempts = 0;
+        const failed = () => setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed.' });
+        setRecordingBinding({ status: 'pending', callId: a.callId });
+        const deadline = setTimeout(() => { failed(); abort.abort(); }, 15000);
+        const bind = async () => {
+            attempts++;
+            try {
+                const result = await api(`/api/video/sessions/${encodeURIComponent(a.sessionId)}/call-binding`, {
+                    lobbyName, callId: a.callId, participantId: a.participantId, clientId,
+                }, abort.signal);
+                if (abort.signal.aborted)
+                    return;
+                if (result.bound !== true || result.callId !== a.callId || result.sessionId !== a.sessionId
+                    || result.participantId !== a.participantId || result.clientId !== clientId || result.lobbyName !== lobbyName || !str(result.channelArn)) {
+                    clearTimeout(deadline);
+                    failed();
+                    return;
+                }
+                clearTimeout(deadline);
+                setRecordingBinding({ status: 'bound', callId: a.callId });
+            }
+            catch (error) {
+                if (abort.signal.aborted)
+                    return;
+                const status = error.status;
+                // A gateway registration race can return403; retries never confer access.
+                if (attempts < 4 && (status === undefined || status === 403 || status === 429 || status >= 500)) {
+                    retry = setTimeout(() => { void bind(); }, [250, 1000, 2500][attempts - 1]);
+                }
+                else {
+                    clearTimeout(deadline);
+                    failed();
+                }
+            }
+        };
+        void bind();
+        return () => { abort.abort(); clearTimeout(deadline); clearTimeout(retry); };
+    }, [opts.bindRecordingCall, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
+        active?.gatewayClientId, active?.pageHuddle, active?.startedAt, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
     // A remote tile arriving is an answer too (a callee who skipped `accepted`).
     (0, react_1.useEffect)(() => {
         const a = activeRef.current;
@@ -866,7 +1014,8 @@ function useConversationCall(opts) {
                 screenStream: local?.screenStream ?? null,
             });
         }
-        const targetName = (uid) => active?.targets.find((t) => t.userId === uid)?.displayName;
+        const targetName = (uid) => active?.targets.find((t) => t.userId === uid)?.displayName
+            ?? invitationRequests.find(row => row.callId === active?.callId && row.userId === uid)?.displayName;
         const byPid = new Map();
         for (const [uid, r] of Object.entries(roster))
             if (r.participantId)
@@ -949,7 +1098,7 @@ function useConversationCall(opts) {
         }
         return out;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [active, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl]);
+    }, [active, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, invitationRequests]);
     const participantCount = participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length;
     const call = (0, react_1.useMemo)(() => {
         if (active) {
@@ -984,6 +1133,7 @@ function useConversationCall(opts) {
     const devices = (0, react_1.useMemo)(() => ({ prefs, set: setPrefs, list: deviceList }), [prefs, setPrefs, deviceList]);
     return {
         phase,
+        recordingBinding,
         call,
         incoming,
         error,
@@ -991,6 +1141,9 @@ function useConversationCall(opts) {
         callingTo,
         self,
         start,
+        inviteUsers,
+        invitationRequests,
+        invitationError,
         accept,
         decline,
         leave,

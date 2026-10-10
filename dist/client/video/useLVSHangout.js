@@ -396,53 +396,32 @@ function useLVSHangout(opts) {
         // Reconnect-ladder state — see WS setup further down.
         let reconnectAttempt = 0;
         let reconnectTimer = null;
-        // forceDeleteBase=true means "even if other media (camera streams or
-        // screen) remain on the participant entry, scrub the basePid entirely
-        // from remoteParticipants and firstSeenAtRef". The all-tracks-ended
-        // auto-recovery path uses this so the next openPcFor sees a clean
-        // slate and creates a fresh MediaStream — without it, a stale entry
-        // could linger (e.g. screenStream still present from a different PC)
-        // and prevent the consumer's <video> element from re-binding to the
-        // fresh stream id. For producer.removed and StrictMode cleanup paths,
-        // the historical "preserve sibling media" semantics still apply.
-        const cleanupPc = (fullPid, forceDeleteBase = false) => {
+        // A camera and its screen have separate consumer transports. Teardown
+        // and recovery must release only the media owned by this fullPid;
+        // deleting the base participant would stop the healthy sibling PC.
+        const cleanupPc = (fullPid) => {
             // Cancel any in-flight open for this pid so the open body bails
             // before it can publish a new entry to remoteSubscribersRef.
             const inflight = inFlightOpensRef.current.get(fullPid);
             if (inflight) {
                 console.info('[remote-pc] cleanupPc — cancelling in-flight open', {
                     fullPid,
-                    forceDeleteBase,
                     inflightEpoch: inflight.epoch,
                 });
                 inflight.cancelled = true;
                 inFlightOpensRef.current.delete(fullPid);
             }
             const entry = remoteSubscribersRef.current.get(fullPid);
-            if (!entry) {
-                // No PC to close, but if forceDeleteBase is set we still want
-                // to scrub the participant entry (covers the case where the
-                // PC was already torn down by a prior sweep).
-                if (forceDeleteBase) {
-                    const basePid = fullPid.split(':')[0] ?? fullPid;
-                    setRemoteParticipants((prev) => {
-                        if (!prev.has(basePid))
-                            return prev;
-                        const next = new Map(prev);
-                        next.delete(basePid);
-                        return next;
-                    });
-                    firstSeenAtRef.current.delete(basePid);
-                }
+            if (!entry)
                 return;
-            }
+            // Relinquish ownership before close() can deliver ended callbacks.
+            remoteSubscribersRef.current.delete(fullPid);
             // Permanent diagnostic — paired with the open log so we can grep
             // open/close transitions when remote tiles inevitably regress.
             console.info('[remote-pc] close', {
                 fullPid,
                 kind: entry.kind,
                 epoch: entry.epoch,
-                forceDeleteBase,
                 receiverStates: entry.pc.getReceivers().map(r => ({
                     kind: r.track?.kind,
                     ready: r.track?.readyState,
@@ -464,7 +443,6 @@ function useLVSHangout(opts) {
             if (entry.resourceUrl && entry.authToken) {
                 void (0, transport_1.whepTeardown)(entry.resourceUrl, entry.authToken).catch(() => { });
             }
-            remoteSubscribersRef.current.delete(fullPid);
             // Drop the per-PC connectionState snapshot so the aggregate doesn't
             // keep reporting 'reconnecting' for a PC that no longer exists.
             whepConnStatesRef.current.delete(fullPid);
@@ -476,19 +454,8 @@ function useLVSHangout(opts) {
                 const e = next.get(basePid);
                 if (!e)
                     return prev;
-                if (forceDeleteBase) {
-                    // Auto-recovery path — scrub everything for this basePid so the
-                    // next openPcFor creates a brand-new participant entry +
-                    // MediaStream. Stop any lingering tracks so the consumer's
-                    // <video> element drops the stale frame.
-                    for (const s of e.streams) {
-                        for (const t of s.getTracks()) {
-                            try {
-                                t.stop();
-                            }
-                            catch { /* */ }
-                        }
-                    }
+                if (isScreen) {
+                    // Screen-kind teardown — drop screenStream only.
                     if (e.screenStream) {
                         for (const t of e.screenStream.getTracks()) {
                             try {
@@ -496,18 +463,10 @@ function useLVSHangout(opts) {
                             }
                             catch { /* */ }
                         }
-                    }
-                    next.delete(basePid);
-                    firstSeenAtRef.current.delete(basePid);
-                    return next;
-                }
-                if (isScreen) {
-                    // Screen-kind teardown — drop screenStream only.
-                    if (e.screenStream) {
                         next.set(basePid, { ...e, screenStream: undefined });
                     }
                     // Don't delete the entry if camera-kind streams remain.
-                    if (!e.screenStream && e.streams.length === 0) {
+                    if (e.streams.length === 0) {
                         next.delete(basePid);
                         // Last producer for this peer gone — drop the first-seen
                         // entry so a rejoin under the same pid starts a fresh timer
@@ -783,19 +742,19 @@ function useLVSHangout(opts) {
                 // fires within ~1s of the actual failure instead of waiting on
                 // the 5s health sweep).
                 pc.addEventListener('connectionstatechange', () => {
-                    if (cancelled)
+                    if (cancelled || remoteSubscribersRef.current.get(fullPid)?.pc !== pc)
                         return;
                     const s = pc.connectionState;
                     whepConnStatesRef.current.set(fullPid, s);
                     setWhepHealthTick((n) => n + 1);
                     if (s === 'failed' && knownProducersRef.current.has(fullPid)) {
                         console.info('[remote-pc] connectionState=failed — triggering recovery', { fullPid });
-                        cleanupPc(fullPid, /* forceDeleteBase */ true);
+                        cleanupPc(fullPid);
                         scheduleRetry(fullPid);
                     }
                 });
                 pc.addEventListener('track', (ev) => {
-                    if (cancelled)
+                    if (cancelled || remoteSubscribersRef.current.get(fullPid)?.pc !== pc)
                         return;
                     const track = ev.track;
                     const basePid = fullPid.split(':')[0] ?? fullPid;
@@ -878,15 +837,14 @@ function useLVSHangout(opts) {
                     // any track is still live, we leave the PC alone and let the
                     // SFU drive the eventual teardown via producer.removed.
                     //
-                    // All-tracks-ended path (sticky-stale-state fix): when every
-                    // receiver is dead the consumer transport was reaped by the
-                    // SFU mid-call (transient ICE/DTLS blip). Fully scrub the
-                    // participant entry via forceDeleteBase so the avatar fallback
-                    // doesn't stick on a stale stream, then schedule an auto-
-                    // recovery retry — the producer is likely still alive on the
-                    // SFU and a fresh openPcFor will rebind the tile within ~1s.
+                    // All-ended recovery clears only this transport's stream so
+                    // the retry binds fresh media without interrupting its sibling.
                     track.addEventListener('ended', () => {
                         const current = remoteSubscribersRef.current.get(fullPid);
+                        // An old PC can deliver queued events after replacement. It
+                        // no longer owns either the ref or the replacement streams.
+                        if (cancelled || (current && current.pc !== pc))
+                            return;
                         const receiverStates = current
                             ? current.pc.getReceivers().map(r => ({
                                 kind: r.track?.kind,
@@ -902,41 +860,40 @@ function useLVSHangout(opts) {
                             receiverStates,
                         });
                         if (!current) {
-                            // Ref entry already gone (silent bail or earlier cleanup).
-                            // The ontrack handler had already pushed this track into
-                            // setRemoteParticipants, so the React tile is bound to a
-                            // MediaStream whose tracks are now `ended`. Scrub the
-                            // basePid from React state so the avatar fallback renders
-                            // instead of a permanently black <video>.
-                            const basePid = fullPid.split(':')[0] ?? fullPid;
-                            console.info('[remote-pc] track-ended on orphan ref — scrubbing React state', { fullPid, basePid });
+                            // Cleanup already removed the transport. Clear only a
+                            // surviving stream containing this exact orphaned track;
+                            // queued callbacks must not scrub sibling or newer media.
+                            console.info('[remote-pc] track-ended on orphan ref — scrubbing owned media', { fullPid, basePid, kind });
                             setRemoteParticipants((prev) => {
-                                if (!prev.has(basePid))
+                                const e = prev.get(basePid);
+                                if (!e)
                                     return prev;
-                                const next = new Map(prev);
-                                const e = next.get(basePid);
-                                if (e) {
-                                    for (const s of e.streams) {
-                                        for (const t of s.getTracks()) {
-                                            try {
-                                                t.stop();
-                                            }
-                                            catch { /* */ }
+                                const ownsTrack = (stream) => stream.getTracks().some(t => t.id === track.id);
+                                const owned = kind === 'screen'
+                                    ? (e.screenStream && ownsTrack(e.screenStream) ? [e.screenStream] : [])
+                                    : e.streams.filter(ownsTrack);
+                                if (owned.length === 0)
+                                    return prev;
+                                for (const stream of owned) {
+                                    for (const t of stream.getTracks()) {
+                                        try {
+                                            t.stop();
                                         }
-                                    }
-                                    if (e.screenStream) {
-                                        for (const t of e.screenStream.getTracks()) {
-                                            try {
-                                                t.stop();
-                                            }
-                                            catch { /* */ }
-                                        }
+                                        catch { /* */ }
                                     }
                                 }
-                                next.delete(basePid);
+                                const streams = kind === 'screen' ? e.streams : e.streams.filter(s => !owned.includes(s));
+                                const screenStream = kind === 'screen' ? undefined : e.screenStream;
+                                const next = new Map(prev);
+                                if (streams.length === 0 && !screenStream) {
+                                    next.delete(basePid);
+                                    firstSeenAtRef.current.delete(basePid);
+                                }
+                                else {
+                                    next.set(basePid, { ...e, streams, streamIds: new Set(streams.map(s => s.id)), screenStream });
+                                }
                                 return next;
                             });
-                            firstSeenAtRef.current.delete(basePid);
                             return;
                         }
                         const stillLive = current.pc.getReceivers().some((r) => {
@@ -951,11 +908,11 @@ function useLVSHangout(opts) {
                             });
                             return;
                         }
-                        console.info('[remote-pc] all tracks ended — full scrub + retry', {
+                        console.info('[remote-pc] all tracks ended — owned media scrub + retry', {
                             fullPid,
                             endedKind: track.kind,
                         });
-                        cleanupPc(fullPid, /* forceDeleteBase */ true);
+                        cleanupPc(fullPid);
                         scheduleRetry(fullPid);
                     }, { once: true });
                 });
@@ -1351,7 +1308,7 @@ function useLVSHangout(opts) {
                         fullPid: k,
                         kind: entry.kind,
                     });
-                    cleanupPc(k, /* forceDeleteBase */ true);
+                    cleanupPc(k);
                     scheduleRetry(k);
                 }
             }
@@ -1440,7 +1397,7 @@ function useLVSHangout(opts) {
                             muted: r.track?.muted,
                         })),
                     });
-                    // Route through cleanupPc(forceDeleteBase=true) so React state
+                    // Route through cleanupPc so this transport's React media state
                     // gets scrubbed alongside the ref + PC close — otherwise
                     // participants[i].streams[0] keeps pointing at the just-killed
                     // MediaStream (tracks transition to `ended` synchronously when
@@ -1449,7 +1406,7 @@ function useLVSHangout(opts) {
                     // Falls back to the inline scrub if cleanupPc isn't published
                     // (effect torn down).
                     if (cleanupPcRef.current) {
-                        cleanupPcRef.current(k, /* forceDeleteBase */ true);
+                        cleanupPcRef.current(k);
                     }
                     else {
                         try {

@@ -1,4 +1,5 @@
 import { type CallAction, type CallErrorFrame, type CallInvite, type CallLogger, type CallMessageRouter, type CallServiceOptions } from './types';
+type CallErrorDetail = Pick<CallErrorFrame, 'code' | 'action' | 'callId' | 'lobbyName' | 'requestId'>;
 /** Dedup identity for an invite: the call PLUS who is being rung.
  *  Broadcast invites (no targets) collapse to the callId, which is the
  *  old behaviour and correct for them — a broadcast re-fired within the
@@ -462,7 +463,7 @@ export declare class CallService {
     private scheduleDocLeave;
     private clearDocLeaveTimer;
     private clearDocLeaveTimerKey;
-    sendError(clientId: string, message: string, detail?: Pick<CallErrorFrame, 'code' | 'action' | 'callId' | 'lobbyName'>): void;
+    sendError(clientId: string, message: string, detail?: CallErrorDetail): void;
     getStats(): {
         stateful: true;
         activeCalls: number;
