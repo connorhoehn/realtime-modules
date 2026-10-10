@@ -556,7 +556,7 @@ class CallService {
      * write-through TTL matches the call lifetime — 60s for an open
      * invite, refreshed to 4h once accepted.
      */
-    registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds, mirror = true) {
+    registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds, mirror = true, channel) {
         // F2 — a (re)registration during the rejoin grace window saves
         // the call: cancel the deferred teardown.
         const pendingEnd = this.rejoinGraceTimers.get(callId);
@@ -589,7 +589,7 @@ class CallService {
             this.participantWrites.set(callId, writes);
             const prior = writes.get(clientId) ?? Promise.resolve();
             const write = prior.then(async () => {
-                await this.stateStore.registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds);
+                await this.stateStore.registerParticipant(callId, clientId, callerId, lobbyName, targetUserIds, channel);
                 this.storeMirrored.add(callId);
                 if (typeof this.stateStore.addClientToCall === 'function') {
                     const ttl = this.acceptedCallIds.has(callId) ? CallService.ACCEPTED_CALL_TTL_SEC : CallService.INVITE_TTL_SEC;
@@ -1777,7 +1777,7 @@ class CallService {
         const shouldRegister = !!callId && ((action === 'invite' && !!lobbyName)
             || action === 'accepted');
         if (shouldRegister) {
-            const participantWrite = this.registerParticipant(callId, clientId, callerId, resolvedLobbyName, targetUserIds, !acceptedSeatClaimed);
+            const participantWrite = this.registerParticipant(callId, clientId, callerId, resolvedLobbyName, targetUserIds, !acceptedSeatClaimed, action === 'invite' && typeof payload.channel === 'string' ? payload.channel : undefined);
             if (acceptedSeatClaimed)
                 this.storeMirrored.add(callId);
             if (typeof this.messageRouter.getUserIdForClient === 'function') {
@@ -2382,7 +2382,7 @@ class CallService {
             if (!result.accepted && !result.winnerClientId && !view) {
                 // No call yet: this join creates it, then takes its seat the
                 // same way every later join does.
-                await this.stateStore.registerParticipant(callId, clientId, userId, lobbyName, []);
+                await this.stateStore.registerParticipant(callId, clientId, userId, lobbyName, [], typeof payload.channel === 'string' ? payload.channel : undefined);
                 result = await claim();
             }
             if (!result.accepted && result.winnerClientId && this.isClientAliveHook
@@ -2410,7 +2410,7 @@ class CallService {
             }
             claimed = true;
         }
-        const write = this.registerParticipant(callId, clientId, existing?.callerId || view?.callerId || userId, lobbyName, [], !claimed);
+        const write = this.registerParticipant(callId, clientId, existing?.callerId || view?.callerId || userId, lobbyName, [], !claimed, typeof payload.channel === 'string' ? payload.channel : undefined);
         if (claimed)
             this.storeMirrored.add(callId);
         this.participantUserIds.set(clientId, userId);

@@ -1,4 +1,6 @@
 export interface ActiveCallStateView {
+    /** Original page channel; immutable after call creation, absent on legacy calls. */
+    channel?: string | null;
     callerId: string;
     lobbyName: string;
     targetUserIds: string[];
@@ -29,7 +31,7 @@ export interface CallStateStore {
      * a liveness query. A concurrent registration must make this return false. */
     forgetCallIfUnchanged?(callId: string, expected: ActiveCallStateView): Promise<boolean>;
     /** Add a participant to a call. Creates the call entry if missing. */
-    registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
+    registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], channel?: string): Promise<void>;
     /** Remove one participant. Returns the remaining count post-removal,
      *  or null when the call doesn't exist. */
     removeParticipant(callId: string, clientId: string): Promise<{
@@ -165,7 +167,7 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     private lobbyToCalls;
     resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
     forgetCallIfUnchanged(callId: string, expected: ActiveCallStateView): Promise<boolean>;
-    registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
+    registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], channel?: string): Promise<void>;
     removeParticipant(callId: string, clientId: string): Promise<{
         remaining: number;
     } | null>;
@@ -233,7 +235,7 @@ export declare class RedisCallStateStore implements CallStateStore {
     private script;
     resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
     forgetCallIfUnchanged(callId: string, expected: ActiveCallStateView): Promise<boolean>;
-    registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void>;
+    registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], channel?: string): Promise<void>;
     private hsetnx;
     private sadd;
     private srem;

@@ -9,6 +9,8 @@
 //     restart. Per-call hash + per-client set, with TTL safety net.
 
 export interface ActiveCallStateView {
+    /** Original page channel; immutable after call creation, absent on legacy calls. */
+    channel?: string | null;
     callerId: string;
     lobbyName: string;
     targetUserIds: string[];
@@ -44,6 +46,7 @@ export interface CallStateStore {
         callerId: string,
         lobbyName: string,
         targetUserIds: string[],
+        channel?: string,
     ): Promise<void>;
 
     /** Remove one participant. Returns the remaining count post-removal,
@@ -218,6 +221,7 @@ export interface CallStateStore {
 // ---------------------------------------------------------------------------
 
 interface InMemoryActiveCall {
+    channel?: string | null;
     callerId: string;
     lobbyName: string;
     targetUserIds: string[];
@@ -306,10 +310,10 @@ export class InMemoryCallStateStore implements CallStateStore {
         return true;
     }
 
-    async registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void> {
+    async registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], channel?: string): Promise<void> {
         let state = this.activeCalls.get(callId);
         if (!state) {
-            state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set() };
+            state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set(), ...(validCallChannel(channel) ? { channel } : {}) };
             this.activeCalls.set(callId, state);
         }
         state.participantClientIds.add(clientId);
@@ -337,6 +341,7 @@ export class InMemoryCallStateStore implements CallStateStore {
         return {
             callerId: state.callerId,
             lobbyName: state.lobbyName,
+            ...(state.channel !== undefined ? { channel: state.channel } : {}),
             targetUserIds: state.targetUserIds,
             participantClientIds: Array.from(state.participantClientIds),
             invitedAt: state.invitedAt ?? null,
@@ -512,6 +517,7 @@ export class InMemoryCallStateStore implements CallStateStore {
                 lobbyName: state.lobbyName,
                 targetUserIds: state.targetUserIds,
                 participantClientIds: new Set<string>(state.participantClientIds),
+                ...(validCallChannel(state.channel) ? { channel: state.channel } : {}),
             };
             this.activeCalls.set(callId, entry);
         } else {
@@ -717,10 +723,11 @@ export class RedisCallStateStore implements CallStateStore {
         return Number(result) === 1;
     }
 
-    async registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[]): Promise<void> {
+    async registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], channel?: string): Promise<void> {
         const callKey = this.callKey(callId);
         const participantsKey = this.participantsKey(callId);
         const clientKey = this.clientKey(clientId);
+        if (validCallChannel(channel)) await this.script(CREATE_CALL_CHANNEL, [callKey], [callerId, lobbyName, JSON.stringify(targetUserIds), channel, TTL_SECONDS]);
         // HSETNX is atomic + only-if-not-exists, so the first-write
         // values for callerId/lobby/targetUserIds win without a
         // racy hgetall→hset compare.
@@ -853,6 +860,7 @@ export class RedisCallStateStore implements CallStateStore {
         return {
             callerId: hash.callerId,
             lobbyName: hash.lobbyName ?? '',
+            ...(typeof hash.channel === 'string' ? { channel: hash.channel } : {}),
             targetUserIds,
             participantClientIds,
             invitedAt,
@@ -1099,6 +1107,7 @@ export class RedisCallStateStore implements CallStateStore {
     async setCall(callId: string, state: ActiveCallStateView, ttlSec: number): Promise<void> {
         const callKey = this.callKey(callId);
         const participantsKey = this.participantsKey(callId);
+        if (validCallChannel(state.channel)) await this.script(CREATE_CALL_CHANNEL, [callKey], [state.callerId, state.lobbyName, JSON.stringify(state.targetUserIds ?? []), state.channel, ttlSec]);
         // Authoritative write — overwrites prior values (this is the
         // explicit "I know the full state" path; the registerParticipant
         // HSETNX path is for racy concurrent inserts).
@@ -1343,3 +1352,18 @@ export class RedisDocumentCallMetaStore implements DocumentCallMetaStore {
         return Array.isArray(ids) ? ids : [];
     }
 }
+
+/** A channel is a source hint, never authorization. Consumers still resolve the
+ * exact document and verify the active actor's read authority. */
+function validCallChannel(channel: unknown): channel is string {
+    return typeof channel === 'string' && channel.length > 0 && channel.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(channel);
+}
+// Capture caller/lobby/channel together. HSETNX on the channel alone would let
+// a later join fill a legacy call's missing context or race a different creator.
+const CREATE_CALL_CHANNEL = `-- call-create-channel-v1
+if redis.call('HEXISTS', KEYS[1], 'callerId') == 0 then
+  redis.call('HSET', KEYS[1], 'callerId', ARGV[1], 'lobbyName', ARGV[2], 'targetUserIds', ARGV[3], 'channel', ARGV[4])
+  redis.call('EXPIRE', KEYS[1], ARGV[5])
+end
+return 1
+`;

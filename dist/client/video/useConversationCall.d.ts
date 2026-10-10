@@ -32,6 +32,11 @@ export interface UseConversationCallOptions {
     lvsBaseUrl?: string;
     /** platform-api recording profile for sessions this hook creates. Omitted = the server's default. */
     recordingProfile?: 'hangout' | 'broadcast' | 'dm' | 'none';
+    /** Opt in when platform-api supports verified participant-to-call recording bindings. */
+    bindRecordingCall?: boolean;
+    /** Untrusted source hint for document lobbies. Native authority validates the
+     * source and canonical lobby before acknowledging its durable association. */
+    documentSourceId?: string;
     /** Someone answered (caller side) or you joined (callee side). */
     onCallStarted?(e: ConversationCallEvent & {
         startedAt: number;
@@ -63,6 +68,17 @@ export interface UseConversationCallOptions {
 }
 export interface ConversationCallResult {
     phase: ConversationCallPhase;
+    /** Independent of call/media health. Only a durable native ACK can mark this bound. */
+    recordingBinding?: {
+        status: 'disabled' | 'pending' | 'bound' | 'unavailable';
+        callId?: string;
+        error?: string;
+        documentContext?: {
+            tenant: 'assessment';
+            sourceId: string;
+            lobbyName: string;
+        };
+    };
     /** The call you are in — or, while idle, a live call in this lobby you could join (`rejoin()`). */
     call: ConversationCall | null;
     /** A ring for THIS lobby (the app-wide toast uses useIncomingConversationCalls). */
