@@ -1,4 +1,4 @@
-import React, { type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import type { UseWebSocketHookReturn } from './useWebSocket';
 import type { GatewayMessage } from './types';
 /** All feature identifiers that GatewaySocketProvider knows how to activate. */
@@ -165,7 +165,7 @@ export declare function createGatewayRest(url: string, token?: string, httpBase?
  * WS connection without prop-drilling. Do not call useGateway() outside
  * a GatewaySocketProvider — it throws.
  */
-export declare const GatewayContext: React.Context<GatewayContextValue | null>;
+export declare const GatewayContext: import("react").Context<GatewayContextValue | null>;
 /**
  * GatewaySocketProvider — React context provider for the gateway WS
  * connection.

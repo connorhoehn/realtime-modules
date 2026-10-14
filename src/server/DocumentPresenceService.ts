@@ -50,7 +50,7 @@ type AnyClientData = any;
 
 class DocumentPresenceService {
     private messageRouter: MessageRouterContract;
-    private logger: any;
+    protected logger: any;
     // Map<channelId, Map<clientId, UserInfo>>
     documentPresenceMap: Map<string, Map<string, UserInfo>>;
     // Map<clientId, Set<channelId>> — reverse index for disconnect cleanup

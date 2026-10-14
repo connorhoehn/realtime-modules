@@ -31,6 +31,8 @@ export { createAuthorityScope, publishProofKey, revokePublishProofs, PUBLISH_PRO
 export { WorkGraphStreamService } from '../work-graph/streamService';
 export type { WorkGraphSource, WorkGraphStreamConfig, WorkGraphStreamScope, WorkGraphStreamSubscription, WorkGraphStreamTrigger, WorkGraphChannelContext, } from '../work-graph/streamService';
 export type { AuthorityScope } from '../server-ws/authorityScope';
+export * from './authority';
+export { dmLobbyAdmits } from '../call/lobbyChannel';
 export * from "./documentGrant";
 export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";
 //# sourceMappingURL=index.d.ts.map

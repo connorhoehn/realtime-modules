@@ -37,7 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.exportCanvasProjection = exports.createCanvasSeed = exports.WorkGraphStreamService = exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.workGraph = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.exportCanvasProjection = exports.createCanvasSeed = exports.dmLobbyAdmits = exports.WorkGraphStreamService = exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.workGraph = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -121,6 +121,12 @@ Object.defineProperty(exports, "revokePublishProofs", { enumerable: true, get: f
 Object.defineProperty(exports, "PUBLISH_PROOF_SKEW_MS", { enumerable: true, get: function () { return authorityScope_1.PUBLISH_PROOF_SKEW_MS; } });
 var streamService_1 = require("../work-graph/streamService");
 Object.defineProperty(exports, "WorkGraphStreamService", { enumerable: true, get: function () { return streamService_1.WorkGraphStreamService; } });
+// 0.116 — the authority primitives every multi-tenant host wrote by hand:
+// the channel-family mechanism, the partition/DM guard, the fresh-per-request
+// authority engine, principal revalidation and the bearer subprotocol parser.
+__exportStar(require("./authority"), exports);
+var lobbyChannel_1 = require("../call/lobbyChannel");
+Object.defineProperty(exports, "dmLobbyAdmits", { enumerable: true, get: function () { return lobbyChannel_1.dmLobbyAdmits; } });
 __exportStar(require("./documentGrant"), exports);
 var canvasSeed_1 = require("./canvasSeed");
 Object.defineProperty(exports, "createCanvasSeed", { enumerable: true, get: function () { return canvasSeed_1.createCanvasSeed; } });

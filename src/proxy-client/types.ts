@@ -109,7 +109,7 @@ export interface ProxyClientOptions {
  * fetch; the `status` + `body` fields on HTTP errors carry the response.
  */
 export class ProxyClientError extends Error {
-    constructor(message: string, public readonly cause?: unknown) {
+    constructor(message: string, public override readonly cause?: unknown) {
         super(message);
         this.name = 'ProxyClientError';
     }

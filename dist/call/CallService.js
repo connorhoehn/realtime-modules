@@ -214,6 +214,8 @@ class CallService {
     participantUserIds = new Map();
     /** See CallConfig.allowUntargetedInvites. */
     allowUntargetedInvites = true;
+    /** See CallConfig.refuseEmptyTargets. */
+    refuseEmptyTargets = false;
     onSweepSkipped = null;
     _withSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
@@ -264,6 +266,8 @@ class CallService {
         this.callMissedHook = config.onCallMissed ?? null;
         if (config.allowUntargetedInvites === false)
             this.allowUntargetedInvites = false;
+        if (config.refuseEmptyTargets === true)
+            this.refuseEmptyTargets = true;
         this.inviteSweepTimer = setInterval(() => {
             // PR-W2.4 — leader gate.  When ownership is enabled and a
             // peer node owns the `__leader:call-sweep` sentinel, that
@@ -693,6 +697,9 @@ class CallService {
                 invitedAt: state.invitedAt,
                 endedAt,
                 reason: state.declined ? 'declined' : missedReason,
+                targetUserIds: Array.from(state.rungUserIds ?? state.originalTargetUserIds ?? state.targetUserIds ?? [])
+                    .filter((id) => id !== state.callerId),
+                ...(state.inviteChannel ? { channel: state.inviteChannel } : {}),
             }
             : null;
         void (async () => {
@@ -1432,10 +1439,9 @@ class CallService {
         // untargeted invite is the normal shape: a room walk-in (`room:` /
         // `<tenant>:room:` lobby) and a document call (which never broadcasts).
         if (action === 'invite'
-            && !this.allowUntargetedInvites
             && targetUserIds.length === 0
-            && (0, lobbyChannel_1.lobbyConversationKind)(lobbyName) !== 'room'
-            && !(payload.kind === 'document-review' && this.metaStore)) {
+            && !(payload.kind === 'document-review' && this.metaStore)
+            && (this.refuseEmptyTargets || (!this.allowUntargetedInvites && (0, lobbyChannel_1.lobbyConversationKind)(lobbyName) !== 'room'))) {
             this.logger.warn(`[CallService] refused untargeted invite from ${clientId} (callId=${callId} lobby=${lobbyName})`);
             this.sendError(clientId, 'invite needs targetUserIds: an untargeted invite would ring every connected client', {
                 ...inviteErrorDetail(action, payload),
@@ -1832,6 +1838,13 @@ class CallService {
             }
             if (action === 'invite') {
                 const state = this.activeCalls.get(callId);
+                if (state) {
+                    const rung = state.rungUserIds ?? (state.rungUserIds = new Set());
+                    for (const id of (docInvite ? docInvite.ringTargets : targetUserIds))
+                        rung.add(id);
+                    if (typeof payload.channel === 'string' && payload.channel && !state.inviteChannel)
+                        state.inviteChannel = payload.channel;
+                }
                 const initialInvite = state && typeof state.invitedAt !== 'number';
                 if (initialInvite) {
                     const now = Date.now();

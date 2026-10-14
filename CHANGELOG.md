@@ -2,6 +2,119 @@
 
 ## [Unreleased]
 
+## 0.116.0 — 2026-10-14
+
+The authority primitives every multi-tenant host wrote by hand. The library
+now owns the MECHANISM (how a name is read against a family table, when the
+principal is reloaded, where a call frame is verified); the host keeps the
+DATA and the business rules (its family table, its directory, its policy,
+its membership rows) as callbacks. Fail closed throughout, nothing settles:
+no verdict is cached between calls. Parity: the 104 cases of aws-agentcore's
+`authority-facade.test.ts` (its "88 contracts") run against these primitives in
+`test/server/authority/authority-facade-parity.test.ts` and give the same
+verdict for every row.
+
+- **`defineChannelFamilies(families, opts)`** (`/server`) → `{ guard,
+  lobbyGuard, familyOf, serviceOf, authorityFor, lobbyFamily,
+  isProducerChannel, namespaceOf, partitions }`. A family is `{ id, tenant,
+  pattern, services, lobby?, lobbyResource?, channelResource?, read, write }`
+  where `read`/`write` are the host's own authority values (the library never
+  reads them). Default deny: under a governed partition only a listed family,
+  only for the services it offers (ephemeral `presence`/`typing`/`cursor`
+  publish under `read`), and call lobbies only where `lobby: true`. Host
+  `namespaces` (a server-push feed, a call's own chat) and `rules` (team
+  rosters, a membership mirror) slot in before the table.
+- **`partitionGuard({ tenantsOf, orgOf, userIdOf, dm, next })`**: the first
+  name segment must be the caller's org or one of its tenants, and a
+  member-addressed DM (`<p>:dm:<a>:<b>…`) admits only its listed ids. Built on
+  the new **`dmLobbyAdmits(lobby, userId, { prefix })`** (`/call`, `/server`),
+  the one DM admission rule next to `dmLobbyName`/`parseDmLobby`.
+- **`createChannelAuthority({ families, principal: { load, auth }, holds,
+  meets, resource, channelSteps, callSteps, namespaces })`** →
+  `{ authorizeChannel, authorizeCall, authorizeCallRecipient,
+  authorizeLobby(ctx, name, 'read' | 'join'), holdsFamily, current }`. Order,
+  every call: shape → `principal.load` (fresh) → host steps → the family's
+  `holds` and `resource` → `principal.load` again after that I/O
+  (`recheckAfterIo`, default on) → every step's recheck and `meets` → the
+  shape on the reloaded identity. `authorizeLobby` answers the four-way
+  `'ok' | 'not-a-lobby' | 'gone' | 'denied'`. `authorizeCall` verifies
+  `callerId` on invite (`verifyCaller`, default on), normalises the nested
+  envelope, refuses renaming a stored call into another lobby, and needs a
+  lobby for a recipient check.
+- **Principal revalidation: `attachRealtime({ principal: { revalidate(ctx),
+  recheckAfterIo } })`** (opt-in). `revalidate` is the host's directory read
+  (epoch, grants, actor); false/throw refuses. Run at upgrade (after `auth`,
+  401), before every local-router `authorize` and recipient filter and again
+  after the host's decision, and before/after the `calls()` and
+  `notifications()` hooks (`FeatureContext.principal`). A host with its own
+  router wraps that router's hooks with **`withPrincipalRevalidation(hooks,
+  principal)`**. A stale socket is sent nothing at all, refusals included.
+- **`bearerSubprotocolAuth({ verify, allowOrigin, protocol })`** and
+  **`tokenFromSubprotocol(header)`**: the server half of the
+  `Sec-WebSocket-Protocol: bearer-token-v1, <token>` the client already sends
+  — exactly two entries, the marker first; no query/cookie fallback;
+  verification is the host's (an HS256 realtime token, a service-runtime JWT).
+  A verified identity without a non-empty `userId` is refused. Typed
+  **`RealtimeAuthContext`** (`userId`, `org`, `tenants`, `role`, `epoch`,
+  `sessionIat`, `act`, …).
+- **Call defaults.** `calls({ verifyCaller })`, default **on**: an `invite`
+  must name the connection's authenticated user as `callerId` (the library
+  used to trust it, so a client could ring as someone else and own the call).
+  `calls({ refuseEmptyTargets })`, default **on** unless
+  `allowUntargetedInvites` is set: an invite with no targets is refused for
+  room lobbies too (`allowUntargetedInvites: false` still let `room:` walk-ins
+  broadcast to every connected client); document-call invites are unaffected.
+  `onCallMissed` now carries **`targetUserIds`** (the union of every invite's
+  targets on this node, caller excluded) and **`channel`** (the invite's
+  conversation), which retires a host-side invite ledger.
+- **`npm run lint`**: `tsc -p tsconfig.lint.json` (unused locals, implicit
+  returns, switch fallthrough, `override`). Five pre-existing findings fixed
+  (three unused imports, a `protected` logger, an `override` on
+  `ProxyClientError.cause`).
+
+### Migration (0.115 → 0.116)
+
+Breaking defaults, both in `calls()` under `attachRealtime` (a bare
+`new CallService()` keeps the old behaviour):
+
+1. **`verifyCaller`.** An `invite` whose `callerId` is not the socket's
+   authenticated `userId` — or any invite from a socket without one — is
+   refused (`Not authorized for call action: invite`). Clients that already
+   send their own id see no change. Anonymous demos pass
+   `calls({ verifyCaller: false })`.
+2. **`refuseEmptyTargets`.** A targetless room walk-in (`room:x`,
+   `<tenant>:room:x`) is now refused with `code: 'untargeted-invite'`. A host
+   whose rooms rely on that broadcast passes `calls({ refuseEmptyTargets:
+   false })`; `allowUntargetedInvites: true` keeps implying it.
+
+Everything else is additive and opt-in: existing `authorize` / `lobbyGuard` /
+`filterClientMessage` hooks keep working unchanged.
+
+Adopting the authority kit (the aws-agentcore shape, one release with both
+paths live and a dev parity assertion before deleting the host copies):
+
+- Keep the family TABLE as host data; pass it to `defineChannelFamilies` with
+  `partitions` (the default-deny tenants), `namespaces` (host-only names with
+  their shape rule) and `rules` (rosters/mirrors). Replace hand-written
+  `channelGuard`/`lobbyGuard`/`channelService`/`channelAuthorityFor`/
+  `tenantChannelFamily` with the returned functions.
+- Hand the directory read to `createChannelAuthority({ principal: { load,
+  auth }, holds, meets, resource })`; partition-specific async checks (a
+  Social action + membership proof) become `channelSteps`/`callSteps` that
+  return `{ recheck, dispose }`; a per-row page read (a deck row) becomes the
+  family's `channelResource`. The router's `authorize` is
+  `authority.authorizeChannel`; `calls({ config: { authorize } })` is
+  `authority.authorizeCall`; a lobby REST read is `authorizeLobby(ctx, name,
+  'read')`.
+- Pass `principal: { revalidate }` to `attachRealtime` (or
+  `withPrincipalRevalidation` around a custom router's hooks) instead of
+  calling the directory inside `auth` and every feature hook.
+- Replace a hand-parsed `Sec-WebSocket-Protocol` with
+  `bearerSubprotocolAuth({ verify })`.
+- Drop a host invite ledger: read `targetUserIds`/`channel` off
+  `onCallMissed`. Drop a host `canCall: targets.length > 0`: it is the
+  default.
+
 ## 0.115.0 — 2026-10-07
 
 - **Read cursors on open page discussions (`chat({ cursorMode, currentReaders })`).**

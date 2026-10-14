@@ -29,6 +29,7 @@ exports.channelForLobby = channelForLobby;
 exports.lobbyForChatLobbyChannel = lobbyForChatLobbyChannel;
 exports.dmLobbyName = dmLobbyName;
 exports.dmLobbyPrefix = dmLobbyPrefix;
+exports.dmLobbyAdmits = dmLobbyAdmits;
 exports.parseDmLobby = parseDmLobby;
 exports.isDmLobby = isDmLobby;
 exports.lobbyConversationKind = lobbyConversationKind;
@@ -113,6 +114,34 @@ function dmLobbyName(userIds, opts = {}) {
  */
 function dmLobbyPrefix(opts = {}) {
     return `${opts.prefix ?? ''}${opts.group ? 'dmg' : 'dm'}:`;
+}
+/**
+ * The DM admission rule every multi-tenant host wrote by hand (0.116): does the
+ * member-addressed DM lobby `lobby` admit `userId`? `null` when `lobby` is not
+ * a member-addressed DM under `opts.prefix` at all (the caller's other rules
+ * decide it — a room, a page, a hashed `dmg:` group whose roster the name
+ * cannot reveal).
+ *
+ *   dmLobbyAdmits('acme:dm:alice:bob', 'alice', { prefix: 'acme:' }) → true
+ *   dmLobbyAdmits('acme:dm:alice:bob', 'carol', { prefix: 'acme:' }) → false
+ *   dmLobbyAdmits('acme:dm',           'alice', { prefix: 'acme:' }) → false (no members)
+ *   dmLobbyAdmits('acme:room:x',       'alice', { prefix: 'acme:' }) → null
+ *
+ * Deliberately the gateway guard's reading, which is more lenient about SHAPE
+ * than `parseDmLobby` and exactly as strict about MEMBERSHIP: empty member
+ * segments are skipped and a one-member (self) DM admits its member, but only
+ * a listed id is ever admitted. `dmLobbyName` writes the names this reads.
+ */
+function dmLobbyAdmits(lobby, userId, opts = {}) {
+    const prefix = opts.prefix ?? '';
+    if (!lobby.startsWith(prefix))
+        return null;
+    const rest = lobby.slice(prefix.length);
+    if (rest !== 'dm' && !rest.startsWith('dm:'))
+        return null;
+    if (!userId)
+        return false;
+    return rest.slice(3).split(':').filter(Boolean).includes(userId);
 }
 /**
  * Parse a DM lobby name into its tenant prefix and members (or group hash).

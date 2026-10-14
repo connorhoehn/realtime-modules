@@ -20,7 +20,7 @@
 //   - Additive: omitting `features` is identical to the prior behavior where
 //     the consumer wired subscriptions manually.
 
-import React, {
+import {
   createContext,
   useCallback,
   useContext,

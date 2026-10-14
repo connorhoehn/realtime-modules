@@ -28,7 +28,6 @@ import {
   serializeDocument,
   type DocModel,
   type JsonObject,
-  type JsonValue,
 } from 'distributed-core/applications/document';
 // `@tiptap/y-tiptap` is loaded on use, not on import.
 //

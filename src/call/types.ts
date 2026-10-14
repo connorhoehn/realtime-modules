@@ -405,6 +405,18 @@ export interface CallConfig {
     allowUntargetedInvites?: boolean;
 
     /**
+     * 0.116: refuse EVERY invite with no targets that would reach the
+     * broadcast path — room walk-ins (`room:` / `<tenant>:room:`) included,
+     * which `allowUntargetedInvites: false` still let through and which then
+     * rang every connected client. Document-call invites (which never
+     * broadcast) are not affected. Refused with the same
+     * `code: 'untargeted-invite'` error frame. Default here: false (legacy);
+     * `calls()` under attachRealtime defaults it to true unless
+     * `allowUntargetedInvites` is true.
+     */
+    refuseEmptyTargets?: boolean;
+
+    /**
      * Optional persistence hook for the call→session binding. Called on
      * `invite` (with caller's data) and `accepted` (with accepter's
      * data). The recording-completed webhook later uses this to map
@@ -486,6 +498,15 @@ export interface CallConfig {
         invitedAt?: number;
         endedAt: number;
         reason: 'cancelled' | 'declined' | 'no-answer';
+        /**
+         * 0.116: everyone this node rang for the call — the union of every
+         * `invite`'s `targetUserIds` (a mid-ring "add someone" widens it, never
+         * replaces it). Lets a host notify the missed people without keeping
+         * its own invite ledger. Invites accepted on another node are not in it.
+         */
+        targetUserIds: string[];
+        /** 0.116: the conversation channel the invite named (`invite.channel`), when it named one. */
+        channel?: string;
     }) => Promise<void> | void;
 }
 
@@ -659,6 +680,10 @@ export interface ActiveCallState {
     originalCallerName?: string;
     originalLobbyName?: string;
     originalTargetUserIds?: string[];
+    /** 0.116: every user id any invite on this node rang (onCallMissed.targetUserIds). */
+    rungUserIds?: Set<string>;
+    /** 0.116: the conversation channel the invite named (onCallMissed.channel). */
+    inviteChannel?: string;
 }
 
 /** Verbs accepted by `handleAction`. Exposed for consumer dispatch tables. */

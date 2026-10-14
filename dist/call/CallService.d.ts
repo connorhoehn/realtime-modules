@@ -107,6 +107,8 @@ export declare class CallService {
     private participantUserIds;
     /** See CallConfig.allowUntargetedInvites. */
     private allowUntargetedInvites;
+    /** See CallConfig.refuseEmptyTargets. */
+    private refuseEmptyTargets;
     private onSweepSkipped;
     private readonly _withSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */

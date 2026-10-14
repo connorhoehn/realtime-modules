@@ -1,12 +1,20 @@
 import type { FeatureManifest } from '../feature-manifest/types';
 import type { WsHandlerHandle, WsHandlerOptions, WsService } from '../server-ws/types';
 import { type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
+import { type FeaturePrincipal, type PrincipalRevalidation } from './authority/principal';
 /** Everything a feature's factory receives. */
 export interface FeatureContext {
     /** The shared router — Local by default, swappable via attach opts. */
     router: RealtimeRouter;
     /** Logger shared by the whole attachment. */
     logger: RouterLogger;
+    /**
+     * 0.116: the connection's principal, asked fresh — present when
+     * `attachRealtime({ principal })` is set. A feature that makes its own
+     * admission decision (calls, notifications) gates it on this before and
+     * after its own I/O.
+     */
+    principal?: FeaturePrincipal;
 }
 /** A pluggable realtime capability: manifest + service factory. */
 export interface RealtimeFeature {
@@ -85,6 +93,22 @@ export declare function calls(opts?: {
      * every node (`attachRealtime({ router })`).
      */
     crossNodePubSub?: import('../call/types').CallCrossNodePubSub;
+    /**
+     * 0.116: an `invite` must name the connection's AUTHENTICATED user as
+     * `callerId` (the router's `getUserIdForClient`, i.e. the `auth` context's
+     * `userId`). Default true: before it, the library trusted `callerId` on
+     * invite, so a client could ring as someone else and own the call (its
+     * stop rights included). A connection without an authenticated user
+     * cannot invite. `false` restores the old trust (anonymous demos only).
+     */
+    verifyCaller?: boolean;
+    /**
+     * 0.116: refuse every invite with no targets that would be broadcast —
+     * room walk-ins included (see `CallConfig.refuseEmptyTargets`). Default
+     * true unless `allowUntargetedInvites` is true. A host whose room
+     * walk-ins rely on the untargeted broadcast passes `false`.
+     */
+    refuseEmptyTargets?: boolean;
 }): RealtimeFeature;
 export declare function ingest(opts?: import('../ingest/types').IngestConfig): RealtimeFeature;
 /**
@@ -158,6 +182,18 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
         onClientConnect?: (id: string, ctx: import('../server-ws/types').WsAuthContext) => Promise<void> | void;
         shutdown?: () => Promise<void> | void;
     };
+    /**
+     * 0.116, opt-in: principal revalidation. `revalidate(ctx)` reads the
+     * host's directory (epoch, grants, actor) and refuses (false/throw) a
+     * principal that is no longer current. Run at upgrade (after `auth`;
+     * refusal = 401), before every `authorize` and recipient filter of the
+     * local router (and again after the host's decision with
+     * `recheckAfterIo`, the default), and before/after the `calls()` and
+     * `notifications()` hooks. With a custom `router`, wrap its hooks with
+     * `withPrincipalRevalidation` yourself; upgrade and feature gating still
+     * apply.
+     */
+    principal?: PrincipalRevalidation;
 }
 export interface RealtimeHandle extends WsHandlerHandle {
     router: RealtimeRouter;

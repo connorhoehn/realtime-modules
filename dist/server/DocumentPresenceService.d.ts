@@ -23,7 +23,7 @@ interface UserInfo {
 }
 declare class DocumentPresenceService {
     private messageRouter;
-    private logger;
+    protected logger: any;
     documentPresenceMap: Map<string, Map<string, UserInfo>>;
     clientDocChannels: Map<string, Set<string>>;
     /**

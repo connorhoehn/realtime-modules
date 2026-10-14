@@ -288,6 +288,8 @@ export class CallService {
     private participantUserIds = new Map<string, string>();
     /** See CallConfig.allowUntargetedInvites. */
     private allowUntargetedInvites = true;
+    /** See CallConfig.refuseEmptyTargets. */
+    private refuseEmptyTargets = false;
     private onSweepSkipped: ((reason: 'not_leader') => void) | null = null;
     private readonly _withSpan: CallWithSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
@@ -339,6 +341,7 @@ export class CallService {
         this.callStartedHook = config.onCallStarted ?? null;
         this.callMissedHook = config.onCallMissed ?? null;
         if (config.allowUntargetedInvites === false) this.allowUntargetedInvites = false;
+        if (config.refuseEmptyTargets === true) this.refuseEmptyTargets = true;
 
         this.inviteSweepTimer = setInterval(() => {
             // PR-W2.4 — leader gate.  When ownership is enabled and a
@@ -781,6 +784,9 @@ export class CallService {
                 invitedAt: state.invitedAt,
                 endedAt,
                 reason: state.declined ? 'declined' as const : missedReason,
+                targetUserIds: Array.from(state.rungUserIds ?? state.originalTargetUserIds ?? state.targetUserIds ?? [])
+                    .filter((id) => id !== state.callerId),
+                ...(state.inviteChannel ? { channel: state.inviteChannel } : {}),
             }
             : null;
         void (async () => {
@@ -1514,10 +1520,9 @@ export class CallService {
         // `<tenant>:room:` lobby) and a document call (which never broadcasts).
         if (
             action === 'invite'
-            && !this.allowUntargetedInvites
             && targetUserIds.length === 0
-            && lobbyConversationKind(lobbyName) !== 'room'
             && !(payload.kind === 'document-review' && this.metaStore)
+            && (this.refuseEmptyTargets || (!this.allowUntargetedInvites && lobbyConversationKind(lobbyName) !== 'room'))
         ) {
             this.logger.warn(`[CallService] refused untargeted invite from ${clientId} (callId=${callId} lobby=${lobbyName})`);
             this.sendError(clientId, 'invite needs targetUserIds: an untargeted invite would ring every connected client', {
@@ -1913,6 +1918,11 @@ export class CallService {
             }
             if (action === 'invite') {
                 const state = this.activeCalls.get(callId);
+                if (state) {
+                    const rung = state.rungUserIds ?? (state.rungUserIds = new Set());
+                    for (const id of (docInvite ? docInvite.ringTargets : targetUserIds)) rung.add(id);
+                    if (typeof payload.channel === 'string' && payload.channel && !state.inviteChannel) state.inviteChannel = payload.channel;
+                }
                 const initialInvite = state && typeof state.invitedAt !== 'number';
                 if (initialInvite) {
                     const now = Date.now();

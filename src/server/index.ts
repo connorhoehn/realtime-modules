@@ -129,6 +129,12 @@ export type {
 } from '../work-graph/streamService';
 export type { AuthorityScope } from '../server-ws/authorityScope';
 
+// 0.116 — the authority primitives every multi-tenant host wrote by hand:
+// the channel-family mechanism, the partition/DM guard, the fresh-per-request
+// authority engine, principal revalidation and the bearer subprotocol parser.
+export * from './authority';
+export { dmLobbyAdmits } from '../call/lobbyChannel';
+
 export * from "./documentGrant";
 
 export { createCanvasSeed, exportCanvasProjection } from "./canvasSeed";

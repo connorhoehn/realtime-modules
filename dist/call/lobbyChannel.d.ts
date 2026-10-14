@@ -44,6 +44,26 @@ export declare function dmLobbyPrefix(opts?: {
     prefix?: string;
     group?: boolean;
 }): string;
+/**
+ * The DM admission rule every multi-tenant host wrote by hand (0.116): does the
+ * member-addressed DM lobby `lobby` admit `userId`? `null` when `lobby` is not
+ * a member-addressed DM under `opts.prefix` at all (the caller's other rules
+ * decide it — a room, a page, a hashed `dmg:` group whose roster the name
+ * cannot reveal).
+ *
+ *   dmLobbyAdmits('acme:dm:alice:bob', 'alice', { prefix: 'acme:' }) → true
+ *   dmLobbyAdmits('acme:dm:alice:bob', 'carol', { prefix: 'acme:' }) → false
+ *   dmLobbyAdmits('acme:dm',           'alice', { prefix: 'acme:' }) → false (no members)
+ *   dmLobbyAdmits('acme:room:x',       'alice', { prefix: 'acme:' }) → null
+ *
+ * Deliberately the gateway guard's reading, which is more lenient about SHAPE
+ * than `parseDmLobby` and exactly as strict about MEMBERSHIP: empty member
+ * segments are skipped and a one-member (self) DM admits its member, but only
+ * a listed id is ever admitted. `dmLobbyName` writes the names this reads.
+ */
+export declare function dmLobbyAdmits(lobby: string, userId: string, opts?: {
+    prefix?: string;
+}): boolean | null;
 /** One DM lobby name, parsed (`parseDmLobby`). */
 export type ParsedDmLobby = {
     kind: 'dm';

@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.115.0",
+  "version": "0.116.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -254,6 +254,7 @@
     "test": "jest",
     "typecheck": "tsc --noEmit",
     "check:contract": "tsc -p tsconfig.contract.json",
+    "lint": "tsc -p tsconfig.lint.json",
     "prepare": "test -f dist/index.js || npm run build",
     "prepublishOnly": "npm run build && npm test",
     "demo": "cd demo && npm run dev",

@@ -49,6 +49,15 @@ import {
     type RouterLogger,
 } from './router';
 import { createSubscribeService } from './subscribeService';
+import { normalizeCallPayload } from './authority/engine';
+import {
+    gateOnPrincipal,
+    principalIsCurrent,
+    revalidatingAuth,
+    withPrincipalRevalidation,
+    type FeaturePrincipal,
+    type PrincipalRevalidation,
+} from './authority/principal';
 
 // ---- feature contract ---------------------------------------------------------
 
@@ -58,6 +67,13 @@ export interface FeatureContext {
     router: RealtimeRouter;
     /** Logger shared by the whole attachment. */
     logger: RouterLogger;
+    /**
+     * 0.116: the connection's principal, asked fresh — present when
+     * `attachRealtime({ principal })` is set. A feature that makes its own
+     * admission decision (calls, notifications) gates it on this before and
+     * after its own I/O.
+     */
+    principal?: FeaturePrincipal;
 }
 
 /** A pluggable realtime capability: manifest + service factory. */
@@ -268,38 +284,70 @@ export function calls(opts: {
      * every node (`attachRealtime({ router })`).
      */
     crossNodePubSub?: import('../call/types').CallCrossNodePubSub;
+    /**
+     * 0.116: an `invite` must name the connection's AUTHENTICATED user as
+     * `callerId` (the router's `getUserIdForClient`, i.e. the `auth` context's
+     * `userId`). Default true: before it, the library trusted `callerId` on
+     * invite, so a client could ring as someone else and own the call (its
+     * stop rights included). A connection without an authenticated user
+     * cannot invite. `false` restores the old trust (anonymous demos only).
+     */
+    verifyCaller?: boolean;
+    /**
+     * 0.116: refuse every invite with no targets that would be broadcast —
+     * room walk-ins included (see `CallConfig.refuseEmptyTargets`). Default
+     * true unless `allowUntargetedInvites` is true. A host whose room
+     * walk-ins rely on the untargeted broadcast passes `false`.
+     */
+    refuseEmptyTargets?: boolean;
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../call/manifest').CallManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, principal }) => {
             const { CallService } = require('../call/CallService') as typeof import('../call/CallService');
             const { lobbyGuard } = opts;
+            const allowUntargetedInvites = opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false;
             let config: import('../call/types').CallConfig = {
                 ...(opts.config ?? {}),
-                allowUntargetedInvites: opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false,
+                allowUntargetedInvites,
+                refuseEmptyTargets: opts.refuseEmptyTargets ?? opts.config?.refuseEmptyTargets ?? !allowUntargetedInvites,
             };
-            if (lobbyGuard) {
+            const verifyCaller = opts.verifyCaller !== false;
+            if (lobbyGuard || verifyCaller || principal) {
                 const inner = config?.authorize;
-                config = {
-                    ...config,
-                    authorize: (clientId, action, data) => {
-                        const guard = () => {
-                            // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
-                            const nested = data && typeof data.data === 'object' && data.data ? data.data as { lobbyName?: unknown } : null;
-                            const raw = data?.lobbyName ?? nested?.lobbyName;
-                            const lobby = typeof raw === 'string' ? raw : '';
-                            if (!lobby) return true;
-                            const auth = router.getClientData?.(clientId)?.userContext ?? {};
-                            try { return lobbyGuard(auth, lobby) !== false; } catch { return false; }
-                        };
-                        if (!inner) return guard();
-                        try {
-                            const decision = inner(clientId, action, data);
-                            if (typeof decision === 'boolean') return decision && guard();
-                            return Promise.resolve(decision).then(allowed => allowed === true && guard(), () => false);
-                        } catch { return false; }
-                    },
+                const guard = (clientId: string, data: import('../call/types').CallInvite): boolean => {
+                    if (!lobbyGuard) return true;
+                    // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
+                    const raw = normalizeCallPayload(data as Record<string, unknown>).lobbyName;
+                    const lobby = typeof raw === 'string' ? raw : '';
+                    if (!lobby) return true;
+                    const auth = router.getClientData?.(clientId)?.userContext ?? {};
+                    try { return lobbyGuard(auth, lobby) !== false; } catch { return false; }
                 };
+                const callerVerified = (clientId: string, action: string, data: import('../call/types').CallInvite): boolean => {
+                    if (!verifyCaller || action !== 'invite') return true;
+                    const callerId = normalizeCallPayload(data as Record<string, unknown>).callerId;
+                    let userId: string | undefined;
+                    try {
+                        userId = router.getUserIdForClient?.(clientId);
+                        if (userId === undefined) {
+                            const fromCtx = router.getClientData?.(clientId)?.userContext?.userId;
+                            userId = typeof fromCtx === 'string' && fromCtx ? fromCtx : undefined;
+                        }
+                    } catch { return false; }
+                    return typeof userId === 'string' && userId.length > 0 && callerId === userId;
+                };
+                const decide = async (clientId: string, action: import('../call/types').CallAction, data: import('../call/types').CallInvite): Promise<boolean> => {
+                    if (!callerVerified(clientId, action, data)) return false;
+                    if (inner) {
+                        let allowed = false;
+                        try { allowed = (await inner(clientId, action, data)) === true; } catch { return false; }
+                        if (!allowed) return false;
+                    }
+                    return guard(clientId, data);
+                };
+                const gated = gateOnPrincipal(principal, decide)!;
+                config = { ...config, authorize: (clientId, action, data) => gated(clientId, action, data) };
             }
             return new CallService({
                 messageRouter: router as any,
@@ -409,14 +457,17 @@ export function notifications(opts: {
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../notification/manifest').NotificationManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, principal }) => {
             const { NotificationService } = require('../notification/NotificationService') as typeof import('../notification/NotificationService');
             return new NotificationService({
                 messageRouter: router as any,
                 logger: logger as any,
                 store: opts.store,
                 redisClient: opts.redisClient ?? null,
-                authorize: opts.authorize,
+                // 0.116: with `attachRealtime({ principal })`, every notification
+                // action first asks the connection's principal (and again after
+                // the host's own decision).
+                authorize: principal ? gateOnPrincipal(principal, opts.authorize) : opts.authorize,
             });
         },
     });
@@ -500,6 +551,18 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     router?: RealtimeRouter & { _setHandle?: (h: WsHandlerHandle) => void;
         onClientConnect?: (id: string, ctx: import('../server-ws/types').WsAuthContext) => Promise<void> | void;
         shutdown?: () => Promise<void> | void };
+    /**
+     * 0.116, opt-in: principal revalidation. `revalidate(ctx)` reads the
+     * host's directory (epoch, grants, actor) and refuses (false/throw) a
+     * principal that is no longer current. Run at upgrade (after `auth`;
+     * refusal = 401), before every `authorize` and recipient filter of the
+     * local router (and again after the host's decision with
+     * `recheckAfterIo`, the default), and before/after the `calls()` and
+     * `notifications()` hooks. With a custom `router`, wrap its hooks with
+     * `withPrincipalRevalidation` yourself; upgrade and feature gating still
+     * apply.
+     */
+    principal?: PrincipalRevalidation;
 }
 
 export interface RealtimeHandle extends WsHandlerHandle {
@@ -519,9 +582,22 @@ export function attachRealtime(
     server: WsHandlerOptions['server'],
     opts: AttachRealtimeOptions,
 ): RealtimeHandle {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log, publishProofMaxAgeMs });
+    const hooks = principal ? withPrincipalRevalidation({ authorize, filterClientMessage }, principal) : { authorize, filterClientMessage };
+    const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({
+        plugins, authorize: hooks.authorize, filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs });
+    if (principal) wsOpts.auth = revalidatingAuth(wsOpts.auth, principal);
+    const featurePrincipal: FeaturePrincipal | undefined = principal ? {
+        recheckAfterIo: principal.recheckAfterIo !== false,
+        current: async (clientId: string) => {
+            let ctx: import('../server-ws/types').WsAuthContext | null | undefined;
+            try { ctx = router.getClientData?.(clientId)?.userContext; } catch { return false; }
+            if (!await principalIsCurrent(principal, ctx)) return false;
+            // A context replaced while revalidating is not the one we judged.
+            try { return router.getClientData?.(clientId)?.userContext === ctx; } catch { return false; }
+        },
+    } : undefined;
 
     const services: Record<string, WsService> = {};
     const manifests: FeatureManifest[] = [];
@@ -530,7 +606,7 @@ export function attachRealtime(
         if (services[name]) {
             throw new Error(`attachRealtime: duplicate feature '${name}'`);
         }
-        services[name] = feature.create({ router, logger: log });
+        services[name] = feature.create({ router, logger: log, ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
         manifests.push(feature.manifest);
     }
 

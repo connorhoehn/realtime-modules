@@ -58,6 +58,8 @@ exports.attachRealtime = attachRealtime;
 const createWsHandler_1 = require("../server-ws/createWsHandler");
 const router_1 = require("./router");
 const subscribeService_1 = require("./subscribeService");
+const engine_1 = require("./authority/engine");
+const principal_1 = require("./authority/principal");
 /** Identity helper — exists so feature definitions type-check at the site. */
 function defineFeature(feature) {
     return feature;
@@ -189,46 +191,69 @@ function social(opts = {}) {
 function calls(opts = {}) {
     return defineFeature({
         manifest: require('../call/manifest').CallManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, principal }) => {
             const { CallService } = require('../call/CallService');
             const { lobbyGuard } = opts;
+            const allowUntargetedInvites = opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false;
             let config = {
                 ...(opts.config ?? {}),
-                allowUntargetedInvites: opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false,
+                allowUntargetedInvites,
+                refuseEmptyTargets: opts.refuseEmptyTargets ?? opts.config?.refuseEmptyTargets ?? !allowUntargetedInvites,
             };
-            if (lobbyGuard) {
+            const verifyCaller = opts.verifyCaller !== false;
+            if (lobbyGuard || verifyCaller || principal) {
                 const inner = config?.authorize;
-                config = {
-                    ...config,
-                    authorize: (clientId, action, data) => {
-                        const guard = () => {
-                            // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
-                            const nested = data && typeof data.data === 'object' && data.data ? data.data : null;
-                            const raw = data?.lobbyName ?? nested?.lobbyName;
-                            const lobby = typeof raw === 'string' ? raw : '';
-                            if (!lobby)
-                                return true;
-                            const auth = router.getClientData?.(clientId)?.userContext ?? {};
-                            try {
-                                return lobbyGuard(auth, lobby) !== false;
-                            }
-                            catch {
-                                return false;
-                            }
-                        };
-                        if (!inner)
-                            return guard();
+                const guard = (clientId, data) => {
+                    if (!lobbyGuard)
+                        return true;
+                    // Flat or nested (`{ data: { lobbyName } }`) — the service accepts both.
+                    const raw = (0, engine_1.normalizeCallPayload)(data).lobbyName;
+                    const lobby = typeof raw === 'string' ? raw : '';
+                    if (!lobby)
+                        return true;
+                    const auth = router.getClientData?.(clientId)?.userContext ?? {};
+                    try {
+                        return lobbyGuard(auth, lobby) !== false;
+                    }
+                    catch {
+                        return false;
+                    }
+                };
+                const callerVerified = (clientId, action, data) => {
+                    if (!verifyCaller || action !== 'invite')
+                        return true;
+                    const callerId = (0, engine_1.normalizeCallPayload)(data).callerId;
+                    let userId;
+                    try {
+                        userId = router.getUserIdForClient?.(clientId);
+                        if (userId === undefined) {
+                            const fromCtx = router.getClientData?.(clientId)?.userContext?.userId;
+                            userId = typeof fromCtx === 'string' && fromCtx ? fromCtx : undefined;
+                        }
+                    }
+                    catch {
+                        return false;
+                    }
+                    return typeof userId === 'string' && userId.length > 0 && callerId === userId;
+                };
+                const decide = async (clientId, action, data) => {
+                    if (!callerVerified(clientId, action, data))
+                        return false;
+                    if (inner) {
+                        let allowed = false;
                         try {
-                            const decision = inner(clientId, action, data);
-                            if (typeof decision === 'boolean')
-                                return decision && guard();
-                            return Promise.resolve(decision).then(allowed => allowed === true && guard(), () => false);
+                            allowed = (await inner(clientId, action, data)) === true;
                         }
                         catch {
                             return false;
                         }
-                    },
+                        if (!allowed)
+                            return false;
+                    }
+                    return guard(clientId, data);
                 };
+                const gated = (0, principal_1.gateOnPrincipal)(principal, decide);
+                config = { ...config, authorize: (clientId, action, data) => gated(clientId, action, data) };
             }
             return new CallService({
                 messageRouter: router,
@@ -316,14 +341,17 @@ function rooms(opts = {}) {
 function notifications(opts = {}) {
     return defineFeature({
         manifest: require('../notification/manifest').NotificationManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, principal }) => {
             const { NotificationService } = require('../notification/NotificationService');
             return new NotificationService({
                 messageRouter: router,
                 logger: logger,
                 store: opts.store,
                 redisClient: opts.redisClient ?? null,
-                authorize: opts.authorize,
+                // 0.116: with `attachRealtime({ principal })`, every notification
+                // action first asks the connection's principal (and again after
+                // the host's own decision).
+                authorize: principal ? (0, principal_1.gateOnPrincipal)(principal, opts.authorize) : opts.authorize,
             });
         },
     });
@@ -371,9 +399,35 @@ function collabDocs(opts = {}) {
  * All HTTP routes, middleware and listeners you already have are untouched.
  */
 function attachRealtime(server, opts) {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const router = customRouter ?? new router_1.LocalRealtimeRouter({ plugins, authorize, filterClientMessage, logger: log, publishProofMaxAgeMs });
+    const hooks = principal ? (0, principal_1.withPrincipalRevalidation)({ authorize, filterClientMessage }, principal) : { authorize, filterClientMessage };
+    const router = customRouter ?? new router_1.LocalRealtimeRouter({
+        plugins, authorize: hooks.authorize, filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs
+    });
+    if (principal)
+        wsOpts.auth = (0, principal_1.revalidatingAuth)(wsOpts.auth, principal);
+    const featurePrincipal = principal ? {
+        recheckAfterIo: principal.recheckAfterIo !== false,
+        current: async (clientId) => {
+            let ctx;
+            try {
+                ctx = router.getClientData?.(clientId)?.userContext;
+            }
+            catch {
+                return false;
+            }
+            if (!await (0, principal_1.principalIsCurrent)(principal, ctx))
+                return false;
+            // A context replaced while revalidating is not the one we judged.
+            try {
+                return router.getClientData?.(clientId)?.userContext === ctx;
+            }
+            catch {
+                return false;
+            }
+        },
+    } : undefined;
     const services = {};
     const manifests = [];
     for (const feature of features) {
@@ -381,7 +435,7 @@ function attachRealtime(server, opts) {
         if (services[name]) {
             throw new Error(`attachRealtime: duplicate feature '${name}'`);
         }
-        services[name] = feature.create({ router, logger: log });
+        services[name] = feature.create({ router, logger: log, ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
         manifests.push(feature.manifest);
     }
     // Channel membership itself, always present. Not a feature to attach —

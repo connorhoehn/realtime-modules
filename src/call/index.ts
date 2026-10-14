@@ -62,6 +62,7 @@ export {
   lobbyConversationKind,
   dmLobbyMembers,
   dmLobbyName,
+  dmLobbyAdmits,
   dmLobbyPrefix,
   parseDmLobby,
   lobbyForChatLobbyChannel,

@@ -76,8 +76,23 @@ describe('calls() — untargeted invites', () => {
         } finally { await srv.stop(); }
     });
 
-    it('lets a room walk-in through (bare and tenant-prefixed room lobbies)', async () => {
+    it('0.116: refuses a targetless room walk-in by default too (it rang every connected client)', async () => {
         const srv = await start({});
+        try {
+            const alice = await srv.connect('u-alice', 'acme');
+            const mallory = await srv.connect('u-mallory', 'globex');
+            send(alice, { action: 'invite', callId: 'c-room', lobbyName: 'room:design', callerId: 'u-alice' });
+            send(alice, { action: 'invite', callId: 'c-room2', lobbyName: 'acme:room:design', callerId: 'u-alice' });
+            await sleep(100);
+            const errors = alice.frames.filter((f) => f.type === 'error');
+            expect(errors.map((e) => e.code)).toEqual(['untargeted-invite', 'untargeted-invite']);
+            expect(invitesTo(mallory, 'c-room')).toHaveLength(0);
+            expect(invitesTo(mallory, 'c-room2')).toHaveLength(0);
+        } finally { await srv.stop(); }
+    });
+
+    it('refuseEmptyTargets: false lets a room walk-in through (bare and tenant-prefixed room lobbies)', async () => {
+        const srv = await start({ refuseEmptyTargets: false });
         try {
             const alice = await srv.connect('u-alice', 'acme');
             const bob = await srv.connect('u-bob', 'acme');
