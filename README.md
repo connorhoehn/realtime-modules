@@ -8,7 +8,7 @@ hangouts, and notifications; an AG-UI / SSE agent-streaming surface; a
 Tiptap collaborative editor adapter; and a typed REST proxy client for
 Lambda / server-to-server callers.
 
-**Status.** Powers `websocket-gateway` (server + frontend), OrgIQ
+**Status.** Powers `realtime-examples` (server + frontend), OrgIQ
 middleware/portal (aws-agentcore), and live-video-streaming's UI.
 Pre-1.0 (`0.x`) — subpath shapes may shift between minors; pin to an
 exact published version (GitHub Packages) or git SHA.
@@ -31,10 +31,10 @@ enforced by the attach test matrix).
 | Video hangouts (WHIP/WHEP against an SFU) | `./client/video`, `./client/hangout-rooms` |
 | Agent / LLM streaming UX | `./agent-streaming` (server), `./agent-streaming/client` |
 | Lambda / server-to-server calls into a gateway | `./proxy-client` |
-| Durable persistence behind the services | Implement the store interfaces (`ChatStore`, `MetadataStore`, `SnapshotStore`, `HotCache`) in YOUR app — in-memory defaults ship here; DynamoDB/Redis adapters live with the app that owns those tables (see websocket-gateway's `realtime-fanout/*/adapters`) |
+| Durable persistence behind the services | Implement the store interfaces (`ChatStore`, `MetadataStore`, `SnapshotStore`, `HotCache`) in YOUR app — in-memory defaults ship here; DynamoDB/Redis adapters live with the app that owns those tables (see realtime-examples's `realtime-fanout/*/adapters`) |
 
 Layering: `ui-components → realtime-modules → (service-runtime,
-event-catalog)`. Apps (websocket-gateway, live-video-streaming,
+event-catalog)`. Apps (realtime-examples, live-video-streaming,
 aws-agentcore) sit on top and contribute deployment glue + persistence
 adapters, not service logic.
 
@@ -351,7 +351,7 @@ transport. They speak to a live-video-streaming deployment, not to
 
 **Persistent-WS lane** (`./client`, `./client/ws`, `./server-ws`,
 `./adapters/tiptap`): assumes a long-lived WebSocket to a
-`websocket-gateway` deployment.
+`realtime-examples` deployment.
 
 ### Connection semantics (v0.15.0 — session-gated connect)
 

@@ -17,7 +17,8 @@ Manual release recipe. Keep it boring.
 3. **Test** — `NODE_OPTIONS='--max-old-space-size=2048' npx jest --no-coverage --maxWorkers=1`
 4. **Bump version** — edit `package.json` `version` field; move CHANGELOG `[Unreleased]` content under a new `## [x.y.z] — YYYY-MM-DD` section
 5. **Commit** — include the changed source/tests, `package.json`, `package-lock.json`, `CHANGELOG.md`, and rebuilt tracked `dist/` files in the release commit.
-6. **Tag + push** — `git tag realtime-modules-vX.Y.Z && git push && git push --tags`
+6. **Tag + push (mandatory)** — `git tag -a vX.Y.Z -m "Release X.Y.Z" && git push origin main vX.Y.Z && git push slalom main vX.Y.Z`. Both remotes must carry the tag; verify `git show vX.Y.Z:package.json` has the same version. Untagged releases 0.100–0.115 had to be reconstructed from `git log -p -- package.json`.
+7. **Export checks** — `npm run verify:exports && npm run check:contract && npm run verify:packed` (also run by `prepack`/`prepublishOnly`).
 
 ## `dist/` is tracked
 

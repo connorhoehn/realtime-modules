@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## 0.116.1 — 2026-10-14
+
+Release hygiene (lane R1 of the 2026-10-14 upstream refinement plan). No
+runtime behaviour changes.
+
+- **Tags.** `v0.100.0` … `v0.115.0` (every release commit, including the
+  `.x` patch releases in between) are now annotated tags on both remotes.
+  Tagging is a mandatory step in `RELEASE.md`.
+- **Export checks run on publish.** New `prepack` runs `verify:exports` and
+  `check:contract`; `prepublishOnly` runs build, both checks, the suite and
+  the new `verify:packed`.
+- **`verify:packed`** (`scripts/verify-packed-consumer.mjs`): packs the
+  tarball, installs it in a scratch project under a different dependency
+  key, and loads every `exports` subpath from there.
+- **distributed-core 0.45.6 -> 0.48.0** (`077d7594`, full sha). It ships
+  `typesVersions` and optional OpenTelemetry peers, so the two
+  `distributed-core/*` `paths` mappings in `tsconfig.json` are gone.
+- **Deprecated, not removed** (remove no earlier than the next minor):
+  - the root `.` barrel (mixes React and server code; use a subpath);
+  - the duplicate `./server-ws` re-exports in `./server`
+    (`WsAuthContext`, `WsAuthFn`, `AuthSender`, `ResolveSender`,
+    `splitServiceChannel`, `baseChannel`, `SERVICE_CHANNEL_PREFIXES`,
+    `ServiceChannelPrefix`, `ChannelAccessKind`, `createAuthorityScope`,
+    `publishProofKey`, `revokePublishProofs`, `PUBLISH_PROOF_SKEW_MS`,
+    `AuthorityScope`, `DEFAULT_WS_MAX_PAYLOAD`,
+    `DEFAULT_INDEPENDENT_SERVICES`): import from `./server-ws`;
+  - the `WorkGraphStreamService` export path and its types in `./server`:
+    import from `./work-graph/server`.
+  `./ingest` and `./server-ws` are untouched.
+- README no longer says it powers `websocket-gateway` (now
+  `realtime-examples`).
+
 ## 0.116.0 — 2026-10-14
 
 The authority primitives every multi-tenant host wrote by hand. The library

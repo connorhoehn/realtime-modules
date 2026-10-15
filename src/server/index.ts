@@ -109,25 +109,79 @@ export type {
     ClientMessageFilter,
     FeaturePlugin as RealtimeFeaturePlugin,
 } from './router';
-// The auth context `auth` returns and `authorize` / `lobbyGuard` /
-// `resolveSender` receive — so a consumer types its callbacks from this entry.
-export type { WsAuthContext, WsAuthFn } from '../server-ws/types';
-export { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from '../server-ws/types';
-export type { AuthSender, ResolveSender } from '../server-ws/senderIdentity';
-// Read the service prefix off a channel `authorize` receives.
-export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
-export type { ServiceChannelPrefix, ChannelAccessKind } from '../server-ws/channelAccess';
-export { createAuthorityScope, publishProofKey, revokePublishProofs, PUBLISH_PROOF_SKEW_MS } from '../server-ws/authorityScope';
-export { WorkGraphStreamService } from '../work-graph/streamService';
-export type {
-    WorkGraphSource,
-    WorkGraphStreamConfig,
-    WorkGraphStreamScope,
-    WorkGraphStreamSubscription,
-    WorkGraphStreamTrigger,
-    WorkGraphChannelContext,
+// 0.116.1 — DEPRECATED duplicates. Everything in this block is also exported
+// from `./server-ws` (and `WorkGraphStreamService` from `./work-graph/server`),
+// which stay the canonical homes; the `./server` copies are kept for one minor
+// so existing importers keep compiling, then removed. Aliases (not bare
+// re-exports) so the @deprecated tag shows in editors.
+import type {
+    WsAuthContext as _WsAuthContext,
+    WsAuthFn as _WsAuthFn,
+} from '../server-ws/types';
+import type { AuthSender as _AuthSender, ResolveSender as _ResolveSender } from '../server-ws/senderIdentity';
+import type { ServiceChannelPrefix as _ServiceChannelPrefix, ChannelAccessKind as _ChannelAccessKind } from '../server-ws/channelAccess';
+import type { AuthorityScope as _AuthorityScope } from '../server-ws/authorityScope';
+import { DEFAULT_WS_MAX_PAYLOAD as _DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES as _DEFAULT_INDEPENDENT_SERVICES } from '../server-ws/types';
+import { splitServiceChannel as _splitServiceChannel, baseChannel as _baseChannel, SERVICE_CHANNEL_PREFIXES as _SERVICE_CHANNEL_PREFIXES } from '../server-ws/channelAccess';
+import { createAuthorityScope as _createAuthorityScope, publishProofKey as _publishProofKey, revokePublishProofs as _revokePublishProofs, PUBLISH_PROOF_SKEW_MS as _PUBLISH_PROOF_SKEW_MS } from '../server-ws/authorityScope';
+import { WorkGraphStreamService as _WorkGraphStreamService } from '../work-graph/streamService';
+import type {
+    WorkGraphSource as _WorkGraphSource,
+    WorkGraphStreamConfig as _WorkGraphStreamConfig,
+    WorkGraphStreamScope as _WorkGraphStreamScope,
+    WorkGraphStreamSubscription as _WorkGraphStreamSubscription,
+    WorkGraphStreamTrigger as _WorkGraphStreamTrigger,
+    WorkGraphChannelContext as _WorkGraphChannelContext,
 } from '../work-graph/streamService';
-export type { AuthorityScope } from '../server-ws/authorityScope';
+
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type WsAuthContext = _WsAuthContext;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type WsAuthFn = _WsAuthFn;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type AuthSender = _AuthSender;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type ResolveSender = _ResolveSender;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type ServiceChannelPrefix = _ServiceChannelPrefix;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type ChannelAccessKind = _ChannelAccessKind;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export type AuthorityScope = _AuthorityScope;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const DEFAULT_WS_MAX_PAYLOAD: typeof _DEFAULT_WS_MAX_PAYLOAD = _DEFAULT_WS_MAX_PAYLOAD;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const DEFAULT_INDEPENDENT_SERVICES: typeof _DEFAULT_INDEPENDENT_SERVICES = _DEFAULT_INDEPENDENT_SERVICES;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const splitServiceChannel: typeof _splitServiceChannel = _splitServiceChannel;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const baseChannel: typeof _baseChannel = _baseChannel;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const SERVICE_CHANNEL_PREFIXES: typeof _SERVICE_CHANNEL_PREFIXES = _SERVICE_CHANNEL_PREFIXES;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const createAuthorityScope: typeof _createAuthorityScope = _createAuthorityScope;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const publishProofKey: typeof _publishProofKey = _publishProofKey;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const revokePublishProofs: typeof _revokePublishProofs = _revokePublishProofs;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+export const PUBLISH_PROOF_SKEW_MS: typeof _PUBLISH_PROOF_SKEW_MS = _PUBLISH_PROOF_SKEW_MS;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export const WorkGraphStreamService: typeof _WorkGraphStreamService = _WorkGraphStreamService;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphStreamService = InstanceType<typeof _WorkGraphStreamService>;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphSource = _WorkGraphSource;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphStreamConfig = _WorkGraphStreamConfig;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphStreamScope = _WorkGraphStreamScope;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphStreamSubscription = _WorkGraphStreamSubscription;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphStreamTrigger = _WorkGraphStreamTrigger;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+export type WorkGraphChannelContext = _WorkGraphChannelContext;
 
 // 0.116 — the authority primitives every multi-tenant host wrote by hand:
 // the channel-family mechanism, the partition/DM guard, the fresh-per-request

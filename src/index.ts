@@ -1,5 +1,11 @@
 // @connorhoehn/realtime-modules — entry point.
 //
+// @deprecated As of 0.116.1 this root barrel is deprecated: it mixes React
+// (client) and server code, so importing it drags both into either bundle.
+// Import from a dedicated subpath instead (`/client`, `/server`, `/server-ws`,
+// `/agent-streaming`, ...). It is not removed in this minor.
+//
+//
 // This package is a client-side realtime collaboration library.
 // Feature subpaths are exposed via package.json "exports":
 //   import { ... } from '@connorhoehn/realtime-modules/client';

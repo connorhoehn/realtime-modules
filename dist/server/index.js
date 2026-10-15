@@ -106,21 +106,30 @@ Object.defineProperty(exports, "LocalRealtimeRouter", { enumerable: true, get: f
 Object.defineProperty(exports, "PLUGIN_SCOPE_RETAIN_MAX_MS", { enumerable: true, get: function () { return router_1.PLUGIN_SCOPE_RETAIN_MAX_MS; } });
 var RedisRealtimeRouter_1 = require("./RedisRealtimeRouter");
 Object.defineProperty(exports, "RedisRealtimeRouter", { enumerable: true, get: function () { return RedisRealtimeRouter_1.RedisRealtimeRouter; } });
-var types_1 = require("../server-ws/types");
-Object.defineProperty(exports, "DEFAULT_WS_MAX_PAYLOAD", { enumerable: true, get: function () { return types_1.DEFAULT_WS_MAX_PAYLOAD; } });
-Object.defineProperty(exports, "DEFAULT_INDEPENDENT_SERVICES", { enumerable: true, get: function () { return types_1.DEFAULT_INDEPENDENT_SERVICES; } });
-// Read the service prefix off a channel `authorize` receives.
-var channelAccess_1 = require("../server-ws/channelAccess");
-Object.defineProperty(exports, "splitServiceChannel", { enumerable: true, get: function () { return channelAccess_1.splitServiceChannel; } });
-Object.defineProperty(exports, "baseChannel", { enumerable: true, get: function () { return channelAccess_1.baseChannel; } });
-Object.defineProperty(exports, "SERVICE_CHANNEL_PREFIXES", { enumerable: true, get: function () { return channelAccess_1.SERVICE_CHANNEL_PREFIXES; } });
-var authorityScope_1 = require("../server-ws/authorityScope");
-Object.defineProperty(exports, "createAuthorityScope", { enumerable: true, get: function () { return authorityScope_1.createAuthorityScope; } });
-Object.defineProperty(exports, "publishProofKey", { enumerable: true, get: function () { return authorityScope_1.publishProofKey; } });
-Object.defineProperty(exports, "revokePublishProofs", { enumerable: true, get: function () { return authorityScope_1.revokePublishProofs; } });
-Object.defineProperty(exports, "PUBLISH_PROOF_SKEW_MS", { enumerable: true, get: function () { return authorityScope_1.PUBLISH_PROOF_SKEW_MS; } });
-var streamService_1 = require("../work-graph/streamService");
-Object.defineProperty(exports, "WorkGraphStreamService", { enumerable: true, get: function () { return streamService_1.WorkGraphStreamService; } });
+const types_1 = require("../server-ws/types");
+const channelAccess_1 = require("../server-ws/channelAccess");
+const authorityScope_1 = require("../server-ws/authorityScope");
+const streamService_1 = require("../work-graph/streamService");
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.DEFAULT_WS_MAX_PAYLOAD = types_1.DEFAULT_WS_MAX_PAYLOAD;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.DEFAULT_INDEPENDENT_SERVICES = types_1.DEFAULT_INDEPENDENT_SERVICES;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.splitServiceChannel = channelAccess_1.splitServiceChannel;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.baseChannel = channelAccess_1.baseChannel;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.SERVICE_CHANNEL_PREFIXES = channelAccess_1.SERVICE_CHANNEL_PREFIXES;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.createAuthorityScope = authorityScope_1.createAuthorityScope;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.publishProofKey = authorityScope_1.publishProofKey;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.revokePublishProofs = authorityScope_1.revokePublishProofs;
+/** @deprecated Import from `@connorhoehn/realtime-modules/server-ws`. */
+exports.PUBLISH_PROOF_SKEW_MS = authorityScope_1.PUBLISH_PROOF_SKEW_MS;
+/** @deprecated Import from `@connorhoehn/realtime-modules/work-graph/server`. */
+exports.WorkGraphStreamService = streamService_1.WorkGraphStreamService;
 // 0.116 — the authority primitives every multi-tenant host wrote by hand:
 // the channel-family mechanism, the partition/DM guard, the fresh-per-request
 // authority engine, principal revalidation and the bearer subprotocol parser.

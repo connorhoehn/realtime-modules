@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.116.0",
+  "version": "0.116.1",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -256,16 +256,18 @@
     "check:contract": "tsc -p tsconfig.contract.json",
     "lint": "tsc -p tsconfig.lint.json",
     "prepare": "test -f dist/index.js || npm run build",
-    "prepublishOnly": "npm run build && npm test",
+    "prepack": "npm run verify:exports && npm run check:contract",
+    "prepublishOnly": "npm run build && npm run verify:exports && npm run check:contract && npm test && npm run verify:packed",
     "demo": "cd demo && npm run dev",
     "demo:build": "cd demo && npm run build",
     "clean": "rm -rf dist",
     "verify:exports": "node scripts/verify-exports.mjs",
+    "verify:packed": "node scripts/verify-packed-consumer.mjs",
     "smoke:features": "node scripts/smoke-features.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",
-    "distributed-core": "github:connorhoehn/distributed-core#eb6e49104d30b0db074c0754b5bedf070402cb02",
+    "distributed-core": "github:connorhoehn/distributed-core#077d7594cc412e3153ace47ce0f0b4be60df84d5",
     "lib0": "^0.2.117",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0"
