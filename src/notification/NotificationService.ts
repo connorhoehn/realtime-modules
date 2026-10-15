@@ -43,6 +43,7 @@
 
 import { randomUUID } from 'crypto';
 import { RedisNotificationStore } from './RedisNotificationStore';
+import type { FeaturePrincipal } from '../server/authority/principal';
 import type { NotificationRedisClient } from './RedisNotificationStore';
 import type {
     NotificationInput,
@@ -69,6 +70,27 @@ export interface NotificationServiceOpts {
      * rejection refuses the action. Recipient delivery filtering belongs to
      * the router so it also covers producer delivery and connect replay. */
     authorize?: (clientId: string, action: string) => boolean | Promise<boolean>;
+    /**
+     * READ ADMISSION (0.118). Asked FRESH for every record at every delivery
+     * (`notifyUser` fan-out, connect replay, `getHistory`) — never cached: may
+     * `userId` be shown `record` right now? The host answers from its read
+     * authority (e.g. "may this person still read the page this item is
+     * about"). False, a throw or a rejection withholds the record from that
+     * delivery; it stays stored, and a later delivery asks again.
+     */
+    admit?: (userId: string, record: NotificationRecord) => boolean | Promise<boolean>;
+    /**
+     * Replay the user's unread inbox to each new connection, once per
+     * connection, through `admit`. Replaces a host `onConnect` that called
+     * `replayUnreadForUser`.
+     */
+    replayOnConnect?: boolean;
+    /**
+     * The connection's principal (set by `attachRealtime({ principal })`).
+     * Checked per connection before and, with `recheckAfterIo`, after
+     * admission, so a session whose epoch moved mid-delivery gets nothing.
+     */
+    principal?: FeaturePrincipal;
 }
 
 export class NotificationService {
@@ -76,6 +98,11 @@ export class NotificationService {
     private readonly logger: NotificationLogger;
     private readonly store: RedisNotificationStore;
     private readonly authorize: NotificationServiceOpts['authorize'];
+    private readonly admit: NotificationServiceOpts['admit'];
+    private readonly replayOnConnect: boolean;
+    private readonly principal: FeaturePrincipal | undefined;
+    /** Connections already replayed once (cleared on disconnect). */
+    private readonly replayed = new Set<string>();
 
     constructor(opts: NotificationServiceOpts) {
         if (!opts || !opts.messageRouter) {
@@ -87,6 +114,9 @@ export class NotificationService {
         this.messageRouter = opts.messageRouter;
         this.logger = opts.logger;
         this.authorize = opts.authorize;
+        this.admit = opts.admit;
+        this.replayOnConnect = opts.replayOnConnect === true;
+        this.principal = opts.principal;
         this.store =
             opts.store ??
             new RedisNotificationStore({
@@ -141,7 +171,8 @@ export class NotificationService {
             service: 'notification',
             payload: record,
         };
-        const delivered = await this.deliverToUser(userId, frame);
+        // Stored either way; shown only if the host admits the user NOW.
+        const delivered = (await this.admitted(userId, record)) ? await this.deliverToUser(userId, frame) : 0;
 
         this.logger.debug?.('[notification] notifyUser delivered', {
             userId,
@@ -242,7 +273,9 @@ export class NotificationService {
     }
 
     private async handleGetHistory(clientId: string, userId: string): Promise<void> {
-        const notifications = await this.store.list(userId);
+        if (!await this.clientCurrent(clientId)) return;
+        const notifications = await this.admitAll(userId, await this.store.list(userId));
+        if (!await this.clientCurrent(clientId, true)) return;
         const frame: NotificationBulkUpdateFrame = {
             type: 'notification:bulk-update',
             service: 'notification',
@@ -264,8 +297,11 @@ export class NotificationService {
     async replayUnreadForUser(clientId: string, userId: string): Promise<void> {
         if (!clientId || !userId) return;
         try {
-            const notifications = await this.store.listUnread(userId);
+            if (!await this.clientCurrent(clientId)) return;
+            const notifications = await this.admitAll(userId, await this.store.listUnread(userId));
             if (notifications.length === 0) return;
+            // Admission is I/O: a session revoked or re-epoched during it gets nothing.
+            if (!await this.clientCurrent(clientId, true)) return;
             const frame: NotificationBulkUpdateFrame = {
                 type: 'notification:bulk-update',
                 service: 'notification',
@@ -286,9 +322,40 @@ export class NotificationService {
         }
     }
 
+    /** WsService connect hook: with `replayOnConnect`, one replay per connection, off the connect path. */
+    async onClientConnect(clientId: string): Promise<void> {
+        if (!this.replayOnConnect || this.replayed.has(clientId)) return;
+        this.replayed.add(clientId);
+        const userId = (this.messageRouter as unknown as { getUserIdForClient?: (c: string) => string | null }).getUserIdForClient?.(clientId);
+        if (typeof userId === 'string' && userId) void this.replayUnreadForUser(clientId, userId);
+    }
+
+    async onClientDisconnect(clientId: string): Promise<void> {
+        this.replayed.delete(clientId);
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // Internals
     // ──────────────────────────────────────────────────────────────────
+
+    /** Fresh read admission for one record; no `admit` hook admits (legacy behaviour). Fails closed. */
+    private async admitted(userId: string, record: NotificationRecord): Promise<boolean> {
+        if (!this.admit) return true;
+        try { return (await this.admit(userId, record)) === true; } catch { return false; }
+    }
+
+    private async admitAll(userId: string, records: NotificationRecord[]): Promise<NotificationRecord[]> {
+        if (!this.admit) return records;
+        const out: NotificationRecord[] = [];
+        for (const r of records) if (await this.admitted(userId, r)) out.push(r);
+        return out;
+    }
+
+    /** Is the connection's principal current? (`after`: only when the principal asks for a recheck after I/O.) */
+    private async clientCurrent(clientId: string, after = false): Promise<boolean> {
+        if (!this.principal || (after && !this.principal.recheckAfterIo)) return true;
+        try { return await this.principal.current(clientId); } catch { return false; }
+    }
 
     /**
      * Resolve every live clientId for `userId` and deliver `frame` to each.
@@ -323,6 +390,7 @@ export class NotificationService {
             // Three-state liveness: false = dead-local (skip), true/null =
             // deliver (null means peer-node — let sendToClient route it).
             if (isLive && isLive(m.clientId) === false) continue;
+            if (!await this.clientCurrent(m.clientId)) continue;
             try {
                 if (await Promise.resolve(this.messageRouter.sendToClient(m.clientId, frame)) !== false) delivered++;
             } catch (err: any) {

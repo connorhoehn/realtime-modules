@@ -1,4 +1,5 @@
 import { RedisNotificationStore } from './RedisNotificationStore';
+import type { FeaturePrincipal } from '../server/authority/principal';
 import type { NotificationRedisClient } from './RedisNotificationStore';
 import type { NotificationInput, NotificationRecord, NotificationMessageRouter, NotificationLogger } from './types';
 export interface NotificationServiceOpts {
@@ -16,12 +17,38 @@ export interface NotificationServiceOpts {
      * rejection refuses the action. Recipient delivery filtering belongs to
      * the router so it also covers producer delivery and connect replay. */
     authorize?: (clientId: string, action: string) => boolean | Promise<boolean>;
+    /**
+     * READ ADMISSION (0.118). Asked FRESH for every record at every delivery
+     * (`notifyUser` fan-out, connect replay, `getHistory`) — never cached: may
+     * `userId` be shown `record` right now? The host answers from its read
+     * authority (e.g. "may this person still read the page this item is
+     * about"). False, a throw or a rejection withholds the record from that
+     * delivery; it stays stored, and a later delivery asks again.
+     */
+    admit?: (userId: string, record: NotificationRecord) => boolean | Promise<boolean>;
+    /**
+     * Replay the user's unread inbox to each new connection, once per
+     * connection, through `admit`. Replaces a host `onConnect` that called
+     * `replayUnreadForUser`.
+     */
+    replayOnConnect?: boolean;
+    /**
+     * The connection's principal (set by `attachRealtime({ principal })`).
+     * Checked per connection before and, with `recheckAfterIo`, after
+     * admission, so a session whose epoch moved mid-delivery gets nothing.
+     */
+    principal?: FeaturePrincipal;
 }
 export declare class NotificationService {
     private readonly messageRouter;
     private readonly logger;
     private readonly store;
     private readonly authorize;
+    private readonly admit;
+    private readonly replayOnConnect;
+    private readonly principal;
+    /** Connections already replayed once (cleared on disconnect). */
+    private readonly replayed;
     constructor(opts: NotificationServiceOpts);
     /**
      * Publish a notification to a user. Persists it (Redis) then delivers a
@@ -54,6 +81,14 @@ export declare class NotificationService {
      * Best-effort; no-op when the user has no unread items.
      */
     replayUnreadForUser(clientId: string, userId: string): Promise<void>;
+    /** WsService connect hook: with `replayOnConnect`, one replay per connection, off the connect path. */
+    onClientConnect(clientId: string): Promise<void>;
+    onClientDisconnect(clientId: string): Promise<void>;
+    /** Fresh read admission for one record; no `admit` hook admits (legacy behaviour). Fails closed. */
+    private admitted;
+    private admitAll;
+    /** Is the connection's principal current? (`after`: only when the principal asks for a recheck after I/O.) */
+    private clientCurrent;
     /**
      * Resolve every live clientId for `userId` and deliver `frame` to each.
      * Returns the count of successful deliveries (false suppresses/counts

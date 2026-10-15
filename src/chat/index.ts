@@ -59,3 +59,4 @@ export { MemoryChatPinsStore, PIN_PREVIEW_MAX } from './ChatPinsStore';
 export type { ChatPinInput, ChatPinsStore, PinnedMessage } from './ChatPinsStore';
 
 export default ChatService;
+export type { ChatUnreadOpts, ChatUnreadInbox, ChatUnreadItem, ChatUnreadContent } from './unread';

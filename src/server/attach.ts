@@ -74,6 +74,8 @@ export interface FeatureContext {
      * after its own I/O.
      */
     principal?: FeaturePrincipal;
+    /** 0.118: another attached feature's service by wire name (resolved lazily; undefined until attached). */
+    service?: (name: string) => unknown;
 }
 
 /** A pluggable realtime capability: manifest + service factory. */
@@ -115,11 +117,13 @@ export function chat(
 ): RealtimeFeature {
     return defineFeature({
         manifest: require('../chat/manifest').ChatManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, service }) => {
             const { ChatService } = require('../chat/ChatService') as typeof import('../chat/ChatService');
-            const { store, chatStore, identityResolver, ...rest } = opts;
+            const { store, chatStore, identityResolver, unread, ...rest } = opts;
             return new ChatService({
                 ...rest,
+                // 0.118: `unread.notify` defaults to the attached notifications() service.
+                ...(unread ? { unread: { ...unread, notify: unread.notify ?? (() => service?.('notification') as any) } } : {}),
                 messageRouter: router as any,
                 logger: logger as any,
                 chatStore: chatStore ?? store,
@@ -454,6 +458,10 @@ export function notifications(opts: {
     store?: import('../notification/RedisNotificationStore').RedisNotificationStore;
     redisClient?: import('../notification/RedisNotificationStore').NotificationRedisClient | null;
     authorize?: import('../notification/NotificationService').NotificationServiceOpts['authorize'];
+    /** 0.118: fresh per-delivery read admission (see NotificationServiceOpts.admit). */
+    admit?: import('../notification/NotificationService').NotificationServiceOpts['admit'];
+    /** 0.118: replay the unread inbox to each new connection, once, through `admit`. */
+    replayOnConnect?: boolean;
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../notification/manifest').NotificationManifest,
@@ -468,6 +476,9 @@ export function notifications(opts: {
                 // action first asks the connection's principal (and again after
                 // the host's own decision).
                 authorize: principal ? gateOnPrincipal(principal, opts.authorize) : opts.authorize,
+                admit: opts.admit,
+                replayOnConnect: opts.replayOnConnect,
+                ...(principal ? { principal } : {}),
             });
         },
     });
@@ -606,7 +617,7 @@ export function attachRealtime(
         if (services[name]) {
             throw new Error(`attachRealtime: duplicate feature '${name}'`);
         }
-        services[name] = feature.create({ router, logger: log, ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
+        services[name] = feature.create({ router, logger: log, service: (n: string) => services[n], ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
         manifests.push(feature.manifest);
     }
 

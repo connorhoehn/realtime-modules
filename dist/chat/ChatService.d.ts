@@ -5,6 +5,7 @@ import { type ChatReadReceipt, type ChatReadReceiptStore } from './ChatReadRecei
 import { type ChatMember, type ChatMemberView, type ChatMembershipStore } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
 import { type ResolveSender } from '../server-ws/senderIdentity';
+import { type ChatUnreadInbox, type ChatUnreadOpts } from './unread';
 import { type ChannelAccessRouter } from '../server-ws/channelAccess';
 import { type AuthorityScope } from '../server-ws/authorityScope';
 export interface ChatLogger {
@@ -247,7 +248,18 @@ export interface ChatServiceOpts {
      * `channel` NOW. Rows for anyone else are left in the store but never
      * listed. Errors and a missing hook list every row.
      */
-    currentReaders?: (channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>;
+    currentReaders?: (channel: string, userIds: readonly string[], scope?: AuthorityScope) => Promise<Iterable<string>> | Iterable<string>;
+    /**
+     * 0.118: the "new messages" notification item per cursor holder. Owned
+     * here for every post — a client send and a server-side post
+     * (`postSystemMessage`, `noteMessagePosted`) take the same path — and
+     * cleared when the holder's read receipt passes it. Needs receipts on the
+     * channel (`readReceiptStore`; `cursorMode` for open channels). A holder
+     * gets an item only if they read the channel NOW: `currentReaders` (or the
+     * member roster) is asked fresh for each recipient just before the item is
+     * made. See `ChatUnreadOpts`.
+     */
+    unread?: ChatUnreadOpts;
 }
 /** See `ChatServiceOpts.cursorMode`. */
 export type ChatCursorMode = 'members' | 'readers';
@@ -294,7 +306,8 @@ export declare class ChatService {
     }) => void) | null;
     channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
     cursorMode: ((channel: string) => ChatCursorMode) | null;
-    currentReaders: ((channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>) | null;
+    currentReaders: ((channel: string, userIds: readonly string[], scope?: AuthorityScope) => Promise<Iterable<string>> | Iterable<string>) | null;
+    unread: ChatUnreadOpts | null;
     clientChannels: SubscriptionTracker;
     channelCaches: Map<string, LRUCache<string, ChatMessage>>;
     readonly maxMessagesPerChannel: number;
@@ -528,7 +541,7 @@ export declare class ChatService {
      * `_forgetReceipt` — a row written before a crash, or by another node
      * mid-removal, never outlives the membership it describes on the wire.
      */
-    listReadReceipts(channel: string): Promise<ChatReadReceipt[]>;
+    listReadReceipts(channel: string, scope?: AuthorityScope): Promise<ChatReadReceipt[]>;
     /**
      * `{action:'read', channel, messageId?, at?}` — "I have read up to here."
      *
@@ -594,6 +607,27 @@ export declare class ChatService {
         typing?: unknown;
     }, scope?: AuthorityScope): Promise<void>;
     broadcastMessage(channel: string, messageData: ChatMessage, publisherClientId?: string, scope?: AuthorityScope): Promise<void>;
+    /**
+     * 0.118 (`unread`): create the "new messages" item for each cursor holder
+     * of `channel` that this message is new to. Called for every post by
+     * `broadcastMessage`; a host that writes a message straight into the store
+     * (a server-side post that does not broadcast) calls it itself. Holders
+     * skipped: the sender, anyone `unread.live` names, anyone who is not a
+     * reader of the channel at the moment their item would be made (asked
+     * fresh, per recipient). One item per stretch since the cursor (`itemId`);
+     * an existing item with that id is left alone. Resolves to the users given
+     * an item; never throws.
+     */
+    noteMessagePosted(channel: string, message: ChatMessage, opts?: {
+        sender?: string;
+        senderName?: string;
+        scope?: AuthorityScope;
+    }): Promise<string[]>;
+    /** The cursor moved: this holder's unread items for `channel` at or before `readAt` are read. */
+    _clearUnread(channel: string, userId: string, readAt: string): Promise<string[]>;
+    _unreadInbox(): ChatUnreadInbox | null;
+    /** Does `userId` read `channel` right now? Asked of the host every time; fails closed. */
+    _readsNow(channel: string, userId: string, scope?: AuthorityScope): Promise<boolean>;
     /**
      * Resolve the sender identity for a connection, or null. A throwing
      * resolver is logged and treated as "no identity" — which the dm gate

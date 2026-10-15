@@ -75,11 +75,13 @@ const NOOP_LOGGER = {
 function chat(opts = {}) {
     return defineFeature({
         manifest: require('../chat/manifest').ChatManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, service }) => {
             const { ChatService } = require('../chat/ChatService');
-            const { store, chatStore, identityResolver, ...rest } = opts;
+            const { store, chatStore, identityResolver, unread, ...rest } = opts;
             return new ChatService({
                 ...rest,
+                // 0.118: `unread.notify` defaults to the attached notifications() service.
+                ...(unread ? { unread: { ...unread, notify: unread.notify ?? (() => service?.('notification')) } } : {}),
                 messageRouter: router,
                 logger: logger,
                 chatStore: chatStore ?? store,
@@ -352,6 +354,9 @@ function notifications(opts = {}) {
                 // action first asks the connection's principal (and again after
                 // the host's own decision).
                 authorize: principal ? (0, principal_1.gateOnPrincipal)(principal, opts.authorize) : opts.authorize,
+                admit: opts.admit,
+                replayOnConnect: opts.replayOnConnect,
+                ...(principal ? { principal } : {}),
             });
         },
     });
@@ -435,7 +440,7 @@ function attachRealtime(server, opts) {
         if (services[name]) {
             throw new Error(`attachRealtime: duplicate feature '${name}'`);
         }
-        services[name] = feature.create({ router, logger: log, ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
+        services[name] = feature.create({ router, logger: log, service: (n) => services[n], ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
         manifests.push(feature.manifest);
     }
     // Channel membership itself, always present. Not a feature to attach —

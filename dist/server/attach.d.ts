@@ -15,6 +15,8 @@ export interface FeatureContext {
      * after its own I/O.
      */
     principal?: FeaturePrincipal;
+    /** 0.118: another attached feature's service by wire name (resolved lazily; undefined until attached). */
+    service?: (name: string) => unknown;
 }
 /** A pluggable realtime capability: manifest + service factory. */
 export interface RealtimeFeature {
@@ -140,6 +142,10 @@ export declare function notifications(opts?: {
     store?: import('../notification/RedisNotificationStore').RedisNotificationStore;
     redisClient?: import('../notification/RedisNotificationStore').NotificationRedisClient | null;
     authorize?: import('../notification/NotificationService').NotificationServiceOpts['authorize'];
+    /** 0.118: fresh per-delivery read admission (see NotificationServiceOpts.admit). */
+    admit?: import('../notification/NotificationService').NotificationServiceOpts['admit'];
+    /** 0.118: replay the unread inbox to each new connection, once, through `admit`. */
+    replayOnConnect?: boolean;
 }): RealtimeFeature;
 export declare function fileUploads(opts?: {
     blobStore?: import('../fileupload/FileBlobStore').FileBlobStore;

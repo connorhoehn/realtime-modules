@@ -64,6 +64,7 @@ import {
 } from './ChatMembershipStore';
 import type { ChatMessage } from './types';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
+import { CHAT_UNREAD_MARKER, DEFAULT_UNREAD_WINDOW, defaultIsItem, type ChatUnreadInbox, type ChatUnreadOpts } from './unread';
 import { routerPermits, type ChannelAccessKind, type ChannelAccessRouter } from '../server-ws/channelAccess';
 import { createAuthorityScope, type AuthorityScope } from '../server-ws/authorityScope';
 
@@ -389,7 +390,18 @@ export interface ChatServiceOpts {
      * `channel` NOW. Rows for anyone else are left in the store but never
      * listed. Errors and a missing hook list every row.
      */
-    currentReaders?: (channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>;
+    currentReaders?: (channel: string, userIds: readonly string[], scope?: AuthorityScope) => Promise<Iterable<string>> | Iterable<string>;
+    /**
+     * 0.118: the "new messages" notification item per cursor holder. Owned
+     * here for every post — a client send and a server-side post
+     * (`postSystemMessage`, `noteMessagePosted`) take the same path — and
+     * cleared when the holder's read receipt passes it. Needs receipts on the
+     * channel (`readReceiptStore`; `cursorMode` for open channels). A holder
+     * gets an item only if they read the channel NOW: `currentReaders` (or the
+     * member roster) is asked fresh for each recipient just before the item is
+     * made. See `ChatUnreadOpts`.
+     */
+    unread?: ChatUnreadOpts;
 }
 
 /** See `ChatServiceOpts.cursorMode`. */
@@ -497,7 +509,8 @@ export class ChatService {
     onChannelJoin: ((info: { channel: string; userId: string }) => void) | null;
     channelAudience: ((channel: string) => Promise<string[]> | string[]) | null;
     cursorMode: ((channel: string) => ChatCursorMode) | null;
-    currentReaders: ((channel: string, userIds: readonly string[]) => Promise<Iterable<string>> | Iterable<string>) | null;
+    currentReaders: ((channel: string, userIds: readonly string[], scope?: AuthorityScope) => Promise<Iterable<string>> | Iterable<string>) | null;
+    unread: ChatUnreadOpts | null;
 
     clientChannels: SubscriptionTracker;
     channelCaches: Map<string, LRUCache<string, ChatMessage>>;
@@ -558,6 +571,7 @@ export class ChatService {
         this.receiptsMaxMembers = opts.receiptsMaxMembers ?? DEFAULT_RECEIPTS_MAX_MEMBERS;
         this.cursorMode = opts.cursorMode ?? null;
         this.currentReaders = opts.currentReaders ?? null;
+        this.unread = opts.unread ?? null;
 
         // Local state management
         this.clientChannels = new SubscriptionTracker();
@@ -1825,7 +1839,7 @@ export class ChatService {
      * `_forgetReceipt` — a row written before a crash, or by another node
      * mid-removal, never outlives the membership it describes on the wire.
      */
-    async listReadReceipts(channel: string): Promise<ChatReadReceipt[]> {
+    async listReadReceipts(channel: string, scope?: AuthorityScope): Promise<ChatReadReceipt[]> {
         const audience = await this._receiptsAudience(channel);
         if (!audience.enabled || !this.readReceiptStore) return [];
         let rows: ChatReadReceipt[];
@@ -1842,7 +1856,7 @@ export class ChatService {
             allowed = null;
         } else {
             try {
-                allowed = new Set(await this.currentReaders(channel, [...new Set(rows.map((r) => r.userId))]));
+                allowed = new Set(await this.currentReaders(channel, [...new Set(rows.map((r) => r.userId))], scope));
             } catch (err: any) {
                 // Fail closed: a host that cannot say who reads now lists nobody.
                 this.logger.error('currentReaders hook failed (no cursors listed):', err && err.message);
@@ -1973,6 +1987,7 @@ export class ChatService {
                 this.logger.error('onReadReceipt hook threw (ignored):', hookErr);
             }
         }
+        if (this.unread) await this._clearUnread(channel, stored.userId, stored.readAt);
     }
 
     /**
@@ -2118,6 +2133,101 @@ export class ChatService {
         if (!redisAvailable) {
             this.logger.debug(`Redis unavailable, message delivered to local clients only`);
         }
+
+        // One path for every post: a client send, postSystemMessage, a host call.
+        if (this.unread) {
+            const sender = messageData.userId ?? (publisherClientId != null ? this._resolveIdentity(publisherClientId)?.userId : undefined);
+            await this.noteMessagePosted(channel, messageData, { ...(sender ? { sender } : {}), ...(scope ? { scope } : {}) });
+        }
+    }
+
+    /**
+     * 0.118 (`unread`): create the "new messages" item for each cursor holder
+     * of `channel` that this message is new to. Called for every post by
+     * `broadcastMessage`; a host that writes a message straight into the store
+     * (a server-side post that does not broadcast) calls it itself. Holders
+     * skipped: the sender, anyone `unread.live` names, anyone who is not a
+     * reader of the channel at the moment their item would be made (asked
+     * fresh, per recipient). One item per stretch since the cursor (`itemId`);
+     * an existing item with that id is left alone. Resolves to the users given
+     * an item; never throws.
+     */
+    async noteMessagePosted(channel: string, message: ChatMessage, opts: { sender?: string; senderName?: string; scope?: AuthorityScope } = {}): Promise<string[]> {
+        const cfg = this.unread;
+        if (!cfg) return [];
+        try {
+            const inbox = this._unreadInbox();
+            if (!inbox) return [];
+            const sender = opts.sender ?? message.userId;
+            const cursors = (await this.listReadReceipts(channel, opts.scope)).filter((c) => c.userId !== sender);
+            if (!cursors.length) return [];
+            const live = cfg.live ? await cfg.live(channel, cursors.map((c) => c.userId), opts.scope) : null;
+            const window = cfg.window ?? DEFAULT_UNREAD_WINDOW;
+            const recent = await this.getChannelHistory(channel, window);
+            const messages = recent.some((m) => m.id === message.id) ? recent : [...recent, message];
+            const given: string[] = [];
+            for (const cursor of cursors) {
+                if (live?.has(cursor.userId)) continue;
+                const unseen = messages.filter((m) => (m.userId ?? m.clientId) !== cursor.userId && m.timestamp > cursor.readAt && !m.deletedAt).length;
+                if (unseen < 1) continue;
+                const id = cfg.itemId(channel, cursor.readAt);
+                if ((await inbox.listForUser(cursor.userId)).some((n) => n.id === id)) continue;
+                const content = await cfg.describe({ channel, message, ...(opts.senderName ? { senderName: opts.senderName } : {}), recipient: cursor.userId });
+                if (!content) continue;
+                // READ ADMISSION: the verdict is made now, for this recipient, and not
+                // taken from the listing above (which may be a moment old).
+                if (!await this._readsNow(channel, cursor.userId, opts.scope)) continue;
+                await inbox.notifyUser(cursor.userId, {
+                    id,
+                    type: content.type ?? 'message',
+                    title: content.title,
+                    ...(content.body !== undefined ? { body: content.body } : {}),
+                    timestamp: message.timestamp,
+                    channel,
+                    payload: { ...(content.payload ?? {}), [CHAT_UNREAD_MARKER]: channel },
+                    ...(content.action ? { action: content.action } : {}),
+                });
+                given.push(cursor.userId);
+            }
+            return given;
+        } catch (err: any) {
+            this.logger.error('unread items failed (ignored):', err && err.message);
+            return [];
+        }
+    }
+
+    /** The cursor moved: this holder's unread items for `channel` at or before `readAt` are read. */
+    async _clearUnread(channel: string, userId: string, readAt: string): Promise<string[]> {
+        const cfg = this.unread;
+        if (!cfg) return [];
+        try {
+            const inbox = this._unreadInbox();
+            if (!inbox) return [];
+            const isItem = cfg.isItem ?? defaultIsItem;
+            const ids = (await inbox.listForUser(userId))
+                .filter((n) => !n.read && isItem(n, channel) && (n.timestamp ?? '') <= readAt)
+                .map((n) => n.id);
+            if (ids.length) await inbox.markReadForUser(userId, ids);
+            return ids;
+        } catch (err: any) {
+            this.logger.error('unread clear failed (ignored):', err && err.message);
+            return [];
+        }
+    }
+
+    _unreadInbox(): ChatUnreadInbox | null {
+        const n = this.unread?.notify;
+        const inbox = typeof n === 'function' ? n() : n;
+        return inbox && typeof inbox.notifyUser === 'function' ? inbox : null;
+    }
+
+    /** Does `userId` read `channel` right now? Asked of the host every time; fails closed. */
+    async _readsNow(channel: string, userId: string, scope?: AuthorityScope): Promise<boolean> {
+        const audience = await this._receiptsAudience(channel);
+        if (!audience.enabled) return false;
+        if (audience.mode === 'members') return audience.members.includes(userId);
+        if (!this.currentReaders) return true;
+        try { return new Set(await this.currentReaders(channel, [userId], scope)).has(userId); } catch { return false; }
     }
 
     /**

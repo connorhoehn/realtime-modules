@@ -2,6 +2,69 @@
 
 ## [Unreleased]
 
+## 0.118.0 — 2026-10-14
+
+The chat read model owns its "new messages" notification, and the
+notifications service replays the inbox on connect, both behind a read
+admission rule (lane R5 of the 2026-10-14 upstream refinement plan). Additive:
+nothing changes unless `unread`, `admit` or `replayOnConnect` is passed.
+
+### Added (lane R5)
+
+- **`chat({ unread: { notify?, itemId, describe, live?, window?, isItem? } })`.**
+  `ChatService` now creates the per-cursor-holder "new messages" item and
+  clears it on read receipt. One path for every post: a client send and a
+  server-side post (`postSystemMessage`) both reach `broadcastMessage`, which
+  calls the new public `noteMessagePosted(channel, message, { sender?, scope? })`;
+  a host that writes a message straight into its store calls that method itself.
+  A holder is skipped if they sent it, `live` names them, or they are not a
+  reader NOW. One item per stretch since the cursor (`itemId(channel, readAt)`);
+  an existing item with that id is kept. The item carries
+  `payload.chatUnread = <channel>`; `isItem` overrides how items are recognised
+  when clearing. `notify` defaults to the `notifications()` service attached
+  beside `chat()` (new `FeatureContext.service(name)`), or takes any object with
+  `notifyUser`/`listForUser`/`markReadForUser`. `currentReaders` now receives
+  the send's `AuthorityScope` as a third argument, and `listReadReceipts` takes
+  an optional scope.
+- **`notifications({ replayOnConnect: true })`.** The service implements
+  `onClientConnect`/`onClientDisconnect`: each new connection gets its unread
+  set as one `notification:bulk-update`, once per connection. A host `onConnect`
+  that calls `replayUnreadForUser` is no longer needed.
+- **`notifications({ admit })` / `NotificationServiceOpts.admit(userId, record)`.**
+  See below.
+
+### Read admission (design note for review)
+
+Rule: an unread item, a live notification, a replay or a history reply reaches
+a user only if the host's read authority admits that user for that record at
+delivery time.
+
+1. **Creation.** `noteMessagePosted` lists cursor holders through
+   `currentReaders` (or the member roster), then asks `currentReaders` AGAIN for
+   each recipient immediately before making that recipient's item. The listing
+   is never the verdict. A throwing or rejecting `currentReaders` creates
+   nothing (fail closed).
+2. **Delivery.** `NotificationService` asks `admit(userId, record)` for every
+   record on every delivery path: `notifyUser` fan-out, connect replay and
+   `getHistory`. No verdict is cached or stored; a refusal, throw or rejection
+   withholds the record from that delivery only. The record stays in the
+   inbox, so a later delivery asks again (a re-admitted reader sees it; a
+   revoked one never does, replay included). Without `admit` behaviour is
+   unchanged.
+3. **Session epoch.** With `attachRealtime({ principal })` the service checks
+   the connection's principal before delivering to each connection, and again
+   after admission I/O when `recheckAfterIo` is set. A principal that went
+   stale (epoch bump, revoked session) while the host was deciding gets
+   nothing: no frame, not a partial replay.
+4. **Clearing is not gated.** Marking an item read needs no admission; it only
+   removes state, and the echo carries an id, not content.
+
+Residual, by design: the item's text (a message snippet) is built from the
+triggering message before the final reader check; it is discarded if the check
+fails and is never stored for a refused recipient. A user admitted at creation
+and revoked before they connect still has the stored record, but `admit` keeps
+it from every later delivery.
+
 ## 0.117.0 — 2026-10-14
 
 `RedisRealtimeRouter` rebuilt on distributed-core 0.48.0's fenced lease
