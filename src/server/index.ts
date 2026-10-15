@@ -95,10 +95,14 @@ export type {
     FeatureContext,
     RealtimeFeature,
     RealtimeHandle,
+    RealtimeServices,
+    KnownRealtimeServices,
+    RealtimeStats,
 } from './attach';
 export {
     LocalRealtimeRouter,
     PLUGIN_SCOPE_RETAIN_MAX_MS,
+    liveUsersOnChannel,
 } from './router';
 export { RedisRealtimeRouter } from './RedisRealtimeRouter';
 export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents, RealtimeLeaseGroup,

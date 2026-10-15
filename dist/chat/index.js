@@ -10,7 +10,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PIN_PREVIEW_MAX = exports.MemoryChatPinsStore = exports.DM_CHANNEL_NAME_MAX_LENGTH = exports.DM_GROUP_CHANNEL_PREFIX = exports.DM_CHANNEL_PREFIX = exports.dmChannelMembers = exports.dmChatChannelFor = exports.isDmChatChannel = exports.SubscriptionTracker = exports.MAX_HISTORY_DAYS = exports.memberView = exports.parseHistoryChoice = exports.historyFloorFor = exports.MemoryChatMembershipStore = exports.MemoryChatReadReceiptStore = exports.InMemoryChatStore = exports.ChatManifest = exports.ChatService = void 0;
+exports.parseChatPluginMessage = exports.PIN_PREVIEW_MAX = exports.MemoryChatPinsStore = exports.DM_CHANNEL_NAME_MAX_LENGTH = exports.DM_GROUP_CHANNEL_PREFIX = exports.DM_CHANNEL_PREFIX = exports.dmChannelMembers = exports.dmChatChannelFor = exports.isDmChatChannel = exports.SubscriptionTracker = exports.MAX_HISTORY_DAYS = exports.memberView = exports.parseHistoryChoice = exports.historyFloorFor = exports.MemoryChatMembershipStore = exports.MemoryChatReadReceiptStore = exports.InMemoryChatStore = exports.ChatManifest = exports.ChatService = void 0;
 const ChatService_1 = __importDefault(require("./ChatService"));
 exports.ChatService = ChatService_1.default;
 const manifest_1 = require("./manifest");
@@ -37,5 +37,7 @@ Object.defineProperty(exports, "DM_CHANNEL_NAME_MAX_LENGTH", { enumerable: true,
 var ChatPinsStore_1 = require("./ChatPinsStore");
 Object.defineProperty(exports, "MemoryChatPinsStore", { enumerable: true, get: function () { return ChatPinsStore_1.MemoryChatPinsStore; } });
 Object.defineProperty(exports, "PIN_PREVIEW_MAX", { enumerable: true, get: function () { return ChatPinsStore_1.PIN_PREVIEW_MAX; } });
+var pluginMessage_1 = require("./pluginMessage");
+Object.defineProperty(exports, "parseChatPluginMessage", { enumerable: true, get: function () { return pluginMessage_1.parseChatPluginMessage; } });
 exports.default = ChatService_1.default;
 //# sourceMappingURL=index.js.map

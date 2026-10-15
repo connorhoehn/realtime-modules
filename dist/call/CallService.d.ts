@@ -32,6 +32,8 @@ export declare class CallService {
      *  Local cache is a write-through view: every mutation here also
      *  mirrors to stateStore. */
     private activeCalls;
+    /** Calls this process holds (the per-node cache). Cluster-wide truth is the state store. 0.119 */
+    activeCallCount(): number;
     private readonly participantWrites;
     private clientToCalls;
     private inviteSweepTimer;

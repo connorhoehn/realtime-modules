@@ -202,6 +202,15 @@ export interface RealtimeRouter {
         clientId: string;
         userId: string;
     }[]>;
+    /**
+     * 0.119: which of `userIds` hold a live, READABLE subscription to
+     * `channel` right now (peer-aware on a cluster router). Pass the send's
+     * `scope` to share its membership proof. Throws nothing: an unanswerable
+     * probe rejects, so callers decide their own conservative default.
+     */
+    liveUsersOn?(channel: string, userIds: string[], opts?: {
+        scope?: AuthorityScope;
+    }): Promise<Set<string>>;
     /** Fresh cluster lookup. Local getClientData remains synchronous for
      * inbound identity fences; REST-originated readers can await this seam. */
     resolveClientData?(clientId: string): Promise<{
@@ -221,6 +230,10 @@ export interface RealtimeRouter {
     readonly redisAvailable?: boolean;
     readonly nodeId?: string;
 }
+/** Shared by the local and cluster routers: users with a readable subscription to `channel`. */
+export declare function liveUsersOnChannel(router: Pick<RealtimeRouter, 'getClientsByUserId' | 'isClientSubscribed'>, channel: string, userIds: string[], opts?: {
+    scope?: AuthorityScope;
+}): Promise<Set<string>>;
 /**
  * Single-process router: in-memory channel membership, identity from the WS
  * auth context, optional channel authz, plugin lifecycle hooks. The handle
@@ -265,6 +278,9 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
         userContext?: WsAuthContext;
     } | null;
     getUserIdForClient(clientId: string): string | undefined;
+    liveUsersOn(channel: string, userIds: string[], opts?: {
+        scope?: AuthorityScope;
+    }): Promise<Set<string>>;
     getClientsByUserId(userIds: string[], excludeClientId?: string): {
         clientId: string;
         userId: string;

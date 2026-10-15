@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.118.0",
+  "version": "0.119.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -105,6 +105,9 @@
       ],
       "deck": [
         "dist/deck/index.d.ts"
+      ],
+      "testing": [
+        "dist/testing/index.d.ts"
       ]
     }
   },
@@ -241,6 +244,10 @@
     "./deck": {
       "types": "./dist/deck/index.d.ts",
       "default": "./dist/deck/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "files": [

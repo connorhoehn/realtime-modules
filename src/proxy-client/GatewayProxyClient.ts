@@ -150,7 +150,9 @@ export class GatewayProxyClient {
                 'GatewayProxyClient: no fetch implementation available. Pass `fetch` in options or run on Node 18+.',
             );
         }
-        this.fetchImpl = f;
+        // Bound: `this.fetchImpl(...)` would otherwise call a browser's native
+        // fetch with `this` set to the client ("Illegal invocation").
+        this.fetchImpl = ((input, init) => f(input, init)) as typeof fetch;
         this.timeoutMs = opts.timeout ?? DEFAULT_TIMEOUT_MS;
     }
 

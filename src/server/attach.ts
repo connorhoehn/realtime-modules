@@ -48,6 +48,10 @@ import {
     type RealtimeRouter,
     type RouterLogger,
 } from './router';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+import type { ChatService } from '../chat/ChatService';
+import type { NotificationService } from '../notification/NotificationService';
+import type { CallService } from '../call/CallService';
 import { createSubscribeService } from './subscribeService';
 import { normalizeCallPayload } from './authority/engine';
 import {
@@ -576,10 +580,43 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     principal?: PrincipalRevalidation;
 }
 
+/**
+ * 0.119: the services the built-in features register, typed by name. Present
+ * only when the matching feature is attached (`chat()`, `notifications()`,
+ * `calls()`); any other name stays a `WsService`.
+ */
+export interface KnownRealtimeServices {
+    chat?: ChatService;
+    notification?: NotificationService;
+    call?: CallService;
+}
+export type RealtimeServices = KnownRealtimeServices & Record<string, WsService>;
+
+/** One reading of the gateway process. 0.119 */
+export interface RealtimeStats {
+    /** Connected sockets on this process. */
+    sockets: number;
+    /** Calls this process holds (0 without `calls()`). */
+    activeCalls: number;
+    /** Event-loop delay p99 / max in ms since the last `onStats` tick (or process start). */
+    eventLoopDelayP99Ms: number;
+    eventLoopDelayMaxMs: number;
+    rssMb: number;
+    ts: string;
+}
+
 export interface RealtimeHandle extends WsHandlerHandle {
     router: RealtimeRouter;
-    services: Record<string, WsService>;
+    services: RealtimeServices;
     manifests: FeatureManifest[];
+    /** A snapshot of this process: sockets, calls, event-loop p99, RSS. */
+    stats(): RealtimeStats;
+    /**
+     * Call `listener` with `stats()` every `intervalMs` (default 60 000) and
+     * reset the event-loop histogram each tick. Returns the unsubscribe;
+     * `dispose()` stops every subscription. The timer is unref'd.
+     */
+    onStats(listener: (stats: RealtimeStats) => void, opts?: { intervalMs?: number }): () => void;
 }
 
 /**
@@ -610,7 +647,7 @@ export function attachRealtime(
         },
     } : undefined;
 
-    const services: Record<string, WsService> = {};
+    const services: Record<string, WsService> = {};  // widened to RealtimeServices on the handle
     const manifests: FeatureManifest[] = [];
     for (const feature of features) {
         const name = feature.serviceName ?? feature.manifest.name;
@@ -670,5 +707,39 @@ export function attachRealtime(
         await router.shutdown?.();
     };
 
-    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose });
+    let histogram: ReturnType<typeof monitorEventLoopDelay> | null = null;
+    const loopHistogram = () => {
+        if (!histogram) { histogram = monitorEventLoopDelay({ resolution: 20 }); histogram.enable(); }
+        return histogram;
+    };
+    const statTimers = new Set<ReturnType<typeof setInterval>>();
+    const ms = (ns: number) => Math.round((ns / 1e6) * 100) / 100;
+    const stats = (): RealtimeStats => {
+        const h = loopHistogram();
+        const call = services['call'] as { activeCallCount?: () => number } | undefined;
+        return {
+            sockets: handle.listClients().length,
+            activeCalls: call?.activeCallCount?.() ?? 0,
+            eventLoopDelayP99Ms: ms(h.percentile(99)),
+            eventLoopDelayMaxMs: ms(h.max),
+            rssMb: Math.round(process.memoryUsage().rss / 1048576),
+            ts: new Date().toISOString(),
+        };
+    };
+    const onStats = (listener: (s: RealtimeStats) => void, o: { intervalMs?: number } = {}): (() => void) => {
+        const interval = o.intervalMs && o.intervalMs > 0 ? o.intervalMs : 60_000;
+        const timer = setInterval(() => {
+            try { listener(stats()); } catch (err) { log.warn('[attachRealtime] onStats listener failed', err); }
+            finally { histogram?.reset(); }
+        }, interval);
+        timer.unref?.();
+        statTimers.add(timer);
+        return () => { clearInterval(timer); statTimers.delete(timer); };
+    };
+    const disposeAll = async (): Promise<void> => {
+        for (const t of statTimers) clearInterval(t);
+        statTimers.clear();
+        try { await dispose(); } finally { histogram?.disable(); histogram = null; }
+    };
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats });
 }

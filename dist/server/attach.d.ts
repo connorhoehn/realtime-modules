@@ -1,6 +1,9 @@
 import type { FeatureManifest } from '../feature-manifest/types';
 import type { WsHandlerHandle, WsHandlerOptions, WsService } from '../server-ws/types';
 import { type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
+import type { ChatService } from '../chat/ChatService';
+import type { NotificationService } from '../notification/NotificationService';
+import type { CallService } from '../call/CallService';
 import { type FeaturePrincipal, type PrincipalRevalidation } from './authority/principal';
 /** Everything a feature's factory receives. */
 export interface FeatureContext {
@@ -201,10 +204,43 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      */
     principal?: PrincipalRevalidation;
 }
+/**
+ * 0.119: the services the built-in features register, typed by name. Present
+ * only when the matching feature is attached (`chat()`, `notifications()`,
+ * `calls()`); any other name stays a `WsService`.
+ */
+export interface KnownRealtimeServices {
+    chat?: ChatService;
+    notification?: NotificationService;
+    call?: CallService;
+}
+export type RealtimeServices = KnownRealtimeServices & Record<string, WsService>;
+/** One reading of the gateway process. 0.119 */
+export interface RealtimeStats {
+    /** Connected sockets on this process. */
+    sockets: number;
+    /** Calls this process holds (0 without `calls()`). */
+    activeCalls: number;
+    /** Event-loop delay p99 / max in ms since the last `onStats` tick (or process start). */
+    eventLoopDelayP99Ms: number;
+    eventLoopDelayMaxMs: number;
+    rssMb: number;
+    ts: string;
+}
 export interface RealtimeHandle extends WsHandlerHandle {
     router: RealtimeRouter;
-    services: Record<string, WsService>;
+    services: RealtimeServices;
     manifests: FeatureManifest[];
+    /** A snapshot of this process: sockets, calls, event-loop p99, RSS. */
+    stats(): RealtimeStats;
+    /**
+     * Call `listener` with `stats()` every `intervalMs` (default 60 000) and
+     * reset the event-loop histogram each tick. Returns the unsubscribe;
+     * `dispose()` stops every subscription. The timer is unref'd.
+     */
+    onStats(listener: (stats: RealtimeStats) => void, opts?: {
+        intervalMs?: number;
+    }): () => void;
 }
 /**
  * Attach realtime features to an EXISTING http(s).Server.

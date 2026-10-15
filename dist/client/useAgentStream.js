@@ -301,6 +301,11 @@ function useAgentStream(opts) {
     }, [setSessionId]);
     // ---- sendMessage --------------------------------------------------------
     const sendMessage = (0, react_1.useCallback)(async (text) => {
+        // In-flight guard: a second send while a stream is open would orphan the
+        // first controller (its abort handle lost) and interleave two assistants.
+        // Callers wait for `isStreaming` to clear, or call `reset()` to cancel.
+        if (abortRef.current)
+            return;
         const o = optsRef.current;
         const userMsg = {
             id: randomId(),
@@ -318,7 +323,8 @@ function useAgentStream(opts) {
         currentMsgRef.current = { id: '', content: '', toolCalls: [] };
         const controller = new AbortController();
         abortRef.current = controller;
-        const fetchImpl = o.fetch ?? globalThis.fetch;
+        const rawFetch = o.fetch ?? globalThis.fetch;
+        const fetchImpl = rawFetch && ((input, init) => rawFetch(input, init));
         if (!fetchImpl) {
             setError('fetch is unavailable in this environment');
             setIsStreaming(false);
@@ -397,8 +403,12 @@ function useAgentStream(opts) {
             currentMsgRef.current = { id: '', content: '', toolCalls: [] };
             setStreamingText('');
             setActiveToolCalls([]);
-            setIsStreaming(false);
-            abortRef.current = null;
+            // A reset()/new send may have replaced this stream's controller; only
+            // the owner clears the handle.
+            if (abortRef.current === controller || abortRef.current === null) {
+                setIsStreaming(false);
+                abortRef.current = null;
+            }
         }
     }, [handleEvent]);
     // ---- reset --------------------------------------------------------------

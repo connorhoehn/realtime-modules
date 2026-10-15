@@ -57,6 +57,7 @@ exports.collabDocs = collabDocs;
 exports.attachRealtime = attachRealtime;
 const createWsHandler_1 = require("../server-ws/createWsHandler");
 const router_1 = require("./router");
+const node_perf_hooks_1 = require("node:perf_hooks");
 const subscribeService_1 = require("./subscribeService");
 const engine_1 = require("./authority/engine");
 const principal_1 = require("./authority/principal");
@@ -433,7 +434,7 @@ function attachRealtime(server, opts) {
             }
         },
     } : undefined;
-    const services = {};
+    const services = {}; // widened to RealtimeServices on the handle
     const manifests = [];
     for (const feature of features) {
         const name = feature.serviceName ?? feature.manifest.name;
@@ -494,6 +495,57 @@ function attachRealtime(server, opts) {
         }
         await router.shutdown?.();
     };
-    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose });
+    let histogram = null;
+    const loopHistogram = () => {
+        if (!histogram) {
+            histogram = (0, node_perf_hooks_1.monitorEventLoopDelay)({ resolution: 20 });
+            histogram.enable();
+        }
+        return histogram;
+    };
+    const statTimers = new Set();
+    const ms = (ns) => Math.round((ns / 1e6) * 100) / 100;
+    const stats = () => {
+        const h = loopHistogram();
+        const call = services['call'];
+        return {
+            sockets: handle.listClients().length,
+            activeCalls: call?.activeCallCount?.() ?? 0,
+            eventLoopDelayP99Ms: ms(h.percentile(99)),
+            eventLoopDelayMaxMs: ms(h.max),
+            rssMb: Math.round(process.memoryUsage().rss / 1048576),
+            ts: new Date().toISOString(),
+        };
+    };
+    const onStats = (listener, o = {}) => {
+        const interval = o.intervalMs && o.intervalMs > 0 ? o.intervalMs : 60_000;
+        const timer = setInterval(() => {
+            try {
+                listener(stats());
+            }
+            catch (err) {
+                log.warn('[attachRealtime] onStats listener failed', err);
+            }
+            finally {
+                histogram?.reset();
+            }
+        }, interval);
+        timer.unref?.();
+        statTimers.add(timer);
+        return () => { clearInterval(timer); statTimers.delete(timer); };
+    };
+    const disposeAll = async () => {
+        for (const t of statTimers)
+            clearInterval(t);
+        statTimers.clear();
+        try {
+            await dispose();
+        }
+        finally {
+            histogram?.disable();
+            histogram = null;
+        }
+    };
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats });
 }
 //# sourceMappingURL=attach.js.map

@@ -194,6 +194,9 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void;
+    liveUsersOn(channel: string, userIds: string[], opts?: {
+        scope?: AuthorityScope;
+    }): Promise<Set<string>>;
     isClientSubscribed(clientId: string, channel: string, opts?: {
         scope?: AuthorityScope;
     }): Promise<boolean>;

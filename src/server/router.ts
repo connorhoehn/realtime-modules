@@ -213,6 +213,13 @@ export interface RealtimeRouter {
     getUserIdForClient?(clientId: string): string | undefined;
     /** User-targeted routing (call). */
     getClientsByUserId?(userIds: string[], excludeClientId?: string): { clientId: string; userId: string }[] | Promise<{ clientId: string; userId: string }[]>;
+    /**
+     * 0.119: which of `userIds` hold a live, READABLE subscription to
+     * `channel` right now (peer-aware on a cluster router). Pass the send's
+     * `scope` to share its membership proof. Throws nothing: an unanswerable
+     * probe rejects, so callers decide their own conservative default.
+     */
+    liveUsersOn?(channel: string, userIds: string[], opts?: { scope?: AuthorityScope }): Promise<Set<string>>;
     /** Fresh cluster lookup. Local getClientData remains synchronous for
      * inbound identity fences; REST-originated readers can await this seam. */
     resolveClientData?(clientId: string): Promise<{ userContext?: WsAuthContext } | null>;
@@ -229,6 +236,24 @@ export interface RealtimeRouter {
     /** Transport hints some services read. */
     readonly redisAvailable?: boolean;
     readonly nodeId?: string;
+}
+
+/** Shared by the local and cluster routers: users with a readable subscription to `channel`. */
+export async function liveUsersOnChannel(
+    router: Pick<RealtimeRouter, 'getClientsByUserId' | 'isClientSubscribed'>,
+    channel: string,
+    userIds: string[],
+    opts: { scope?: AuthorityScope } = {},
+): Promise<Set<string>> {
+    const live = new Set<string>();
+    if (!router.getClientsByUserId || !router.isClientSubscribed || userIds.length === 0) return live;
+    const wanted = new Set(userIds);
+    const scope = opts.scope?.active ? { scope: opts.scope } : undefined;
+    const clients = await router.getClientsByUserId([...wanted]);
+    await Promise.all(clients.filter(c => wanted.has(c.userId) && !live.has(c.userId)).map(async c => {
+        if (await router.isClientSubscribed!(c.clientId, channel, scope)) live.add(c.userId);
+    }));
+    return live;
 }
 
 function firePlugin(name: string, fn: () => void | Promise<void>, scope?: AuthorityScope): void {
@@ -334,6 +359,10 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     getUserIdForClient(clientId: string): string | undefined {
         const uid = this.ctxOf(clientId)?.userId;
         return typeof uid === 'string' && uid.length > 0 ? uid : undefined;
+    }
+
+    liveUsersOn(channel: string, userIds: string[], opts: { scope?: AuthorityScope } = {}): Promise<Set<string>> {
+        return liveUsersOnChannel(this, channel, userIds, opts);
     }
 
     getClientsByUserId(userIds: string[], excludeClientId?: string): { clientId: string; userId: string }[] {

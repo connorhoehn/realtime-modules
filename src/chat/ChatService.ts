@@ -77,7 +77,8 @@ const DEFAULT_CACHE_CLEANUP_INTERVAL_MS = 300_000;
 const DEFAULT_HISTORY_LIMIT = 50;
 const DEFAULT_JOIN_HISTORY_LIMIT = 20;
 const DEFAULT_MAX_MESSAGE_LENGTH = 1000;
-const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
+// 0.119: 256 (was 50). Tenant- and team-prefixed names (`<tenant>:ch:<40-char slug>:General`) exceed 50.
+const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 256;
 /**
  * Above this many people in a channel, read receipts are off.
  *
@@ -1284,6 +1285,21 @@ export class ChatService {
             this.channelCaches.set(channelId, cache);
         }
         return this.channelCaches.get(channelId)!;
+    }
+
+    /**
+     * A message the SERVER produced (a REST-originated thread post, a system
+     * card): cached in the channel history, optionally persisted, then
+     * broadcast through the router, so the router's plugins (`onMessage`,
+     * `clientId: 'server'`, no `userId`) and every live subscriber see it the
+     * way they see a socket send. `persist: true` also writes it to the
+     * ChatStore; leave it off when the host already stored the row.
+     */
+    async appendServerMessage(channel: string, message: ChatMessage, opts: { persist?: boolean } = {}): Promise<ChatMessage> {
+        this.addToChannelHistory(channel, message);
+        if (opts.persist) await this._persistMessage(message);
+        await this.broadcastMessage(channel, message);
+        return message;
     }
 
     addToChannelHistory(channel: string, messageData: ChatMessage): void {

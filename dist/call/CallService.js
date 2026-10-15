@@ -139,6 +139,8 @@ class CallService {
      *  Local cache is a write-through view: every mutation here also
      *  mirrors to stateStore. */
     activeCalls = new Map();
+    /** Calls this process holds (the per-node cache). Cluster-wide truth is the state store. 0.119 */
+    activeCallCount() { return this.activeCalls.size; }
     participantWrites = new Map();
     clientToCalls = new Map();
     inviteSweepTimer = null;

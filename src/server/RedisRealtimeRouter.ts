@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
 import { FencedLease, LeaseHeldError, type FenceEvent, type FencedOwner, type LeaseAttachment } from 'distributed-core/cluster/leases';
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
-import { LocalRealtimeRouter, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
+import { LocalRealtimeRouter, liveUsersOnChannel, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
 import { acceptsOriginPublishProof, createAuthorityScope, scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
@@ -455,6 +455,10 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
     }
     unsubscribeFromChannel(clientId: string, channel: string) { this.local.unsubscribeFromChannel(clientId, channel); }
+    liveUsersOn(channel: string, userIds: string[], opts: { scope?: AuthorityScope } = {}): Promise<Set<string>> {
+        return liveUsersOnChannel(this, channel, userIds, opts);
+    }
+
     async isClientSubscribed(clientId: string, channel: string, opts: { scope?: AuthorityScope } = {}): Promise<boolean> {
         if (!this.live() || typeof channel !== 'string' || !channel || Buffer.byteLength(channel) > this.maxBytes) return false;
         if (this.current(clientId)) {

@@ -429,6 +429,17 @@ export declare class ChatService {
         limit?: number;
     }): Promise<void>;
     getChannelCache(channelId: string): LRUCache<string, ChatMessage>;
+    /**
+     * A message the SERVER produced (a REST-originated thread post, a system
+     * card): cached in the channel history, optionally persisted, then
+     * broadcast through the router, so the router's plugins (`onMessage`,
+     * `clientId: 'server'`, no `userId`) and every live subscriber see it the
+     * way they see a socket send. `persist: true` also writes it to the
+     * ChatStore; leave it off when the host already stored the row.
+     */
+    appendServerMessage(channel: string, message: ChatMessage, opts?: {
+        persist?: boolean;
+    }): Promise<ChatMessage>;
     addToChannelHistory(channel: string, messageData: ChatMessage): void;
     getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]>;
     sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope): Promise<void>;

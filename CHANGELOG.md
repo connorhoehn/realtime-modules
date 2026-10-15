@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+## 0.119.0 — 2026-10-14
+
+Typed seams for hosts (lane R4) and upstream client defects plus a `/testing`
+subpath (lane R7) of the 2026-10-14 upstream refinement plan.
+
+### Added
+
+- **Typed service accessors (lane R4).** `handle.services.chat`,
+  `.notification` and `.call` are typed (`ChatService`, `NotificationService`,
+  `CallService`; `undefined` when the feature is not attached). Other names
+  stay `WsService`. Types: `RealtimeServices`, `KnownRealtimeServices`.
+- **`router.liveUsersOn(channel, userIds, { scope })` (lane R4).** Which of the
+  users hold a readable subscription to the channel, peer-aware on
+  `RedisRealtimeRouter`, sharing the send's scope proof. Also exported as
+  `liveUsersOnChannel(router, ...)` for custom routers.
+- **`handle.stats()` / `handle.onStats(listener, { intervalMs })` (lane R4).**
+  Sockets, calls this process holds (`CallService.activeCallCount()`),
+  event-loop delay p99/max, RSS. `dispose()` stops subscriptions.
+- **`ChatService.appendServerMessage(channel, message, { persist? })` (lane R4).**
+  Caches, optionally persists, and broadcasts a server-originated message
+  through the router, so plugins (`onMessage`, `clientId: 'server'`) and live
+  subscribers see it as they see a socket send.
+- **`parseChatPluginMessage(input, { resolveUserId? })` from `/chat` (lane R4).**
+  Reads a plugin's chat frame and returns null unless the stamped sender
+  equals the authenticated publisher.
+- **`./testing` subpath (lane R7).** `createRowsChatBackend` (rows-backed
+  `ChatStore` and read receipts over resettable row getters),
+  `FakeClusterRedis` (in-memory Redis for `RedisRealtimeRouter` with `hold`
+  stall injection, `port().lose()` and BoundedRedis connections; was the
+  repo's test helper) and `TestIdentityDirectory` (epoch-scoped identity
+  clones with a `principal()` revalidator). Test code only.
+
+### Changed
+
+- **`ChatService` default `maxChannelNameLength` is 256 (was 50) (lane R4).**
+  Tenant- and team-prefixed names exceed 50; hosts that pass an explicit
+  value are unaffected.
+
+### Fixed
+
+- **`GatewayProxyClient` called `fetch` with the client as `this` (lane R7)**,
+  which a browser rejects ("Illegal invocation"). The injected or global fetch
+  is now invoked unbound. `useAgentStream` does the same.
+- **`useAgentStream` had no in-flight guard (lane R7).** A second
+  `sendMessage` while a stream was open orphaned the first abort handle and
+  interleaved two assistants; it is now ignored until the stream settles or
+  `reset()` runs. A superseded stream no longer clears the newer stream's
+  handle.
+- **`archiveRoom` (lane R7):** already `POST /api/rooms/:slug/archive`, the
+  route platform-api serves (fixed in 0.99.2; the consumer queue entry is
+  stale). Pinned by `test/client/hangout-rooms/archiveRoom.test.ts`.
+
 ## 0.118.0 — 2026-10-14
 
 The chat read model owns its "new messages" notification, and the

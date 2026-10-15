@@ -13,6 +13,8 @@ export type { ChatMembershipStore, ChatMember, ChatMemberRole, ChatMemberView, C
 export type { ChatMessage, ChatHistoryQuery, ChatMessagePatch } from './types';
 export { MemoryChatPinsStore, PIN_PREVIEW_MAX } from './ChatPinsStore';
 export type { ChatPinInput, ChatPinsStore, PinnedMessage } from './ChatPinsStore';
+export { parseChatPluginMessage } from './pluginMessage';
+export type { ChatPluginInput, ParsedChatPluginMessage, ChatPluginFrameMessage } from './pluginMessage';
 export default ChatService;
 export type { ChatUnreadOpts, ChatUnreadInbox, ChatUnreadItem, ChatUnreadContent } from './unread';
 //# sourceMappingURL=index.d.ts.map

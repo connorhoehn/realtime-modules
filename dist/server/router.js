@@ -19,6 +19,7 @@
 // http.Server with zero infrastructure.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = void 0;
+exports.liveUsersOnChannel = liveUsersOnChannel;
 const channelAccess_1 = require("../server-ws/channelAccess");
 const authorityScope_1 = require("../server-ws/authorityScope");
 /**
@@ -38,6 +39,20 @@ const authorityScope_1 = require("../server-ws/authorityScope");
  * closed); a hook that ignores it keeps the per-recipient behaviour.
  */
 exports.PLUGIN_SCOPE_RETAIN_MAX_MS = 30_000;
+/** Shared by the local and cluster routers: users with a readable subscription to `channel`. */
+async function liveUsersOnChannel(router, channel, userIds, opts = {}) {
+    const live = new Set();
+    if (!router.getClientsByUserId || !router.isClientSubscribed || userIds.length === 0)
+        return live;
+    const wanted = new Set(userIds);
+    const scope = opts.scope?.active ? { scope: opts.scope } : undefined;
+    const clients = await router.getClientsByUserId([...wanted]);
+    await Promise.all(clients.filter(c => wanted.has(c.userId) && !live.has(c.userId)).map(async (c) => {
+        if (await router.isClientSubscribed(c.clientId, channel, scope))
+            live.add(c.userId);
+    }));
+    return live;
+}
 function firePlugin(name, fn, scope) {
     // A plugin observing a scoped operation keeps the scope open until its
     // own promise settles (bounded), so its reads share the operation's
@@ -126,6 +141,9 @@ class LocalRealtimeRouter {
     getUserIdForClient(clientId) {
         const uid = this.ctxOf(clientId)?.userId;
         return typeof uid === 'string' && uid.length > 0 ? uid : undefined;
+    }
+    liveUsersOn(channel, userIds, opts = {}) {
+        return liveUsersOnChannel(this, channel, userIds, opts);
     }
     getClientsByUserId(userIds, excludeClientId) {
         if (!this.handleRef)

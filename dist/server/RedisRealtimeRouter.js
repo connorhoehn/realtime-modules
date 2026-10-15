@@ -420,6 +420,9 @@ class RedisRealtimeRouter {
         return this.live() ? this.local.subscribeToChannel(clientId, channel, opts) : false;
     }
     unsubscribeFromChannel(clientId, channel) { this.local.unsubscribeFromChannel(clientId, channel); }
+    liveUsersOn(channel, userIds, opts = {}) {
+        return (0, router_1.liveUsersOnChannel)(this, channel, userIds, opts);
+    }
     async isClientSubscribed(clientId, channel, opts = {}) {
         if (!this.live() || typeof channel !== 'string' || !channel || Buffer.byteLength(channel) > this.maxBytes)
             return false;

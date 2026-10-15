@@ -213,6 +213,7 @@ is the same as an unpublished one.
 | `./server` | CRDT/document stack — `CRDTService`, snapshots, awareness, `attachRealtime` | Hosting collaborative documents |
 | `./server/stores/dynamo` | `DynamoChatStore` — durable chat over DynamoDB (messages, conversations index, membership, read receipts); optional peer `@aws-sdk/client-dynamodb` | Production chat: `chat({ chatStore })` or `chat(store.chatOptions())` |
 | `./deck` | Deck engine — `DeckSpec` contract + `validateDeckSpec`, `deckConstraints`, themes, `renderDeckPreview`/`renderAllSlideSvgs`, `renderPptx` (.pptx); optional peer `pptxgenjs` | Server-side generated presentations |
+| `./testing` | Test doubles: `createRowsChatBackend` (rows-backed chat/receipt stores), `FakeClusterRedis` (in-memory Redis for `RedisRealtimeRouter` with stall injection and connection loss), `TestIdentityDirectory` (epoch-scoped identity clones) | Tests of a host built on `attachRealtime`; never production |
 | `./agent-streaming` | AG-UI v0.1.x SSE emitter (`agentStreamMiddleware`) | Backends streaming AI responses |
 | `./proxy-client` | `GatewayProxyClient` — typed REST shim with optional HMAC signing | Server-to-server / Lambda |
 | `./work-graph` | Dependency-free work-event, sharing, viewer, cursor, reference, and collaboration contracts | Producers, API hosts, gateways, and clients composing the Active now work graph |
