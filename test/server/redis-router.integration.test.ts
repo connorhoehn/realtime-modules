@@ -5,11 +5,12 @@ import http from 'http';
 import { randomUUID } from 'crypto';
 import { createClient, type RedisClientType } from 'redis';
 import WebSocket from 'ws';
-import { attachRealtime, defineFeature, calls, chat, notifications, presence, splitServiceChannel, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle } from '../../src/server';
+import { attachRealtime, defineFeature, calls, chat, notifications, presence, splitServiceChannel, RedisRealtimeRouter, type RealtimeClusterRedis, type RealtimeHandle, type RealtimeMembershipInvalidation } from '../../src/server';
 import { createAuthorityScope, type AuthorityScope } from '../../src/server-ws/authorityScope';
 import { RedisPresenceStore } from '../../src/presence';
 import { RedisCallStateStore, type CallStateRedis } from '../../src/call';
 import type { NotificationService } from '../../src/notification';
+import { FENCED_LEASE_SCRIPTS, LeaseGroup, ReadinessGate } from 'distributed-core/cluster/leases';
 
 const enabled = process.env.REAL_ROUTER_REDIS === '1';
 const redisUrl = process.env.REAL_ROUTER_REDIS_URL;
@@ -38,12 +39,16 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
     let members: Set<string>;
     let held: { id: string; entered: VoidDeferred; release: VoidDeferred; calls: number } | null;
     let asks: Array<{ node: string; kind: string; userId: string; channel: string; scope?: AuthorityScope }>;
+    // The lease's fencing counter never expires by design; drop each test namespace's counter.
+    const namespaces = new Set<string>();
 
     async function boot(nodeId: string, ns = namespace, options: { fixedClientId?: string; dropReceipts?: boolean;
         registerGate?: VoidDeferred; disconnectGate?: VoidDeferred; disconnected?: VoidDeferred;
         rejoinGraceMs?: number; renewGate?: VoidDeferred; renewing?: VoidDeferred; ended?: string[];
-        publishProofMaxAgeMs?: number; peerOperationLingerMs?: number; withChat?: boolean } = {}): Promise<NativeNode> {
+        publishProofMaxAgeMs?: number; peerOperationLingerMs?: number; withChat?: boolean;
+        leaseGroup?: LeaseGroup; membershipStore?: RealtimeMembershipInvalidation } = {}): Promise<NativeNode> {
         if (!redisUrl) throw new Error('REAL_ROUTER_REDIS_URL is required for real Redis acceptance');
+        namespaces.add(ns);
         const command = createClient({ url: redisUrl, disableOfflineQueue: true, socket: { reconnectStrategy: false } });
         command.on('error', () => undefined);
         const subscriber = command.duplicate(); subscriber.on('error', () => undefined);
@@ -56,7 +61,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
                 if (options.registerGate && args[0] === 'EVAL' && args[1]?.includes("redis.call('EXISTS',KEYS[2])")) {
                     await options.registerGate.promise;
                 }
-                if (options.renewGate && args[0] === 'EVAL' && args[1]?.includes('for i=2,#KEYS,2')) {
+                if (options.renewGate && args[0] === 'EVAL' && args[1] === FENCED_LEASE_SCRIPTS.RENEW) {
                     // Redis committed the renewal but the response is held.
                     // A late success cannot resurrect local lease ownership.
                     const result = await command.sendCommand(args);
@@ -84,6 +89,8 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         const router = new RedisRealtimeRouter({ redis: port, namespace: ns, nodeId, leaseMs: 900, requestTimeoutMs: 200,
             ...(options.publishProofMaxAgeMs !== undefined ? { publishProofMaxAgeMs: options.publishProofMaxAgeMs } : {}),
             ...(options.peerOperationLingerMs !== undefined ? { peerOperationLingerMs: options.peerOperationLingerMs } : {}),
+            ...(options.leaseGroup ? { leaseGroup: options.leaseGroup } : {}),
+            ...(options.membershipStore ? { membershipStore: options.membershipStore } : {}),
             authorize, filterClientMessage: async ({ ctx, message }) => {
                 const frame = message as any;
                 if (held && frame.id === held.id && ctx?.userId === 'bob') {
@@ -160,6 +167,9 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
     afterEach(async () => {
         held?.release.resolve();
         for (const client of clients) client.ws.terminate();
+        const admin = nodes.find(node => node.command.isOpen)?.command;
+        for (const ns of namespaces) await admin?.del(`realtime:${encodeURIComponent(ns)}:lease-fence`).catch(() => undefined);
+        namespaces.clear();
         for (const node of nodes) {
             await node.handle.dispose();
             await new Promise<void>(resolve => node.server.close(() => resolve()));
@@ -826,5 +836,40 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         authorities.set('bob', { epoch: 1, org: 'orgiq' });
         const refused = await service.notifyUser('bob', { type: 'message', title: 'Revoked notification' });
         expect(refused.delivered).toBe(0);
+    });
+
+    it('0.117 LeaseGroup: a lost transport on one router retires its sibling and hands the sibling key back', async () => {
+        const group = new LeaseGroup();
+        const gate = new ReadinessGate();
+        const ws = await boot('ws', namespace, { leaseGroup: group }), cookie = await boot('cookie', namespace, { leaseGroup: group });
+        const peer = await boot('peer');
+        gate.addOwner('ws', ws.router); gate.addOwner('realtime', cookie.router); gate.setListening(true);
+        const bob = await connect(cookie, 'bob');
+        expect(gate.isReady()).toBe(true);
+        ws.unavailable();
+        expect(gate.isReady()).toBe(false);
+        expect(cookie.router.isReady()).toBe(false);
+        await group.retired;
+        const prefix = `realtime:${encodeURIComponent(namespace)}:`;
+        expect(await peer.command.get(`${prefix}node:cookie`)).toBeNull();
+        expect(await peer.command.get(`${prefix}node:ws`)).toBe(ws.router.instance);
+        expect(await peer.router.sendToClient(bob.id, { type: 'test', id: 'retired-sibling' })).toBe(false);
+        await delay(1200);
+        expect(gate.isReady()).toBe(false);
+        expect(bob.frames.some(frame => frame.id === 'retired-sibling')).toBe(false);
+    });
+
+    it('0.117 membershipStore: a committed write on one node invalidates the peer cache', async () => {
+        const make = () => {
+            const observers = new Set<(channel: string) => void>(); const invalidated: string[] = [];
+            return { invalidated, commit: (c: string) => { for (const o of observers) o(c); },
+                invalidate: (c: string) => { invalidated.push(c); },
+                onCommittedWrite: (o: (c: string) => void) => { observers.add(o); return () => { observers.delete(o); }; } };
+        };
+        const sa = make(), sb = make();
+        await boot('a', namespace, { membershipStore: sa }); await boot('b', namespace, { membershipStore: sb });
+        sa.commit('orgiq:room');
+        await eventually(() => sb.invalidated.length === 1);
+        expect(sb.invalidated).toEqual(['orgiq:room']); expect(sa.invalidated).toEqual([]);
     });
 });

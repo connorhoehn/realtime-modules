@@ -1,3 +1,4 @@
+import { type FenceEvent, type FencedOwner } from 'distributed-core/cluster/leases';
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
@@ -22,7 +23,24 @@ export interface RealtimePeerEvents {
     publish(topic: string, payload: string): Promise<void>;
     subscribe(topic: string, handler: (payload: string) => void | Promise<void>): () => void;
 }
+/** Structural view of distributed-core's `LeaseGroup` (any copy of it). The
+ * router adds its ownership lease on start; the first member to fence
+ * retires (fences and releases) every sibling. */
+export interface RealtimeLeaseGroup {
+    add(member: FencedOwner): () => void;
+}
+/** A host membership cache whose committed writes other replicas must drop.
+ * The router publishes each committed channel as a peer event and calls
+ * `invalidate` for channels committed on peers. Hints only: the store must
+ * reread its durable authority after an invalidation. */
+export interface RealtimeMembershipInvalidation {
+    invalidate(channel: string): void;
+    onCommittedWrite(observer: (channel: string) => void): () => void;
+}
 export interface RedisRealtimeRouterOptions {
+    /** The existing port, or distributed-core's `BoundedRedis`
+     * (`createBoundedRedis(url, { timeoutMs })`), which satisfies it and
+     * bounds every reply after the socket write. */
     redis: RealtimeClusterRedis;
     /** Separate applications/environments must use separate namespaces. */
     namespace: string;
@@ -56,6 +74,27 @@ export interface RedisRealtimeRouterOptions {
      * before, and no operation number on the wire. Max 2000.
      */
     peerOperationLingerMs?: number;
+    /**
+     * 0.117: fence together with sibling owners in the same process (e.g. a
+     * `/ws` router and a cookie `/realtime` router). Pass a distributed-core
+     * `LeaseGroup`; the router joins it once its lease is acquired. When any
+     * member fences, every other member is fenced and released, so no lease
+     * outlives the node's 503. A router joining a retired group fails start.
+     * `shutdown()` leaves the group before releasing its lease, so a
+     * deliberate shutdown (or a failed start) does not retire siblings; a
+     * fence always does.
+     */
+    leaseGroup?: RealtimeLeaseGroup;
+    /**
+     * 0.117: cross-replica invalidation for a membership cache. Committed
+     * writes are published on `membershipEventTopic` (default
+     * `chat:membership`) and peers call `invalidate(channel)`.
+     */
+    membershipStore?: RealtimeMembershipInvalidation;
+    /** Peer event topic for `membershipStore`. Default `chat:membership`. */
+    membershipEventTopic?: string;
+    /** Peer-supplied channels this node will invalidate. Default: any non-empty string up to 512 bytes. */
+    acceptMembershipChannel?: (channel: string) => boolean;
 }
 /** Opt-in Redis peer transport. Each destination uses LocalRealtimeRouter's
  * current recipient authorization/context/subscription fences. Directory
@@ -76,12 +115,13 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private readonly maxPending;
     private readonly maxSeen;
     private handle;
-    private deadline;
     private stopped;
     private started;
-    private fenced;
-    private timer;
-    private renewing;
+    /** The node ownership lease (0.117: distributed-core `FencedLease`).
+     * Its owner is this router's boot `instance`; it renews this node's
+     * client registrations (and their user index) as attached keys. */
+    private readonly ownership;
+    private readonly membershipTopic;
     private readonly unsubs;
     private readonly registrations;
     private readonly remote;
@@ -98,6 +138,17 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     /** False permanently after ownership expires or renewal fails. Hosts can
      * remove an unhealthy replica from admission without knowing Redis keys. */
     isReady(): boolean;
+    /** Same as `isReady()`; with `onFence` this makes the router a
+     * distributed-core `ReadinessGate` owner. */
+    isLive(): boolean;
+    /** Called once when routing stops being live: the lease fenced (expired,
+     * renewal failed/refused, connection unavailable, sibling, manual) or was
+     * released at shutdown (`reason: 'released'`). */
+    onFence(handler: (event: FenceEvent) => void): () => void;
+    /** The ownership lease, for a host `LeaseGroup` or `ReadinessGate`. */
+    get lease(): FencedOwner;
+    /** The lease's monotonic fencing token (0 before start). */
+    get fencingToken(): number;
     /** Ready with start(), namespace-scoped and checked against the origin's
      * live ownership lease. CallService's sync subscription has no async gap. */
     readonly crossNodePubSub: CallCrossNodePubSub;
@@ -107,7 +158,11 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private userKey;
     private topic;
     private live;
-    private fence;
+    /** The lease stopped being live. It never revives (the lease logs why). */
+    private fenced;
+    /** Renewed atomically with the owner key: each current registration's
+     * client key (while it still holds this registration) and its user index. */
+    private attachments;
     private source;
     private current;
     private validSource;
@@ -115,7 +170,7 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     start(): Promise<void>;
     _setHandle(handle: WsHandlerHandle): void;
     onClientConnect(clientId: string, ctx: WsAuthContext): Promise<void>;
-    private renew;
+    private wireMembership;
     private registration;
     getClientData(clientId: string): {
         userContext?: WsAuthContext;

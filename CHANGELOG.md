@@ -2,6 +2,102 @@
 
 ## [Unreleased]
 
+## 0.117.0 — 2026-10-14
+
+`RedisRealtimeRouter` rebuilt on distributed-core 0.48.0's fenced lease
+(`distributed-core/cluster/leases`), lane R3 of the 2026-10-14 upstream
+refinement plan. Routing behaviour, wire frames and Redis key layout are
+unchanged; every existing router contract (fake and native Redis) passes
+unmodified apart from the native suite's renew-script matcher.
+
+### Changed
+
+- **Ownership is a `FencedLease`.** The router's own `RENEW` script, deadline
+  bookkeeping and `fence()` are gone. The lease's owner is the router's boot
+  `instance` and its key is the same `realtime:<ns>:node:<nodeId>`. Current
+  client registrations (and their `user:` index as companions) are the
+  lease's `attached` keys, renewed in the same atomic script only while the
+  owner key and each registration are still this router's. Register, remove
+  and prune keep the router's scripts, guarded by `lease.owner`. Peer owner
+  checks use `FencedLease.isHeldBy`.
+- **Renewal starts at acquire**, not after subscriptions, so a slow startup
+  stays owned; a startup whose lease lapses still fails `start()`.
+- **Renewal replies are bounded by the lease deadline** even on a port with
+  no deadline of its own, and the lease fences on a timer at the deadline
+  rather than only when next read.
+- **Acquire is `SET NX PX` plus a fencing token** in one script. The token is
+  one never-expiring counter per namespace (`realtime:<ns>:lease-fence`), not
+  one per node id. Rolling upgrades are compatible: an 0.116 router and an
+  0.117 router read and refuse each other's owner keys the same way.
+- `onUnavailable` is subscribed by the lease (once), not by the router.
+
+### Added
+
+- `leaseGroup` option: any distributed-core `LeaseGroup`. The router joins
+  after acquire; the first member to fence fences (`reason: 'sibling'`) and
+  releases every sibling, so a half-fenced node cannot keep serving one socket
+  path. Joining a retired group fails `start()`. `shutdown()` leaves the group
+  before releasing, so a deliberate shutdown does not retire siblings.
+- `router.isLive()`, `router.onFence(handler)`, `router.lease` (a
+  `FencedOwner`) and `router.fencingToken`. The router is a `ReadinessGate`
+  owner as-is.
+- `membershipStore` (`{ invalidate(channel), onCommittedWrite(observer) }`),
+  `membershipEventTopic` (default `chat:membership`) and
+  `acceptMembershipChannel`: the router publishes committed membership writes
+  as peer events and invalidates peers' caches. Channels over 512 bytes,
+  non-strings and unparseable payloads are dropped; a fenced router publishes
+  nothing.
+- `./server` re-exports `FencedLease`, `LeaseGroup`, `ReadinessGate`,
+  `RedisPeerRegistry`, `BoundedRedis`, `createBoundedRedis`, `LeaseHeldError`,
+  `LeaseFencedError`, `RedisDeadlineError` and their types from the
+  distributed-core copy the router uses. `BoundedRedis` satisfies
+  `RealtimeClusterRedis` without an adapter.
+- Contracts: `test/server/redis-router.lease.test.ts` (19, in-memory Redis
+  that runs the real scripts, default suite) covers acquire/refuse/token,
+  attached renewal, late renew reply stays fenced, connection loss, peer
+  `isHeldBy`, slow startup, LeaseGroup retirement and join-after-retire,
+  shutdown without sibling retirement, ReadinessGate latching, stalled
+  command and publish replies on `BoundedRedis`, and membership
+  invalidation. Two native contracts (LeaseGroup retirement with a
+  ReadinessGate; membership invalidation) join the opt-in
+  `REAL_ROUTER_REDIS=1` suite, which now deletes each test namespace's fencing
+  counter.
+
+### Migration (hosts)
+
+No change is required: the constructor, `start()`, `isReady()` and
+`shutdown()` keep their contracts. What a host can now delete (aws-agentcore
+paths):
+
+- `middleware/src/lib/realtime-node-ownership.ts` (`linkNodeOwnership`): pass
+  one `LeaseGroup` as `leaseGroup` to the `/ws` and cookie `/realtime`
+  routers. Retirement is event-driven instead of a 250 ms poll, and the
+  sibling's key is handed back instead of a full `shutdown()`.
+- `middleware/src/lib/gateway-redis.ts` (`GatewayRedis`): use
+  `createBoundedRedis(url, { timeoutMs })` per router. It keeps the separate
+  command/publisher/subscriber connections and the post-write deadline, and
+  adds `lockClient()`, `evalClient()` and `pubSubClient()` for the
+  distributed-core lock, semaphore and pub/sub consumers. Keep the host's own
+  error logging through `onError`.
+- The fleet half of `middleware/src/lib/replica-fleet.ts` (heartbeat sorted
+  set, alone/peers): `RedisPeerRegistry`, whose `survey()` answers
+  `unknown` when Redis is unreachable; treat `unknown` like `peers`. The
+  mutex half stays.
+- `/health` composition of router `isReady()`s: a `ReadinessGate` with each
+  router added as an owner and `setListening(true)` once the listener is up.
+- The `onCommittedWrite` → `peerEvents` membership wiring in
+  `realtime-gateway.ts`: pass `membershipStore`, with
+  `membershipEventTopic: 'social:membership'` and an
+  `acceptMembershipChannel` that requires the `social:` prefix to stay
+  wire-compatible with replicas still on the hand-written glue.
+
+Hosts importing the lease primitives should take them from
+`@connorhoehn/realtime-modules/server` (or the same distributed-core 0.48.0
+copy) so `LeaseGroup` and the router share one module instance; the router
+only relies on the structural `RealtimeLeaseGroup` shape, so another copy
+also works. The single-gateway CDK safeguard stays until two-node
+contracts pass in the cloud.
+
 ## 0.116.1 — 2026-10-14
 
 Release hygiene (lane R1 of the 2026-10-14 upstream refinement plan). No

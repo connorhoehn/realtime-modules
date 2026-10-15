@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
+import { FencedLease, LeaseHeldError, type FenceEvent, type FencedOwner, type LeaseAttachment } from 'distributed-core/cluster/leases';
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { LocalRealtimeRouter, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
@@ -25,7 +26,24 @@ export interface RealtimePeerEvents {
     publish(topic: string, payload: string): Promise<void>;
     subscribe(topic: string, handler: (payload: string) => void | Promise<void>): () => void;
 }
+/** Structural view of distributed-core's `LeaseGroup` (any copy of it). The
+ * router adds its ownership lease on start; the first member to fence
+ * retires (fences and releases) every sibling. */
+export interface RealtimeLeaseGroup {
+    add(member: FencedOwner): () => void;
+}
+/** A host membership cache whose committed writes other replicas must drop.
+ * The router publishes each committed channel as a peer event and calls
+ * `invalidate` for channels committed on peers. Hints only: the store must
+ * reread its durable authority after an invalidation. */
+export interface RealtimeMembershipInvalidation {
+    invalidate(channel: string): void;
+    onCommittedWrite(observer: (channel: string) => void): () => void;
+}
 export interface RedisRealtimeRouterOptions {
+    /** The existing port, or distributed-core's `BoundedRedis`
+     * (`createBoundedRedis(url, { timeoutMs })`), which satisfies it and
+     * bounds every reply after the socket write. */
     redis: RealtimeClusterRedis;
     /** Separate applications/environments must use separate namespaces. */
     namespace: string;
@@ -59,6 +77,27 @@ export interface RedisRealtimeRouterOptions {
      * before, and no operation number on the wire. Max 2000.
      */
     peerOperationLingerMs?: number;
+    /**
+     * 0.117: fence together with sibling owners in the same process (e.g. a
+     * `/ws` router and a cookie `/realtime` router). Pass a distributed-core
+     * `LeaseGroup`; the router joins it once its lease is acquired. When any
+     * member fences, every other member is fenced and released, so no lease
+     * outlives the node's 503. A router joining a retired group fails start.
+     * `shutdown()` leaves the group before releasing its lease, so a
+     * deliberate shutdown (or a failed start) does not retire siblings; a
+     * fence always does.
+     */
+    leaseGroup?: RealtimeLeaseGroup;
+    /**
+     * 0.117: cross-replica invalidation for a membership cache. Committed
+     * writes are published on `membershipEventTopic` (default
+     * `chat:membership`) and peers call `invalidate(channel)`.
+     */
+    membershipStore?: RealtimeMembershipInvalidation;
+    /** Peer event topic for `membershipStore`. Default `chat:membership`. */
+    membershipEventTopic?: string;
+    /** Peer-supplied channels this node will invalidate. Default: any non-empty string up to 512 bytes. */
+    acceptMembershipChannel?: (channel: string) => boolean;
 }
 type Source = { nodeId: string; instance: string };
 type Registration = Source & { generation: string; ctx: WsAuthContext };
@@ -69,7 +108,6 @@ type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'ch
     /** P6: the origin operation this frame belongs to (its scope id). */
     op?: number };
 const NOOP_LOGGER: RouterLogger = { debug() {}, info() {}, warn() {}, error() {} };
-const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0";
 const REGISTER = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
 if redis.call('EXISTS',KEYS[2]) == 1 then return 0 end
 redis.call('SET',KEYS[2],ARGV[2],'PX',ARGV[3]); redis.call('SADD',KEYS[3],ARGV[4]);
@@ -77,11 +115,7 @@ redis.call('PEXPIRE',KEYS[3],ARGV[3]*2); return 1`;
 const REMOVE = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
 redis.call('DEL',KEYS[1]); redis.call('SREM',KEYS[2],ARGV[2]); return 1`;
 const PRUNE = "if redis.call('EXISTS',KEYS[1]) == 0 then return redis.call('SREM',KEYS[2],ARGV[1]) end return 0";
-const RENEW = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
-redis.call('PEXPIRE',KEYS[1],ARGV[2]);
-for i=2,#KEYS,2 do if redis.call('GET',KEYS[i]) == ARGV[i/2+2] then
-redis.call('PEXPIRE',KEYS[i],ARGV[2]); redis.call('PEXPIRE',KEYS[i+1],ARGV[2]*2); end end
-return 1`;
+const MEMBERSHIP_CHANNEL_MAX_BYTES = 512;
 
 /** Opt-in Redis peer transport. Each destination uses LocalRealtimeRouter's
  * current recipient authorization/context/subscription fences. Directory
@@ -101,12 +135,13 @@ export class RedisRealtimeRouter implements RealtimeRouter {
     private readonly maxPending: number;
     private readonly maxSeen: number;
     private handle: WsHandlerHandle | null = null;
-    private deadline = 0;
     private stopped = false;
     private started = false;
-    private fenced = false;
-    private timer: ReturnType<typeof setInterval> | null = null;
-    private renewing: Promise<void> | null = null;
+    /** The node ownership lease (0.117: distributed-core `FencedLease`).
+     * Its owner is this router's boot `instance`; it renews this node's
+     * client registrations (and their user index) as attached keys. */
+    private readonly ownership: FencedLease;
+    private readonly membershipTopic: string;
     private readonly unsubs: Array<() => Promise<void> | void> = [];
     private readonly registrations = new Map<string, { registration: Registration; encoded: string; context: WsAuthContext }>();
     private readonly remote = new Map<string, { encoded: string; registration: Registration; until: number }>();
@@ -139,6 +174,17 @@ export class RedisRealtimeRouter implements RealtimeRouter {
     /** False permanently after ownership expires or renewal fails. Hosts can
      * remove an unhealthy replica from admission without knowing Redis keys. */
     isReady(): boolean { return this.live(); }
+    /** Same as `isReady()`; with `onFence` this makes the router a
+     * distributed-core `ReadinessGate` owner. */
+    isLive(): boolean { return this.live(); }
+    /** Called once when routing stops being live: the lease fenced (expired,
+     * renewal failed/refused, connection unavailable, sibling, manual) or was
+     * released at shutdown (`reason: 'released'`). */
+    onFence(handler: (event: FenceEvent) => void): () => void { return this.ownership.onFence(handler); }
+    /** The ownership lease, for a host `LeaseGroup` or `ReadinessGate`. */
+    get lease(): FencedOwner { return this.ownership; }
+    /** The lease's monotonic fencing token (0 before start). */
+    get fencingToken(): number { return this.ownership.token; }
     /** Ready with start(), namespace-scoped and checked against the origin's
      * live ownership lease. CallService's sync subscription has no async gap. */
     readonly crossNodePubSub: CallCrossNodePubSub = {
@@ -171,22 +217,38 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         this.log = opts.logger ?? NOOP_LOGGER;
         this.local = new LocalRealtimeRouter({ authorize: opts.authorize, filterClientMessage: opts.filterClientMessage,
             plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
+        this.membershipTopic = opts.membershipEventTopic ?? 'chat:membership';
+        if (opts.membershipStore) this.validateEventTopic(this.membershipTopic);
+        this.ownership = new FencedLease({
+            redis: opts.redis, key: this.nodeKey(), owner: this.instance, leaseMs: this.leaseMs,
+            // One never-expiring fencing counter per namespace, not one per
+            // nodeId: replica ids are often per-task and would leak a key each.
+            tokenKey: `${this.prefix}lease-fence`,
+            attached: () => this.attachments(),
+            logger: { warn: (message, error) => this.log.warn(`[realtime-cluster] ${message}`, error) },
+        });
+        this.ownership.onFence(() => this.fenced());
     }
     private nodeKey(nodeId = this.nodeId) { return `${this.prefix}node:${encodeURIComponent(nodeId)}`; }
     private clientKey(clientId: string) { return `${this.prefix}client:${encodeURIComponent(clientId)}`; }
     private userKey(userId: string) { return `${this.prefix}user:${encodeURIComponent(userId)}`; }
     private topic(nodeId: string = this.nodeId, instance: string = this.instance) { return `${this.prefix}direct:${encodeURIComponent(nodeId)}:${instance}`; }
     private live() {
-        if (this.started && performance.now() >= this.deadline) this.fence('ownership lease expired');
-        return this.started && !this.stopped && !this.fenced;
+        // isLive() fences the lease itself once its local deadline passes.
+        return this.started && !this.stopped && this.ownership.isLive();
     }
-    private fence(reason: string, error?: unknown): void {
-        if (this.fenced || this.stopped) return;
-        this.fenced = true; this.deadline = 0;
-        if (this.timer) clearInterval(this.timer);
+    /** The lease stopped being live. It never revives (the lease logs why). */
+    private fenced(): void {
         for (const pending of this.pending.values()) pending.resolve(false);
         this.closePeerOps();
-        this.log.warn(`[realtime-cluster] ${reason}; routing permanently fenced`, error);
+    }
+    /** Renewed atomically with the owner key: each current registration's
+     * client key (while it still holds this registration) and its user index. */
+    private *attachments(): Iterable<LeaseAttachment> {
+        for (const [id, entry] of this.registrations) {
+            if (this.current(id) !== entry.context) continue;
+            yield { key: this.clientKey(id), value: entry.encoded, companions: [this.userKey(entry.context.userId!)] };
+        }
     }
     private source(): Source { return { nodeId: this.nodeId, instance: this.instance }; }
     private current(clientId: string) { return this.handle?.getClientContext(clientId) ?? null; }
@@ -194,32 +256,32 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         const value = source as Source | null;
         return !!value && typeof value.nodeId === 'string' && !!value.nodeId && typeof value.instance === 'string' && !!value.instance;
     }
-    private async ownerAlive(source: Source) {
-        return await this.opts.redis.command('GET', this.nodeKey(source.nodeId)) === source.instance;
+    private ownerAlive(source: Source) {
+        return FencedLease.isHeldBy(this.opts.redis, this.nodeKey(source.nodeId), source.instance);
     }
     async start(): Promise<void> {
         if (this.started || this.stopped) throw new Error('Cluster router cannot be started twice');
-        const before = performance.now();
-        const claimed = await this.opts.redis.command('SET', this.nodeKey(), this.instance, 'NX', 'PX', String(this.leaseMs));
-        if (claimed !== 'OK') throw new Error('Cluster nodeId already has a live owner');
-        this.deadline = before + this.leaseMs;
         try {
-            if (this.opts.redis.onUnavailable) this.unsubs.push(this.opts.redis.onUnavailable(() => this.fence('Redis connection unavailable')));
+            // SET NX PX plus a fencing token; the lease also fences on the
+            // port's onUnavailable, so a lost subscriber/publisher fences here.
+            await this.ownership.acquire();
+        } catch (error) {
+            if (error instanceof LeaseHeldError || (error as { code?: unknown } | null)?.code === 'lease-held') {
+                throw new Error('Cluster nodeId already has a live owner');
+            }
+            throw error;
+        }
+        try {
+            if (this.opts.leaseGroup) this.unsubs.push(this.opts.leaseGroup.add(this.ownership));
+            if (!this.ownership.isLive()) throw new Error('Cluster ownership lease is not live (its lease group may be retired)');
             for (const topic of [this.topic(), `${this.prefix}channels`, `${this.prefix}broadcast`, `${this.prefix}call-events`, `${this.prefix}peer-events`]) {
                 this.unsubs.push(await this.opts.redis.subscribe(topic, payload => {
                     void this.receive(payload).catch(error => this.log.warn('[realtime-cluster] peer delivery failed', error));
                 }));
             }
-            if (this.fenced || performance.now() >= this.deadline) throw new Error('Cluster startup exceeded or lost its ownership lease');
+            if (!this.ownership.isLive()) throw new Error('Cluster startup exceeded or lost its ownership lease');
+            this.wireMembership();
             this.started = true;
-            this.timer = setInterval(() => {
-                if (!this.renewing) {
-                    this.renewing = this.renew().catch(error => {
-                        this.fence('lease renewal failed', error);
-                    }).finally(() => { this.renewing = null; });
-                }
-            }, Math.floor(this.leaseMs / 3));
-            this.timer.unref?.();
         } catch (error) {
             await this.shutdown();
             throw error;
@@ -249,17 +311,25 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             throw new Error('Cluster connection changed during registration');
         }
     }
-    private async renew(): Promise<void> {
-        if (this.stopped || this.fenced) return;
-        if (!this.live()) throw new Error('Cluster ownership lease expired');
-        const current = [...this.registrations].filter(([id, entry]) => this.current(id) === entry.context);
-        const keys = [this.nodeKey(), ...current.flatMap(([id, entry]) => [this.clientKey(id), this.userKey(entry.context.userId!)])];
-        const before = performance.now();
-        const previousDeadline = this.deadline;
-        const renewed = await this.opts.redis.command('EVAL', RENEW, String(keys.length), ...keys,
-            this.instance, String(this.leaseMs), ...current.map(([, entry]) => entry.encoded));
-        if (renewed !== 1 || this.fenced || performance.now() >= previousDeadline) throw new Error('Cluster ownership lease lost');
-        this.deadline = before + this.leaseMs;
+    private wireMembership(): void {
+        const store = this.opts.membershipStore;
+        if (!store) return;
+        const accept = this.opts.acceptMembershipChannel ?? (() => true);
+        const valid = (channel: unknown): channel is string => typeof channel === 'string' && !!channel
+            && Buffer.byteLength(channel) <= MEMBERSHIP_CHANNEL_MAX_BYTES;
+        this.unsubs.push(this.peerEvents.subscribe(this.membershipTopic, payload => {
+            let channel: unknown;
+            try { channel = JSON.parse(payload); } catch { return; } // a hint is never a membership record
+            if (!valid(channel)) return;
+            let accepted = false;
+            try { accepted = accept(channel); } catch { /* refuse */ }
+            if (accepted) store.invalidate(channel);
+        }));
+        this.unsubs.push(store.onCommittedWrite(channel => {
+            if (!valid(channel) || !this.live()) return;
+            void this.peerEvents.publish(this.membershipTopic, JSON.stringify(channel))
+                .catch(error => this.log.warn('[realtime-cluster] membership invalidation publish failed', error));
+        }));
     }
     private async registration(clientId: string, remember = true): Promise<Registration | null> {
         if (!this.live()) return null;
@@ -561,17 +631,15 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (this.stopped) return;
         this.stopped = true;
         this.closePeerOps();
-        this.deadline = 0;
-        if (this.timer) clearInterval(this.timer);
         for (const pending of this.pending.values()) pending.resolve(false);
         for (const id of this.registrations.keys()) this.removeClient(id);
-        await this.renewing;
         await Promise.all([...this.cleanup]);
         for (const unsubscribe of this.unsubs.splice(0)) {
             try { await unsubscribe(); } catch (error) { this.log.warn('[realtime-cluster] unsubscribe failed during retirement', error); }
         }
-        try { await this.opts.redis.command('EVAL', RELEASE, '1', this.nodeKey(), this.instance); }
-        catch (error) { this.log.warn('[realtime-cluster] owner release unavailable; lease will expire', error); }
+        // Stops renewal (awaiting one in flight) and compare-and-deletes the
+        // owner key; a failure only logs and the key expires within leaseMs.
+        await this.ownership.release();
         this.remote.clear(); this.seen.clear(); this.callHandlers.clear(); this.peerHandlers.clear();
     }
 }

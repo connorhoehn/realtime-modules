@@ -101,7 +101,15 @@ export {
     PLUGIN_SCOPE_RETAIN_MAX_MS,
 } from './router';
 export { RedisRealtimeRouter } from './RedisRealtimeRouter';
-export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents } from './RedisRealtimeRouter';
+export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents, RealtimeLeaseGroup,
+    RealtimeMembershipInvalidation } from './RedisRealtimeRouter';
+// 0.117: the fenced-ownership primitives the router is built on, re-exported
+// so a host composes LeaseGroup / ReadinessGate / BoundedRedis from the same
+// distributed-core copy the router uses.
+export { FencedLease, LeaseGroup, ReadinessGate, RedisPeerRegistry, BoundedRedis, createBoundedRedis,
+    LeaseHeldError, LeaseFencedError, RedisDeadlineError } from 'distributed-core/cluster/leases';
+export type { FencedOwner, FenceEvent, FenceReason, LeaseRedis, LeaseGroupOptions, ReadinessOwner,
+    ReadinessSnapshot, ReadinessProbe, PeerSurvey, RedisPeerRegistryOptions, BoundedRedisOptions } from 'distributed-core/cluster/leases';
 export type {
     RealtimeRouter,
     RouterLogger,

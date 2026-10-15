@@ -68,7 +68,7 @@ ID so known captured recipients and old peer frames cannot adopt a new
 connection. A local duplicate client ID or a second live node owner is refused.
 
 Ownership and client leases default to 30 seconds and renew every third of
-that interval. Delivery is fenced on renewal failure or local lease expiry.
+that interval (renewal starts at acquire, so a slow startup stays owned). Delivery is fenced on renewal failure or local lease expiry.
 A late successful renewal cannot revive a fenced router: dispose it and
 create/start a fresh instance. `isReady()` exposes that permanent fence for
 host admission/retirement. Lease fencing does not close the host's TCP
@@ -134,7 +134,55 @@ strings within the router's frame limit. There is no replay or receipt; a
 consumer must reread durable authority on every protected read even if an
 invalidation was missed. Do not use event payloads as identity or permission.
 
-CRDT ownership/snapshots, cached chat membership, room state and other service
+## Ownership lease, sibling routers and readiness (0.117)
+
+The node ownership lease is distributed-core's `FencedLease`
+(`distributed-core/cluster/leases`, re-exported from `./server`). Its owner is
+the router's boot `instance`; each current connection registration and its
+user index are renewed as `attached` keys in the same atomic script, so they
+live exactly as long as the node lease. A fence is permanent: renewal failed
+or refused, the local deadline passed (a reply that lands later is ignored),
+`onUnavailable` fired, or a sibling fenced. Acquire also bumps one
+never-expiring fencing counter per namespace (`realtime:<ns>:lease-fence`);
+`router.fencingToken` exposes the value.
+
+Prefer distributed-core's `BoundedRedis` as the port. It bounds every reply
+after the socket write (where node-redis drops its own timeout), destroys a
+stalled connection and reports it through `onUnavailable`:
+
+```ts
+import { createBoundedRedis, LeaseGroup, ReadinessGate, RedisRealtimeRouter }
+    from '@connorhoehn/realtime-modules/server';
+
+// One BoundedRedis per router: unsubscribing a topic on a shared subscriber
+// connection would drop the other router's listener for the same topic.
+const [wsRedis, cookieRedis] = await Promise.all([
+    createBoundedRedis(redisUrl, { timeoutMs: 2000 }), createBoundedRedis(redisUrl, { timeoutMs: 2000 })]);
+const group = new LeaseGroup();        // one node = one owner
+const gate = new ReadinessGate();
+const ws = new RedisRealtimeRouter({ redis: wsRedis, namespace: 'app:ws', nodeId: replicaId, leaseGroup: group });
+const cookie = new RedisRealtimeRouter({ redis: cookieRedis, namespace: 'app:realtime', nodeId: replicaId, leaseGroup: group });
+gate.addOwner('ws', ws); gate.addOwner('realtime', cookie);
+await ws.start(); await cookie.start();
+server.listen(port, () => gate.setListening(true));
+app.get('/ready', (_req, res) => res.status(gate.isReady() ? 200 : 503).json(gate.snapshot()));
+```
+
+When any router in a `LeaseGroup` fences, every sibling is fenced (`reason:
+'sibling'`) and its node key handed back at once, so a half-fenced node
+cannot keep serving one socket path while `/ready` says 503. A router that
+joins an already retired group fails `start()`. `shutdown()` leaves the group
+before releasing, so a deliberate shutdown does not retire siblings. The
+router is itself a `ReadinessGate` owner (`isLive()`, `onFence()`); the gate
+latches the first fence and never reports ready again.
+
+`membershipStore` moves the membership cache invalidation into the router:
+each `onCommittedWrite(channel)` is published as a peer event on
+`membershipEventTopic` (default `chat:membership`), and peers call
+`invalidate(channel)` for channels that pass `acceptMembershipChannel`. These
+are hints; the store still rereads durable authority.
+
+CRDT ownership/snapshots, room state and other service
 state still require their own shared stores/invalidation policies. Adding
 this router alone does not accept a multi-replica application.
 

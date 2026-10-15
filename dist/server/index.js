@@ -37,7 +37,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.exportCanvasProjection = exports.createCanvasSeed = exports.dmLobbyAdmits = exports.WorkGraphStreamService = exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.workGraph = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.RedisDeadlineError = exports.LeaseFencedError = exports.LeaseHeldError = exports.createBoundedRedis = exports.BoundedRedis = exports.RedisPeerRegistry = exports.ReadinessGate = exports.LeaseGroup = exports.FencedLease = exports.RedisRealtimeRouter = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = exports.LocalRealtimeRouter = exports.collabDocs = exports.fileUploads = exports.notifications = exports.rooms = exports.typedDocuments = exports.workGraph = exports.pipeline = exports.ingest = exports.calls = exports.social = exports.activity = exports.reactions = exports.cursor = exports.presence = exports.chat = exports.defineFeature = exports.attachRealtime = exports.inMemoryAdapters = exports.createRealtimeServer = exports.crdtManifest = exports.config = exports.MemorySnapshotStore = exports.MemoryMetadataStore = exports.MemoryHotCache = exports.createSubscribeService = exports.SubscribeService = exports.AwarenessLedger = exports.IdleEvictionManager = exports.AwarenessCoalescer = exports.DocumentPresenceService = exports.DocumentMetadataService = exports.SnapshotManager = exports.CRDTService = void 0;
+exports.exportCanvasProjection = exports.createCanvasSeed = exports.dmLobbyAdmits = exports.WorkGraphStreamService = exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = void 0;
 const CRDTService_1 = __importDefault(require("./CRDTService"));
 exports.CRDTService = CRDTService_1.default;
 const SnapshotManager_1 = __importDefault(require("./SnapshotManager"));
@@ -106,6 +107,19 @@ Object.defineProperty(exports, "LocalRealtimeRouter", { enumerable: true, get: f
 Object.defineProperty(exports, "PLUGIN_SCOPE_RETAIN_MAX_MS", { enumerable: true, get: function () { return router_1.PLUGIN_SCOPE_RETAIN_MAX_MS; } });
 var RedisRealtimeRouter_1 = require("./RedisRealtimeRouter");
 Object.defineProperty(exports, "RedisRealtimeRouter", { enumerable: true, get: function () { return RedisRealtimeRouter_1.RedisRealtimeRouter; } });
+// 0.117: the fenced-ownership primitives the router is built on, re-exported
+// so a host composes LeaseGroup / ReadinessGate / BoundedRedis from the same
+// distributed-core copy the router uses.
+var leases_1 = require("distributed-core/cluster/leases");
+Object.defineProperty(exports, "FencedLease", { enumerable: true, get: function () { return leases_1.FencedLease; } });
+Object.defineProperty(exports, "LeaseGroup", { enumerable: true, get: function () { return leases_1.LeaseGroup; } });
+Object.defineProperty(exports, "ReadinessGate", { enumerable: true, get: function () { return leases_1.ReadinessGate; } });
+Object.defineProperty(exports, "RedisPeerRegistry", { enumerable: true, get: function () { return leases_1.RedisPeerRegistry; } });
+Object.defineProperty(exports, "BoundedRedis", { enumerable: true, get: function () { return leases_1.BoundedRedis; } });
+Object.defineProperty(exports, "createBoundedRedis", { enumerable: true, get: function () { return leases_1.createBoundedRedis; } });
+Object.defineProperty(exports, "LeaseHeldError", { enumerable: true, get: function () { return leases_1.LeaseHeldError; } });
+Object.defineProperty(exports, "LeaseFencedError", { enumerable: true, get: function () { return leases_1.LeaseFencedError; } });
+Object.defineProperty(exports, "RedisDeadlineError", { enumerable: true, get: function () { return leases_1.RedisDeadlineError; } });
 const types_1 = require("../server-ws/types");
 const channelAccess_1 = require("../server-ws/channelAccess");
 const authorityScope_1 = require("../server-ws/authorityScope");
