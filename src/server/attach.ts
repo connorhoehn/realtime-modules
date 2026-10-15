@@ -38,11 +38,12 @@
 //      a shared config type.
 
 import type { FeatureManifest } from '../feature-manifest/types';
-import type { WsHandlerHandle, WsHandlerOptions, WsService } from '../server-ws/types';
+import type { WsHandlerHandle, WsHandlerOptions, WsHandlerStats, WsService } from '../server-ws/types';
 import { createWsHandler } from '../server-ws/createWsHandler';
 import {
     LocalRealtimeRouter,
     type ChannelAuthorize,
+    type ChannelAuthorizeBatch,
     type ClientMessageFilter,
     type FeaturePlugin,
     type RealtimeRouter,
@@ -62,6 +63,12 @@ import {
     type FeaturePrincipal,
     type PrincipalRevalidation,
 } from './authority/principal';
+import {
+    withAuthorityCache,
+    type AuthorityCacheOptions,
+    type AuthorityCacheStats,
+    type AuthorityVerdictCache,
+} from './authority/verdictCache';
 
 // ---- feature contract ---------------------------------------------------------
 
@@ -578,6 +585,25 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      * apply.
      */
     principal?: PrincipalRevalidation;
+    /**
+     * 0.119 (lane R6), opt-in: one host call per channel fan-out for every
+     * recipient's subscribe check (see `ChannelAuthorizeBatch`). Without it
+     * the local router asks `authorize` per recipient. Composed under the
+     * principal revalidation and the verdict cache like `authorize`. Ignored
+     * with a custom `router` (pass it to that router).
+     */
+    authorizeBatch?: ChannelAuthorizeBatch;
+    /**
+     * 0.119 (lane R6), opt-in: cache POSITIVE `authorize` verdicts per
+     * (connection, channel, directory epoch) — contract V1–V7 in
+     * `authority/verdictCache.ts`. `epoch(ctx)` must return the principal's
+     * CURRENT directory epoch; any change misses and drops that connection's
+     * verdicts, and so does a principal revalidation failure. Feed
+     * membership events to `handle.authorityCache.invalidateChannel`.
+     * Refusals are never cached. Ignored with a custom `router` (wrap its
+     * hooks with `withAuthorityCache` yourself).
+     */
+    authorityCache?: AuthorityCacheOptions;
 }
 
 /**
@@ -592,8 +618,12 @@ export interface KnownRealtimeServices {
 }
 export type RealtimeServices = KnownRealtimeServices & Record<string, WsService>;
 
-/** One reading of the gateway process. 0.119 */
-export interface RealtimeStats {
+/**
+ * One reading of the gateway process. 0.119 (lane R4); 0.120 (lane R6) adds
+ * the handler's queue depth, inbound budget counters and event-loop
+ * percentiles (`WsHandlerStats`), the verdict cache and the router's queues.
+ */
+export interface RealtimeStats extends WsHandlerStats {
     /** Connected sockets on this process. */
     sockets: number;
     /** Calls this process holds (0 without `calls()`). */
@@ -603,20 +633,31 @@ export interface RealtimeStats {
     eventLoopDelayMaxMs: number;
     rssMb: number;
     ts: string;
+    /** 0.120 (lane R6): verdict cache counters, when `authorityCache` is on. */
+    authorityCache?: AuthorityCacheStats;
+    /** 0.120 (lane R6): the router's own queues, when it reports them (`RedisRealtimeRouter.stats()`). */
+    router?: Record<string, number>;
 }
 
 export interface RealtimeHandle extends WsHandlerHandle {
     router: RealtimeRouter;
     services: RealtimeServices;
     manifests: FeatureManifest[];
-    /** A snapshot of this process: sockets, calls, event-loop p99, RSS. */
-    stats(): RealtimeStats;
+    /**
+     * A snapshot of this process: sockets, calls, event-loop delay, RSS
+     * (0.119); queue depth, inbound budget, verdict cache and router queues
+     * (0.120, lane R6). `reset` restarts the peak queue depth and the
+     * event-loop histograms after reading.
+     */
+    stats(opts?: { reset?: boolean }): RealtimeStats;
     /**
      * Call `listener` with `stats()` every `intervalMs` (default 60 000) and
      * reset the event-loop histogram each tick. Returns the unsubscribe;
      * `dispose()` stops every subscription. The timer is unref'd.
      */
     onStats(listener: (stats: RealtimeStats) => void, opts?: { intervalMs?: number }): () => void;
+    /** 0.120 (lane R6): the verdict cache, when `authorityCache` is set — invalidate on membership events. */
+    authorityCache?: AuthorityVerdictCache;
 }
 
 /**
@@ -630,11 +671,22 @@ export function attachRealtime(
     server: WsHandlerOptions['server'],
     opts: AttachRealtimeOptions,
 ): RealtimeHandle {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal,
+        authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const hooks = principal ? withPrincipalRevalidation({ authorize, filterClientMessage }, principal) : { authorize, filterClientMessage };
+    // Composition, inside out: host hooks → verdict cache → principal
+    // revalidation (verdictCache.ts V4: revalidation runs on every check,
+    // cache hits included, and a refusal drops the connection's verdicts).
+    const cached = !customRouter && cacheOpts && authorize ? withAuthorityCache(authorize, cacheOpts, authorizeBatch) : null;
+    const inner = { authorize: cached?.authorize ?? authorize, filterClientMessage,
+        authorizeBatch: cached?.authorizeBatch ?? authorizeBatch };
+    const verdictCache = cached?.cache;
+    const hooks = principal
+        ? withPrincipalRevalidation(inner, principal, verdictCache ? { onStale: (id) => verdictCache.invalidateConnection(id) } : {})
+        : inner;
     const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({
-        plugins, authorize: hooks.authorize, filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs });
+        plugins, authorize: hooks.authorize, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
+        filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs });
     if (principal) wsOpts.auth = revalidatingAuth(wsOpts.auth, principal);
     const featurePrincipal: FeaturePrincipal | undefined = principal ? {
         recheckAfterIo: principal.recheckAfterIo !== false,
@@ -682,6 +734,7 @@ export function attachRealtime(
         onDisconnect: async (clientId: string) => {
             try { await consumerOnDisconnect?.(clientId); } catch { /* consumer errors stay theirs */ }
             router.removeClient?.(clientId);
+            verdictCache?.invalidateConnection(clientId); // V7
         },
     });
 
@@ -714,23 +767,35 @@ export function attachRealtime(
     };
     const statTimers = new Set<ReturnType<typeof setInterval>>();
     const ms = (ns: number) => Math.round((ns / 1e6) * 100) / 100;
-    const stats = (): RealtimeStats => {
+    const stats = (statsOpts?: { reset?: boolean }): RealtimeStats => {
         const h = loopHistogram();
         const call = services['call'] as { activeCallCount?: () => number } | undefined;
-        return {
+        const base: WsHandlerStats = handle.stats?.(statsOpts) ?? {
+            connections: handle.listClients().length, queueDepth: 0, maxConnectionQueueDepth: 0, peakQueueDepth: 0,
+            inbound: { accepted: 0, dropped: 0, limitNotices: 0, limitedConnections: 0 }, eventLoop: null,
+        };
+        let routerStats: Record<string, number> | undefined;
+        try { routerStats = (router as { stats?: () => Record<string, number> }).stats?.(); } catch { routerStats = undefined; }
+        const out: RealtimeStats = {
+            ...base,
             sockets: handle.listClients().length,
             activeCalls: call?.activeCallCount?.() ?? 0,
             eventLoopDelayP99Ms: ms(h.percentile(99)),
             eventLoopDelayMaxMs: ms(h.max),
             rssMb: Math.round(process.memoryUsage().rss / 1048576),
             ts: new Date().toISOString(),
+            ...(verdictCache ? { authorityCache: verdictCache.stats() } : {}),
+            ...(routerStats ? { router: routerStats } : {}),
         };
+        if (statsOpts?.reset) histogram?.reset();
+        return out;
     };
     const onStats = (listener: (s: RealtimeStats) => void, o: { intervalMs?: number } = {}): (() => void) => {
         const interval = o.intervalMs && o.intervalMs > 0 ? o.intervalMs : 60_000;
         const timer = setInterval(() => {
-            try { listener(stats()); } catch (err) { log.warn('[attachRealtime] onStats listener failed', err); }
-            finally { histogram?.reset(); }
+            let reading: RealtimeStats | null = null;
+            try { reading = stats({ reset: true }); } catch (err) { log.warn('[attachRealtime] stats failed', err); }
+            if (reading) { try { listener(reading); } catch (err) { log.warn('[attachRealtime] onStats listener failed', err); } }
         }, interval);
         timer.unref?.();
         statTimers.add(timer);
@@ -741,5 +806,6 @@ export function attachRealtime(
         statTimers.clear();
         try { await dispose(); } finally { histogram?.disable(); histogram = null; }
     };
-    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats });
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats,
+        ...(verdictCache ? { authorityCache: verdictCache } : {}) });
 }

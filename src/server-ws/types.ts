@@ -124,6 +124,56 @@ export interface WsHandlerOptions {
      * 0.7–2.4 s p50 of a burst DM delivery). Pass `[]` for one shared lane.
      */
     independentServices?: readonly string[];
+    /**
+     * 0.119 (lane R6), opt-in: a per-connection inbound frame budget. A token
+     * bucket refilled at `framesPerSecond` (default 50) holding at most
+     * `burst` frames (default twice the rate). A frame that arrives with the
+     * bucket empty is dropped before it is parsed or queued, and the client
+     * gets ONE `{ type: 'error', code: 'RATE_LIMITED', dropped, retryAfterMs }`
+     * frame per `windowMs` (default 1000) however many were dropped in it.
+     * The socket stays open. `true` takes every default. Unset/false: no
+     * budget (the old behaviour). Counts appear in `stats().inbound`.
+     */
+    inboundRateLimit?: boolean | InboundRateLimitOptions;
+}
+
+/** {@link WsHandlerOptions.inboundRateLimit}. */
+export interface InboundRateLimitOptions {
+    /** Sustained frames per second per connection. Default 50. */
+    framesPerSecond?: number;
+    /** Bucket size: frames a connection may send at once. Default 2 × rate. */
+    burst?: number;
+    /** At most one RATE_LIMITED frame per connection per window. Default 1000 ms. */
+    windowMs?: number;
+    /** Observer for each dropped frame (metrics). Never throws into the socket. */
+    onLimited?: (clientId: string, info: { droppedInWindow: number; droppedTotal: number }) => void;
+}
+
+/** What `WsHandlerHandle.stats()` reports (0.119, lane R6). */
+export interface WsHandlerStats {
+    /** Connected clients. */
+    connections: number;
+    /**
+     * Inbound frames accepted but not yet finished, summed over every
+     * connection and lane — the handler's work queue depth.
+     */
+    queueDepth: number;
+    /** The deepest single connection queue right now. */
+    maxConnectionQueueDepth: number;
+    /** The deepest total queue seen since creation (or the last reset). */
+    peakQueueDepth: number;
+    inbound: {
+        /** Frames handed to a lane. */
+        accepted: number;
+        /** Frames dropped by `inboundRateLimit`. */
+        dropped: number;
+        /** RATE_LIMITED error frames sent. */
+        limitNotices: number;
+        /** Connections that are over budget in their current window. */
+        limitedConnections: number;
+    };
+    /** Event-loop delay (ms) since creation or the last reset; null where unsupported. */
+    eventLoop: { p50Ms: number; p99Ms: number; maxMs: number; meanMs: number } | null;
 }
 
 /** Default {@link WsHandlerOptions.independentServices}. */
@@ -151,4 +201,10 @@ export interface WsHandlerHandle {
      * Replacing the context fences pending authorization and sensitive replies.
      */
     getClientContext(clientId: string): WsAuthContext | null;
+    /**
+     * 0.119 (lane R6): queue depth, inbound budget counters and event-loop
+     * delay. `reset` restarts the peak and the event-loop histogram after
+     * reading. Optional so hand-written handles (tests, wrappers) still type.
+     */
+    stats?(opts?: { reset?: boolean }): WsHandlerStats;
 }

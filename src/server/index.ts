@@ -118,6 +118,7 @@ export type {
     RealtimeRouter,
     RouterLogger,
     ChannelAuthorize,
+    ChannelAuthorizeBatch,
     ClientMessageFilter,
     FeaturePlugin as RealtimeFeaturePlugin,
 } from './router';

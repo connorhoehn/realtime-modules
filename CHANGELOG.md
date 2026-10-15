@@ -2,6 +2,68 @@
 
 ## [Unreleased]
 
+## 0.120.0 — 2026-10-14
+
+Capacity and backpressure (lane R6 of the 2026-10-14 upstream refinement
+plan). Everything is opt-in: with none of the new options set, behaviour is
+unchanged apart from `stats()` reporting more.
+
+### Added (lane R6)
+
+- **`attachRealtime({ inboundRateLimit })` / `createWsHandler({ inboundRateLimit })`.**
+  A per-connection token bucket (`framesPerSecond`, default 50; `burst`,
+  default twice the rate; `true` for both defaults). A frame arriving with the
+  bucket empty is dropped before it is parsed or queued; the client gets one
+  `{ type: 'error', code: 'RATE_LIMITED', retryAfterMs, windowMs }` per
+  `windowMs` (default 1 s) however many frames it lost; the socket stays open.
+  `onLimited(clientId, { droppedInWindow, droppedTotal })` observes drops.
+- **`attachRealtime({ authorityCache: { epoch, maxAgeMs?, maxEntries?, kinds? } })`
+  and `withAuthorityCache(authorize, opts, authorizeBatch?)`.** Caches
+  POSITIVE channel verdicts per (connection, auth context, kind, channel,
+  directory epoch); contract V1–V7 in `src/server/authority/verdictCache.ts`.
+  `epoch(ctx)` is read on every check: a different epoch misses and drops
+  every verdict of that connection. Refusals are never cached. Principal
+  revalidation (`principal`) still runs on every check, hits included, and a
+  refusal drops the connection's verdicts (`withPrincipalRevalidation`'s new
+  third argument, `{ onStale }`). Membership events go to
+  `handle.authorityCache.invalidateChannel(channel)` (all service prefixes of
+  the base channel), `invalidateUser`, `invalidateConnection` or `clear`; a
+  verdict whose host call was in flight during a matching invalidation is not
+  stored. Entries expire after `maxAgeMs` (default 5 s) and are dropped on
+  disconnect. `RedisRealtimeRouter({ authorityCache })` invalidates on every
+  membership event it sees (local committed writes and peer hints) when
+  `membershipStore` is set. With a custom router, attachRealtime ignores the
+  option: wrap that router's hooks with `withAuthorityCache` yourself.
+- **`attachRealtime({ authorizeBatch })` / `ChannelAuthorizeBatch`** (also on
+  `LocalRealtimeRouter` and `RedisRealtimeRouter`). A channel fan-out asks the
+  host once for every local recipient instead of one `authorize` per
+  recipient. A wrong-length result, a throw or a rejection refuses every
+  recipient (fail closed); the connection-context and subscription-token
+  fences still run per recipient. Without it, the per-recipient path is
+  unchanged. Composes under the verdict cache (hits never reach the host) and
+  the principal fence (each recipient revalidated before and after).
+- **`stats({ reset? })`** on `createWsHandler`, and folded into 0.119's
+  `attachRealtime(...).stats()` (whose fields are unchanged; `onStats` ticks now reset with `reset: true`):
+  `connections`, `queueDepth` (inbound frames accepted and not finished),
+  `maxConnectionQueueDepth`, `peakQueueDepth`, `inbound.{accepted, dropped,
+  limitNotices, limitedConnections}`, `eventLoop.{p50Ms, p99Ms, maxMs, meanMs}`
+  (perf_hooks histogram), plus `authorityCache` counters and the router's own
+  queues (`RedisRealtimeRouter.stats()`: `pendingRequests`, `activeDeliveries`,
+  `peerOperations`). `WsHandlerHandle.stats` is optional in the type, so
+  hand-written handles still compile.
+
+### Measured (in-process harness, `bench/authority-load.cjs`, not shipped)
+
+400 sockets in DM groups of 4, 5 chat sends each at once plus one presence
+set, host `authorize` modelled on the OrgIQ BFF (one membership query =
+250 µs CPU + 3 ms I/O, shared per operation through `scope.share`, principal
+revalidation on). Member queries per send 1.40 → 0.40 with `authorityCache`;
+burst chat p95 880–1,012 ms → 337–349 ms; server CPU per burst ~1.15 s →
+~0.53 s. `authorizeBatch` alone cut host `authorize` calls per send 10 → 5.4
+but not member queries (the host already shares the read per operation), so
+no latency change in that model. A 4,600 frames/s flooding socket with
+`inboundRateLimit` on: ~4,000 of ~7,400 frames dropped per second, peak queue
+depth ~4,500 → ~2,450.
 ## 0.119.0 — 2026-10-14
 
 Typed seams for hosts (lane R4) and upstream client defects plus a `/testing`

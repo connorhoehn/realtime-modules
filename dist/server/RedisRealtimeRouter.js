@@ -124,7 +124,7 @@ class RedisRealtimeRouter {
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs)
             throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
-        this.local = new router_1.LocalRealtimeRouter({ authorize: opts.authorize, filterClientMessage: opts.filterClientMessage,
+        this.local = new router_1.LocalRealtimeRouter({ authorize: opts.authorize, authorizeBatch: opts.authorizeBatch, filterClientMessage: opts.filterClientMessage,
             plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
         this.membershipTopic = opts.membershipEventTopic ?? 'chat:membership';
         if (opts.membershipStore)
@@ -252,15 +252,31 @@ class RedisRealtimeRouter {
                 accepted = accept(channel);
             }
             catch { /* refuse */ }
-            if (accepted)
+            if (accepted) {
                 store.invalidate(channel);
+                this.dropVerdicts(channel);
+            }
         }));
         this.unsubs.push(store.onCommittedWrite(channel => {
+            if (valid(channel))
+                this.dropVerdicts(channel);
             if (!valid(channel) || !this.live())
                 return;
             void this.peerEvents.publish(this.membershipTopic, JSON.stringify(channel))
                 .catch(error => this.log.warn('[realtime-cluster] membership invalidation publish failed', error));
         }));
+    }
+    dropVerdicts(channel) {
+        try {
+            this.opts.authorityCache?.invalidateChannel(channel);
+        }
+        catch (error) {
+            this.log.warn('[realtime-cluster] verdict invalidation failed', error);
+        }
+    }
+    /** 0.119 (lane R6): this router's own queues, for `attachRealtime(...).stats()`. */
+    stats() {
+        return { pendingRequests: this.pending.size, activeDeliveries: this.activeDeliveries, peerOperations: this.peerOps.size, maxPendingRequests: this.maxPending };
     }
     async registration(clientId, remember = true) {
         if (!this.live())

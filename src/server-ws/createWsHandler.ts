@@ -28,6 +28,8 @@
 import { attachWsHeartbeat, wsSend } from 'distributed-core/transport';
 import { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from './types';
 import type {
+    InboundRateLimitOptions,
+    WsHandlerStats,
     WsAuthContext,
     WsHandlerHandle,
     WsHandlerOptions,
@@ -59,6 +61,37 @@ function safeParse(raw: unknown): Record<string, unknown> | null {
  */
 const FRAME_DRAIN_TIMEOUT_MS = 5_000;
 
+/** {@link InboundRateLimitOptions} defaults (lane R6). */
+export const DEFAULT_INBOUND_FRAMES_PER_SECOND = 50;
+
+type RateLimit = { rate: number; burst: number; windowMs: number; onLimited?: InboundRateLimitOptions['onLimited'] };
+
+function resolveRateLimit(option: boolean | InboundRateLimitOptions | undefined): RateLimit | null {
+    if (!option) return null;
+    const o: InboundRateLimitOptions = option === true ? {} : option;
+    const rate = o.framesPerSecond ?? DEFAULT_INBOUND_FRAMES_PER_SECOND;
+    const burst = o.burst ?? rate * 2;
+    const windowMs = o.windowMs ?? 1000;
+    if (!(Number.isFinite(rate) && rate > 0)) throw new Error(`createWsHandler: inboundRateLimit.framesPerSecond must be a positive number (got ${rate})`);
+    if (!(Number.isFinite(burst) && burst >= 1)) throw new Error(`createWsHandler: inboundRateLimit.burst must be at least 1 (got ${burst})`);
+    if (!(Number.isFinite(windowMs) && windowMs > 0)) throw new Error(`createWsHandler: inboundRateLimit.windowMs must be positive (got ${windowMs})`);
+    return { rate, burst, windowMs, onLimited: o.onLimited };
+}
+
+/** A lazily-required event-loop delay histogram; null where perf_hooks lacks it. */
+function eventLoopMonitor(): { enable(): void; disable(): void; reset(): void; percentile(p: number): number; max: number; mean: number } | null {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { monitorEventLoopDelay } = require('perf_hooks');
+        if (typeof monitorEventLoopDelay !== 'function') return null;
+        const h = monitorEventLoopDelay({ resolution: 10 });
+        h.enable();
+        return h;
+    } catch {
+        return null;
+    }
+}
+
 export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
     // Lazy-require ws so consumers without server-side code never load it.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -76,8 +109,10 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         path,
         maxPayload = DEFAULT_WS_MAX_PAYLOAD,
         independentServices: independentServiceNames = DEFAULT_INDEPENDENT_SERVICES,
+        inboundRateLimit,
     } = opts;
     const independentServices = new Set(independentServiceNames);
+    const rateLimit = resolveRateLimit(inboundRateLimit);
 
     if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
         throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
@@ -92,6 +127,12 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
     const cleanupFns = new Map<string, () => void>();
     /** Async disconnect hooks must finish before a host closes shared ports. */
     const closing = new Set<Promise<void>>();
+    /** clientId -> inbound frames accepted and not yet finished (lane R6). */
+    const queueDepths = new Map<string, number>();
+    /** clientId -> the end of the window it is currently over budget in. */
+    const limitedUntil = new Map<string, number>();
+    const counters = { accepted: 0, dropped: 0, limitNotices: 0, queued: 0, peak: 0 };
+    const loop = eventLoopMonitor();
 
     const denyUpgrade = (socket: any, status: number, reason: string): void => {
         try {
@@ -283,15 +324,61 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             }
         };
 
+        // Inbound budget (lane R6): a token bucket per connection, checked
+        // before the frame is parsed or queued, so a runaway tab costs a
+        // counter increment per frame instead of a parse, a queue slot and a
+        // service call (one distillation tab measured ~4,600 frames/s).
+        let tokens = rateLimit?.burst ?? 0;
+        let refilledAt = Date.now();
+        let windowEnd = 0;
+        let droppedInWindow = 0;
+        let droppedTotal = 0;
+        const admitFrame = (): boolean => {
+            if (!rateLimit) return true;
+            const now = Date.now();
+            tokens = Math.min(rateLimit.burst, tokens + ((now - refilledAt) / 1000) * rateLimit.rate);
+            refilledAt = now;
+            if (tokens >= 1) { tokens -= 1; return true; }
+            counters.dropped++; droppedTotal++;
+            if (now >= windowEnd) {
+                // First drop of a new window: one notice, then silence until it ends.
+                windowEnd = now + rateLimit.windowMs;
+                droppedInWindow = 0;
+                limitedUntil.set(clientId, windowEnd);
+                counters.limitNotices++;
+                wsSend(ws, JSON.stringify({
+                    type: 'error',
+                    code: 'RATE_LIMITED',
+                    message: `Inbound frame budget exceeded (${rateLimit.rate}/s); frames are being dropped`,
+                    retryAfterMs: Math.ceil(((1 - tokens) / rateLimit.rate) * 1000),
+                    windowMs: rateLimit.windowMs,
+                    timestamp: new Date().toISOString(),
+                }));
+            }
+            droppedInWindow++;
+            try { rateLimit.onLimited?.(clientId, { droppedInWindow, droppedTotal }); } catch { /* observer only */ }
+            return false;
+        };
+
+        const settled = () => {
+            counters.queued--;
+            const left = (queueDepths.get(clientId) ?? 1) - 1;
+            if (left > 0) queueDepths.set(clientId, left); else queueDepths.delete(clientId);
+        };
         const enqueueFrame = (raw: unknown) => {
+            if (!admitFrame()) return;
+            counters.accepted++;
+            counters.queued++;
+            if (counters.queued > counters.peak) counters.peak = counters.queued;
+            queueDepths.set(clientId, (queueDepths.get(clientId) ?? 0) + 1);
             const msg = safeParse(raw);
             const lane = msg && typeof msg.service === 'string' && independentServices.has(msg.service) ? msg.service : null;
             // A rejected frame must not poison the chain for the next one.
             if (lane === null) {
-                frameQueue = frameQueue.then(() => handleFrame(msg)).catch(() => undefined);
+                frameQueue = frameQueue.then(() => handleFrame(msg)).catch(() => undefined).finally(settled);
                 return;
             }
-            lanes.set(lane, (lanes.get(lane) ?? Promise.resolve()).then(() => handleFrame(msg)).catch(() => undefined));
+            lanes.set(lane, (lanes.get(lane) ?? Promise.resolve()).then(() => handleFrame(msg)).catch(() => undefined).finally(settled));
         };
         ws.off('message', bufferInitialFrame);
         ws.on('message', enqueueFrame);
@@ -326,6 +413,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             ]);
 
             clients.delete(id);
+            limitedUntil.delete(id);
             const cleanup = cleanupFns.get(id);
             if (cleanup) {
                 cleanup();
@@ -372,7 +460,41 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             const entry = clients.get(clientId);
             return entry?.ws.readyState === 1 ? entry.ctx : null;
         },
+        stats(statsOpts?: { reset?: boolean }): WsHandlerStats {
+            const now = Date.now();
+            let limitedConnections = 0;
+            for (const [id, until] of limitedUntil) {
+                if (until > now) limitedConnections++; else limitedUntil.delete(id);
+            }
+            let maxConnectionQueueDepth = 0;
+            for (const depth of queueDepths.values()) if (depth > maxConnectionQueueDepth) maxConnectionQueueDepth = depth;
+            const ms = (ns: number) => Math.round((ns / 1e6) * 10) / 10;
+            const out: WsHandlerStats = {
+                connections: clients.size,
+                queueDepth: counters.queued,
+                maxConnectionQueueDepth,
+                peakQueueDepth: counters.peak,
+                inbound: {
+                    accepted: counters.accepted,
+                    dropped: counters.dropped,
+                    limitNotices: counters.limitNotices,
+                    limitedConnections,
+                },
+                eventLoop: loop ? {
+                    p50Ms: ms(loop.percentile(50)),
+                    p99Ms: ms(loop.percentile(99)),
+                    maxMs: ms(loop.max),
+                    meanMs: ms(Number.isFinite(loop.mean) ? loop.mean : 0),
+                } : null,
+            };
+            if (statsOpts?.reset) {
+                counters.peak = counters.queued;
+                loop?.reset();
+            }
+            return out;
+        },
         async dispose(): Promise<void> {
+            loop?.disable();
             // Remove our upgrade listener (best-effort across http.Server APIs).
             const removeFn = (server as any).removeListener || (server as any).off;
             if (typeof removeFn === 'function') {

@@ -21,7 +21,7 @@
 
 import type { AuthorityScope } from '../../server-ws/authorityScope';
 import type { WsAuthContext, WsAuthFn } from '../../server-ws/types';
-import type { ChannelAuthorize, ClientMessageFilter } from '../router';
+import type { ChannelAuthorize, ChannelAuthorizeBatch, ClientMessageFilter } from '../router';
 
 export interface PrincipalRevalidation {
     /**
@@ -60,31 +60,66 @@ export function revalidatingAuth(auth: WsAuthFn | undefined, principal: Principa
  * `filterClientMessage`, the same for delivery.
  */
 export function withPrincipalRevalidation(
-    hooks: { authorize?: ChannelAuthorize | undefined; filterClientMessage?: ClientMessageFilter | undefined },
+    hooks: { authorize?: ChannelAuthorize | undefined; filterClientMessage?: ClientMessageFilter | undefined;
+        authorizeBatch?: ChannelAuthorizeBatch | undefined },
     principal: PrincipalRevalidation,
-): { authorize: ChannelAuthorize; filterClientMessage: ClientMessageFilter } {
+    opts: {
+        /**
+         * 0.119 (lane R6): told the connection whose principal was refused —
+         * the verdict cache drops its entries here (verdictCache.ts V4).
+         */
+        onStale?: (clientId: string) => void;
+    } = {},
+): { authorize: ChannelAuthorize; filterClientMessage: ClientMessageFilter; authorizeBatch?: ChannelAuthorizeBatch } {
     const recheck = principal.recheckAfterIo !== false;
     const inner = hooks.authorize;
     const filter = hooks.filterClientMessage;
+    const stale = (clientId: string): false => {
+        try { opts.onStale?.(clientId); } catch { /* observer only */ }
+        return false;
+    };
+    const current = async (clientId: string, ctx: WsAuthContext | null | undefined, scope?: AuthorityScope): Promise<boolean> =>
+        (await principalIsCurrent(principal, ctx, scope)) || stale(clientId);
     const authorize: ChannelAuthorize = async (args) => {
-        if (!await principalIsCurrent(principal, args.ctx, args.scope)) return false;
+        if (!await current(args.clientId, args.ctx, args.scope)) return false;
         if (inner) {
             let allowed = false;
             try { allowed = (await inner(args)) === true; } catch { return false; }
             if (!allowed) return false;
-            if (recheck && !await principalIsCurrent(principal, args.ctx, args.scope)) return false;
+            if (recheck && !await current(args.clientId, args.ctx, args.scope)) return false;
         }
         return true;
     };
     const filterClientMessage: ClientMessageFilter = async (args) => {
-        if (!await principalIsCurrent(principal, args.ctx)) return null;
+        if (!await current(args.clientId, args.ctx)) return null;
         if (!filter) return args.message;
         const filtered = await filter(args);
         if (filtered == null) return null;
-        if (recheck && !await principalIsCurrent(principal, args.ctx)) return null;
+        if (recheck && !await current(args.clientId, args.ctx)) return null;
         return filtered;
     };
-    return { authorize, filterClientMessage };
+    const batch = hooks.authorizeBatch;
+    // Every recipient of a batch is revalidated before (and, with
+    // recheckAfterIo, after) the one host call — the same fence per
+    // recipient as the per-recipient path, with one policy call.
+    const authorizeBatch: ChannelAuthorizeBatch | undefined = batch ? async (args) => {
+        const verdicts: boolean[] = new Array(args.recipients.length).fill(false);
+        const live = await Promise.all(args.recipients.map(r => current(r.clientId, r.ctx, args.scope)));
+        const idx = live.flatMap((ok, i) => ok ? [i] : []);
+        if (!idx.length) return verdicts;
+        let answers: ReadonlyArray<boolean> | null = null;
+        try {
+            const out = await batch({ ...args, recipients: idx.map(i => args.recipients[i]) });
+            answers = Array.isArray(out) && out.length === idx.length ? out : null;
+        } catch { answers = null; }
+        if (!answers) return verdicts;
+        const allowed = idx.filter((_, j) => answers![j] === true);
+        const after = recheck ? await Promise.all(allowed.map(i => current(args.recipients[i].clientId, args.recipients[i].ctx, args.scope)))
+            : allowed.map(() => true);
+        allowed.forEach((i, j) => { verdicts[i] = after[j]; });
+        return verdicts;
+    } : undefined;
+    return { authorize, filterClientMessage, ...(authorizeBatch ? { authorizeBatch } : {}) };
 }
 
 /** What `FeatureContext.principal` gives a feature: the connection's principal, asked fresh. */

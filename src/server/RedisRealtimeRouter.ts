@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
 import { FencedLease, LeaseHeldError, type FenceEvent, type FencedOwner, type LeaseAttachment } from 'distributed-core/cluster/leases';
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
-import { LocalRealtimeRouter, liveUsersOnChannel, type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
+import { LocalRealtimeRouter, liveUsersOnChannel, type RealtimeRouter, type ChannelAuthorize, type ChannelAuthorizeBatch, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
 import { acceptsOriginPublishProof, createAuthorityScope, scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
@@ -50,6 +50,8 @@ export interface RedisRealtimeRouterOptions {
     /** Unique among live replicas. A second live owner is rejected. */
     nodeId: string;
     authorize?: ChannelAuthorize;
+    /** 0.119 (lane R6): one host call per local fan-out (see `ChannelAuthorizeBatch`). */
+    authorizeBatch?: ChannelAuthorizeBatch;
     filterClientMessage?: ClientMessageFilter;
     plugins?: FeaturePlugin[];
     logger?: RouterLogger;
@@ -94,6 +96,13 @@ export interface RedisRealtimeRouterOptions {
      * `chat:membership`) and peers call `invalidate(channel)`.
      */
     membershipStore?: RealtimeMembershipInvalidation;
+    /**
+     * 0.119 (lane R6): a verdict cache (`withAuthorityCache(...).cache`) to
+     * drop on every membership event this router sees — local committed
+     * writes and peer invalidations alike (verdictCache.ts V3). Needs
+     * `membershipStore`, which is where the events come from.
+     */
+    authorityCache?: { invalidateChannel(channel: string): void };
     /** Peer event topic for `membershipStore`. Default `chat:membership`. */
     membershipEventTopic?: string;
     /** Peer-supplied channels this node will invalidate. Default: any non-empty string up to 512 bytes. */
@@ -215,7 +224,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (![this.leaseMs, this.timeoutMs, this.maxBytes, this.maxPending, this.maxSeen].every(n => Number.isSafeInteger(n) && n > 0)
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs) throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
-        this.local = new LocalRealtimeRouter({ authorize: opts.authorize, filterClientMessage: opts.filterClientMessage,
+        this.local = new LocalRealtimeRouter({ authorize: opts.authorize, authorizeBatch: opts.authorizeBatch, filterClientMessage: opts.filterClientMessage,
             plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
         this.membershipTopic = opts.membershipEventTopic ?? 'chat:membership';
         if (opts.membershipStore) this.validateEventTopic(this.membershipTopic);
@@ -323,13 +332,21 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             if (!valid(channel)) return;
             let accepted = false;
             try { accepted = accept(channel); } catch { /* refuse */ }
-            if (accepted) store.invalidate(channel);
+            if (accepted) { store.invalidate(channel); this.dropVerdicts(channel); }
         }));
         this.unsubs.push(store.onCommittedWrite(channel => {
+            if (valid(channel)) this.dropVerdicts(channel);
             if (!valid(channel) || !this.live()) return;
             void this.peerEvents.publish(this.membershipTopic, JSON.stringify(channel))
                 .catch(error => this.log.warn('[realtime-cluster] membership invalidation publish failed', error));
         }));
+    }
+    private dropVerdicts(channel: string): void {
+        try { this.opts.authorityCache?.invalidateChannel(channel); } catch (error) { this.log.warn('[realtime-cluster] verdict invalidation failed', error); }
+    }
+    /** 0.119 (lane R6): this router's own queues, for `attachRealtime(...).stats()`. */
+    stats(): { pendingRequests: number; activeDeliveries: number; peerOperations: number; maxPendingRequests: number } {
+        return { pendingRequests: this.pending.size, activeDeliveries: this.activeDeliveries, peerOperations: this.peerOps.size, maxPendingRequests: this.maxPending };
     }
     private async registration(clientId: string, remember = true): Promise<Registration | null> {
         if (!this.live()) return null;

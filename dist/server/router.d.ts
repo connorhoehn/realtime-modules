@@ -85,6 +85,26 @@ export type ChannelAuthorize = (args: {
     ctx: WsAuthContext | null;
     scope?: AuthorityScope;
 }) => boolean | Promise<boolean>;
+/**
+ * 0.119 (lane R6), optional: recipient authorization for a whole fan-out in
+ * ONE host call. When a router has it, each channel fan-out asks it once with
+ * every local recipient (their connection and auth context) instead of
+ * calling `authorize({ kind: 'subscribe' })` per recipient. Return one
+ * boolean per recipient, in order. A wrong-length result, a throw or a
+ * rejection refuses every recipient of that fan-out (fail closed). Without
+ * it the router asks `authorize` per recipient, exactly as before. The
+ * library's own fences (connection context, subscription token) still run
+ * per recipient after the verdict.
+ */
+export type ChannelAuthorizeBatch = (args: {
+    kind: 'subscribe';
+    channel: string;
+    recipients: ReadonlyArray<{
+        clientId: string;
+        ctx: WsAuthContext;
+    }>;
+    scope?: AuthorityScope;
+}) => ReadonlyArray<boolean> | Promise<ReadonlyArray<boolean>>;
 /** Last-mile recipient filter for the local router, including direct user
  * delivery, broadcast and channel fanout. Return the original/filtered frame
  * or null to suppress it. Throws and rejected promises suppress delivery.
@@ -250,6 +270,7 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     private handleRef;
     private readonly plugins;
     private readonly authorize;
+    private readonly authorizeBatch;
     private readonly filterClientMessage;
     private readonly logger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
@@ -261,6 +282,8 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     constructor(opts?: {
         plugins?: FeaturePlugin[];
         authorize?: ChannelAuthorize;
+        /** 0.119 (lane R6): one host call per fan-out for every recipient's subscribe check. */
+        authorizeBatch?: ChannelAuthorizeBatch;
         filterClientMessage?: ClientMessageFilter;
         logger?: RouterLogger;
         /**
@@ -302,6 +325,13 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
      * Every recipient check of one fan-out shares one authority scope. */
     sendToLocalChannel(channel: string, message: unknown, excludeClientId?: string | null, scopeIn?: AuthorityScope): Promise<void>;
     private fanOut;
+    /**
+     * 0.119 (lane R6): the same recipient recheck as `fanOut`, asked of the
+     * host ONCE for every recipient (`authorizeBatch`). Each recipient's
+     * context and subscription token are captured before the call and
+     * fenced after it, exactly as the per-recipient path does.
+     */
+    private fanOutBatched;
     /** Preserve synchronous decisions; rejected async decisions fail closed. */
     private allows;
     hasChannelAuthorize(): boolean;

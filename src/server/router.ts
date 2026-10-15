@@ -107,6 +107,24 @@ export type ChannelAuthorize = (args: {
     scope?: AuthorityScope;
 }) => boolean | Promise<boolean>;
 
+/**
+ * 0.119 (lane R6), optional: recipient authorization for a whole fan-out in
+ * ONE host call. When a router has it, each channel fan-out asks it once with
+ * every local recipient (their connection and auth context) instead of
+ * calling `authorize({ kind: 'subscribe' })` per recipient. Return one
+ * boolean per recipient, in order. A wrong-length result, a throw or a
+ * rejection refuses every recipient of that fan-out (fail closed). Without
+ * it the router asks `authorize` per recipient, exactly as before. The
+ * library's own fences (connection context, subscription token) still run
+ * per recipient after the verdict.
+ */
+export type ChannelAuthorizeBatch = (args: {
+    kind: 'subscribe';
+    channel: string;
+    recipients: ReadonlyArray<{ clientId: string; ctx: WsAuthContext }>;
+    scope?: AuthorityScope;
+}) => ReadonlyArray<boolean> | Promise<ReadonlyArray<boolean>>;
+
 /** Last-mile recipient filter for the local router, including direct user
  * delivery, broadcast and channel fanout. Return the original/filtered frame
  * or null to suppress it. Throws and rejected promises suppress delivery.
@@ -303,6 +321,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     private handleRef: WsHandlerHandle | null = null;
     private readonly plugins: FeaturePlugin[];
     private readonly authorize: ChannelAuthorize | null;
+    private readonly authorizeBatch: ChannelAuthorizeBatch | null;
     private readonly filterClientMessage: ClientMessageFilter | null;
     private readonly logger: RouterLogger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
@@ -316,6 +335,8 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     constructor(opts: {
         plugins?: FeaturePlugin[];
         authorize?: ChannelAuthorize;
+        /** 0.119 (lane R6): one host call per fan-out for every recipient's subscribe check. */
+        authorizeBatch?: ChannelAuthorizeBatch;
         filterClientMessage?: ClientMessageFilter;
         logger?: RouterLogger;
         /**
@@ -332,6 +353,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         this.publishProofMaxAgeMs = maxAge;
         this.plugins = opts.plugins ?? [];
         this.authorize = opts.authorize ?? null;
+        this.authorizeBatch = opts.authorizeBatch ?? null;
         this.filterClientMessage = opts.filterClientMessage ?? null;
         this.logger = opts.logger ?? {
             debug: () => undefined,
@@ -479,6 +501,7 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     }
 
     private async fanOut(channel: string, message: unknown, members: Set<string>, excludeClientId: string | null | undefined, scope: AuthorityScope): Promise<void> {
+        if (this.authorize && this.authorizeBatch) return this.fanOutBatched(channel, message, members, excludeClientId, scope);
         // Admission is not a lasting grant. Recheck every recipient, even for
         // server-originated updates, and do not revive a subscription removed
         // while asynchronous authorization was resolving.
@@ -489,6 +512,43 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             if (!(await this.allows('subscribe', clientId, channel, scope))) return;
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token) return;
             await this.sendFiltered(clientId, message, () => this.ctxOf(clientId) === context
+                && this.subscriptionTokens.get(channel)?.get(clientId) === token);
+        }));
+    }
+
+    /**
+     * 0.119 (lane R6): the same recipient recheck as `fanOut`, asked of the
+     * host ONCE for every recipient (`authorizeBatch`). Each recipient's
+     * context and subscription token are captured before the call and
+     * fenced after it, exactly as the per-recipient path does.
+     */
+    private async fanOutBatched(channel: string, message: unknown, members: Set<string>, excludeClientId: string | null | undefined, scope: AuthorityScope): Promise<void> {
+        const handle = this.handleRef;
+        const recipients: { clientId: string; ctx: WsAuthContext; token: object }[] = [];
+        for (const clientId of members) {
+            if (clientId === excludeClientId) continue;
+            const ctx = this.ctxOf(clientId);
+            const token = this.subscriptionTokens.get(channel)?.get(clientId);
+            if (ctx && token) recipients.push({ clientId, ctx, token });
+        }
+        if (!recipients.length) return;
+        let verdicts: ReadonlyArray<boolean> | null = null;
+        try {
+            const out = await this.authorizeBatch!({
+                kind: 'subscribe', channel,
+                recipients: recipients.map(r => ({ clientId: r.clientId, ctx: r.ctx })),
+                ...(scope.active ? { scope } : {}),
+            });
+            verdicts = Array.isArray(out) && out.length === recipients.length ? out : null;
+            if (!verdicts) this.logger.warn(`[realtime] authorizeBatch returned a malformed result for ${channel}; refusing every recipient`);
+        } catch (err) {
+            this.logger.warn(`[realtime] authorizeBatch threw for ${channel}; refusing every recipient`, err);
+        }
+        if (!verdicts || this.handleRef !== handle) return;
+        await Promise.all(recipients.map(async ({ clientId, ctx, token }, i) => {
+            if (verdicts![i] !== true) return;
+            if (this.ctxOf(clientId) !== ctx || this.subscriptionTokens.get(channel)?.get(clientId) !== token) return;
+            await this.sendFiltered(clientId, message, () => this.ctxOf(clientId) === ctx
                 && this.subscriptionTokens.get(channel)?.get(clientId) === token);
         }));
     }

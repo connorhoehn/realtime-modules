@@ -54,12 +54,20 @@ function revalidatingAuth(auth, principal) {
  * enforces: every subscribe and fan-out asks it); with no
  * `filterClientMessage`, the same for delivery.
  */
-function withPrincipalRevalidation(hooks, principal) {
+function withPrincipalRevalidation(hooks, principal, opts = {}) {
     const recheck = principal.recheckAfterIo !== false;
     const inner = hooks.authorize;
     const filter = hooks.filterClientMessage;
+    const stale = (clientId) => {
+        try {
+            opts.onStale?.(clientId);
+        }
+        catch { /* observer only */ }
+        return false;
+    };
+    const current = async (clientId, ctx, scope) => (await principalIsCurrent(principal, ctx, scope)) || stale(clientId);
     const authorize = async (args) => {
-        if (!await principalIsCurrent(principal, args.ctx, args.scope))
+        if (!await current(args.clientId, args.ctx, args.scope))
             return false;
         if (inner) {
             let allowed = false;
@@ -71,24 +79,50 @@ function withPrincipalRevalidation(hooks, principal) {
             }
             if (!allowed)
                 return false;
-            if (recheck && !await principalIsCurrent(principal, args.ctx, args.scope))
+            if (recheck && !await current(args.clientId, args.ctx, args.scope))
                 return false;
         }
         return true;
     };
     const filterClientMessage = async (args) => {
-        if (!await principalIsCurrent(principal, args.ctx))
+        if (!await current(args.clientId, args.ctx))
             return null;
         if (!filter)
             return args.message;
         const filtered = await filter(args);
         if (filtered == null)
             return null;
-        if (recheck && !await principalIsCurrent(principal, args.ctx))
+        if (recheck && !await current(args.clientId, args.ctx))
             return null;
         return filtered;
     };
-    return { authorize, filterClientMessage };
+    const batch = hooks.authorizeBatch;
+    // Every recipient of a batch is revalidated before (and, with
+    // recheckAfterIo, after) the one host call — the same fence per
+    // recipient as the per-recipient path, with one policy call.
+    const authorizeBatch = batch ? async (args) => {
+        const verdicts = new Array(args.recipients.length).fill(false);
+        const live = await Promise.all(args.recipients.map(r => current(r.clientId, r.ctx, args.scope)));
+        const idx = live.flatMap((ok, i) => ok ? [i] : []);
+        if (!idx.length)
+            return verdicts;
+        let answers = null;
+        try {
+            const out = await batch({ ...args, recipients: idx.map(i => args.recipients[i]) });
+            answers = Array.isArray(out) && out.length === idx.length ? out : null;
+        }
+        catch {
+            answers = null;
+        }
+        if (!answers)
+            return verdicts;
+        const allowed = idx.filter((_, j) => answers[j] === true);
+        const after = recheck ? await Promise.all(allowed.map(i => current(args.recipients[i].clientId, args.recipients[i].ctx, args.scope)))
+            : allowed.map(() => true);
+        allowed.forEach((i, j) => { verdicts[i] = after[j]; });
+        return verdicts;
+    } : undefined;
+    return { authorize, filterClientMessage, ...(authorizeBatch ? { authorizeBatch } : {}) };
 }
 /**
  * Gate a feature hook `(clientId, …) => boolean | Promise<boolean>` on the

@@ -15,6 +15,8 @@ export type {
     WsHandlerOptions,
     WsHandlerHandle,
     WsHttpServer,
+    InboundRateLimitOptions,
+    WsHandlerStats,
 } from './types';
 export type { AuthSender, ResolveSender } from './senderIdentity';
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from './channelAccess';

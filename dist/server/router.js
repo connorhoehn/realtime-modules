@@ -104,6 +104,7 @@ class LocalRealtimeRouter {
     handleRef = null;
     plugins;
     authorize;
+    authorizeBatch;
     filterClientMessage;
     logger;
     /** In-flight admissions are cancelled by an unsubscribe/disconnect. */
@@ -119,6 +120,7 @@ class LocalRealtimeRouter {
         this.publishProofMaxAgeMs = maxAge;
         this.plugins = opts.plugins ?? [];
         this.authorize = opts.authorize ?? null;
+        this.authorizeBatch = opts.authorizeBatch ?? null;
         this.filterClientMessage = opts.filterClientMessage ?? null;
         this.logger = opts.logger ?? {
             debug: () => undefined,
@@ -252,6 +254,8 @@ class LocalRealtimeRouter {
         }
     }
     async fanOut(channel, message, members, excludeClientId, scope) {
+        if (this.authorize && this.authorizeBatch)
+            return this.fanOutBatched(channel, message, members, excludeClientId, scope);
         // Admission is not a lasting grant. Recheck every recipient, even for
         // server-originated updates, and do not revive a subscription removed
         // while asynchronous authorization was resolving.
@@ -265,6 +269,50 @@ class LocalRealtimeRouter {
             if (this.ctxOf(clientId) !== context || !token || this.subscriptionTokens.get(channel)?.get(clientId) !== token)
                 return;
             await this.sendFiltered(clientId, message, () => this.ctxOf(clientId) === context
+                && this.subscriptionTokens.get(channel)?.get(clientId) === token);
+        }));
+    }
+    /**
+     * 0.119 (lane R6): the same recipient recheck as `fanOut`, asked of the
+     * host ONCE for every recipient (`authorizeBatch`). Each recipient's
+     * context and subscription token are captured before the call and
+     * fenced after it, exactly as the per-recipient path does.
+     */
+    async fanOutBatched(channel, message, members, excludeClientId, scope) {
+        const handle = this.handleRef;
+        const recipients = [];
+        for (const clientId of members) {
+            if (clientId === excludeClientId)
+                continue;
+            const ctx = this.ctxOf(clientId);
+            const token = this.subscriptionTokens.get(channel)?.get(clientId);
+            if (ctx && token)
+                recipients.push({ clientId, ctx, token });
+        }
+        if (!recipients.length)
+            return;
+        let verdicts = null;
+        try {
+            const out = await this.authorizeBatch({
+                kind: 'subscribe', channel,
+                recipients: recipients.map(r => ({ clientId: r.clientId, ctx: r.ctx })),
+                ...(scope.active ? { scope } : {}),
+            });
+            verdicts = Array.isArray(out) && out.length === recipients.length ? out : null;
+            if (!verdicts)
+                this.logger.warn(`[realtime] authorizeBatch returned a malformed result for ${channel}; refusing every recipient`);
+        }
+        catch (err) {
+            this.logger.warn(`[realtime] authorizeBatch threw for ${channel}; refusing every recipient`, err);
+        }
+        if (!verdicts || this.handleRef !== handle)
+            return;
+        await Promise.all(recipients.map(async ({ clientId, ctx, token }, i) => {
+            if (verdicts[i] !== true)
+                return;
+            if (this.ctxOf(clientId) !== ctx || this.subscriptionTokens.get(channel)?.get(clientId) !== token)
+                return;
+            await this.sendFiltered(clientId, message, () => this.ctxOf(clientId) === ctx
                 && this.subscriptionTokens.get(channel)?.get(clientId) === token);
         }));
     }

@@ -1,6 +1,6 @@
 import type { AuthorityScope } from '../../server-ws/authorityScope';
 import type { WsAuthContext, WsAuthFn } from '../../server-ws/types';
-import type { ChannelAuthorize, ClientMessageFilter } from '../router';
+import type { ChannelAuthorize, ChannelAuthorizeBatch, ClientMessageFilter } from '../router';
 export interface PrincipalRevalidation {
     /**
      * Is this connection's principal still current? Read the host directory
@@ -27,9 +27,17 @@ export declare function revalidatingAuth(auth: WsAuthFn | undefined, principal: 
 export declare function withPrincipalRevalidation(hooks: {
     authorize?: ChannelAuthorize | undefined;
     filterClientMessage?: ClientMessageFilter | undefined;
-}, principal: PrincipalRevalidation): {
+    authorizeBatch?: ChannelAuthorizeBatch | undefined;
+}, principal: PrincipalRevalidation, opts?: {
+    /**
+     * 0.119 (lane R6): told the connection whose principal was refused —
+     * the verdict cache drops its entries here (verdictCache.ts V4).
+     */
+    onStale?: (clientId: string) => void;
+}): {
     authorize: ChannelAuthorize;
     filterClientMessage: ClientMessageFilter;
+    authorizeBatch?: ChannelAuthorizeBatch;
 };
 /** What `FeatureContext.principal` gives a feature: the connection's principal, asked fresh. */
 export interface FeaturePrincipal {

@@ -1,10 +1,11 @@
 import type { FeatureManifest } from '../feature-manifest/types';
-import type { WsHandlerHandle, WsHandlerOptions, WsService } from '../server-ws/types';
-import { type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
+import type { WsHandlerHandle, WsHandlerOptions, WsHandlerStats, WsService } from '../server-ws/types';
+import { type ChannelAuthorize, type ChannelAuthorizeBatch, type ClientMessageFilter, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
 import type { ChatService } from '../chat/ChatService';
 import type { NotificationService } from '../notification/NotificationService';
 import type { CallService } from '../call/CallService';
 import { type FeaturePrincipal, type PrincipalRevalidation } from './authority/principal';
+import { type AuthorityCacheOptions, type AuthorityCacheStats, type AuthorityVerdictCache } from './authority/verdictCache';
 /** Everything a feature's factory receives. */
 export interface FeatureContext {
     /** The shared router — Local by default, swappable via attach opts. */
@@ -203,6 +204,25 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      * apply.
      */
     principal?: PrincipalRevalidation;
+    /**
+     * 0.119 (lane R6), opt-in: one host call per channel fan-out for every
+     * recipient's subscribe check (see `ChannelAuthorizeBatch`). Without it
+     * the local router asks `authorize` per recipient. Composed under the
+     * principal revalidation and the verdict cache like `authorize`. Ignored
+     * with a custom `router` (pass it to that router).
+     */
+    authorizeBatch?: ChannelAuthorizeBatch;
+    /**
+     * 0.119 (lane R6), opt-in: cache POSITIVE `authorize` verdicts per
+     * (connection, channel, directory epoch) — contract V1–V7 in
+     * `authority/verdictCache.ts`. `epoch(ctx)` must return the principal's
+     * CURRENT directory epoch; any change misses and drops that connection's
+     * verdicts, and so does a principal revalidation failure. Feed
+     * membership events to `handle.authorityCache.invalidateChannel`.
+     * Refusals are never cached. Ignored with a custom `router` (wrap its
+     * hooks with `withAuthorityCache` yourself).
+     */
+    authorityCache?: AuthorityCacheOptions;
 }
 /**
  * 0.119: the services the built-in features register, typed by name. Present
@@ -215,8 +235,12 @@ export interface KnownRealtimeServices {
     call?: CallService;
 }
 export type RealtimeServices = KnownRealtimeServices & Record<string, WsService>;
-/** One reading of the gateway process. 0.119 */
-export interface RealtimeStats {
+/**
+ * One reading of the gateway process. 0.119 (lane R4); 0.120 (lane R6) adds
+ * the handler's queue depth, inbound budget counters and event-loop
+ * percentiles (`WsHandlerStats`), the verdict cache and the router's queues.
+ */
+export interface RealtimeStats extends WsHandlerStats {
     /** Connected sockets on this process. */
     sockets: number;
     /** Calls this process holds (0 without `calls()`). */
@@ -226,13 +250,24 @@ export interface RealtimeStats {
     eventLoopDelayMaxMs: number;
     rssMb: number;
     ts: string;
+    /** 0.120 (lane R6): verdict cache counters, when `authorityCache` is on. */
+    authorityCache?: AuthorityCacheStats;
+    /** 0.120 (lane R6): the router's own queues, when it reports them (`RedisRealtimeRouter.stats()`). */
+    router?: Record<string, number>;
 }
 export interface RealtimeHandle extends WsHandlerHandle {
     router: RealtimeRouter;
     services: RealtimeServices;
     manifests: FeatureManifest[];
-    /** A snapshot of this process: sockets, calls, event-loop p99, RSS. */
-    stats(): RealtimeStats;
+    /**
+     * A snapshot of this process: sockets, calls, event-loop delay, RSS
+     * (0.119); queue depth, inbound budget, verdict cache and router queues
+     * (0.120, lane R6). `reset` restarts the peak queue depth and the
+     * event-loop histograms after reading.
+     */
+    stats(opts?: {
+        reset?: boolean;
+    }): RealtimeStats;
     /**
      * Call `listener` with `stats()` every `intervalMs` (default 60 000) and
      * reset the event-loop histogram each tick. Returns the unsubscribe;
@@ -241,6 +276,8 @@ export interface RealtimeHandle extends WsHandlerHandle {
     onStats(listener: (stats: RealtimeStats) => void, opts?: {
         intervalMs?: number;
     }): () => void;
+    /** 0.120 (lane R6): the verdict cache, when `authorityCache` is set — invalidate on membership events. */
+    authorityCache?: AuthorityVerdictCache;
 }
 /**
  * Attach realtime features to an EXISTING http(s).Server.

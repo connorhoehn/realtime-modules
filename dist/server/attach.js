@@ -61,6 +61,7 @@ const node_perf_hooks_1 = require("node:perf_hooks");
 const subscribeService_1 = require("./subscribeService");
 const engine_1 = require("./authority/engine");
 const principal_1 = require("./authority/principal");
+const verdictCache_1 = require("./authority/verdictCache");
 /** Identity helper — exists so feature definitions type-check at the site. */
 function defineFeature(feature) {
     return feature;
@@ -405,11 +406,21 @@ function collabDocs(opts = {}) {
  * All HTTP routes, middleware and listeners you already have are untouched.
  */
 function attachRealtime(server, opts) {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, ...wsOpts } = opts;
+    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
     const log = logger ?? NOOP_LOGGER;
-    const hooks = principal ? (0, principal_1.withPrincipalRevalidation)({ authorize, filterClientMessage }, principal) : { authorize, filterClientMessage };
+    // Composition, inside out: host hooks → verdict cache → principal
+    // revalidation (verdictCache.ts V4: revalidation runs on every check,
+    // cache hits included, and a refusal drops the connection's verdicts).
+    const cached = !customRouter && cacheOpts && authorize ? (0, verdictCache_1.withAuthorityCache)(authorize, cacheOpts, authorizeBatch) : null;
+    const inner = { authorize: cached?.authorize ?? authorize, filterClientMessage,
+        authorizeBatch: cached?.authorizeBatch ?? authorizeBatch };
+    const verdictCache = cached?.cache;
+    const hooks = principal
+        ? (0, principal_1.withPrincipalRevalidation)(inner, principal, verdictCache ? { onStale: (id) => verdictCache.invalidateConnection(id) } : {})
+        : inner;
     const router = customRouter ?? new router_1.LocalRealtimeRouter({
-        plugins, authorize: hooks.authorize, filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs
+        plugins, authorize: hooks.authorize, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
+        filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs
     });
     if (principal)
         wsOpts.auth = (0, principal_1.revalidatingAuth)(wsOpts.auth, principal);
@@ -470,6 +481,7 @@ function attachRealtime(server, opts) {
             }
             catch { /* consumer errors stay theirs */ }
             router.removeClient?.(clientId);
+            verdictCache?.invalidateConnection(clientId); // V7
         },
     });
     router._setHandle?.(handle);
@@ -505,29 +517,52 @@ function attachRealtime(server, opts) {
     };
     const statTimers = new Set();
     const ms = (ns) => Math.round((ns / 1e6) * 100) / 100;
-    const stats = () => {
+    const stats = (statsOpts) => {
         const h = loopHistogram();
         const call = services['call'];
-        return {
+        const base = handle.stats?.(statsOpts) ?? {
+            connections: handle.listClients().length, queueDepth: 0, maxConnectionQueueDepth: 0, peakQueueDepth: 0,
+            inbound: { accepted: 0, dropped: 0, limitNotices: 0, limitedConnections: 0 }, eventLoop: null,
+        };
+        let routerStats;
+        try {
+            routerStats = router.stats?.();
+        }
+        catch {
+            routerStats = undefined;
+        }
+        const out = {
+            ...base,
             sockets: handle.listClients().length,
             activeCalls: call?.activeCallCount?.() ?? 0,
             eventLoopDelayP99Ms: ms(h.percentile(99)),
             eventLoopDelayMaxMs: ms(h.max),
             rssMb: Math.round(process.memoryUsage().rss / 1048576),
             ts: new Date().toISOString(),
+            ...(verdictCache ? { authorityCache: verdictCache.stats() } : {}),
+            ...(routerStats ? { router: routerStats } : {}),
         };
+        if (statsOpts?.reset)
+            histogram?.reset();
+        return out;
     };
     const onStats = (listener, o = {}) => {
         const interval = o.intervalMs && o.intervalMs > 0 ? o.intervalMs : 60_000;
         const timer = setInterval(() => {
+            let reading = null;
             try {
-                listener(stats());
+                reading = stats({ reset: true });
             }
             catch (err) {
-                log.warn('[attachRealtime] onStats listener failed', err);
+                log.warn('[attachRealtime] stats failed', err);
             }
-            finally {
-                histogram?.reset();
+            if (reading) {
+                try {
+                    listener(reading);
+                }
+                catch (err) {
+                    log.warn('[attachRealtime] onStats listener failed', err);
+                }
             }
         }, interval);
         timer.unref?.();
@@ -546,6 +581,7 @@ function attachRealtime(server, opts) {
             histogram = null;
         }
     };
-    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats });
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats,
+        ...(verdictCache ? { authorityCache: verdictCache } : {}) });
 }
 //# sourceMappingURL=attach.js.map

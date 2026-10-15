@@ -34,5 +34,7 @@ export type {
 } from './engine';
 export { principalIsCurrent, revalidatingAuth, withPrincipalRevalidation, gateOnPrincipal } from './principal';
 export type { PrincipalRevalidation, FeaturePrincipal } from './principal';
+export { withAuthorityCache } from './verdictCache';
+export type { AuthorityCacheOptions, AuthorityCacheStats, AuthorityVerdictCache } from './verdictCache';
 export { BEARER_SUBPROTOCOL, tokenFromSubprotocol, bearerSubprotocolAuth } from './bearer';
 export type { RealtimeAuthContext, BearerSubprotocolAuthOptions } from './bearer';

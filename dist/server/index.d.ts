@@ -23,7 +23,7 @@ export { RedisRealtimeRouter } from './RedisRealtimeRouter';
 export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents, RealtimeLeaseGroup, RealtimeMembershipInvalidation } from './RedisRealtimeRouter';
 export { FencedLease, LeaseGroup, ReadinessGate, RedisPeerRegistry, BoundedRedis, createBoundedRedis, LeaseHeldError, LeaseFencedError, RedisDeadlineError } from 'distributed-core/cluster/leases';
 export type { FencedOwner, FenceEvent, FenceReason, LeaseRedis, LeaseGroupOptions, ReadinessOwner, ReadinessSnapshot, ReadinessProbe, PeerSurvey, RedisPeerRegistryOptions, BoundedRedisOptions } from 'distributed-core/cluster/leases';
-export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
+export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ChannelAuthorizeBatch, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 import type { WsAuthContext as _WsAuthContext, WsAuthFn as _WsAuthFn } from '../server-ws/types';
 import type { AuthSender as _AuthSender, ResolveSender as _ResolveSender } from '../server-ws/senderIdentity';
 import type { ServiceChannelPrefix as _ServiceChannelPrefix, ChannelAccessKind as _ChannelAccessKind } from '../server-ws/channelAccess';

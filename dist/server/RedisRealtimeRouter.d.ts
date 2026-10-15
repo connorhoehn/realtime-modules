@@ -1,6 +1,6 @@
 import { type FenceEvent, type FencedOwner } from 'distributed-core/cluster/leases';
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
-import { type RealtimeRouter, type ChannelAuthorize, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
+import { type RealtimeRouter, type ChannelAuthorize, type ChannelAuthorizeBatch, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
 import type { CallCrossNodePubSub } from '../call/types';
 import { type AuthorityScope } from '../server-ws/authorityScope';
@@ -47,6 +47,8 @@ export interface RedisRealtimeRouterOptions {
     /** Unique among live replicas. A second live owner is rejected. */
     nodeId: string;
     authorize?: ChannelAuthorize;
+    /** 0.119 (lane R6): one host call per local fan-out (see `ChannelAuthorizeBatch`). */
+    authorizeBatch?: ChannelAuthorizeBatch;
     filterClientMessage?: ClientMessageFilter;
     plugins?: FeaturePlugin[];
     logger?: RouterLogger;
@@ -91,6 +93,15 @@ export interface RedisRealtimeRouterOptions {
      * `chat:membership`) and peers call `invalidate(channel)`.
      */
     membershipStore?: RealtimeMembershipInvalidation;
+    /**
+     * 0.119 (lane R6): a verdict cache (`withAuthorityCache(...).cache`) to
+     * drop on every membership event this router sees — local committed
+     * writes and peer invalidations alike (verdictCache.ts V3). Needs
+     * `membershipStore`, which is where the events come from.
+     */
+    authorityCache?: {
+        invalidateChannel(channel: string): void;
+    };
     /** Peer event topic for `membershipStore`. Default `chat:membership`. */
     membershipEventTopic?: string;
     /** Peer-supplied channels this node will invalidate. Default: any non-empty string up to 512 bytes. */
@@ -171,6 +182,14 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     _setHandle(handle: WsHandlerHandle): void;
     onClientConnect(clientId: string, ctx: WsAuthContext): Promise<void>;
     private wireMembership;
+    private dropVerdicts;
+    /** 0.119 (lane R6): this router's own queues, for `attachRealtime(...).stats()`. */
+    stats(): {
+        pendingRequests: number;
+        activeDeliveries: number;
+        peerOperations: number;
+        maxPendingRequests: number;
+    };
     private registration;
     getClientData(clientId: string): {
         userContext?: WsAuthContext;
