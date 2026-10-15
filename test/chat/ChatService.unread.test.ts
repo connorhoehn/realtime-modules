@@ -117,3 +117,36 @@ describe('chat unread items', () => {
         expect([...inbox.rows.keys()]).toEqual(['u-carol']);
     });
 });
+
+describe('chat unread items: unread.channels filter (lane R5, 0.120.1)', () => {
+    const DM = 'dm:u-bob:u-eve';
+    const withFilter = (channels: (c: string) => boolean) => {
+        const ctx = setup();
+        const inbox = ctx.inbox;
+        (ctx.svc as any).unread = { ...(ctx.svc as any).unread, notify: inbox, channels };
+        const spy = jest.spyOn(ctx.receipts, 'listReceipts' as any);
+        return { ...ctx, spy };
+    };
+
+    it('opted-out sends do no receipts read and make no item', async () => {
+        const { svc, inbox, receipts, spy } = withFilter((c) => c.startsWith('page:'));
+        await receipts.advance({ channel: DM, userId: 'u-eve', readAt: T0, updatedAt: T0 } as any);
+        spy.mockClear();
+        await svc.handleAction('bob', 'join', { channel: DM });
+        await svc.handleAction('bob', 'send', { channel: DM, message: 'psst' });
+        await svc.postSystemMessage(DM, 'sys');
+        expect(spy).not.toHaveBeenCalled();
+        expect(inbox.rows.size).toBe(0);
+    });
+
+    it('opted-in channels still create and clear items', async () => {
+        const { svc, inbox, receipts, spy } = withFilter((c) => c.startsWith('page:'));
+        await seedCursor(receipts, 'u-eve');
+        await svc.handleAction('bob', 'join', { channel: PAGE });
+        await svc.handleAction('bob', 'send', { channel: PAGE, message: 'hi' });
+        expect(spy).toHaveBeenCalled(); // the spy does see receipts reads
+        expect(inbox.rows.get('u-eve')).toHaveLength(1);
+        await svc.handleAction('eve', 'read', { channel: PAGE });
+        expect(inbox.rows.get('u-eve')![0].read).toBe(true);
+    });
+});

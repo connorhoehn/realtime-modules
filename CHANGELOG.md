@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## 0.120.1 — 2026-10-14
+
+### Added (lane R5)
+
+- **`chat({ unread: { channels } })`.** `channels(channel) => boolean` opts a
+  channel in to unread items. For a channel it refuses (a DM, a Social
+  channel with no cursor holders) a send does no unread work: no read-receipts
+  read, no inbox read, and no clearing on receipt. Omitted: every channel, as
+  before. A throwing predicate counts as false.
+
 ## 0.120.0 — 2026-10-14
 
 Capacity and backpressure (lane R6 of the 2026-10-14 upstream refinement

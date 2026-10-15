@@ -1824,7 +1824,7 @@ class ChatService {
      */
     async noteMessagePosted(channel, message, opts = {}) {
         const cfg = this.unread;
-        if (!cfg)
+        if (!cfg || !this._unreadOptedIn(channel))
             return [];
         try {
             const inbox = this._unreadInbox();
@@ -1877,7 +1877,7 @@ class ChatService {
     /** The cursor moved: this holder's unread items for `channel` at or before `readAt` are read. */
     async _clearUnread(channel, userId, readAt) {
         const cfg = this.unread;
-        if (!cfg)
+        if (!cfg || !this._unreadOptedIn(channel))
             return [];
         try {
             const inbox = this._unreadInbox();
@@ -1894,6 +1894,19 @@ class ChatService {
         catch (err) {
             this.logger.error('unread clear failed (ignored):', err && err.message);
             return [];
+        }
+    }
+    /** `unread.channels` (0.120.1): does this channel keep unread items? Default yes; a throw is no. */
+    _unreadOptedIn(channel) {
+        const pick = this.unread?.channels;
+        if (!pick)
+            return true;
+        try {
+            return pick(channel) === true;
+        }
+        catch (err) {
+            this.logger.error('unread.channels hook threw (channel skipped):', err && err.message);
+            return false;
         }
     }
     _unreadInbox() {

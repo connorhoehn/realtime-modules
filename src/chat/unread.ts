@@ -56,6 +56,13 @@ export interface ChatUnreadOpts {
     describe: (ev: { channel: string; message: ChatMessage; senderName?: string; recipient: string }) => ChatUnreadContent | null | Promise<ChatUnreadContent | null>;
     /** Users watching the channel right now (their open panel reads it); null: unknown. They get no item. */
     live?: (channel: string, userIds: readonly string[], scope?: AuthorityScope) => Promise<ReadonlySet<string> | null> | ReadonlySet<string> | null;
+    /**
+     * 0.120.1: which channels keep unread items. Return false for a channel
+     * (a DM, a Social channel with no cursor holders) and a send there does no
+     * unread work at all: no read-receipts read, no inbox read. Omitted: every
+     * channel, as before. A throw is treated as false (fail closed).
+     */
+    channels?: (channel: string) => boolean;
     /** How far back an unread count looks. Default 50. */
     window?: number;
     /** Is this inbox record one of this channel's unread items? Default: `payload.chatUnread === channel`. */

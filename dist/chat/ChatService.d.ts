@@ -636,6 +636,8 @@ export declare class ChatService {
     }): Promise<string[]>;
     /** The cursor moved: this holder's unread items for `channel` at or before `readAt` are read. */
     _clearUnread(channel: string, userId: string, readAt: string): Promise<string[]>;
+    /** `unread.channels` (0.120.1): does this channel keep unread items? Default yes; a throw is no. */
+    _unreadOptedIn(channel: string): boolean;
     _unreadInbox(): ChatUnreadInbox | null;
     /** Does `userId` read `channel` right now? Asked of the host every time; fails closed. */
     _readsNow(channel: string, userId: string, scope?: AuthorityScope): Promise<boolean>;
