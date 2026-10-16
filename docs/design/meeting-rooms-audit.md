@@ -22,7 +22,11 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 - Work in a worktree (`git worktree add -b fix/meeting-audit-N .claude/worktrees/meeting-audit main`,
   then symlink `node_modules -> ../../../node_modules`). Merge with
   `git merge --ff-only` only; if main moved, rebase first. Delete the
-  worktree and branch after merging.
+  worktree and branch after merging. If the main checkout has uncommitted
+  files the release also changes (the other session rebuilding `dist/`),
+  do not merge into it: check `git merge-base --is-ancestor origin/main HEAD`
+  and `git push origin HEAD:main` from the worktree, and leave local `main`
+  behind for its owner to fast-forward.
 - Release realtime-modules per `RELEASE.md` (build, tag, push **both**
   remotes). Release ui-components per its CLAUDE.md (feature commit without
   `dist/`, release commit with the version bump, `dist/` and the export
@@ -120,7 +124,7 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 
 - [x] **H. Toolbar keyboard roving.** — ui-components 2.458.2 (`useRovingToolbar`; one tab stop, arrows wrap, Home/End, disabled skipped, chevrons reachable). `MeetingToolbar` declares `role="toolbar"` but Tab walks every button; arrow keys should move focus (Home/End, wrap) per WAI-ARIA. ui-components has `shared/RovingToolbar` — reuse it, test with fireEvent keyDown.
 - [x] **Follow the active lobby.** — realtime-modules 0.122.0 (`useFollowMeetingLobby`, 8 tests: order, no overlap, latest wins, debounce, unrelated call, lagging host, failure). Every app must write "when `activeLobby` changes, leave the call and join the new lobby". Add `useFollowMeetingLobby(activeLobby, { leave, join, debounceMs })` to `./client/meeting` with tests (no double join, no join while leaving, ignores the first render).
-- [ ] **Rename and add rooms while open.** Teams allows both. Server verbs `breakout.rename { roomId, name }` and `breakout.addRoom { name? }` (organizer, any phase, name limits); `useMeeting` methods; inline rename in `BreakoutRoomsPanel` (organizer, via `forms/Input`) and an Add room button; wrapper bindings.
+- [x] **Rename and add rooms while open.** — realtime-modules 0.123.0 (`breakout.addRoom`/`breakout.rename`, `addRoom`/`renameRoom`, 4 tests) + ui-components 2.459.0 (`onRenameRoom` via `InlineEditableText`, `onAddRoom`, `maxRooms`; optional on `RMMeetingSource` for older pins). Teams allows both. Server verbs `breakout.rename { roomId, name }` and `breakout.addRoom { name? }` (organizer, any phase, name limits); `useMeeting` methods; inline rename in `BreakoutRoomsPanel` (organizer, via `forms/Input`) and an Add room button; wrapper bindings.
 - [ ] **Raised-hands queue in People.** `RosterPanel` sorted by queue position when hands are up, with organizer `onLowerHand(id)` and `onLowerAllHands()` actions; `WrappedRosterHands` binding or adapter.
 - [ ] **Closing grace.** When the timer runs out or the organizer closes rooms, Teams gives a short countdown before moving people. Server: optional `closingGraceMs` → `breakout.changed` with `closingAt`; banner shows "Rooms close in 0:30"; tests with fake timers.
 - [x] **Dark mode pass.** — verified 2026-10-16 with the theme applied correctly: pane, consent card, banner, toolbar and organizer controls all flip; no change needed. Screenshot every new story in dark; fix any token that does not flip (consent card, banner, pane, toolbar active underline).
@@ -138,3 +142,4 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | 2026-10-16 00:10 | rm meeting 45/45, types ok; ui targeted 61/61, types ok; full 11142 pass | no changes to our code since last tick → A–J ok; 15/15 verbs have a server test and a hook method; `UseMeetingResult → RMMeetingSource` compiles | light + dark, 5 stories, clean (first dark attempt was a harness artefact, now documented) | 2.458.2 toolbar roving; dark pass closed |
 | 2026-10-16 01:10 | rm meeting 45/45, ui 64/64, types ok | changed since last tick: toolbar roving → A–F n/a, G ok (shared hook), H fixed by it, I ok (no RM runtime import), J ok | light + dark, 5 stories clean; live toolbar has 1 tab stop; draft story shows Delete rooms | 0.122.0 useFollowMeetingLobby |
 | 2026-10-16 02:10 | rm meeting 53/53, ui 64/64, types ok | changed: useFollowMeetingLobby → C finding (join after unmount/disable); A, B, D, E, F n/a; G–J ok | skipped (no UI change; visual done today) | 0.122.1 fix |
+| 2026-10-16 03:10 | rm meeting 55/55, ui 64/64, types ok; after the change rm full 2438 pass, ui full 11146 pass | no changes since last tick → A–J ok; new verbs checked as written: A organizer-only (FORBIDDEN tested), E names 1–80 refused not truncated, ids pattern + unique, `maxRooms` cap; I new `RMMeetingSource` members optional (old-pin test) | light + dark, 5 stories + rename-in-place: clean, focus lands in the name input | 0.123.0 / 2.459.0 rename + add rooms; ui pushed to `origin/main` from the worktree (main checkout has the other session's uncommitted `dist/` rebuild, local `main` left at 2.458.2) |
