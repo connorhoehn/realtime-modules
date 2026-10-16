@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## 0.128.0 — 2026-10-16
+
+### Added
+
+- **`createMeetingLoopback(config?)`** (`./meeting`): a whole meeting in one
+  process with no gateway. A real `MeetingService` behind an in-memory router,
+  plus `socketFor(clientId, userId, displayName?)` shaped for
+  `useMeeting(meetingId, { socket })`, `disconnect(clientId)` and `dispose()`.
+  Frames arrive on a microtask and each connection's frames are handled in
+  the order it sent them, as over a socket. Browser-safe: for Storybook
+  stages, app tests and demos that need the real authority, ordering and
+  timers.
+
 ## 0.127.0 — 2026-10-16
 
 ### Fixed

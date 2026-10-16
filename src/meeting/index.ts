@@ -6,6 +6,8 @@
 // Design: docs/design/meeting-rooms.md.
 
 export { MeetingService } from './MeetingService';
+export { createMeetingLoopback } from './loopback';
+export type { MeetingLoopback, MeetingLoopbackSocket } from './loopback';
 export { meeting } from './feature';
 export { MeetingManifest } from './manifest';
 export { InMemoryMeetingStateStore } from './MeetingStateStore';

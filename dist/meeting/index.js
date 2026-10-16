@@ -6,9 +6,11 @@
 // Raised hands and breakout rooms for a call already running on LVS.
 // Design: docs/design/meeting-rooms.md.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.meetingChannel = exports.ORGANIZER_ACTIONS = exports.MEETING_ID_PATTERN = exports.MEETING_CHANNEL_PREFIX = exports.MEETING_ACTIONS = exports.MAX_ROOM_NAME_LENGTH = exports.MAX_DISPLAY_NAME_LENGTH = exports.MAX_ANNOUNCEMENT_LENGTH = exports.EMPTY_BREAKOUT = exports.BREAKOUT_ROOM_ID_PATTERN = exports.parseBreakoutLobby = exports.meetingChatChannel = exports.isBreakoutLobby = exports.breakoutRoomFor = exports.breakoutLobbyName = exports.activeMeetingLobby = exports.activeMeetingChat = exports.BREAKOUT_LOBBY_SEPARATOR = exports.RedisMeetingStateStore = exports.MEETING_CAS_SCRIPT = exports.InMemoryMeetingStateStore = exports.MeetingManifest = exports.meeting = exports.MeetingService = void 0;
+exports.meetingChannel = exports.ORGANIZER_ACTIONS = exports.MEETING_ID_PATTERN = exports.MEETING_CHANNEL_PREFIX = exports.MEETING_ACTIONS = exports.MAX_ROOM_NAME_LENGTH = exports.MAX_DISPLAY_NAME_LENGTH = exports.MAX_ANNOUNCEMENT_LENGTH = exports.EMPTY_BREAKOUT = exports.BREAKOUT_ROOM_ID_PATTERN = exports.parseBreakoutLobby = exports.meetingChatChannel = exports.isBreakoutLobby = exports.breakoutRoomFor = exports.breakoutLobbyName = exports.activeMeetingLobby = exports.activeMeetingChat = exports.BREAKOUT_LOBBY_SEPARATOR = exports.RedisMeetingStateStore = exports.MEETING_CAS_SCRIPT = exports.InMemoryMeetingStateStore = exports.MeetingManifest = exports.meeting = exports.createMeetingLoopback = exports.MeetingService = void 0;
 var MeetingService_1 = require("./MeetingService");
 Object.defineProperty(exports, "MeetingService", { enumerable: true, get: function () { return MeetingService_1.MeetingService; } });
+var loopback_1 = require("./loopback");
+Object.defineProperty(exports, "createMeetingLoopback", { enumerable: true, get: function () { return loopback_1.createMeetingLoopback; } });
 var feature_1 = require("./feature");
 Object.defineProperty(exports, "meeting", { enumerable: true, get: function () { return feature_1.meeting; } });
 var manifest_1 = require("./manifest");

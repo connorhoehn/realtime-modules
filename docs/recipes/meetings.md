@@ -58,6 +58,12 @@ useFollowMeetingLobby(meeting.activeLobby, {
 verbs (`joinRoom`, `returnToMain`), `isOrganizer`, `error`, and the standing `state.announcement`.
 Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activeMeetingLobby`, `meetingOfLobby`.
 
+## Without a server
+
+`createMeetingLoopback()` (0.128.0) runs the real service in the page or the
+test: give each simulated person `useMeeting(meetingId, { socket: loop.socketFor(clientId, userId, name) })`.
+ui-components' `Video/MeetingRehearsal` story builds the whole stage this way.
+
 ## Room chat
 
 Read `meeting.activeChat` with `useChat` (0.126.0): it is the meeting's chat in
