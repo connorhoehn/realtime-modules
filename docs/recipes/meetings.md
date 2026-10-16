@@ -60,7 +60,8 @@ Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activ
 
 ## UI
 
-ui-components `/video`: `MeetingToolbar`, `MeetingStatusCluster`, `RecordingConsentNotice`
+ui-components `/video`: `MeetingToolbar` (an item's `popover: (close) => <ReactionPicker … />` makes React
+open the reaction picker; send with `useReactions`), `MeetingStatusCluster`, `RecordingConsentNotice`
 (with ``useConsentDismissal(`${meetingId}:${recordingId}`)`` so a dismissal survives a reload),
 `BreakoutRoomsPanel`, `BreakoutRoomBanner`, `RaisedHandBadge`, `RosterPanel` (`raisedHandsFirst`,
 `onLowerHand`, `onLowerAllHands`); `/integrations/realtime-modules`: `WrappedBreakoutRoomsPanel`,
