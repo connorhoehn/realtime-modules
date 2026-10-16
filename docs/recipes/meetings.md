@@ -89,10 +89,29 @@ Guard the lobby where tokens are minted: for a breakout lobby, mint only when
 `await meetingService.admitsBreakoutLobby(userId, lobby)` is true (the SFU
 itself does not know who belongs in a room).
 
+Run the SFU with auth on. Its session routes (`POST /api/sessions`,
+`POST /api/sessions/:arn/join`) then take only a Cognito token or
+`Bearer <LVS_SERVICE_TOKEN>`. Keep the service token on your server: the server
+creates the session and asks for the join, then hands the browser only the
+participant token the SFU signed. With that in place, the only way a client gets
+a stage token is through your mint and its `admitsBreakoutLobby` check. One gap
+is outside this library: LVS's unauthenticated `GET /api/channels/:arn` returns
+the channel's `streamKey`, and that key can mint a publisher token. So don't
+hand a client the channel ARN of a room it was not admitted to.
+`LVS_AUTH_BYPASS=true` opens the session routes to anyone and is for local
+experiments only.
+
+On an LVS cluster, a channel belongs to the node that takes its first WHIP. LVS
+has no placement hint. To place a lobby on a node, create its session and mint
+its token on that node, and return the node's URL with the token so the client
+publishes there.
+
 `test/e2e-media/` rehearses this end to end against a real LVS SFU with two
-headless Chromium pages (fake camera and mic) and the real gateway; the run
-command is at the top of `breakout-media.live.test.ts`. It is opt-in
-(`REAL_LVS=1`) and needs a local Redis, the SFU, `playwright` and `esbuild`.
+headless Chromium pages (fake camera and mic) and the real gateway. Auth is on
+by default. It can also run against two SFU nodes, with one breakout placed on
+the second. The commands are at the top of `breakout-media.live.test.ts`. It is
+opt-in (`REAL_LVS=1`) and needs a local Redis, the SFU, `playwright` and
+`esbuild`.
 
 ## UI
 

@@ -13,7 +13,7 @@ import { useLVSHangout } from '../../src/client/video/useLVSHangout';
 import type { GatewayMessage } from '../../src/client/types';
 
 interface Config { user: string; token: string; meetingId: string; sfu: string; }
-interface Call { lobby: string; token: string; participantId: string; channelArn: string; }
+interface Call { lobby: string; token: string; participantId: string; channelArn: string; sfu: string; }
 interface MintResult { status: number; body: any }
 
 const q = new URLSearchParams(location.search);
@@ -69,12 +69,12 @@ function CallView({ call, leaveRef }: { call: Call; leaveRef: { current: () => v
         stageToken: call.token,
         participantId: call.participantId,
         userId: cfg.user,
-        baseUrl: cfg.sfu,
+        baseUrl: call.sfu,
         media: { video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } }, audio: true },
     });
     leaveRef.current = h.leave;
     const remotes = h.participants.filter((p) => !p.isLocal);
-    view.call = { lobby: call.lobby, channelArn: call.channelArn, participantId: call.participantId };
+    view.call = { lobby: call.lobby, channelArn: call.channelArn, participantId: call.participantId, sfu: call.sfu };
     view.isJoined = h.isJoined;
     view.connectionState = h.connectionState;
     view.hangoutError = h.error;
@@ -95,7 +95,8 @@ function App({ socket }: { socket: Awaited<ReturnType<typeof openSocket>> }) {
     const join = useCallback(async (lobby: string) => {
         const r = await mint(lobby);
         if (r.status !== 200) throw new Error(`stage token for ${lobby} refused: ${r.status}`);
-        setCall({ lobby, token: r.body.token, participantId: r.body.participantId, channelArn: r.body.channelArn });
+        // The host says which SFU node serves this lobby; the page follows it.
+        setCall({ lobby, token: r.body.token, participantId: r.body.participantId, channelArn: r.body.channelArn, sfu: r.body.sfu ?? cfg.sfu });
     }, []);
     const leave = useCallback(() => {
         leaveRef.current();
