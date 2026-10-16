@@ -62,10 +62,26 @@ function applyFrame(state, f) {
     switch (f.action) {
         case 'meeting.snapshot': {
             const snap = d;
+            const snapVersion = typeof snap.version === 'number' ? snap.version : 0;
+            // The server reads the snapshot, then resolves organizer status
+            // before sending it, so a change frame committed in between can
+            // arrive FIRST. A snapshot older than what we hold keeps our
+            // slices and contributes only `you` and readiness.
+            if (snapVersion < state.version) {
+                return {
+                    ...state,
+                    ready: true,
+                    createdBy: typeof snap.createdBy === 'string' ? snap.createdBy : state.createdBy,
+                    you: {
+                        userId: typeof snap.you?.userId === 'string' ? snap.you.userId : null,
+                        organizer: snap.you?.organizer === true,
+                    },
+                };
+            }
             return {
                 ...state,
                 ready: true,
-                version: typeof snap.version === 'number' ? snap.version : 0,
+                version: snapVersion,
                 hands: Array.isArray(snap.hands) ? snap.hands : [],
                 breakout: isObject(snap.breakout) ? snap.breakout : types_1.EMPTY_BREAKOUT,
                 createdBy: typeof snap.createdBy === 'string' ? snap.createdBy : null,

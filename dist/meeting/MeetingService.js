@@ -68,6 +68,12 @@ class MeetingService {
             if (!meetingId || !types_1.MEETING_ID_PATTERN.test(meetingId)) {
                 throw new MeetingError('INVALID_PAYLOAD', 'meetingId is required');
             }
+            // A meeting whose id contains the separator would be read as a
+            // breakout lobby of ANOTHER meeting by parseBreakoutLobby, and a
+            // lobby guard would judge its media by that meeting's rooms.
+            if (meetingId.includes(lobby_1.BREAKOUT_LOBBY_SEPARATOR)) {
+                throw new MeetingError('INVALID_PAYLOAD', `meetingId may not contain ${lobby_1.BREAKOUT_LOBBY_SEPARATOR}`);
+            }
             const verb = action;
             if (verb === 'subscribe')
                 return await this.subscribe(clientId, meetingId);
@@ -90,8 +96,13 @@ class MeetingService {
     async onClientDisconnect(clientId) {
         const entry = this.clients.get(clientId);
         this.clients.delete(clientId);
-        if (!entry || !entry.userId)
+        if (!entry)
             return;
+        if (!entry.userId) {
+            for (const meetingId of entry.meetings)
+                await this.releaseIfIdle(meetingId).catch(() => undefined);
+            return;
+        }
         for (const meetingId of entry.meetings) {
             if (this.userHasOtherClient(entry.userId, meetingId, clientId))
                 continue;
@@ -106,6 +117,9 @@ class MeetingService {
                 next.hands = next.hands.filter((h) => h.userId !== userId);
                 await this.commit({ state: next, hands: true }, 'hand.lower', userId);
             }).catch((err) => this.logger.warn('meeting disconnect cleanup failed', { meetingId, error: String(err) }));
+        }
+        for (const meetingId of entry.meetings) {
+            await this.releaseIfIdle(meetingId).catch((err) => this.logger.warn('meeting release failed', { meetingId, error: String(err) }));
         }
     }
     // ── Host-facing reads ─────────────────────────────────────────────────────
@@ -150,6 +164,35 @@ class MeetingService {
         if (verdict !== 'organizer-only')
             return verdict;
         return this.organizerVerdicts.get(`${parsed.meetingId}\u0000${userId}`) === true;
+    }
+    /**
+     * Drop a meeting's state once nobody in this process is subscribed and it
+     * holds nothing live (no raised hand, no breakout session). Without this a
+     * long-running gateway keeps every meeting it ever saw. A meeting with
+     * rooms (draft or open) is kept so an organizer who reconnects finds them.
+     */
+    async releaseIfIdle(meetingId) {
+        for (const e of this.clients.values())
+            if (e.meetings.has(meetingId))
+                return;
+        await this.serial(meetingId, async () => {
+            for (const e of this.clients.values())
+                if (e.meetings.has(meetingId))
+                    return;
+            const state = await this.store.get(meetingId);
+            if (state && (state.hands.length > 0 || state.breakout.phase !== 'none'))
+                return;
+            await this.store.delete(meetingId);
+            this.mirror.delete(meetingId);
+            const prefix = `${meetingId}\u0000`;
+            for (const k of this.organizerVerdicts.keys())
+                if (k.startsWith(prefix))
+                    this.organizerVerdicts.delete(k);
+            const t = this.timers.get(meetingId);
+            if (t)
+                clearTimeout(t);
+            this.timers.delete(meetingId);
+        });
     }
     /** Stop every breakout timer (tests, shutdown). */
     dispose() {
@@ -216,6 +259,7 @@ class MeetingService {
                 await this.commit({ state: next, hands: true }, 'hand.lower', userId);
             });
         }
+        await this.releaseIfIdle(meetingId);
     }
     // ── mutations ─────────────────────────────────────────────────────────────
     async mutate(clientId, meetingId, verb, data) {

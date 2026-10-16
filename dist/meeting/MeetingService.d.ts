@@ -36,6 +36,13 @@ export declare class MeetingService {
      * resolved them (any subscribe or write of theirs).
      */
     admitsBreakoutLobbySync(userId: string, lobby: string): boolean | null;
+    /**
+     * Drop a meeting's state once nobody in this process is subscribed and it
+     * holds nothing live (no raised hand, no breakout session). Without this a
+     * long-running gateway keeps every meeting it ever saw. A meeting with
+     * rooms (draft or open) is kept so an organizer who reconnects finds them.
+     */
+    private releaseIfIdle;
     /** Stop every breakout timer (tests, shutdown). */
     dispose(): void;
     private subscribe;

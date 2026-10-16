@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## 0.121.1 — 2026-10-15
+
+Audit sweep of the meeting feature (`docs/design/meeting-rooms-audit.md`).
+
+### Fixed
+
+- **A late `meeting.snapshot` no longer rolls back newer state.** The server
+  resolves organizer status between reading the snapshot and sending it, so a
+  change frame could arrive first; `meetingReducer` now keeps the newer slices
+  and takes only `you` and readiness from an older snapshot.
+- **Idle meetings are released.** `MeetingService` drops a meeting's state
+  (store, sync mirror, organizer verdicts, timer) when its last subscriber
+  leaves and no hand is up and no rooms exist. Meetings with rooms are kept so
+  a reconnecting organizer finds them.
+- **A meetingId containing `~breakout~` is refused**, since
+  `parseBreakoutLobby` would read it as another meeting's breakout lobby.
+
+### Added
+
+- `docs/design/meeting-rooms-audit.md`: the audit checklist, findings log and
+  backlog for the feature.
+
 ## 0.121.0 — 2026-10-15
 
 Meetings: raised hands and breakout rooms for a call already running on LVS
