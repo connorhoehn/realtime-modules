@@ -40,3 +40,26 @@ hand the fix to it instead.
 G6 and G1 first (what a viewer sees), then G2, G5, G7, G3 with G4, G8, G9,
 G10. One release per item or per tightly coupled pair, each ticked in the
 audit backlog with its release number.
+
+## Wave 2 (2026-10-16, after G1–G9 shipped)
+
+Found while finishing wave 1: by the event-catalog declarations (event-catalog
+0.8.6), by reading the code for what a real meeting would hit, and by the
+user's ask to keep refining before app wiring.
+
+| # | Gap | Evidence | Judge |
+|---|---|---|---|
+| G11 | **Wiring rehearsal.** Every story builds the stage by hand; nothing proves the bindings compose into the whole screen. | `MeetingStage.stories.tsx` hand-builds toolbar items | a story and an integration test build the stage only from `meetingToolbarItems`, `meetingRosterProps`, `useMeetingChat`, `WrappedBreakoutRoomsPanel`, `WrappedBreakoutRoomBanner` over a real `MeetingService`; anything that needs glue becomes a binding |
+| G12 | **Clock skew.** Countdowns compare the viewer's own clock with the server's `endsAt`; a laptop 40 s off shows a timer 40 s off and closes "early". | `BreakoutRoomBanner`, `BreakoutRoomsPanel` use `Date.now()` | snapshot and breakout frames carry `serverNow`; `useMeeting` exposes `clockOffsetMs`; banner and pane take an optional `now` offset; test with a skewed clock |
+| G13 | **Announcement history.** The state keeps only the latest announcement, so a late joiner's chat shows one and a reload loses the rest. | `BreakoutState.announcement` | state keeps the last 20 (`announcements`, `announcement` stays the latest for old clients); `useMeetingChat` seeds from it; test a late joiner |
+| G14 | **No rate limits.** A client can toggle its hand or announce in a tight loop and every frame fans out to the whole meeting. | no limiter in `MeetingService` | per-user token bucket on mutating verbs (configurable, generous default), `RATE_LIMITED` error, declared in event-catalog; test |
+| G15 | **Server leniency the catalog refuses.** A bad `mode` or a non-object room draft is silently ignored; the catalog schema refuses it. | event-catalog 0.8.6 notes | the server refuses both with `INVALID_PAYLOAD`; catalog and server agree (test) |
+| G16 | **Which chat am I in?** Inside a room the chat changes channel with no sign of it. | G4 | `meetingChatTitle(meeting)` ("Room 2 chat" / "Meeting chat") and a one-line notice when the chat switches; test |
+| G17 | **Narrow widths.** Every visual check ran at desktop width. | tick log | stage, pane, toolbar and chat at 390 px and 768 px, light and dark: no horizontal scroll, More holds the folded buttons, the pane becomes a sheet or stacks |
+| G18 | **DOM and accessibility audit.** No automated check of roles, names, contrast or focus order on the meeting stories. | no axe; ui-components ships `skills/ui-dom-audit` | run the ui-dom-audit skill over the meeting stories; fix every finding in our files |
+| G19 | **Scale.** Nothing measures a 300-person meeting with 50 rooms: snapshot size, auto-assign, roster ordering. | — | a test with budgets (snapshot under 64 KB, auto-assign and ordering under 50 ms) |
+| G21 | **Live media never exercised.** Breakout media is LVS (mediasoup SFU) leave-then-join, but every test uses a fake router and every story placeholder tiles. | user question, 2026-10-16 | two headless browsers with fake camera/mic join a real LVS lobby on a local SFU; organizer opens rooms; each client's media moves to its room lobby (SFU sees the producer leave one router and join the other), a non-member is refused by the guard, close brings everyone back. If no SFU can run locally without app changes, `blocked:` with what is missing |
+| G20 | **Typed frames.** `useMeeting` frames are not checked against the catalog. | G10 follow-up | repin `@connorhoehn/event-catalog` to 0.8.6 and add `satisfies` on outbound frames. Needs `npm install` in realtime-modules' shared `node_modules`: do it only when no other session is working in realtime-modules, else `blocked:` |
+
+Order: G11 first (it will surface glue the others need), then G21 (proves the
+media path before more polish), G12, G13, G15, G14, G16, G17, G18, G19, G20.

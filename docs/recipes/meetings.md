@@ -84,4 +84,6 @@ more than one gateway replica pass `meeting({ store: new RedisMeetingStateStore(
 each replica's synchronous lobby check and breakout timer follow writes made
 elsewhere (without it, use the async `admitsBreakoutLobby`). Frames still reach
 clients on other replicas only through a router that fans channels out across
-the cluster.
+the cluster. If you pass an `isOrganizer` hook, guard lobbies with the async
+`admitsBreakoutLobby` on a multi-replica gateway: the synchronous check only knows
+hook verdicts from its own replica (0.127.0).

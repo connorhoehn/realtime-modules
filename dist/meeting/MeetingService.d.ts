@@ -35,8 +35,10 @@ export declare class MeetingService {
     /**
      * The same answer from this process's last-known state, synchronously —
      * for `calls({ lobbyGuard })`, which cannot await. A meeting this process
-     * has not seen refuses; an organizer is recognised once the service has
-     * resolved them (any subscribe or write of theirs).
+     * has not seen refuses. Without an `isOrganizer` hook the creator is the
+     * organizer on every replica that follows the meeting (0.127.0); with a
+     * hook, an organizer is recognised once this process has resolved them
+     * (any subscribe or write of theirs here).
      */
     admitsBreakoutLobbySync(userId: string, lobby: string): boolean | null;
     /**

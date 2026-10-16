@@ -151,8 +151,19 @@ The definition of done is `meeting-rooms-goal.md` (G1–G10); these items track 
 - [x] **G7 ReactionPicker surface tone.** — ui-components 2.465.0 (default `chrome` unchanged).
 - [x] **G4 Room chat channel.** — realtime-modules 0.126.0 (`meetingChatChannel`, `activeMeetingChat`, `useMeeting().activeChat`; room chat named like its lobby so one guard covers both). `meetingChatChannel(meetingId, roomId?)`.
 - [x] **G8 Rename focus restore** (`InlineEditableText`). — ui-components 2.467.0 (Enter/Escape refocus the button; blur left alone; test fails without the fix).
-- [ ] **G9 Organizer verdict across replicas.**
-- [ ] **G10 event-catalog declarations** for the `meeting` frames (`~/Projects/event-catalog` if present, else `blocked:` with a note), then `satisfies` annotations in `useMeeting`.
+- [x] **G9 Organizer verdict across replicas.** — realtime-modules 0.127.0 (creator recognised by every replica's sync guard; hook verdicts stay local, recipe says use the async guard then; test fails without the fix).
+- [x] **G10 event-catalog declarations** — event-catalog 0.8.6 (`66f8c92b`, bundle `meeting@1.0.0`, 17 outbound + 6 inbound frames; `MeetingOutboundFrame`, `MeetingInboundFrame` from `/client-frames`). The `satisfies` step is wave-2 G20.
+- [ ] **G11 Wiring rehearsal.**
+- [ ] **G21 Live media rehearsal** (real SFU, two headless browsers).
+- [ ] **G12 Clock skew.**
+- [ ] **G13 Announcement history.**
+- [ ] **G15 Server refuses what the catalog refuses.**
+- [ ] **G14 Rate limits.**
+- [ ] **G16 Which chat am I in.**
+- [ ] **G17 Narrow widths.**
+- [ ] **G18 DOM and accessibility audit.**
+- [ ] **G19 Scale budgets.**
+- [ ] **G20 Typed frames** (repin event-catalog; shared node_modules caution).
 - [ ] blocked: **App wiring** (aws-agentcore portal/BFF) — the user said not yet.
 
 ## Tick log
@@ -170,3 +181,4 @@ The definition of done is `meeting-rooms-goal.md` (G1–G10); these items track 
 | 2026-10-16 07:10 | rm meeting 65/65, types ok; ui 76/76 (the doc's eight files plus WrappedLVSHangoutLayout), types ok; after the change ui full 11163 pass | no changes since last tick → A–J ok; new slot: G panel is `InlinePopover` with surface tokens, no inline styles; H `aria-haspopup`/`aria-expanded`, Escape and second click close, focus returns, panel portalled so roving skips it (tested); I `popover` optional, older callers unchanged; J recipe names the slot. Finding: `ReactionPicker` has no light hover (outside scope, logged) | light + dark, 5 stories + React open in MeetingStage: clean, matches the reference's reaction flyout | 2.463.0 React popover |
 | 2026-10-16 08:10 | rm meeting 65/65, types ok; ui 79/79, types ok; after the change rm meeting 73/73, full 2452 pass, exports/contract/packed ok | no changes since last tick → A–J ok; new store: A authority unchanged (verbs still checked before apply); B ordering = in-process chain plus cross-process CAS, retried mutations re-read and re-check authority; C `dispose` stops `watch`; D lobby mirror follows remote writes, newer versions only; E retries capped at 5 then CONFLICT; I store members optional, old stores behave as before; J design + recipe + changelog | skipped: server only; full visual today (07:10) | 0.125.0 shared store |
 | 2026-10-16 10:07 | rm meeting 75/75 (0.126 worktree), types ok; ui 100/100 (gate list now adds ReactionPicker, meeting-brand, InlineEditableText), types ok; ui full 11170 pass after each release | changed since 08:10 (user asked to work the goal through): A authority unchanged — announce still `breakout.announce` (organizer-only, server-checked), the chat switch only shows for organizers; B announcement list dedupes by `at`+sender, capped 50; C picker popover and chat binding hold no timers; D room chat reuses the lobby name so `admitsBreakoutLobby` guards it; E announcement trimmed and cut at 500 like the server; G brand ratchet test green, no hand-drawn bits; H focus restore (G8), segmented `To` switch is a labelled radio group; I new props optional, `announceIn` default is a documented behaviour change; J recipe Room chat section, both changelogs, goal doc | light + dark: TealBrand and default stage, React hover, chat announcement, pane hint — clean | ui 2.464.0–2.467.0 (G1 G2 G3 G5 G6 G7 G8), rm 0.126.0 (G4); rm full 2453 pass, `work-graph/streamService` flaked once (3/3 alone, not ours) |
+| 2026-10-16 11:30 | rm meeting 76/76, full 2455 pass, exports/contract/packed ok | new code: A organizer still the creator unless a hook is set (same rule as the async path); D sync guard now admits the creator on every replica that mirrors the meeting, hook verdicts stay local (documented); J changelog + recipe | skipped: server only | 0.127.0 G9; event-catalog 0.8.6 G10 (agent); wave 2 (G11–G21) written into the goal |

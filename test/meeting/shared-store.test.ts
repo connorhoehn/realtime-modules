@@ -178,6 +178,37 @@ describe('MeetingService on a shared store', () => {
         a.svc.dispose(); b.svc.dispose();
     });
 
+    it("the organizer may visit any room on a replica they never used; a hook's verdict stays local", async () => {
+        const { client, subscriber } = fakeRedis();
+        const { a, b } = replicas(() => new RedisMeetingStateStore(client, { subscriber: subscriber() }));
+        connectAs(a.router, 'c-org', 'u-org');
+        connectAs(b.router, 'c-x', 'u-x');
+        await a.svc.handleAction('c-org', 'subscribe', { meetingId: M });
+        await b.svc.handleAction('c-x', 'subscribe', { meetingId: M });
+        await a.svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1', members: ['u-x'] }, { id: 'r2' }], mode: 'assigned' });
+        await a.svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        await flush();
+        // B has never seen u-org act, yet knows them as the creator.
+        expect(b.svc.admitsBreakoutLobbySync('u-org', breakoutLobbyName(M, 'r2'))).toBe(true);
+        expect(b.svc.admitsBreakoutLobbySync('u-x', breakoutLobbyName(M, 'r2'))).toBe(false);
+        a.svc.dispose(); b.svc.dispose();
+
+        // With a hook, only the replica that ran it knows; the async guard asks.
+        const shared = fakeRedis();
+        const hook = { isOrganizer: ({ userId }: { userId: string }) => userId === 'u-org' };
+        const h = replicas(() => new RedisMeetingStateStore(shared.client, { subscriber: shared.subscriber() }), hook);
+        connectAs(h.a.router, 'c-org', 'u-org');
+        connectAs(h.b.router, 'c-x', 'u-x');
+        await h.a.svc.handleAction('c-org', 'subscribe', { meetingId: M });
+        await h.b.svc.handleAction('c-x', 'subscribe', { meetingId: M });
+        await h.a.svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1' }], mode: 'assigned' });
+        await h.a.svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        await flush();
+        expect(h.b.svc.admitsBreakoutLobbySync('u-org', breakoutLobbyName(M, 'r1'))).toBe(false);
+        expect(await h.b.svc.admitsBreakoutLobby('u-org', breakoutLobbyName(M, 'r1'))).toBe(true);
+        h.a.svc.dispose(); h.b.svc.dispose();
+    });
+
     it('every replica arms the breakout timer; exactly one close commits, even after the setter is gone', async () => {
         jest.useFakeTimers({ doNotFake: ['setImmediate', 'queueMicrotask'] });
         try {

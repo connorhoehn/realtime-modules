@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## 0.127.0 — 2026-10-16
+
+### Fixed
+
+- **The organizer is recognised on every replica by the synchronous lobby
+  guard** (`./meeting`). `admitsBreakoutLobbySync` used to admit an organizer
+  to a room they were not assigned to only on a replica where they had already
+  subscribed or acted, so with `RedisMeetingStateStore` an organizer visiting
+  a room through another replica was refused. Without an `isOrganizer` hook
+  the organizer is the meeting's creator, which the mirrored state carries, so
+  every replica following the meeting now answers. With a hook the verdict is
+  still known only where it ran; use the async `admitsBreakoutLobby` there.
+
 ## 0.126.0 — 2026-10-16
 
 ### Added
