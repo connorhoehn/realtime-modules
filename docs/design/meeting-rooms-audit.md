@@ -166,7 +166,7 @@ The definition of done is `meeting-rooms-goal.md` (G1–G10); these items track 
 - [x] **G16 Which chat am I in.** — ui-components 2.470.0 (`MeetingChatContext` in the chat dock, polite status; `meetingChatTitle`; rehearsal asserts it).
 - [x] **G17 Narrow widths.** — ui-components 2.472.0 (toolbar phone layout below 820px, banner wraps, stories fluid; 390/768/1024/1440 light + dark, no horizontal overflow).
 - [x] **G18 DOM and accessibility audit.** — ui-dom-audit over 14 meeting stories × light/dark × 1440/900/390 (84 cases, Storybook adapter in the session scratchpad). In-scope contrast findings fixed in ui-components 2.473.0 (room status, raised-hand badge, active brand ink, privacy link, announcement note); the re-run clears them. Left, outside scope: RecordingChip "Rec" 4.41:1, tile avatar initials 4.44:1, shared count Badge at 10px, ChatPanel's default input has no composer marker. Harness-only: Storybook font, no main landmark, three rehearsal seats share a pane name.
-- [ ] **G19 Scale budgets.** ui half done (`meetingScale.test.tsx`: 300 people / 50 rooms / 100 hands, bindings < 25 ms, pane renders all rooms); server half (snapshot size, auto-assign) next.
+- [x] **G19 Scale budgets.** — ui `meetingScale.test.tsx` (bindings < 25 ms at 300 people / 50 rooms / 100 hands) + rm `test/meeting/scale.test.ts` (measured 2026-10-16: 0.09 ms per hand raise with fan-out to 301 clients, 0.3 ms auto-assign of 300, worst-case snapshot 30 KB; budgets 25 ms / 100 ms / 64 KB). Test-only, no release.
 - [ ] **G20 Typed frames** (repin event-catalog; shared node_modules caution).
 - [ ] blocked: **App wiring** (aws-agentcore portal/BFF) — the user said not yet.
 
