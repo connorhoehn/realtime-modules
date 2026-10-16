@@ -50,7 +50,7 @@ describe('MeetingService at scale (300 people, 50 rooms)', () => {
         if (process.env.MEETING_SCALE_REPORT) console.log(JSON.stringify({ handsMs, autoAssignMs, snapshotBytes }));
         // Budgets: per hand raise (store + fan-out to 301 clients), one auto-assign, snapshot size.
         expect({ handsMs: Math.round(handsMs), under: handsMs < 25 }).toMatchObject({ under: true });
-        expect({ autoAssignMs: Math.round(autoAssignMs), under: autoAssignMs < 100 }).toMatchObject({ under: true });
+        expect({ autoAssignMs: Math.round(autoAssignMs), under: autoAssignMs < 50 }).toMatchObject({ under: true });
         expect({ snapshotBytes, under: snapshotBytes < 64 * 1024 }).toMatchObject({ under: true });
         svc.dispose();
     });

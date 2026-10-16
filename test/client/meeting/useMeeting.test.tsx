@@ -86,7 +86,7 @@ describe('useMeeting', () => {
     const ana = (() => { const sk = h.socketFor('c-a', 'u-a', 'Ana'); return renderHook(() => useMeeting(M, { socket: sk })); })();
     await waitFor(() => expect(ana.result.current.ready).toBe(true));
 
-    act(() => org.result.current.configureBreakouts([{ id: 'r1', name: "Hilla's Room" }, { id: 'r2', name: 'Room 2' }], { mode: 'assigned' }));
+    act(() => org.result.current.configureBreakouts([{ id: 'r1', name: "Mara's Room" }, { id: 'r2', name: 'Room 2' }], { mode: 'assigned' }));
     act(() => org.result.current.assign({ 'u-a': 'r1' }));
     act(() => org.result.current.openRooms());
     await waitFor(() => expect(ana.result.current.myRoom?.id).toBe('r1'));

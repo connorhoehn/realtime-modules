@@ -119,7 +119,7 @@ describe('MeetingService — breakout rooms', () => {
     async function withRooms(mode: 'assigned' | 'self-select' = 'assigned') {
         const ctx = await setup();
         await ctx.svc.handleAction('c-org', 'breakout.configure', {
-            meetingId: M, mode, rooms: [{ id: 'r1', name: "Hilla's Room" }, { id: 'r2', name: '' }],
+            meetingId: M, mode, rooms: [{ id: 'r1', name: "Mara's Room" }, { id: 'r2', name: '' }],
         });
         return ctx;
     }
@@ -264,7 +264,7 @@ describe('MeetingService — breakout rooms', () => {
         const before = router.framesFor('c-a', 'breakout.changed').length;
         await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r2', name: ' Design crit ' });
         const b = router.last('c-a', 'breakout.changed').data.breakout;
-        expect(b.rooms.map((r: any) => r.name)).toEqual(["Hilla's Room", 'Design crit']);
+        expect(b.rooms.map((r: any) => r.name)).toEqual(["Mara's Room", 'Design crit']);
         expect(b.phase).toBe('open');
         await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r2', name: 'Design crit' });
         expect(router.framesFor('c-a', 'breakout.changed')).toHaveLength(before + 1);
@@ -276,7 +276,7 @@ describe('MeetingService — breakout rooms', () => {
         expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
         await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r1', name: 7 });
         expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
-        expect((await svc.getState(M))!.breakout.rooms[0]!.name).toBe("Hilla's Room");
+        expect((await svc.getState(M))!.breakout.rooms[0]!.name).toBe("Mara's Room");
         svc.dispose();
     });
 
