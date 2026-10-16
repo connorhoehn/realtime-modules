@@ -82,8 +82,11 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
    - J. **Docs.** CHANGELOG, recipe and design doc match the code.
 5. **Visual check (every tick that changed UI, else daily).** Start Storybook
    (`npx storybook dev -p 6107 --ci --no-open` in the worktree), screenshot
-   with headless Playwright at 1440×800 in light AND dark
-   (`document.documentElement.dataset.theme = 'dark'`):
+   with headless Playwright at 1440×800 in light AND dark. **Dark:** the
+   Storybook preview wraps stories in a light `ThemeProvider` that writes
+   light tokens INLINE on `<html>`, which beats `[data-theme="dark"]`. Clear
+   them first or the shot is half-themed and every panel looks broken:
+   `document.documentElement.removeAttribute('style'); document.documentElement.dataset.theme = 'dark';`
    `video-meetingstage-composition--main-meeting`,
    `video-meetingstage-composition--in-breakout-room`,
    `video-breakoutroomspanel--organizer-open`,
@@ -114,12 +117,12 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 
 ## Backlog (top first)
 
-- [ ] **H. Toolbar keyboard roving.** `MeetingToolbar` declares `role="toolbar"` but Tab walks every button; arrow keys should move focus (Home/End, wrap) per WAI-ARIA. ui-components has `shared/RovingToolbar` — reuse it, test with fireEvent keyDown.
+- [x] **H. Toolbar keyboard roving.** — ui-components 2.458.2 (`useRovingToolbar`; one tab stop, arrows wrap, Home/End, disabled skipped, chevrons reachable). `MeetingToolbar` declares `role="toolbar"` but Tab walks every button; arrow keys should move focus (Home/End, wrap) per WAI-ARIA. ui-components has `shared/RovingToolbar` — reuse it, test with fireEvent keyDown.
 - [ ] **Follow the active lobby.** Every app must write "when `activeLobby` changes, leave the call and join the new lobby". Add `useFollowMeetingLobby(activeLobby, { leave, join, debounceMs })` to `./client/meeting` with tests (no double join, no join while leaving, ignores the first render).
 - [ ] **Rename and add rooms while open.** Teams allows both. Server verbs `breakout.rename { roomId, name }` and `breakout.addRoom { name? }` (organizer, any phase, name limits); `useMeeting` methods; inline rename in `BreakoutRoomsPanel` (organizer, via `forms/Input`) and an Add room button; wrapper bindings.
 - [ ] **Raised-hands queue in People.** `RosterPanel` sorted by queue position when hands are up, with organizer `onLowerHand(id)` and `onLowerAllHands()` actions; `WrappedRosterHands` binding or adapter.
 - [ ] **Closing grace.** When the timer runs out or the organizer closes rooms, Teams gives a short countdown before moving people. Server: optional `closingGraceMs` → `breakout.changed` with `closingAt`; banner shows "Rooms close in 0:30"; tests with fake timers.
-- [ ] **Dark mode pass.** Screenshot every new story in dark; fix any token that does not flip (consent card, banner, pane, toolbar active underline).
+- [x] **Dark mode pass.** — verified 2026-10-16 with the theme applied correctly: pane, consent card, banner, toolbar and organizer controls all flip; no change needed. Screenshot every new story in dark; fix any token that does not flip (consent card, banner, pane, toolbar active underline).
 - [ ] **Consent remembered.** `RecordingConsentNotice` dismissal per meeting+recording session via a small `useConsentDismissal(key)` helper (try/catch storage).
 - [ ] **React button.** Toolbar items gain an optional `popover` slot so React can host the existing `ReactionPickerButton`/`ReactionPicker` instead of a menu.
 - [ ] **Shared store.** `RedisMeetingStateStore` (injected client like `RedisRoomStateStore`) with a version compare-and-set, plus one timer owner across replicas. Needed before any multi-replica deploy.
@@ -131,3 +134,4 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | When | Gates | Review A–J | Visual | Shipped |
 |---|---|---|---|---|
 | 2026-10-15 sweep | rm meeting 45/45 (full 2423 pass; `work-graph/streamService` flaky 1/3, not ours), ui affected 69/69 | B, C, D, F findings (above) | light, 4 stories, matches reference | 0.121.1 / 2.458.1 |
+| 2026-10-16 00:10 | rm meeting 45/45, types ok; ui targeted 61/61, types ok; full 11142 pass | no changes to our code since last tick → A–J ok; 15/15 verbs have a server test and a hook method; `UseMeetingResult → RMMeetingSource` compiles | light + dark, 5 stories, clean (first dark attempt was a harness artefact, now documented) | 2.458.2 toolbar roving; dark pass closed |
