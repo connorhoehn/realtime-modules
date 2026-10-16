@@ -1,0 +1,62 @@
+# Meetings — raised hands and breakout rooms
+
+A Teams-style meeting on top of a call you already run on LVS: a Raise
+button with an ordered queue, and a Rooms pane where an organizer splits the
+call into breakout rooms (assigned or self-select), opens and closes them,
+runs a timer, broadcasts an announcement and recalls everyone. Design and wire
+contract: [../design/meeting-rooms.md](../design/meeting-rooms.md).
+
+## Server
+
+```ts
+import { attachRealtime, calls } from '@connorhoehn/realtime-modules/server';
+import { meeting } from '@connorhoehn/realtime-modules/meeting';
+
+const realtime = attachRealtime(httpServer, {
+    features: [calls({ lobbyGuard }), meeting({ isOrganizer: ({ userId, meetingId }) => hosts(meetingId).has(userId) })],
+    auth,
+    authorize, // admits `meeting:<meetingId>` like any other channel
+});
+```
+
+- The meetingId **is** the main call's lobby name.
+- Without `isOrganizer`, the meeting's first subscriber is its organizer. Supply the hook in a product.
+- A breakout room is an ordinary LVS hangout at `breakoutLobbyName(meetingId, roomId)`. Make the lobby guard ask the service:
+
+```ts
+const svc = () => realtime.services.meeting as MeetingService;
+// calls({ lobbyGuard }) is synchronous, so it uses the mirror-backed form:
+const lobbyGuard = (auth, lobby) =>
+    svc().admitsBreakoutLobbySync(auth.userId, lobby) ?? yourExistingGuard(auth, lobby); // null: not a breakout lobby
+```
+
+An async caller (a platform-api join route) uses `await svc().admitsBreakoutLobby(userId, lobby)`,
+which reads the store rather than this process's mirror.
+
+## Client
+
+```tsx
+import { useMeeting } from '@connorhoehn/realtime-modules/client/meeting';
+
+const meeting = useMeeting(mainLobby, { displayName: me.name });
+// Media follows the room: when activeLobby changes, leave the call and join that lobby.
+const call = useConversationCall({ lobbyName: meeting.activeLobby ?? mainLobby, ... });
+```
+
+`useMeeting` returns `hands`, `myHandPosition`, `raiseHand`/`lowerHand`/`toggleHand`/`lowerAllHands`,
+`breakout`, `myRoom`, `activeLobby`, the organizer verbs (`configureBreakouts`, `assign`,
+`autoAssign`, `openRooms`, `closeRooms`, `setTimer`, `broadcast`, `endBreakouts`), the participant
+verbs (`joinRoom`, `returnToMain`), `isOrganizer`, `error`, and the standing `state.announcement`.
+Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activeMeetingLobby`.
+
+## UI
+
+ui-components `/video`: `MeetingToolbar`, `MeetingStatusCluster`, `RecordingConsentNotice`,
+`BreakoutRoomsPanel`, `BreakoutRoomBanner`, `RaisedHandBadge`; `/integrations/realtime-modules`:
+`WrappedBreakoutRoomsPanel`.
+
+## Graduation
+
+`MeetingStateStore` is in-memory and the breakout timer is a process timer. A
+multi-replica gateway needs a shared store (the interface is async; compare
+`version` on write) and one timer owner.

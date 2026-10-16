@@ -199,6 +199,7 @@ is the same as an unpublished one.
 | `./client/media-effects` | Blur, virtual backgrounds, face sprites — lazy MediaPipe engine | Camera surfaces wanting effects |
 | `./client/voice` | Ambient push-to-talk capture + `ContextFrame` (where an utterance attaches) | Dictation / spoken remarks outside a call |
 | `./client/hangout-rooms` | Hangout room hooks + the REST functions behind them | Multi-room video apps |
+| `./client/meeting` | `useMeeting` — raised hands and breakout rooms for a live call; `activeLobby` says which LVS lobby to be in | Teams-style meetings: Raise, Rooms pane, breakout timer |
 | `./client/pipelines` | `usePipelineRunStatus` — live run status merged from `pipeline:event` frames and a REST snapshot; `usePipelineCatalog` — the pipelines directory (work-type/kind enum, last-run rollups kept current from `pipeline:all`, `statusPillFor`, `generatePipelineDraft`); pure helpers for SSR/scripts | Rendering a pipeline-run card or the pipelines page |
 | `./client/documents` | `useDocumentWork` — one document's work fields (status, points, owner, priority, outcome, criteria, links) with optimistic PATCH and 409 rollback; `useWorkList` — the Work column grouped by work status ("Not planned" for none) with the header rollup and live run status; `useRunDraft` — save / dispatch / stop a run draft with a stable request id; `useRunEstimate` — cost and duration range, `null` = "No prior runs"; pure REST helpers for scripts. Live from the gateway's id-only `doc-work:*` signals (re-read the one record; no polling) | The Documents four-pane Work / detail / Run draft view |
 | `./agent-streaming/client` | `useAgentStream` React hook — no Yjs dependency | Browser apps consuming agent streams |
@@ -232,6 +233,7 @@ is the same as an unpublished one.
 | `./fileupload` | `FileUploadService` + `FileBlobStore` (local-fs default) | `useFileUpload` |
 | `./call` | `CallService` — invites, call state stores, lobby channel | none yet — frames via `useGateway()` |
 | `./room` | `RoomService` — room lifecycle + state store | `./client/hangout-rooms` |
+| `./meeting` | `MeetingService` + `meeting()` feature — raised hands, breakout rooms (assign, self-select, open/close, timer, broadcast), `admitsBreakoutLobby` for lobby guards | `./client/meeting` |
 | `./pipeline` | `PipelineWsRouter` — pipeline subscription fan-out + frame projection | `./client/pipelines` |
 | `./social` | `SocialService` — social-event fan-out | none yet — frames via `useGateway()` |
 | `./ingest` | `IngestService` — ingest subscription fan-out | none yet — frames via `useGateway()` |

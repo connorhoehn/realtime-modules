@@ -120,6 +120,7 @@ const HOOK_SUBPATHS = [
     './client/voice',
     './client/media-effects',
     './client/hangout-rooms',
+    './client/meeting',
     './client/pipelines',
 ];
 const prose = [

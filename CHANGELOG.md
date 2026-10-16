@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## 0.121.0 — 2026-10-15
+
+Meetings: raised hands and breakout rooms for a call already running on LVS
+(the reference is a Teams meeting with the Rooms pane open). Additive: two new
+subpaths, nothing existing changes. Design: `docs/design/meeting-rooms.md`;
+recipe: `docs/recipes/meetings.md`.
+
+### Added
+
+- **`./meeting` — `MeetingService` and the `meeting()` feature** for
+  `attachRealtime` (wire key `meeting`, channel `meeting:<meetingId>`, where the
+  meetingId is the main call's lobby). Verbs: `subscribe`/`unsubscribe`,
+  `hand.raise`/`hand.lower`/`hand.lowerAll`, and `breakout.configure`,
+  `.assign`, `.autoAssign`, `.open`, `.close`, `.timer`, `.broadcast`, `.join`,
+  `.leave`, `.end`. Every change frame carries the whole slice
+  (`hands.changed`, `breakout.changed`) with a `version`; `meeting.snapshot` is
+  per client and says whether you are an organizer. Organizer authority is
+  `meeting({ isOrganizer })`; without it the first subscriber organizes. The
+  timer closes every room when it runs out (also lazily on the next read). A
+  user's last connection leaving lowers their hand. Writes to one meeting are
+  serialised.
+- **`MeetingService.admitsBreakoutLobby(userId, lobby)`** for a host's LVS lobby
+  guard: `null` for a non-breakout lobby, otherwise whether the user may sit in
+  that room now. **`admitsBreakoutLobbySync`** gives the same answer from the
+  process's last-known state, for `calls({ lobbyGuard })`, which is synchronous.
+- **`breakoutLobbyName` / `parseBreakoutLobby` / `activeMeetingLobby`** — a
+  breakout room is an ordinary hangout at `<meetingId>~breakout~<roomId>`.
+- **`InMemoryMeetingStateStore`** behind the async `MeetingStateStore` interface.
+- **`./client/meeting` — `useMeeting(meetingId, opts)`**: hands, queue position,
+  breakout state, `myRoom`, `activeLobby` (the lobby your media should be in),
+  the organizer and participant verbs, the standing announcement, and errors.
+  Provider-optional like `useReactions` (`socket`), resubscribes on
+  `sessionEpoch`, and tolerates an inline socket object. Pure `meetingReducer`
+  and selectors `handPosition`, `breakoutRemainingMs`, `unassignedUsers`.
+
 ## 0.120.1 — 2026-10-14
 
 ### Added (lane R5)

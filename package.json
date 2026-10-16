@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.120.1",
+  "version": "0.121.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -33,6 +33,9 @@
       ],
       "client/hangout-rooms": [
         "dist/client/hangout-rooms/index.d.ts"
+      ],
+      "client/meeting": [
+        "dist/client/meeting/index.d.ts"
       ],
       "client/pipelines": [
         "dist/client/pipelines/index.d.ts"
@@ -87,6 +90,9 @@
       ],
       "room": [
         "dist/room/index.d.ts"
+      ],
+      "meeting": [
+        "dist/meeting/index.d.ts"
       ],
       "notification": [
         "dist/notification/index.d.ts"
@@ -148,6 +154,11 @@
       "types": "./dist/client/hangout-rooms/index.d.ts",
       "import": "./dist/client/hangout-rooms/index.js",
       "default": "./dist/client/hangout-rooms/index.js"
+    },
+    "./client/meeting": {
+      "types": "./dist/client/meeting/index.d.ts",
+      "import": "./dist/client/meeting/index.js",
+      "default": "./dist/client/meeting/index.js"
     },
     "./client/pipelines": {
       "types": "./dist/client/pipelines/index.d.ts",
@@ -220,6 +231,10 @@
     "./room": {
       "types": "./dist/room/index.d.ts",
       "default": "./dist/room/index.js"
+    },
+    "./meeting": {
+      "types": "./dist/meeting/index.d.ts",
+      "default": "./dist/meeting/index.js"
     },
     "./notification": {
       "types": "./dist/notification/index.d.ts",
