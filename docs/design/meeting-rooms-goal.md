@@ -2,8 +2,32 @@
 
 **Status: done (2026-10-16).** G1–G21 are met; the judge for each is below
 and the evidence is in `meeting-rooms-audit.md` (backlog ticks, findings,
-tick log). Out of scope by design: app wiring (aws-agentcore portal and BFF),
-which waits on the user.
+tick log).
+
+**Independent review (2026-10-16).** A separate reviewer checked every row
+against the repos (releases on `main`, the code at file:line, the judge's
+tests run: realtime-modules 92/92, ui-components 991/991, both typechecks
+clean). It found G2, G5, G6 and G11 short of their judges as written and
+three wording slips in this doc; all were fixed the same day:
+G2 raw weights replaced and the ratchet now refuses raw `text-{size}` and
+`font-{weight}`, close controls found by role and name (ui-components
+2.474.0); G5 the MeetingStage story builds its toolbar from
+`meetingToolbarItems`; G6 the last reference name left realtime-modules'
+tests and `test/meeting/demo-names.test.ts` guards it (`1743052`); G11 Chat
+and People became bindings so the rehearsal kit has no hand-built item, and
+the rehearsal test says plainly that it drives realtime-modules' reducer
+because the CommonJS dist loads a second React under vitest (the real hook
+over the same loopback is `test/meeting/loopback.test.tsx`). G17 and G18
+became reproducible: `tests/storybook/meeting-widths.spec.ts` (36 cases) and
+`tests/storybook/ui-dom-audit/` in ui-components. G19's auto-assign budget
+now matches its 50 ms judge (measured 0.3 ms).
+
+**Found outside this goal.** live-video-streaming's `GET /api/channels/:arn`
+answers without auth and returns the channel's `streamKey`, which mints a
+publisher token (`src/api/channels/index.js:1983-1995`). The breakout guard
+therefore holds only while a client never learns another room's channel id.
+That is the SFU owner's fix (auth on the read, or drop `streamKey` from it);
+the G21 test records it as `arnHole` without asserting it.
 
 | # | Closed by |
 |---|---|
@@ -27,7 +51,7 @@ which waits on the user.
 | G18 DOM and accessibility audit | ui-components 2.473.0 |
 | G19 scale budgets | test-only (both repos): 0.09 ms/hand, 0.3 ms auto-assign of 300, 30 KB snapshot |
 | G20 typed frames | realtime-modules 0.133.0 |
-| G21 live media | test-only, `test/e2e-media` (`db0309f`): real SFU, two headless browsers; producers move main → room ARNs and back, forged join refused; re-run independently and passing |
+| G21 live media | test-only, `test/e2e-media` (`db0309f`, hardened `f50f31d`): real SFU with auth ON (direct SFU calls 401, the host refuses a forged room token 403) and on two SFU nodes (a room on the other node; media moves there and back); producers move main → room ARNs → main; re-run independently and passing |
 
 The definition of done for the Teams-style meeting library work (raise hand,
 reactions, people queue, breakout rooms) after the first build and nine audit
@@ -38,8 +62,10 @@ and BFF) stays out until the user asks.
 
 ## Done means
 
-All of G1–G10 checked, the audit gates green, the visual check clean under
-two brands in light and dark, and the audit backlog empty except `blocked:`.
+All of G1–G21 met, the audit gates green, the visual check clean under two
+brands in light and dark, an independent review supporting each judge, and
+no unchecked item left in the audit backlog. App wiring is not part of this
+goal (below).
 
 ## Gaps
 
@@ -47,7 +73,7 @@ two brands in light and dark, and the audit backlog empty except `blocked:`.
 |---|---|---|---|
 | G1 | **Brand color.** Highlights use the library `accent` (fixed purple). Apps point `--color-primary` at their brand (the portal: indigo for Org, teal for Assessment), so the toolbar's active underline, pressed Raise, focus ring and the consent privacy link stay purple in every tenant. | user review, 2026-10-16 | a ratchet test fails on `accent`, raw palette classes, `white` or `[#hex]` in our files; stories under a teal brand show teal |
 | G2 | **Hand-drawn bits.** `×` glyph spans as close buttons (banner, consent card, pane header), a drawn radio dot on the consent card, `text-white` on the tile hand badge, raw sizes (`text-[10px]`, `text-lg`, `font-semibold`) beside `T`. | component-discipline review | the same ratchet test, plus close buttons found by role and name |
-| G3 | **Announcements belong in the chat.** The pane's "Send an announcement to every room" box is a second composer. Organizers should send from the meeting chat with a "To: all rooms" target, and an announcement should appear as a marked message in the main and every room's chat. The banner keeps the latest one. | user review, 2026-10-16 | pane renders no composer by default; a chat binding merges `breakout.announcement` frames into the timeline (test); the composer's target sends `breakout.announce` (test); story shows both |
+| G3 | **Announcements belong in the chat.** The pane's "Send an announcement to every room" box is a second composer. Organizers should send from the meeting chat with a "To: all rooms" target, and an announcement should appear as a marked message in the main and every room's chat. The banner keeps the latest one. | user review, 2026-10-16 | pane renders no composer by default; a chat binding merges `breakout.announcement` frames into the timeline (test); the composer's target sends `breakout.broadcast` (test); story shows both |
 | G4 | **Rooms have no chat of their own.** Media moves to the room's lobby, but nothing names the room's chat channel, so an app would keep everyone in the main chat. | G3 design | `meetingChatChannel(meetingId, roomId?)` in `./meeting` and `./client/meeting`, tested; recipe shows the switch |
 | G5 | **React is not bound.** `meetingToolbarItems` builds every button but React; each app would hand-wire `popover` + `ReactionPicker` + `useReactions`. | 2.463.0 tick | `meetingToolbarItems({ onReact })` adds a React item with the picker (test); MeetingStage story uses the binding |
 | G6 | **Demo content copies real names.** Stories and tests reuse names from the reference screenshot (a real meeting). Demo content must be fictional. | visual tour, 2026-10-16 | no name from the reference appears under `src/` (grep in the ratchet test) |
@@ -55,6 +81,15 @@ two brands in light and dark, and the audit backlog empty except `blocked:`.
 | G8 | **Rename drops keyboard focus.** `InlineEditableText` unmounts its input on Enter/Escape and focus falls to the body; room rename inherits it. | 2.459.0 tick | focus returns to the edit trigger after Enter and Escape (test) |
 | G9 | **Organizer lobby check across replicas.** `admitsBreakoutLobbySync` recognises an organizer only after they acted on THIS replica; on another replica the sync guard refuses them until then. | 0.125.0 review | the verdict is recorded on every replica that sees the organizer's state through `watch` (`createdBy`), or the recipe says to use the async guard for organizers; test either way |
 | G10 | **Event catalog.** The `meeting` frames are not declared. | backlog since 0.121.0 | declarations in `~/Projects/event-catalog` if the repo exists, else `blocked:` with the reason |
+
+## Next goal (not this one): app wiring
+
+The user, 2026-10-15: "you dont need to bring it into the app jsut yet but
+everything shouodl be there along with ui componetns updates". Wiring the
+aws-agentcore portal and BFF (`meeting()` in `attachRealtime`, the lobby
+guard, the toolbar on the huddle stage, `useMeetingChat` on the call's chat)
+is a separate goal, started only when the user asks. The rehearsal story
+(`Video/MeetingRehearsal`) is its template.
 
 ## Scope added by this goal
 
@@ -79,7 +114,7 @@ user's ask to keep refining before app wiring.
 | # | Gap | Evidence | Judge |
 |---|---|---|---|
 | G11 | **Wiring rehearsal.** Every story builds the stage by hand; nothing proves the bindings compose into the whole screen. | `MeetingStage.stories.tsx` hand-builds toolbar items | a story and an integration test build the stage only from `meetingToolbarItems`, `meetingRosterProps`, `useMeetingChat`, `WrappedBreakoutRoomsPanel`, `WrappedBreakoutRoomBanner` over a real `MeetingService`; anything that needs glue becomes a binding |
-| G12 | **Clock skew.** Countdowns compare the viewer's own clock with the server's `endsAt`; a laptop 40 s off shows a timer 40 s off and closes "early". | `BreakoutRoomBanner`, `BreakoutRoomsPanel` use `Date.now()` | snapshot and breakout frames carry `serverNow`; `useMeeting` exposes `clockOffsetMs`; banner and pane take an optional `now` offset; test with a skewed clock |
+| G12 | **Clock skew.** Countdowns compare the viewer's own clock with the server's `endsAt`; a laptop 40 s off shows a timer 40 s off and closes "early". | `BreakoutRoomBanner`, `BreakoutRoomsPanel` use `Date.now()` | `useMeeting` exposes `clockOffsetMs`, derived from the server `timestamp` every meeting frame already carries (no new wire field, so no `serverNow`); banner and pane take `clockOffsetMs`; test with a server clock 40 s ahead |
 | G13 | **Announcement history.** The state keeps only the latest announcement, so a late joiner's chat shows one and a reload loses the rest. | `BreakoutState.announcement` | state keeps the last 20 (`announcements`, `announcement` stays the latest for old clients); `useMeetingChat` seeds from it; test a late joiner |
 | G14 | **No rate limits.** A client can toggle its hand or announce in a tight loop and every frame fans out to the whole meeting. | no limiter in `MeetingService` | per-user token bucket on mutating verbs (configurable, generous default), `RATE_LIMITED` error, declared in event-catalog; test |
 | G15 | **Server leniency the catalog refuses.** A bad `mode` or a non-object room draft is silently ignored; the catalog schema refuses it. | event-catalog 0.8.6 notes | the server refuses both with `INVALID_PAYLOAD`; catalog and server agree (test) |
