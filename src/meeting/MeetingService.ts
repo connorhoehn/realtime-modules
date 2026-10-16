@@ -38,6 +38,8 @@ import {
 const DEFAULT_MAX_ROOMS = 50;
 const DEFAULT_MAX_TIMER_MS = 4 * 60 * 60 * 1000;
 const MAX_CLOSING_GRACE_MS = 5 * 60 * 1000;
+const DEFAULT_RATE_BURST = 20;
+const DEFAULT_RATE_PER_SECOND = 5;
 
 const NOOP_LOGGER: MeetingLogger = {
     debug: () => undefined,
@@ -81,6 +83,9 @@ export class MeetingService {
     private readonly closingGraceMs: number;
     private readonly now: () => number;
     private readonly onChange: MeetingConfig['onChange'] | null;
+    private readonly rate: { burst: number; perMs: number } | null;
+    /** Token buckets per `meetingId\u0000userId`. */
+    private readonly buckets = new Map<string, { tokens: number; at: number }>();
 
     private readonly clients = new Map<string, ClientMembership>();
     private readonly chains = new Map<string, Promise<unknown>>();
@@ -106,6 +111,11 @@ export class MeetingService {
         this.closingGraceMs = Number.isFinite(grace) ? Math.min(MAX_CLOSING_GRACE_MS, Math.max(0, Math.round(grace))) : 0;
         this.now = config.now ?? Date.now;
         this.onChange = config.onChange ?? null;
+        const rl = config.rateLimit;
+        this.rate = rl === false ? null : {
+            burst: Math.max(1, Math.round(rl?.burst ?? DEFAULT_RATE_BURST)),
+            perMs: Math.max(0.001, rl?.perSecond ?? DEFAULT_RATE_PER_SECOND) / 1000,
+        };
         this.unwatch = this.store.watch ? this.store.watch((state) => this.onRemoteState(state)) : null;
     }
 
@@ -241,7 +251,23 @@ export class MeetingService {
             const t = this.timers.get(meetingId);
             if (t) clearTimeout(t);
             this.timers.delete(meetingId);
+            for (const k of this.buckets.keys()) if (k.startsWith(prefix)) this.buckets.delete(k);
         });
+    }
+
+    /** One token from this person's bucket in this meeting, or false when it is empty. */
+    private take(meetingId: string, userId: string): boolean {
+        if (!this.rate) return true;
+        const key = `${meetingId}\u0000${userId}`;
+        const now = this.now();
+        const b = this.buckets.get(key) ?? { tokens: this.rate.burst, at: now };
+        b.tokens = Math.min(this.rate.burst, b.tokens + (now - b.at) * this.rate.perMs);
+        b.at = now;
+        if (b.tokens < 1) { this.buckets.set(key, b); return false; }
+        b.tokens -= 1;
+        if (this.buckets.size > 50_000 && !this.buckets.has(key)) this.buckets.clear();
+        this.buckets.set(key, b);
+        return true;
     }
 
     /** Stop every breakout timer (tests, shutdown). */
@@ -320,6 +346,9 @@ export class MeetingService {
         }
         const userId = this.userIdOf(clientId);
         if (!userId) throw new MeetingError('UNAUTHENTICATED', 'A signed-in user is required');
+        if (!this.take(meetingId, userId)) {
+            throw new MeetingError('RATE_LIMITED', 'Too many changes too quickly; wait a moment');
+        }
         await this.expireIfDue(meetingId);
 
         await this.serial(meetingId, async () => {

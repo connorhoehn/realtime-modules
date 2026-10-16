@@ -5,7 +5,7 @@ import { connectAs, fakeRouter, type FakeRouter } from './helpers';
 
 const M = 'orgiq:initiative:p-demo';
 
-async function setup(opts: { isOrganizer?: any; now?: () => number; closingGraceMs?: number } = {}) {
+async function setup(opts: { isOrganizer?: any; now?: () => number; closingGraceMs?: number; rateLimit?: any } = {}) {
     const router = fakeRouter();
     const store = new InMemoryMeetingStateStore();
     const svc = new MeetingService({ router, config: { store, ...opts } });
@@ -474,7 +474,7 @@ describe('MeetingService — concurrency', () => {
 
 describe('MeetingService — announcement history (0.130.0)', () => {
     it('keeps the last 20, oldest first; a late joiner gets them; a new session keeps them', async () => {
-        const { router, store, svc } = await setup();
+        const { router, store, svc } = await setup({ rateLimit: false });
         await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1' }] });
         await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
         for (let i = 1; i <= 25; i++) await svc.handleAction('c-org', 'breakout.broadcast', { meetingId: M, message: `note ${i}` });
@@ -535,6 +535,48 @@ describe('MeetingService — configure refuses what the catalog refuses (0.131.0
         expect(b.settings.allowReturnToMain).toBe(false);
         expect(b.rooms[0]!.name).toBe('Room 1');
         svc.dispose();
+    });
+});
+
+describe('MeetingService — rate limit (0.132.0)', () => {
+    it('refuses writes past the burst with RATE_LIMITED, broadcasts nothing, and refills over time', async () => {
+        let now = Date.parse('2026-10-16T12:00:00Z');
+        const { router, svc } = await setup({ now: () => now, rateLimit: { burst: 3, perSecond: 1 } });
+        const toggles = () => router.framesFor('c-org', 'hands.changed').length;
+        for (let i = 0; i < 3; i++) await svc.handleAction('c-a', i % 2 ? 'hand.lower' : 'hand.raise', { meetingId: M });
+        const sent = toggles();
+        await svc.handleAction('c-a', 'hand.lower', { meetingId: M });
+        expect(err(router, 'c-a').code).toBe('RATE_LIMITED');
+        expect(toggles()).toBe(sent);
+        // Another person in the same meeting has their own bucket.
+        await svc.handleAction('c-b', 'hand.raise', { meetingId: M });
+        expect(toggles()).toBe(sent + 1);
+        // A second later there is one token again.
+        now += 1000;
+        await svc.handleAction('c-a', 'hand.lower', { meetingId: M });
+        expect(toggles()).toBe(sent + 2);
+        svc.dispose();
+    });
+
+    it('the default is generous: a quick burst of ordinary clicks passes', async () => {
+        const { router, svc } = await setup();
+        for (let i = 0; i < 12; i++) await svc.handleAction('c-a', i % 2 ? 'hand.lower' : 'hand.raise', { meetingId: M });
+        expect(router.framesFor('c-a', 'error')).toHaveLength(0);
+        svc.dispose();
+    });
+
+    it('subscribe is never limited, and rateLimit: false turns it off', async () => {
+        const { router, svc } = await setup({ rateLimit: { burst: 1, perSecond: 0.001 } });
+        await svc.handleAction('c-a', 'hand.raise', { meetingId: M });
+        await svc.handleAction('c-a', 'hand.lower', { meetingId: M });
+        expect(err(router, 'c-a').code).toBe('RATE_LIMITED');
+        await svc.handleAction('c-a', 'subscribe', { meetingId: M });
+        expect(router.last('c-a', 'meeting.snapshot')).toBeDefined();
+        svc.dispose();
+        const off = await setup({ rateLimit: false });
+        for (let i = 0; i < 40; i++) await off.svc.handleAction('c-a', i % 2 ? 'hand.lower' : 'hand.raise', { meetingId: M });
+        expect(off.router.framesFor('c-a', 'error')).toHaveLength(0);
+        off.svc.dispose();
     });
 });
 

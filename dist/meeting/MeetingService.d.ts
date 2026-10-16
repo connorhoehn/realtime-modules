@@ -9,6 +9,9 @@ export declare class MeetingService {
     private readonly closingGraceMs;
     private readonly now;
     private readonly onChange;
+    private readonly rate;
+    /** Token buckets per `meetingId\u0000userId`. */
+    private readonly buckets;
     private readonly clients;
     private readonly chains;
     private readonly timers;
@@ -48,6 +51,8 @@ export declare class MeetingService {
      * rooms (draft or open) is kept so an organizer who reconnects finds them.
      */
     private releaseIfIdle;
+    /** One token from this person's bucket in this meeting, or false when it is empty. */
+    private take;
     /** Stop every breakout timer (tests, shutdown). */
     dispose(): void;
     private subscribe;

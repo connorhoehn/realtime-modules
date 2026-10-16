@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## 0.132.0 — 2026-10-16
+
+### Added
+
+- **Rate limit on meeting writes** (`./meeting`): a token bucket per person
+  per meeting, `meeting({ rateLimit: { burst, perSecond } })`, default 20 at
+  once refilled at 5 per second; `rateLimit: false` turns it off. Over it, a
+  write is refused with the new error code `RATE_LIMITED` and nothing is
+  broadcast, so a client stuck in a loop cannot flood the meeting's channel.
+  Subscribing is never limited.
+
 ## 0.131.0 — 2026-10-16
 
 ### Changed

@@ -81,7 +81,9 @@ export interface MeetingState {
     updatedAt: string;
 }
 export declare const EMPTY_BREAKOUT: BreakoutState;
-export type MeetingErrorCode = 'INVALID_ACTION' | 'INVALID_PAYLOAD' | 'UNAUTHENTICATED' | 'FORBIDDEN' | 'NOT_SUBSCRIBED' | 'NOT_FOUND' | 'CONFLICT';
+export type MeetingErrorCode = 'INVALID_ACTION' | 'INVALID_PAYLOAD' | 'UNAUTHENTICATED' | 'FORBIDDEN' | 'NOT_SUBSCRIBED' | 'NOT_FOUND' | 'CONFLICT'
+/** Too many writes from one person in one meeting (0.132.0). */
+ | 'RATE_LIMITED';
 /** Server → client frames. */
 export type MeetingServerFrame = {
     type: 'meeting';
@@ -187,6 +189,17 @@ export interface MeetingConfig {
      * running out still close at once.
      */
     closingGraceMs?: number;
+    /**
+     * Per person, per meeting token bucket on every write (0.132.0): `burst`
+     * writes at once, refilled at `perSecond`. Over it, a write is refused
+     * with RATE_LIMITED and nothing is broadcast, so a client stuck in a loop
+     * (or a hostile one) cannot flood the meeting's channel. Generous by
+     * default (burst 20, 5 per second); `false` turns it off.
+     */
+    rateLimit?: {
+        burst?: number;
+        perSecond?: number;
+    } | false;
     /** Clock, for tests. */
     now?: () => number;
     /** Observes every accepted mutation (metrics, audit). Never awaited; a throw is logged. */
