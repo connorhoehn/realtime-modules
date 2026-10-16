@@ -77,6 +77,23 @@ the main meeting and the room's chat inside a room, and it moves when
 (`meetingChatChannel(meetingId, roomId)`), so route chat channel checks through
 the same `admitsBreakoutLobby` guard as lobbies.
 
+## Live media
+
+Media never passes through the gateway: `meeting()` and `calls()` carry
+signalling, and each participant publishes over WHIP straight to the SFU into
+the channel its stage token names. Moving rooms is therefore leave-then-join:
+`useFollowMeetingLobby(meeting.activeLobby, { currentLobby, leave, join })`
+calls `leave()` (the hangout's `leave`), then `join(lobby)`, which asks your
+server for a stage token for that lobby and remounts `useLVSHangout` with it.
+Guard the lobby where tokens are minted: for a breakout lobby, mint only when
+`await meetingService.admitsBreakoutLobby(userId, lobby)` is true (the SFU
+itself does not know who belongs in a room).
+
+`test/e2e-media/` rehearses this end to end against a real LVS SFU with two
+headless Chromium pages (fake camera and mic) and the real gateway; the run
+command is at the top of `breakout-media.live.test.ts`. It is opt-in
+(`REAL_LVS=1`) and needs a local Redis, the SFU, `playwright` and `esbuild`.
+
 ## UI
 
 ui-components `/video`: `MeetingToolbar` (an item's `popover: (close) => <ReactionPicker … />` makes React
