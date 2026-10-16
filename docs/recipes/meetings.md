@@ -69,6 +69,11 @@ open the reaction picker; send with `useReactions`), `MeetingStatusCluster`, `Re
 
 ## Graduation
 
-`MeetingStateStore` is in-memory and the breakout timer is a process timer. A
-multi-replica gateway needs a shared store (the interface is async; compare
-`version` on write) and one timer owner.
+`MeetingStateStore` defaults to in-memory, which is right for one process. For
+more than one gateway replica pass `meeting({ store: new RedisMeetingStateStore(redis, { subscriber }) })`
+(0.125.0), with `subscriber` a separate pub/sub connection. Writes compare
+`version`, so two replicas never lose each other's update; `subscriber` lets
+each replica's synchronous lobby check and breakout timer follow writes made
+elsewhere (without it, use the async `admitsBreakoutLobby`). Frames still reach
+clients on other replicas only through a router that fans channels out across
+the cluster.

@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## 0.125.0 — 2026-10-16
+
+### Added
+
+- **Shared meeting state for multi-replica gateways** (`./meeting`).
+  `RedisMeetingStateStore(redis, { prefix?, ttlSeconds?, subscriber? })` keeps
+  one JSON value per meeting and writes it with a Lua compare-and-set on
+  `version` (`MEETING_CAS_SCRIPT`) that also publishes the committed state.
+  The client is injected (node-redis `sendCommand`, ioredis `call`/`eval`, or a
+  `command` adapter), like the room and call stores. `MeetingStateStore` gains
+  three optional members: `putIfVersion` (the in-memory store implements it),
+  `shared` and `watch`.
+
+### Changed
+
+- `MeetingService` writes through `putIfVersion` when the store has it and
+  re-reads and re-applies a mutation whose write lost the race (up to five
+  times, then `CONFLICT`), so two replicas raising hands at once both land.
+  On a `shared` store it no longer deletes idle meetings (another replica may
+  still serve them, and a restarted version would make their clients drop
+  every frame); the store's expiry reaps them. With `watch`, a replica's
+  lobby mirror follows remote writes and it arms the breakout timer too: the
+  first replica to close wins and the rest find the rooms closed, so the timer
+  survives the replica that set it. Stores without these members behave as
+  before.
+
 ## 0.124.0 — 2026-10-16
 
 ### Added

@@ -92,6 +92,9 @@ Everything is additive: no existing prop, verb or export changes meaning.
 - No app wiring (aws-agentcore portal, realtime-examples). The next step is a
   `meeting()` feature in the BFF's `attachRealtime`, a lobby guard that calls
   `admitsBreakoutLobby`, and the toolbar on the huddle stage.
-- Durable state: `MeetingStateStore` ships in-memory; a cluster needs a shared
-  store (the interface is async for that reason).
+- Durable state: done in 0.125.0. `RedisMeetingStateStore` (version
+  compare-and-set in Lua, publish on commit) for a cluster; the service
+  re-applies a mutation whose write lost, never deletes shared idle state, and
+  every replica following a meeting arms its timer (the compare-and-set lets
+  exactly one close commit). Cross-replica frame fan-out is the router's job.
 - event-catalog declarations for the `meeting` frames.

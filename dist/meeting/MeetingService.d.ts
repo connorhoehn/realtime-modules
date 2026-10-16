@@ -17,6 +17,8 @@ export declare class MeetingService {
     private readonly mirror;
     /** Last organizer verdict per `meetingId\u0000userId`, for the synchronous lobby check. */
     private readonly organizerVerdicts;
+    /** Stops `store.watch`, when the store offers it. */
+    private readonly unwatch;
     constructor(opts: MeetingServiceOptions);
     handleAction(clientId: string, action: string, data: Record<string, unknown>): Promise<void>;
     onClientConnect(_clientId: string): void;
@@ -61,11 +63,26 @@ export declare class MeetingService {
     private scheduleTimer;
     /** Close every room when the timer has run out (on the timer, and lazily on any access). */
     private expireIfDue;
+    /**
+     * Run `fn` after every earlier write for this meeting in this process. A
+     * write another replica beat (StaleWrite) re-runs `fn`, which re-reads the
+     * state, so the mutation applies on top of theirs instead of over it.
+     */
     private serial;
     private organizer;
     private organizerByUser;
     private parseRooms;
     private mintRoomId;
+    /** Compare-and-set when the store offers it, else last-write-wins. */
+    private write;
+    /**
+     * A state committed by any replica (`store.watch`). Only meetings this
+     * process already follows are mirrored, so a busy cluster does not fill
+     * every replica with every meeting; an older version never replaces a
+     * newer one. Arming the timer here is what keeps a breakout timer alive
+     * when the replica that set it goes away.
+     */
+    private onRemoteState;
     private freshState;
     private bump;
     private userIdOf;

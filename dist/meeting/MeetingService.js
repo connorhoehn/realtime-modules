@@ -29,6 +29,11 @@ class MeetingError extends Error {
         this.code = code;
     }
 }
+/** A shared store refused a write: another replica committed first. */
+class StaleWrite extends Error {
+}
+/** Re-read-and-apply attempts before a write gives up with CONFLICT. */
+const MAX_WRITE_ATTEMPTS = 5;
 class MeetingService {
     router;
     logger;
@@ -47,6 +52,8 @@ class MeetingService {
     mirror = new Map();
     /** Last organizer verdict per `meetingId\u0000userId`, for the synchronous lobby check. */
     organizerVerdicts = new Map();
+    /** Stops `store.watch`, when the store offers it. */
+    unwatch;
     constructor(opts) {
         if (!opts || !opts.router)
             throw new Error('MeetingService: router is required');
@@ -61,6 +68,7 @@ class MeetingService {
         this.closingGraceMs = Number.isFinite(grace) ? Math.min(MAX_CLOSING_GRACE_MS, Math.max(0, Math.round(grace))) : 0;
         this.now = config.now ?? Date.now;
         this.onChange = config.onChange ?? null;
+        this.unwatch = this.store.watch ? this.store.watch((state) => this.onRemoteState(state)) : null;
     }
     // ── WsService ────────────────────────────────────────────────────────────
     async handleAction(clientId, action, data) {
@@ -186,7 +194,11 @@ class MeetingService {
             const state = await this.store.get(meetingId);
             if (state && (state.hands.length > 0 || state.breakout.phase !== 'none'))
                 return;
-            await this.store.delete(meetingId);
+            // A shared store may hold subscribers on other replicas: deleting
+            // would restart the version at 1 under their clients, which then
+            // drop every frame as stale. Its own expiry reaps the state.
+            if (!this.store.shared)
+                await this.store.delete(meetingId);
             this.mirror.delete(meetingId);
             const prefix = `${meetingId}\u0000`;
             for (const k of this.organizerVerdicts.keys())
@@ -200,6 +212,7 @@ class MeetingService {
     }
     /** Stop every breakout timer (tests, shutdown). */
     dispose() {
+        this.unwatch?.();
         for (const t of this.timers.values())
             clearTimeout(t);
         this.timers.clear();
@@ -226,8 +239,8 @@ class MeetingService {
         const state = await this.serial(meetingId, async () => {
             const existing = await this.store.get(meetingId);
             const state = existing ?? this.freshState(meetingId, userId);
-            if (!existing)
-                await this.store.put(state);
+            if (!existing && !(await this.write(state, 0)))
+                throw new StaleWrite();
             this.mirror.set(meetingId, state);
             return state;
         });
@@ -507,7 +520,8 @@ class MeetingService {
     }
     async commit(mutation, verb, userId) {
         const { state } = mutation;
-        await this.store.put(state);
+        if (!(await this.write(state, state.version - 1)))
+            throw new StaleWrite();
         this.mirror.set(state.meetingId, state);
         this.scheduleTimer(state);
         const channel = (0, types_1.meetingChannel)(state.meetingId);
@@ -588,9 +602,27 @@ class MeetingService {
         });
     }
     // ── helpers ───────────────────────────────────────────────────────────────
+    /**
+     * Run `fn` after every earlier write for this meeting in this process. A
+     * write another replica beat (StaleWrite) re-runs `fn`, which re-reads the
+     * state, so the mutation applies on top of theirs instead of over it.
+     */
     serial(meetingId, fn) {
         const prev = this.chains.get(meetingId) ?? Promise.resolve();
-        const run = prev.catch(() => undefined).then(fn);
+        const attempt = async () => {
+            for (let n = 1;; n++) {
+                try {
+                    return await fn();
+                }
+                catch (err) {
+                    if (!(err instanceof StaleWrite))
+                        throw err;
+                    if (n >= MAX_WRITE_ATTEMPTS)
+                        throw new MeetingError('CONFLICT', 'The meeting is changing too fast; try again');
+                }
+            }
+        };
+        const run = prev.catch(() => undefined).then(attempt);
         const tail = run.catch(() => undefined);
         this.chains.set(meetingId, tail);
         void tail.then(() => {
@@ -653,6 +685,27 @@ class MeetingService {
     mintRoomId() {
         this.roomSeq = (this.roomSeq + 1) % 1_000_000;
         return `r${this.now().toString(36)}${this.roomSeq.toString(36)}`;
+    }
+    /** Compare-and-set when the store offers it, else last-write-wins. */
+    async write(state, expectedVersion) {
+        if (this.store.putIfVersion)
+            return this.store.putIfVersion(state, expectedVersion);
+        await this.store.put(state);
+        return true;
+    }
+    /**
+     * A state committed by any replica (`store.watch`). Only meetings this
+     * process already follows are mirrored, so a busy cluster does not fill
+     * every replica with every meeting; an older version never replaces a
+     * newer one. Arming the timer here is what keeps a breakout timer alive
+     * when the replica that set it goes away.
+     */
+    onRemoteState(state) {
+        const held = this.mirror.get(state.meetingId);
+        if (!held || held.version >= state.version)
+            return;
+        this.mirror.set(state.meetingId, state);
+        this.scheduleTimer(state);
     }
     freshState(meetingId, createdBy) {
         return {

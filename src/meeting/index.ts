@@ -10,6 +10,8 @@ export { meeting } from './feature';
 export { MeetingManifest } from './manifest';
 export { InMemoryMeetingStateStore } from './MeetingStateStore';
 export type { MeetingStateStore } from './MeetingStateStore';
+export { MEETING_CAS_SCRIPT, RedisMeetingStateStore } from './RedisMeetingStateStore';
+export type { MeetingStateRedis, MeetingStateSubscriber, RedisMeetingStateStoreOptions } from './RedisMeetingStateStore';
 export {
     BREAKOUT_LOBBY_SEPARATOR,
     activeMeetingLobby,
