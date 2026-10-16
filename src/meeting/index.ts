@@ -18,13 +18,15 @@ export {
     BREAKOUT_LOBBY_SEPARATOR,
     activeMeetingChat,
     activeMeetingLobby,
+    breakoutChannel,
     breakoutLobbyName,
     breakoutRoomFor,
     isBreakoutLobby,
     meetingChatChannel,
+    parseBreakoutChannel,
     parseBreakoutLobby,
 } from './lobby';
-export type { ParsedBreakoutLobby } from './lobby';
+export type { ParsedBreakoutChannel, ParsedBreakoutLobby } from './lobby';
 export {
     BREAKOUT_ROOM_ID_PATTERN,
     EMPTY_BREAKOUT,

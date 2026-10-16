@@ -7,6 +7,17 @@ export interface UseConversationCallOptions {
     lobbyName: string;
     /** The chat channel the call belongs to (for cards / discovery). Defaults to channelForLobby(lobbyName). */
     channel?: string | null;
+    /**
+     * The lobby whose LVS session your MEDIA joins (0.134.0, lane L1). Defaults
+     * to `lobbyName`. A meeting's breakout hands `useMeeting().activeLobby`
+     * here: when it changes mid-call the media leaves the current session and
+     * joins the new lobby's, while the call itself (its `callId`, its signalling
+     * on `lobbyName`, its roster) stays put — no ring, no `invite` / `accepted`
+     * / `ended`, no call frame at all. Moves are serialized and the latest
+     * wins; a failed join keeps the call and shows as `error` (`rejoin()` retries
+     * in the current media lobby).
+     */
+    mediaLobby?: string | null;
     self: {
         userId: string;
         displayName: string;
@@ -102,6 +113,8 @@ export interface ConversationCallResult {
         cameraOn: boolean;
         screenSharing: boolean;
     };
+    /** The lobby your media is in, or moving to (0.134.0); null outside a call. */
+    mediaLobby?: string | null;
     /** Ring these people into a new call in this lobby (none = an open call nobody is rung into). */
     start(targets: {
         userId: string;

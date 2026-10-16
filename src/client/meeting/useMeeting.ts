@@ -19,7 +19,7 @@ import type { ClientFramePayload, MeetingOutboundFrame } from '@connorhoehn/even
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
 import type { BreakoutMode, BreakoutRoom, BreakoutState, RaisedHand } from '../../meeting/types';
-import { activeMeetingChat, activeMeetingLobby, breakoutRoomFor } from '../../meeting/lobby';
+import { activeMeetingChat, activeMeetingLobby, breakoutChannel, breakoutRoomFor } from '../../meeting/lobby';
 import {
     INITIAL_MEETING_STATE,
     handPosition,
@@ -41,6 +41,14 @@ export interface UseMeetingOptions {
     displayName?: string;
     /** Set false to hold the subscription (e.g. before the call is live). Default true. */
     enabled?: boolean;
+    /**
+     * The call's own chat channel when the host names it something other than
+     * the lobby (e.g. `orgiq:huddle:<callId>`) (0.134.0, lane L3). Given it,
+     * `activeChat` is this channel outside a room and
+     * `breakoutChannel(chatChannel, roomId)` inside one. Absent, `activeChat`
+     * is `meetingChatChannel` as before.
+     */
+    chatChannel?: string;
 }
 
 export interface BreakoutRoomDraft {
@@ -76,6 +84,7 @@ export interface UseMeetingResult {
     /**
      * The chat channel this user should read right now: their open room's, or
      * the meeting's (0.126.0). Hand it to `useChat`; it moves with `activeLobby`.
+     * With `opts.chatChannel`, it is that channel or its breakout suffix.
      */
     activeChat: string | null;
     /**
@@ -234,7 +243,12 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
         [myRoomId, state.breakout.rooms],
     );
     const activeLobby = enabled && meetingId ? activeMeetingLobby(meetingId, state.breakout, selfId) : null;
-    const activeChat = enabled && meetingId ? activeMeetingChat(meetingId, state.breakout, selfId) : null;
+    const chatChannel = opts.chatChannel;
+    const activeChat = !enabled || !meetingId
+        ? null
+        : chatChannel
+            ? (myRoomId ? breakoutChannel(chatChannel, myRoomId) : chatChannel)
+            : activeMeetingChat(meetingId, state.breakout, selfId);
 
     return {
         state,

@@ -59,6 +59,17 @@ export interface UseConversationCallOptions {
   lobbyName: string;
   /** The chat channel the call belongs to (for cards / discovery). Defaults to channelForLobby(lobbyName). */
   channel?: string | null;
+  /**
+   * The lobby whose LVS session your MEDIA joins (0.134.0, lane L1). Defaults
+   * to `lobbyName`. A meeting's breakout hands `useMeeting().activeLobby`
+   * here: when it changes mid-call the media leaves the current session and
+   * joins the new lobby's, while the call itself (its `callId`, its signalling
+   * on `lobbyName`, its roster) stays put — no ring, no `invite` / `accepted`
+   * / `ended`, no call frame at all. Moves are serialized and the latest
+   * wins; a failed join keeps the call and shows as `error` (`rejoin()` retries
+   * in the current media lobby).
+   */
+  mediaLobby?: string | null;
   self: { userId: string; displayName: string; avatarUrl?: string };
   /** platform-api access — props, never env. `getIdToken` is called per request. */
   platformApi: { baseUrl: string; getIdToken: () => string | Promise<string> };
@@ -118,6 +129,8 @@ export interface ConversationCallResult {
   callingTo: string | null;
   /** Your own media state. */
   self: { audioOn: boolean; cameraOn: boolean; screenSharing: boolean };
+  /** The lobby your media is in, or moving to (0.134.0); null outside a call. */
+  mediaLobby?: string | null;
   /** Ring these people into a new call in this lobby (none = an open call nobody is rung into). */
   start(targets: { userId: string; displayName?: string }[], opts?: { audioOnly?: boolean }): Promise<void>;
   /** Request these people into the existing live call; never creates or rejoins media. */
@@ -163,6 +176,8 @@ interface ActiveCall {
   pageHuddle?: boolean;
   /** Rendered at join so a changed preference does not re-open the camera mid-call. */
   media: MediaStreamConstraints;
+  /** The lobby `sessionId` belongs to: `lobbyName`, or a breakout's (0.134.0). */
+  mediaLobby: string;
 }
 
 interface RosterEntry {
@@ -200,6 +215,9 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   const channel = opts.channel === undefined ? channelForLobby(lobbyName) : opts.channel;
   const channelRef = useRef(channel);
   channelRef.current = channel;
+  const mediaLobbyTarget = opts.mediaLobby || lobbyName;
+  const mediaLobbyTargetRef = useRef(mediaLobbyTarget);
+  mediaLobbyTargetRef.current = mediaLobbyTarget;
   const fetchImpl = opts.fetch ?? (typeof fetch !== 'undefined' ? fetch : undefined);
   const fetchRef = useRef(fetchImpl);
   fetchRef.current = fetchImpl;
@@ -367,7 +385,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const f = fetchRef.current;
     if (!f) return;
     const o = optsRef.current;
-    const body = JSON.stringify({ lobbyName: o.lobbyName, documentId: o.lobbyName, participantId: a.participantId, userId: o.self.userId });
+    const lobby = a.mediaLobby || o.lobbyName;
+    const body = JSON.stringify({ lobbyName: lobby, documentId: lobby, participantId: a.participantId, userId: o.self.userId });
     const url = `${o.platformApi.baseUrl.replace(/\/$/, '')}/api/video/sessions/${encodeURIComponent(a.sessionId)}/end`;
     if (keepalive) {
       // No awaiting headers on the way out: reuse the last ones.
@@ -422,8 +441,14 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   }, [peerIds, send, teardown]);
 
   // ---- joining -------------------------------------------------------------------
-  const enter = useCallback(async (a: ActiveCall): Promise<boolean> => {
+  const enterInFlight = useRef(0);
+  /** Set for the join a media-lobby move makes: its media coming up is not news to the call. */
+  const quietJoin = useRef(false);
+  const enter = useCallback(async (a: ActiveCall, how: { quiet?: boolean } = {}): Promise<boolean> => {
     const o = optsRef.current;
+    const lobby = a.mediaLobby || o.lobbyName;
+    quietJoin.current = how.quiet === true;
+    enterInFlight.current += 1;
     setActive({ ...a, sessionId: null, stageToken: null, participantId: null });
     setBusy(a.role === 'caller' ? 'creating' : 'joining');
     setError(null);
@@ -433,8 +458,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         ? { recordingConfiguration: { enabled: o.recordingProfile !== 'none', recordingProfile: o.recordingProfile } }
         : {};
       const created = await api('/api/video/sessions', {
-        lobbyName: o.lobbyName,
-        documentId: o.lobbyName, // platform-api's back-compat alias
+        lobbyName: lobby,
+        documentId: lobby, // platform-api's back-compat alias
         displayName: o.self.displayName,
         findOrCreate: true,
         ...recording,
@@ -445,8 +470,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId } : cur));
       const gatewayClientId = str(gwRef.current?.clientId);
       const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
-        lobbyName: o.lobbyName,
-        documentId: o.lobbyName,
+        lobbyName: lobby,
+        documentId: lobby,
         displayName: o.self.displayName,
         ...(gatewayClientId ? { clientId: gatewayClientId } : {}),
       });
@@ -469,6 +494,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       });
       setBusy(null);
       return false;
+    } finally {
+      enterInFlight.current -= 1;
     }
   }, [api, endPlatformSession, setActive]);
 
@@ -495,6 +522,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const ok = await enter({
       callId, role: 'caller', host: o.self.userId, audioOnly, targets: ring,
       sessionId: null, stageToken: null, participantId: null, startedAt: null, media: joinMedia(audioOnly),
+      mediaLobby: mediaLobbyTargetRef.current,
       ...(ring.length === 0 ? { pageHuddle: true } : {}),
     });
     if (!ok) return;
@@ -590,6 +618,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const ok = await enter({
       callId: ring.callId, role: 'joiner', host: ring.callerId, audioOnly: ring.audioOnly, targets: [],
       sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(ring.audioOnly),
+      mediaLobby: mediaLobbyTargetRef.current,
     });
     if (ok) optsRef.current.onCallStarted?.({ ...eventBase(ring.callId), startedAt });
   }, [enter, eventBase, hangUp, joinMedia, joinSelf, send, setIncoming, setRoster]);
@@ -611,18 +640,58 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     });
   }, [send, setIncoming]);
 
+  // ---- media-lobby moves (0.134.0, lane L1) -------------------------------------
+  // The call stays; only the media changes lobby. One loop at a time: it reads
+  // the latest target after every step, so rapid changes end in the last one
+  // and intermediate targets that arrive mid-move are skipped. A leave
+  // mid-move tears the call down at once; the in-flight join sees the call is
+  // gone and ends the session it made (see `enter`).
+  const moving = useRef<Promise<void> | null>(null);
+  const moveMedia = useCallback(() => {
+    if (moving.current) return;
+    const run = async () => {
+      for (;;) {
+        const a = activeRef.current;
+        const target = mediaLobbyTargetRef.current;
+        if (!a || a.mediaLobby === target || enterInFlight.current > 0) return;
+        try { mediaRef.current.leave(); } catch { /* idempotent */ }
+        endPlatformSession(a);
+        setSelf({ screenSharing: false });
+        await enter({ ...a, sessionId: null, stageToken: null, participantId: null, mediaLobby: target,
+          media: deviceConstraints(prefsRef.current, { audio: selfRef.current.audioOn, video: selfRef.current.cameraOn }) },
+        { quiet: true });
+      }
+    };
+    moving.current = run().finally(() => {
+      moving.current = null;
+      // A target that landed between the loop's last look and here.
+      const a = activeRef.current;
+      if (a && a.mediaLobby !== mediaLobbyTargetRef.current && enterInFlight.current === 0) moveMediaRef.current();
+    });
+  }, [endPlatformSession, enter, setSelf]);
+  const moveMediaRef = useRef(moveMedia);
+  moveMediaRef.current = moveMedia;
+
+  useEffect(() => {
+    const a = activeRef.current;
+    if (!a || a.mediaLobby === mediaLobbyTarget || busy) return;
+    moveMedia();
+  }, [mediaLobbyTarget, active?.callId, active?.mediaLobby, busy, moveMedia]);
+
   const leave = useCallback(async () => {
     if (!activeRef.current) { setEnded(null); return; }
     hangUp('left');
   }, [hangUp]);
 
   const rejoin = useCallback(async () => {
+    // Never overlap a media-lobby move: let it settle, then rejoin where it left you.
+    if (moving.current) await moving.current;
     const a = activeRef.current;
     if (a) {
-      // Lost the call: a fresh session in the same call.
+      // Lost the call: a fresh session in the same call, in the current media lobby.
       try { mediaRef.current.leave(); } catch { /* */ }
       setSelf({ screenSharing: false });
-      await enter({ ...a, sessionId: null, stageToken: null, participantId: null,
+      await enter({ ...a, sessionId: null, stageToken: null, participantId: null, mediaLobby: mediaLobbyTargetRef.current,
         media: deviceConstraints(prefsRef.current, { audio: selfRef.current.audioOn, video: selfRef.current.cameraOn }) });
       return;
     }
@@ -647,6 +716,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const ok = await enter({
       callId: d.callId, role: 'joiner', host: others[0] ?? '', audioOnly: false, targets: [],
       sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(false),
+      mediaLobby: mediaLobbyTargetRef.current,
       ...(d.pageHuddle ? { pageHuddle: true } : {}),
     });
     if (ok) {
@@ -944,6 +1014,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   useEffect(() => {
     if (!mediaUp) return;
     if (!selfRef.current.audioOn) { try { mediaRef.current.toggleMute(true); } catch { /* */ } }
+    // A media-lobby move sends no call frames: the call did not change.
+    if (quietJoin.current) { quietJoin.current = false; return; }
     announceSelf();
   }, [mediaUp, announceSelf]);
 
@@ -954,6 +1026,10 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     if (!opts.bindRecordingCall) { setRecordingBinding({ status: 'disabled' }); return; }
     const a = active;
     if (!a || !mediaUp || !(a.pageHuddle || a.startedAt !== null)) { setRecordingBinding({ status: 'pending' }); return; }
+    // A breakout room's session is not the call's: there is no binding to confirm there.
+    if (a.mediaLobby !== lobbyName) {
+      setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association is not available in a breakout room.' }); return;
+    }
     const clientId = str(gw?.clientId);
     if (!clientId || clientId !== a.gatewayClientId || gw?.connectionState !== 'connected' || !a.sessionId || !a.participantId) {
       setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association could not be confirmed for this connection.' }); return;
@@ -995,7 +1071,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     void bind();
     return () => { abort.abort(); clearTimeout(deadline); clearTimeout(retry); };
   }, [opts.bindRecordingCall, opts.documentSourceId, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
-    active?.gatewayClientId, active?.pageHuddle, active?.startedAt, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
+    active?.gatewayClientId, active?.pageHuddle, active?.startedAt, active?.mediaLobby, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
 
   // A remote tile arriving is an answer too (a callee who skipped `accepted`).
   useEffect(() => {
@@ -1217,6 +1293,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     ended: phase === 'ended' ? ended : null,
     callingTo,
     self,
+    mediaLobby: active?.mediaLobby ?? null,
     start,
     inviteUsers,
     invitationRequests,

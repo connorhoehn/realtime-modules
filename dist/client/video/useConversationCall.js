@@ -64,6 +64,9 @@ function useConversationCall(opts) {
     const channel = opts.channel === undefined ? (0, conversationLobby_1.channelForLobby)(lobbyName) : opts.channel;
     const channelRef = (0, react_1.useRef)(channel);
     channelRef.current = channel;
+    const mediaLobbyTarget = opts.mediaLobby || lobbyName;
+    const mediaLobbyTargetRef = (0, react_1.useRef)(mediaLobbyTarget);
+    mediaLobbyTargetRef.current = mediaLobbyTarget;
     const fetchImpl = opts.fetch ?? (typeof fetch !== 'undefined' ? fetch : undefined);
     const fetchRef = (0, react_1.useRef)(fetchImpl);
     fetchRef.current = fetchImpl;
@@ -233,7 +236,8 @@ function useConversationCall(opts) {
         if (!f)
             return;
         const o = optsRef.current;
-        const body = JSON.stringify({ lobbyName: o.lobbyName, documentId: o.lobbyName, participantId: a.participantId, userId: o.self.userId });
+        const lobby = a.mediaLobby || o.lobbyName;
+        const body = JSON.stringify({ lobbyName: lobby, documentId: lobby, participantId: a.participantId, userId: o.self.userId });
         const url = `${o.platformApi.baseUrl.replace(/\/$/, '')}/api/video/sessions/${encodeURIComponent(a.sessionId)}/end`;
         if (keepalive) {
             // No awaiting headers on the way out: reuse the last ones.
@@ -292,8 +296,14 @@ function useConversationCall(opts) {
         teardown(reason);
     }, [peerIds, send, teardown]);
     // ---- joining -------------------------------------------------------------------
-    const enter = (0, react_1.useCallback)(async (a) => {
+    const enterInFlight = (0, react_1.useRef)(0);
+    /** Set for the join a media-lobby move makes: its media coming up is not news to the call. */
+    const quietJoin = (0, react_1.useRef)(false);
+    const enter = (0, react_1.useCallback)(async (a, how = {}) => {
         const o = optsRef.current;
+        const lobby = a.mediaLobby || o.lobbyName;
+        quietJoin.current = how.quiet === true;
+        enterInFlight.current += 1;
         setActive({ ...a, sessionId: null, stageToken: null, participantId: null });
         setBusy(a.role === 'caller' ? 'creating' : 'joining');
         setError(null);
@@ -303,8 +313,8 @@ function useConversationCall(opts) {
                 ? { recordingConfiguration: { enabled: o.recordingProfile !== 'none', recordingProfile: o.recordingProfile } }
                 : {};
             const created = await api('/api/video/sessions', {
-                lobbyName: o.lobbyName,
-                documentId: o.lobbyName, // platform-api's back-compat alias
+                lobbyName: lobby,
+                documentId: lobby, // platform-api's back-compat alias
                 displayName: o.self.displayName,
                 findOrCreate: true,
                 ...recording,
@@ -317,8 +327,8 @@ function useConversationCall(opts) {
             setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId } : cur));
             const gatewayClientId = str(gwRef.current?.clientId);
             const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
-                lobbyName: o.lobbyName,
-                documentId: o.lobbyName,
+                lobbyName: lobby,
+                documentId: lobby,
                 displayName: o.self.displayName,
                 ...(gatewayClientId ? { clientId: gatewayClientId } : {}),
             });
@@ -342,6 +352,9 @@ function useConversationCall(opts) {
             });
             setBusy(null);
             return false;
+        }
+        finally {
+            enterInFlight.current -= 1;
         }
     }, [api, endPlatformSession, setActive]);
     const joinMedia = (0, react_1.useCallback)((audioOnly) => (0, useDevicePreferences_1.deviceConstraints)(prefsRef.current, {
@@ -367,6 +380,7 @@ function useConversationCall(opts) {
         const ok = await enter({
             callId, role: 'caller', host: o.self.userId, audioOnly, targets: ring,
             sessionId: null, stageToken: null, participantId: null, startedAt: null, media: joinMedia(audioOnly),
+            mediaLobby: mediaLobbyTargetRef.current,
             ...(ring.length === 0 ? { pageHuddle: true } : {}),
         });
         if (!ok)
@@ -469,6 +483,7 @@ function useConversationCall(opts) {
         const ok = await enter({
             callId: ring.callId, role: 'joiner', host: ring.callerId, audioOnly: ring.audioOnly, targets: [],
             sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(ring.audioOnly),
+            mediaLobby: mediaLobbyTargetRef.current,
         });
         if (ok)
             optsRef.current.onCallStarted?.({ ...eventBase(ring.callId), startedAt });
@@ -491,6 +506,48 @@ function useConversationCall(opts) {
             ...(reason ? { reason } : {}),
         });
     }, [send, setIncoming]);
+    // ---- media-lobby moves (0.134.0, lane L1) -------------------------------------
+    // The call stays; only the media changes lobby. One loop at a time: it reads
+    // the latest target after every step, so rapid changes end in the last one
+    // and intermediate targets that arrive mid-move are skipped. A leave
+    // mid-move tears the call down at once; the in-flight join sees the call is
+    // gone and ends the session it made (see `enter`).
+    const moving = (0, react_1.useRef)(null);
+    const moveMedia = (0, react_1.useCallback)(() => {
+        if (moving.current)
+            return;
+        const run = async () => {
+            for (;;) {
+                const a = activeRef.current;
+                const target = mediaLobbyTargetRef.current;
+                if (!a || a.mediaLobby === target || enterInFlight.current > 0)
+                    return;
+                try {
+                    mediaRef.current.leave();
+                }
+                catch { /* idempotent */ }
+                endPlatformSession(a);
+                setSelf({ screenSharing: false });
+                await enter({ ...a, sessionId: null, stageToken: null, participantId: null, mediaLobby: target,
+                    media: (0, useDevicePreferences_1.deviceConstraints)(prefsRef.current, { audio: selfRef.current.audioOn, video: selfRef.current.cameraOn }) }, { quiet: true });
+            }
+        };
+        moving.current = run().finally(() => {
+            moving.current = null;
+            // A target that landed between the loop's last look and here.
+            const a = activeRef.current;
+            if (a && a.mediaLobby !== mediaLobbyTargetRef.current && enterInFlight.current === 0)
+                moveMediaRef.current();
+        });
+    }, [endPlatformSession, enter, setSelf]);
+    const moveMediaRef = (0, react_1.useRef)(moveMedia);
+    moveMediaRef.current = moveMedia;
+    (0, react_1.useEffect)(() => {
+        const a = activeRef.current;
+        if (!a || a.mediaLobby === mediaLobbyTarget || busy)
+            return;
+        moveMedia();
+    }, [mediaLobbyTarget, active?.callId, active?.mediaLobby, busy, moveMedia]);
     const leave = (0, react_1.useCallback)(async () => {
         if (!activeRef.current) {
             setEnded(null);
@@ -499,15 +556,18 @@ function useConversationCall(opts) {
         hangUp('left');
     }, [hangUp]);
     const rejoin = (0, react_1.useCallback)(async () => {
+        // Never overlap a media-lobby move: let it settle, then rejoin where it left you.
+        if (moving.current)
+            await moving.current;
         const a = activeRef.current;
         if (a) {
-            // Lost the call: a fresh session in the same call.
+            // Lost the call: a fresh session in the same call, in the current media lobby.
             try {
                 mediaRef.current.leave();
             }
             catch { /* */ }
             setSelf({ screenSharing: false });
-            await enter({ ...a, sessionId: null, stageToken: null, participantId: null,
+            await enter({ ...a, sessionId: null, stageToken: null, participantId: null, mediaLobby: mediaLobbyTargetRef.current,
                 media: (0, useDevicePreferences_1.deviceConstraints)(prefsRef.current, { audio: selfRef.current.audioOn, video: selfRef.current.cameraOn }) });
             return;
         }
@@ -534,6 +594,7 @@ function useConversationCall(opts) {
         const ok = await enter({
             callId: d.callId, role: 'joiner', host: others[0] ?? '', audioOnly: false, targets: [],
             sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(false),
+            mediaLobby: mediaLobbyTargetRef.current,
             ...(d.pageHuddle ? { pageHuddle: true } : {}),
         });
         if (ok) {
@@ -883,6 +944,11 @@ function useConversationCall(opts) {
             }
             catch { /* */ }
         }
+        // A media-lobby move sends no call frames: the call did not change.
+        if (quietJoin.current) {
+            quietJoin.current = false;
+            return;
+        }
         announceSelf();
     }, [mediaUp, announceSelf]);
     // The native endpoint checks the gateway's current accepted seat and writes
@@ -896,6 +962,11 @@ function useConversationCall(opts) {
         const a = active;
         if (!a || !mediaUp || !(a.pageHuddle || a.startedAt !== null)) {
             setRecordingBinding({ status: 'pending' });
+            return;
+        }
+        // A breakout room's session is not the call's: there is no binding to confirm there.
+        if (a.mediaLobby !== lobbyName) {
+            setRecordingBinding({ status: 'unavailable', callId: a.callId, error: 'Recording association is not available in a breakout room.' });
             return;
         }
         const clientId = str(gw?.clientId);
@@ -958,7 +1029,7 @@ function useConversationCall(opts) {
         void bind();
         return () => { abort.abort(); clearTimeout(deadline); clearTimeout(retry); };
     }, [opts.bindRecordingCall, opts.documentSourceId, opts.self.userId, active?.callId, active?.sessionId, active?.participantId,
-        active?.gatewayClientId, active?.pageHuddle, active?.startedAt, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
+        active?.gatewayClientId, active?.pageHuddle, active?.startedAt, active?.mediaLobby, mediaUp, lobbyName, gw?.clientId, gw?.sessionEpoch, gw?.connectionState, api]);
     // A remote tile arriving is an answer too (a callee who skipped `accepted`).
     (0, react_1.useEffect)(() => {
         const a = activeRef.current;
@@ -1192,6 +1263,7 @@ function useConversationCall(opts) {
         ended: phase === 'ended' ? ended : null,
         callingTo,
         self,
+        mediaLobby: active?.mediaLobby ?? null,
         start,
         inviteUsers,
         invitationRequests,

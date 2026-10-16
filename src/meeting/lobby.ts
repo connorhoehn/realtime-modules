@@ -78,3 +78,30 @@ export function activeMeetingChat(
 ): string {
     return meetingChatChannel(meetingId, breakoutRoomFor(breakout, userId));
 }
+
+export interface ParsedBreakoutChannel {
+    base: string;
+    roomId: string;
+}
+
+/**
+ * A breakout room's chat under a host's own chat naming (0.134.0, lane L3).
+ * A host that names a call's chat something other than its lobby (the app's
+ * `orgiq:huddle:<callId>`) gets the room's chat as that channel plus the same
+ * suffix a room's lobby carries: `<base>~breakout~<roomId>`. Guards strip the
+ * suffix with `parseBreakoutChannel` before matching channel families.
+ */
+export function breakoutChannel(base: string, roomId: string): string {
+    return `${base}${BREAKOUT_LOBBY_SEPARATOR}${roomId}`;
+}
+
+/** The base channel and room a breakout chat names, or null for any other channel. */
+export function parseBreakoutChannel(name: string | null | undefined): ParsedBreakoutChannel | null {
+    if (typeof name !== 'string') return null;
+    const at = name.lastIndexOf(BREAKOUT_LOBBY_SEPARATOR);
+    if (at <= 0) return null;
+    const base = name.slice(0, at);
+    const roomId = name.slice(at + BREAKOUT_LOBBY_SEPARATOR.length);
+    if (!BREAKOUT_ROOM_ID_PATTERN.test(roomId)) return null;
+    return { base, roomId };
+}

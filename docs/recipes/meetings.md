@@ -77,6 +77,15 @@ the main meeting and the room's chat inside a room, and it moves when
 (`meetingChatChannel(meetingId, roomId)`), so route chat channel checks through
 the same `admitsBreakoutLobby` guard as lobbies.
 
+A host that names a call's chat something other than its lobby (the app's
+`orgiq:huddle:<callId>`) passes it as `useMeeting(meetingId, { chatChannel })`
+(0.134.0). `activeChat` is then that channel in the main meeting and
+`breakoutChannel(chatChannel, roomId)`, i.e. `<chatChannel>~breakout~<roomId>`,
+inside a room. A guard calls `parseBreakoutChannel(name)` first: it returns
+`{ base, roomId }` for a room's chat, so the guard can admit `base` by its usual
+family rule and then ask `admitsBreakoutLobby` about the room. Never let an
+unparsed room channel reach a family match.
+
 ## Live media
 
 Media never passes through the gateway: `meeting()` and `calls()` carry
@@ -112,6 +121,31 @@ by default. It can also run against two SFU nodes, with one breakout placed on
 the second. The commands are at the top of `breakout-media.live.test.ts`. It is
 opt-in (`REAL_LVS=1`) and needs a local Redis, the SFU, `playwright` and
 `esbuild`.
+
+## With a conversation call
+
+When the meeting is a `useConversationCall` call, pass the meeting's lobby as
+the media lobby (0.134.0):
+
+```tsx
+const meeting = useMeeting(lobbyName, { chatChannel });
+const call = useConversationCall({ lobbyName, mediaLobby: meeting.activeLobby, ... });
+```
+
+The call then moves its own media. When `mediaLobby` changes mid-call, it
+leaves the current media and ends its participant in that LVS session. It then
+creates or joins the new lobby's session (`/api/video/sessions`, then `/join`)
+and joins media with your current device choices and mic and camera state. The
+call does not change: the `callId`, the signalling on `lobbyName` and the roster
+all stay the same, and it sends no call frames (no ring, `invite`, `accepted`,
+`ended` or `participant-state`). Moves run one at a time and the latest target
+wins. A failed join keeps the call in `phase: 'failed'` with `error` set, and
+`rejoin()` retries in the current media lobby. `leave()` ends the session the
+media is in. The result's `mediaLobby` says where the media is (or is going). Recording
+binding reports `unavailable` while you are in a room. A host using this does
+not also need `useFollowMeetingLobby`; that hook stays for hosts that drive
+`useLVSHangout` themselves. Platform-api's lobby check must also admit breakout
+lobbies, through the same `admitsBreakoutLobby` guard as the token mint.
 
 ## UI
 

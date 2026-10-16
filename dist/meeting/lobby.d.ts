@@ -30,4 +30,18 @@ export declare function meetingChatChannel(meetingId: string, roomId?: string | 
  * the meeting's. Moves with them exactly as `activeMeetingLobby` moves media.
  */
 export declare function activeMeetingChat(meetingId: string, breakout: BreakoutState, userId: string | null | undefined): string;
+export interface ParsedBreakoutChannel {
+    base: string;
+    roomId: string;
+}
+/**
+ * A breakout room's chat under a host's own chat naming (0.134.0, lane L3).
+ * A host that names a call's chat something other than its lobby (the app's
+ * `orgiq:huddle:<callId>`) gets the room's chat as that channel plus the same
+ * suffix a room's lobby carries: `<base>~breakout~<roomId>`. Guards strip the
+ * suffix with `parseBreakoutChannel` before matching channel families.
+ */
+export declare function breakoutChannel(base: string, roomId: string): string;
+/** The base channel and room a breakout chat names, or null for any other channel. */
+export declare function parseBreakoutChannel(name: string | null | undefined): ParsedBreakoutChannel | null;
 //# sourceMappingURL=lobby.d.ts.map

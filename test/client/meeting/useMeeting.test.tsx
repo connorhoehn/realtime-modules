@@ -111,6 +111,32 @@ describe('useMeeting', () => {
     h.svc.dispose();
   });
 
+  it('chatChannel: activeChat is the host chat name, with the breakout suffix inside a room (lane L3)', async () => {
+    const h = harness();
+    const CHAT = 'orgiq:huddle:call-7f3a';
+    const org = (() => { const sk = h.socketFor('c-org', 'u-org', 'Olive'); return renderHook(() => useMeeting(M, { socket: sk, chatChannel: CHAT })); })();
+    const ana = (() => { const sk = h.socketFor('c-a', 'u-a', 'Ana'); return renderHook(() => useMeeting(M, { socket: sk, chatChannel: CHAT })); })();
+    // no chatChannel: the 0.126.0 naming is unchanged
+    const ben = (() => { const sk = h.socketFor('c-b', 'u-b', 'Ben'); return renderHook(() => useMeeting(M, { socket: sk })); })();
+    await waitFor(() => expect(ben.result.current.ready).toBe(true));
+    expect(ana.result.current.activeChat).toBe(CHAT);
+    expect(ben.result.current.activeChat).toBe(M);
+
+    act(() => org.result.current.configureBreakouts([{ id: 'r1', name: 'Room 1' }], { mode: 'assigned' }));
+    act(() => org.result.current.assign({ 'u-a': 'r1', 'u-b': 'r1' }));
+    act(() => org.result.current.openRooms());
+    await waitFor(() => expect(ana.result.current.myRoom?.id).toBe('r1'));
+    await waitFor(() => expect(ben.result.current.myRoom?.id).toBe('r1'));
+    expect(ana.result.current.activeChat).toBe(`${CHAT}~breakout~r1`);
+    expect(ana.result.current.activeLobby).toBe(`${M}~breakout~r1`); // media still follows the lobby
+    expect(org.result.current.activeChat).toBe(CHAT);
+    expect(ben.result.current.activeChat).toBe(`${M}~breakout~r1`);
+
+    act(() => ana.result.current.returnToMain());
+    await waitFor(() => expect(ana.result.current.activeChat).toBe(CHAT));
+    h.svc.dispose();
+  });
+
   it('addRoom and renameRoom while rooms are open reach every client', async () => {
     const h = harness();
     const org = (() => { const sk = h.socketFor('c-org', 'u-org', 'Olive'); return renderHook(() => useMeeting(M, { socket: sk })); })();

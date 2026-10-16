@@ -14,6 +14,14 @@ export interface UseMeetingOptions {
     displayName?: string;
     /** Set false to hold the subscription (e.g. before the call is live). Default true. */
     enabled?: boolean;
+    /**
+     * The call's own chat channel when the host names it something other than
+     * the lobby (e.g. `orgiq:huddle:<callId>`) (0.134.0, lane L3). Given it,
+     * `activeChat` is this channel outside a room and
+     * `breakoutChannel(chatChannel, roomId)` inside one. Absent, `activeChat`
+     * is `meetingChatChannel` as before.
+     */
+    chatChannel?: string;
 }
 export interface BreakoutRoomDraft {
     id?: string;
@@ -43,6 +51,7 @@ export interface UseMeetingResult {
     /**
      * The chat channel this user should read right now: their open room's, or
      * the meeting's (0.126.0). Hand it to `useChat`; it moves with `activeLobby`.
+     * With `opts.chatChannel`, it is that channel or its breakout suffix.
      */
     activeChat: string | null;
     /**

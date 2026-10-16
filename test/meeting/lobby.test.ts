@@ -1,4 +1,4 @@
-import { activeMeetingChat, activeMeetingLobby, breakoutLobbyName, meetingChatChannel, breakoutRoomFor, isBreakoutLobby, parseBreakoutLobby } from '../../src/meeting/lobby';
+import { activeMeetingChat, activeMeetingLobby, breakoutChannel, breakoutLobbyName, parseBreakoutChannel, meetingChatChannel, breakoutRoomFor, isBreakoutLobby, parseBreakoutLobby } from '../../src/meeting/lobby';
 import { EMPTY_BREAKOUT, type BreakoutState } from '../../src/meeting/types';
 
 const open: BreakoutState = {
@@ -53,3 +53,30 @@ describe('room chat channels (0.126.0)', () => {
     });
 });
 
+
+describe('breakout chat under a host chat name (0.134.0, lane L3)', () => {
+    const base = 'orgiq:huddle:call-7f3a';
+
+    it('appends the breakout suffix to the host chat channel and parses it back', () => {
+        const name = breakoutChannel(base, 'r1');
+        expect(name).toBe('orgiq:huddle:call-7f3a~breakout~r1');
+        expect(parseBreakoutChannel(name)).toEqual({ base, roomId: 'r1' });
+        // the base keeps its own colons and tildes; the last separator wins
+        expect(parseBreakoutChannel(breakoutChannel('a~breakout~b:c', 'r_2'))).toEqual({ base: 'a~breakout~b:c', roomId: 'r_2' });
+    });
+
+    it('is named exactly like a breakout lobby under the same base', () => {
+        expect(breakoutChannel(base, 'r1')).toBe(breakoutLobbyName(base, 'r1'));
+        expect(parseBreakoutLobby(breakoutChannel(base, 'r1'))).toEqual({ meetingId: base, roomId: 'r1' });
+    });
+
+    it('rejects anything that is not a breakout channel', () => {
+        expect(parseBreakoutChannel(base)).toBeNull();
+        expect(parseBreakoutChannel('~breakout~r1')).toBeNull(); // no base
+        expect(parseBreakoutChannel(`${base}~breakout~`)).toBeNull(); // no room
+        expect(parseBreakoutChannel(`${base}~breakout~r 1`)).toBeNull(); // bad room id
+        expect(parseBreakoutChannel(`${base}~breakout~${'x'.repeat(65)}`)).toBeNull();
+        expect(parseBreakoutChannel(null)).toBeNull();
+        expect(parseBreakoutChannel(undefined)).toBeNull();
+    });
+});

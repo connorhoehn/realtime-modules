@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## 0.134.0 — 2026-10-16
+
+### Added
+
+- **The conversation call changes media lobby in place (lane L1)**:
+  `useConversationCall({ lobbyName, mediaLobby })` (`./client/video`).
+  `mediaLobby` defaults to `lobbyName` and names the lobby whose LVS session the
+  media joins. Hand it `useMeeting().activeLobby` and a breakout moves your
+  media to `<lobby>~breakout~<roomId>` and back. On a change mid-call the hook
+  leaves the media, ends its participant in the old session, then creates and
+  joins the new lobby's session and media. The call keeps its `callId`, its
+  signalling on `lobbyName` and its roster, and no call frame is sent. Moves are
+  serialized and the latest target wins. A failed join keeps the call and sets
+  `error`. `leave()` and `rejoin()` use the current media lobby. The result
+  gains `mediaLobby` (optional in the type). Recording binding reports
+  `unavailable` inside a breakout. Without `mediaLobby` nothing changes.
+- **Breakout chat channels under a host's own chat naming (lane L3)**:
+  `breakoutChannel(base, roomId)` gives `<base>~breakout~<roomId>`, and
+  `parseBreakoutChannel(name)` returns `{ base, roomId } | null`. Both are
+  exported from `./meeting` and `./client/meeting`, with the
+  `ParsedBreakoutChannel` type. `useMeeting(meetingId, { chatChannel })` makes
+  `activeChat` that channel in the main meeting and its breakout channel inside
+  a room, e.g. `orgiq:huddle:<callId>~breakout~r1`. Without `chatChannel`,
+  `activeChat` is `meetingChatChannel` as before.
+
 ## 0.133.0 — 2026-10-16
 
 ### Changed
