@@ -26,7 +26,11 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
   files the release also changes (the other session rebuilding `dist/`),
   do not merge into it: check `git merge-base --is-ancestor origin/main HEAD`
   and `git push origin HEAD:main` from the worktree, and leave local `main`
-  behind for its owner to fast-forward.
+  behind for its owner to fast-forward. Run that tick's ui gates in a
+  worktree off `origin/main`, not the lagging main checkout. If the other
+  session commits on the stale local `main` meanwhile, it must rebase onto
+  `origin/main` before pushing; say so in the tick summary, never rebase it
+  for them.
 - Release realtime-modules per `RELEASE.md` (build, tag, push **both**
   remotes). Release ui-components per its CLAUDE.md (feature commit without
   `dist/`, release commit with the version bump, `dist/` and the export
@@ -118,6 +122,8 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | 2026-10-15 | D: a meetingId containing `~breakout~` parsed as another meeting's breakout lobby | 0.121.1: refused with `INVALID_PAYLOAD` |
 | 2026-10-15 | F: `CallTileRow` (the dock the app renders) dropped `handRaised` at every tile site; no way to feed hands to `ConversationCallDock` or `WrappedLVSHangoutLayout` | ui-components 2.458.1: hands on all variants with the position in the accessible name; `handFor` on both wrappers |
 | 2026-10-15 | Organizer could not delete drafted rooms to start over | 2.458.1: `onDeleteRooms` / Delete rooms in draft; End only while open |
+| 2026-10-16 | H (in this tick's own change, before release): an organizer's Lower button vanished with the hand and dropped keyboard focus on `<body>` | 2.460.0: focus moves to the next Lower, else the panel; regression test |
+| 2026-10-16 | H, outside our scope: `InlineEditableText` (`forms/`, used for room rename) drops focus after Enter/Escape because the input unmounts | not ours to edit; noted for the library owner |
 | 2026-10-16 | C: `useFollowMeetingLobby` still joined after unmount or `enabled: false` mid-move, rejoining a call the user had left | realtime-modules 0.122.1: re-check before each move and after the leave; 2 regression tests (fail without the fix) |
 
 ## Backlog (top first)
@@ -125,7 +131,7 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 - [x] **H. Toolbar keyboard roving.** — ui-components 2.458.2 (`useRovingToolbar`; one tab stop, arrows wrap, Home/End, disabled skipped, chevrons reachable). `MeetingToolbar` declares `role="toolbar"` but Tab walks every button; arrow keys should move focus (Home/End, wrap) per WAI-ARIA. ui-components has `shared/RovingToolbar` — reuse it, test with fireEvent keyDown.
 - [x] **Follow the active lobby.** — realtime-modules 0.122.0 (`useFollowMeetingLobby`, 8 tests: order, no overlap, latest wins, debounce, unrelated call, lagging host, failure). Every app must write "when `activeLobby` changes, leave the call and join the new lobby". Add `useFollowMeetingLobby(activeLobby, { leave, join, debounceMs })` to `./client/meeting` with tests (no double join, no join while leaving, ignores the first render).
 - [x] **Rename and add rooms while open.** — realtime-modules 0.123.0 (`breakout.addRoom`/`breakout.rename`, `addRoom`/`renameRoom`, 4 tests) + ui-components 2.459.0 (`onRenameRoom` via `InlineEditableText`, `onAddRoom`, `maxRooms`; optional on `RMMeetingSource` for older pins). Teams allows both. Server verbs `breakout.rename { roomId, name }` and `breakout.addRoom { name? }` (organizer, any phase, name limits); `useMeeting` methods; inline rename in `BreakoutRoomsPanel` (organizer, via `forms/Input`) and an Add room button; wrapper bindings.
-- [ ] **Raised-hands queue in People.** `RosterPanel` sorted by queue position when hands are up, with organizer `onLowerHand(id)` and `onLowerAllHands()` actions; `WrappedRosterHands` binding or adapter.
+- [x] **Raised-hands queue in People.** — ui-components 2.460.0 (`raisedHandsFirst`, `onLowerHand`, `onLowerAllHands`, `orderRosterByHands`, `meetingRosterProps`; focus kept when a Lower disappears). `RosterPanel` sorted by queue position when hands are up, with organizer `onLowerHand(id)` and `onLowerAllHands()` actions; `WrappedRosterHands` binding or adapter.
 - [ ] **Closing grace.** When the timer runs out or the organizer closes rooms, Teams gives a short countdown before moving people. Server: optional `closingGraceMs` → `breakout.changed` with `closingAt`; banner shows "Rooms close in 0:30"; tests with fake timers.
 - [x] **Dark mode pass.** — verified 2026-10-16 with the theme applied correctly: pane, consent card, banner, toolbar and organizer controls all flip; no change needed. Screenshot every new story in dark; fix any token that does not flip (consent card, banner, pane, toolbar active underline).
 - [ ] **Consent remembered.** `RecordingConsentNotice` dismissal per meeting+recording session via a small `useConsentDismissal(key)` helper (try/catch storage).
@@ -143,3 +149,4 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | 2026-10-16 01:10 | rm meeting 45/45, ui 64/64, types ok | changed since last tick: toolbar roving → A–F n/a, G ok (shared hook), H fixed by it, I ok (no RM runtime import), J ok | light + dark, 5 stories clean; live toolbar has 1 tab stop; draft story shows Delete rooms | 0.122.0 useFollowMeetingLobby |
 | 2026-10-16 02:10 | rm meeting 53/53, ui 64/64, types ok | changed: useFollowMeetingLobby → C finding (join after unmount/disable); A, B, D, E, F n/a; G–J ok | skipped (no UI change; visual done today) | 0.122.1 fix |
 | 2026-10-16 03:10 | rm meeting 55/55, ui 64/64, types ok; after the change rm full 2438 pass, ui full 11146 pass | no changes since last tick → A–J ok; new verbs checked as written: A organizer-only (FORBIDDEN tested), E names 1–80 refused not truncated, ids pattern + unique, `maxRooms` cap; I new `RMMeetingSource` members optional (old-pin test) | light + dark, 5 stories + rename-in-place: clean, focus lands in the name input | 0.123.0 / 2.459.0 rename + add rooms; ui pushed to `origin/main` from the worktree (main checkout has the other session's uncommitted `dist/` rebuild, local `main` left at 2.458.2) |
+| 2026-10-16 04:10 | rm meeting 59/59, types ok; ui 68/68 (worktree off `origin/main` 2.459.0), types ok; after the change ui full 11152 pass | no changes since last tick → A–J ok; new roster code: G Button from `ui/`, opt-in props; H finding fixed before release; I `meetingRosterProps` takes the structural source, no RM import | light + dark, 5 stories + RosterPanel RaisedHandsQueue: clean; keyboard Lower lands on the next Lower | 2.460.0 hands queue; pushed from the worktree. The other session committed `eef92785` on stale local `main` (4404e9de): it must rebase onto `origin/main` before its next push (no file overlap) |
