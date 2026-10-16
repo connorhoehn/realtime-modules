@@ -12,7 +12,7 @@
 // Socket: like useReactions, pass `socket` to bypass GatewaySocketProvider;
 // with neither a socket nor a provider the hook is inert.
 
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
 import type { BreakoutMode, BreakoutRoom, BreakoutState, RaisedHand } from '../../meeting/types';
@@ -75,6 +75,14 @@ export interface UseMeetingResult {
      * the meeting's (0.126.0). Hand it to `useChat`; it moves with `activeLobby`.
      */
     activeChat: string | null;
+    /**
+     * Server clock minus this device's clock, in ms (0.129.0), from the
+     * `timestamp` every meeting frame carries. Count down to `breakout.endsAt`
+     * from `Date.now() + clockOffsetMs`, or a laptop whose clock is 40 s off
+     * shows a timer 40 s off. Network latency makes it a little low; it
+     * updates when it moves by more than a quarter second.
+     */
+    clockOffsetMs: number;
     configureBreakouts(rooms: BreakoutRoomDraft[], opts?: { mode?: BreakoutMode; allowReturnToMain?: boolean }): void;
     /** Adds one closed room in any phase (default name `Room N`); open it with `openRooms([id])`. */
     addRoom(opts?: { id?: string; name?: string }): void;
@@ -124,9 +132,16 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
 
     // Inbound frames. Registered before the subscribe below so the snapshot
     // cannot arrive before anyone listens.
+    const [clockOffsetMs, setClockOffsetMs] = useState(0);
     useEffect(() => {
         return onMessage((msg: GatewayMessage) => {
-            if (msg.type === 'meeting') dispatch({ kind: 'frame', frame: msg as Record<string, unknown> });
+            if (msg.type !== 'meeting') return;
+            const at = typeof msg.timestamp === 'string' ? Date.parse(msg.timestamp) : NaN;
+            if (Number.isFinite(at)) {
+                const offset = at - Date.now();
+                setClockOffsetMs((prev) => (Math.abs(prev - offset) > 250 ? offset : prev));
+            }
+            dispatch({ kind: 'frame', frame: msg as Record<string, unknown> });
         });
         // An inline socket re-registers each render; that only swaps a listener.
     }, [onMessage]);
@@ -219,6 +234,7 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
         myRoom,
         activeLobby,
         activeChat,
+        clockOffsetMs,
         configureBreakouts,
         addRoom,
         renameRoom,

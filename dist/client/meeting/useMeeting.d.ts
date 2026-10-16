@@ -45,6 +45,14 @@ export interface UseMeetingResult {
      * the meeting's (0.126.0). Hand it to `useChat`; it moves with `activeLobby`.
      */
     activeChat: string | null;
+    /**
+     * Server clock minus this device's clock, in ms (0.129.0), from the
+     * `timestamp` every meeting frame carries. Count down to `breakout.endsAt`
+     * from `Date.now() + clockOffsetMs`, or a laptop whose clock is 40 s off
+     * shows a timer 40 s off. Network latency makes it a little low; it
+     * updates when it moves by more than a quarter second.
+     */
+    clockOffsetMs: number;
     configureBreakouts(rooms: BreakoutRoomDraft[], opts?: {
         mode?: BreakoutMode;
         allowReturnToMain?: boolean;

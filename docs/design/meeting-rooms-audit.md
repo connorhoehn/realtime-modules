@@ -50,7 +50,7 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
    cd ~/Projects/ui-components && node scripts/tsc.mjs --noEmit \
      && npx vitest run src/components/video/__tests__/{MeetingToolbar,MeetingStatusCluster,RecordingConsentNotice,RaisedHandBadge,BreakoutRoomsPanel,CallTileRow.hands,ReactionPicker}.test.tsx \
         src/components/video/__tests__/meeting-brand.test.ts src/components/forms/__tests__/InlineEditableText.test.tsx \
-        src/integrations/realtime/__tests__/meeting.test.tsx src/integrations/realtime/__tests__/conversationCall.test.tsx \
+        src/integrations/realtime/__tests__/meeting.test.tsx src/integrations/realtime/__tests__/meetingRehearsal.test.tsx src/integrations/realtime/__tests__/conversationCall.test.tsx \
         src/integrations/realtime-modules/__tests__/WrappedLVSHangoutLayout.test.tsx
    ```
    A red gate is the tick's work: fix it before any backlog item.
@@ -157,11 +157,11 @@ The definition of done is `meeting-rooms-goal.md` (G1–G10); these items track 
 - [x] **G10 event-catalog declarations** — event-catalog 0.8.6 (`66f8c92b`, bundle `meeting@1.0.0`, 17 outbound + 6 inbound frames; `MeetingOutboundFrame`, `MeetingInboundFrame` from `/client-frames`). The `satisfies` step is wave-2 G20.
 - [x] **G11 Wiring rehearsal.** — realtime-modules 0.128.0 (`createMeetingLoopback`) + ui-components 2.468.0 (story `Video/MeetingRehearsal` on the real `useMeeting`; integration test over the real service; `withMeetingHands`). Found and fixed two bugs (findings log). Note: under vitest the realtime-modules CommonJS dist loads its own React, so ui tests drive the seat through realtime-modules' reducer; the real hook is tested in realtime-modules and runs in the story.
 - [ ] **G21 Live media rehearsal** (real SFU, two headless browsers).
-- [ ] **G12 Clock skew.**
+- [x] **G12 Clock skew.** — realtime-modules 0.129.0 (`clockOffsetMs` from frame timestamps; no wire change) + ui-components (banner/pane/wrappers `clockOffsetMs`, ui-components 2.469.0).
 - [ ] **G13 Announcement history.**
 - [ ] **G15 Server refuses what the catalog refuses.**
 - [ ] **G14 Rate limits.**
-- [ ] **G16 Which chat am I in.**
+- [x] **G16 Which chat am I in.** — ui-components 2.470.0 (`MeetingChatContext` in the chat dock, polite status; `meetingChatTitle`; rehearsal asserts it).
 - [ ] **G17 Narrow widths.**
 - [ ] **G18 DOM and accessibility audit.**
 - [ ] **G19 Scale budgets.**
@@ -186,3 +186,4 @@ The definition of done is `meeting-rooms-goal.md` (G1–G10); these items track 
 | 2026-10-16 11:30 | rm meeting 76/76, full 2455 pass, exports/contract/packed ok | new code: A organizer still the creator unless a hook is set (same rule as the async path); D sync guard now admits the creator on every replica that mirrors the meeting, hook verdicts stay local (documented); J changelog + recipe | skipped: server only | 0.127.0 G9; event-catalog 0.8.6 G10 (agent); wave 2 (G11–G21) written into the goal |
 
 | 2026-10-16 12:40 | ui full 11171 pass; rm 0.128.0 full 2457 pass | G11 rehearsal found C (announcement side) and G (banner line), both fixed; I: `localMessages` kept, deprecated; scope: `.storybook/main.ts` gained the two meeting subpath aliases its own comment asks for | rehearsal walked headlessly, light + dark: hands queue, rooms, chat announcement, room chat private, return | rm 0.128.0 + ui 2.468.0 (G11) |
+| 2026-10-16 13:10 | rm meeting 79/79, full 2458 pass; ui 102/102 (gate list adds the rehearsal), full 11172 pass | changed since 12:40: B offset only moves on a >250 ms change, deadlines unchanged on the wire; E nothing new accepted; H context line is a polite status, To switch unchanged; I `clockOffsetMs` optional on `RMMeetingSource`, older pins count as before; J changelogs + recipe Clocks section | rehearsal context line light (wrap fixed before release); countdown change has no visual difference | rm 0.129.0 + ui 2.469.0 (G12), ui 2.470.0 (G16) |

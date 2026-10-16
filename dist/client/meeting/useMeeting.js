@@ -39,10 +39,17 @@ function useMeeting(meetingId, opts = {}) {
     displayNameRef.current = opts.displayName;
     // Inbound frames. Registered before the subscribe below so the snapshot
     // cannot arrive before anyone listens.
+    const [clockOffsetMs, setClockOffsetMs] = (0, react_1.useState)(0);
     (0, react_1.useEffect)(() => {
         return onMessage((msg) => {
-            if (msg.type === 'meeting')
-                dispatch({ kind: 'frame', frame: msg });
+            if (msg.type !== 'meeting')
+                return;
+            const at = typeof msg.timestamp === 'string' ? Date.parse(msg.timestamp) : NaN;
+            if (Number.isFinite(at)) {
+                const offset = at - Date.now();
+                setClockOffsetMs((prev) => (Math.abs(prev - offset) > 250 ? offset : prev));
+            }
+            dispatch({ kind: 'frame', frame: msg });
         });
         // An inline socket re-registers each render; that only swaps a listener.
     }, [onMessage]);
@@ -108,6 +115,7 @@ function useMeeting(meetingId, opts = {}) {
         myRoom,
         activeLobby,
         activeChat,
+        clockOffsetMs,
         configureBreakouts,
         addRoom,
         renameRoom,

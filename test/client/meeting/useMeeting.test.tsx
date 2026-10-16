@@ -184,4 +184,23 @@ describe('useMeeting', () => {
     act(() => result.current.raiseHand());
     expect(result.current.hands).toEqual([]);
   });
+
+  it('clockOffsetMs follows the server clock from frame timestamps (0.129.0)', async () => {
+    const h = harness({ now: () => Date.now() + 40_000 }); // the server runs 40 s ahead
+    const socket = h.socketFor('c-org', 'u-org', 'Olive');
+    const { result } = renderHook(() => useMeeting(M, { socket }));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.clockOffsetMs).toBeGreaterThan(39_000);
+    expect(result.current.clockOffsetMs).toBeLessThanOrEqual(40_000);
+    // A breakout deadline read with the offset is the server's, not this device's.
+    act(() => { result.current.configureBreakouts([{ id: 'r1', name: 'Room 1' }]); });
+    act(() => { result.current.openRooms(); });
+    act(() => { result.current.setTimer(60_000); });
+    await waitFor(() => expect(result.current.breakout.endsAt).not.toBeNull());
+    const leftLocal = Date.parse(result.current.breakout.endsAt!) - Date.now();
+    const leftServer = Date.parse(result.current.breakout.endsAt!) - (Date.now() + result.current.clockOffsetMs);
+    expect(leftLocal).toBeGreaterThan(99_000); // the naive reading is 40 s too long
+    expect(Math.abs(leftServer - 60_000)).toBeLessThan(1_500);
+  });
 });
+

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## 0.129.0 — 2026-10-16
+
+### Added
+
+- **`useMeeting().clockOffsetMs`** (`./client/meeting`): the server clock
+  minus this device's, from the `timestamp` every meeting frame already
+  carries. Countdowns to `breakout.endsAt` should read
+  `Date.now() + clockOffsetMs`; a device whose clock is off by 40 s otherwise
+  shows a timer 40 s off. ui-components' banner and rooms pane take it.
+
 ## 0.128.0 — 2026-10-16
 
 ### Added

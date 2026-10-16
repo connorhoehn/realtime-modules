@@ -64,6 +64,11 @@ Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activ
 test: give each simulated person `useMeeting(meetingId, { socket: loop.socketFor(clientId, userId, name) })`.
 ui-components' `Video/MeetingRehearsal` story builds the whole stage this way.
 
+## Clocks
+
+Breakout deadlines are server time. Count down from
+`Date.now() + meeting.clockOffsetMs` (0.129.0); the ui-components wrappers do.
+
 ## Room chat
 
 Read `meeting.activeChat` with `useChat` (0.126.0): it is the meeting's chat in
