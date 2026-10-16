@@ -61,7 +61,7 @@ Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activ
 ## UI
 
 ui-components `/video`: `MeetingToolbar`, `MeetingStatusCluster`, `RecordingConsentNotice`
-(with `useConsentDismissal(\`${meetingId}:${recordingId}\`)` so a dismissal survives a reload),
+(with ``useConsentDismissal(`${meetingId}:${recordingId}`)`` so a dismissal survives a reload),
 `BreakoutRoomsPanel`, `BreakoutRoomBanner`, `RaisedHandBadge`, `RosterPanel` (`raisedHandsFirst`,
 `onLowerHand`, `onLowerAllHands`); `/integrations/realtime-modules`: `WrappedBreakoutRoomsPanel`,
 `WrappedBreakoutRoomBanner`, `meetingToolbarItems`, `meetingRosterProps`, `meetingHandPositions`.
