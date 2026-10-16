@@ -366,6 +366,15 @@ export class MeetingService {
             case 'breakout.configure': {
                 if (b.phase === 'open') throw new MeetingError('CONFLICT', 'Close the rooms before reconfiguring them');
                 const rooms = this.parseRooms(data.rooms, b.rooms);
+                // Absent keeps the current value; present but malformed is refused,
+                // as the event-catalog schema refuses it (0.131.0). These were
+                // silently ignored, so a typo'd mode left the old one in place.
+                if (data.mode !== undefined && parseMode(data.mode) === null) {
+                    throw new MeetingError('INVALID_PAYLOAD', 'mode must be "assigned" or "self-select"');
+                }
+                if (data.allowReturnToMain !== undefined && typeof data.allowReturnToMain !== 'boolean') {
+                    throw new MeetingError('INVALID_PAYLOAD', 'allowReturnToMain must be a boolean');
+                }
                 const mode = parseMode(data.mode) ?? b.mode;
                 const allowReturnToMain = typeof data.allowReturnToMain === 'boolean'
                     ? data.allowReturnToMain
@@ -670,7 +679,16 @@ export class MeetingService {
         if (raw.length > this.maxRooms) throw new MeetingError('INVALID_PAYLOAD', `At most ${this.maxRooms} rooms`);
         const seen = new Set<string>();
         return raw.map((r, i) => {
-            const rec = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+            if (!r || typeof r !== 'object' || Array.isArray(r)) {
+                throw new MeetingError('INVALID_PAYLOAD', `Room ${i + 1} must be an object`);
+            }
+            const rec = r as Record<string, unknown>;
+            if (rec.name !== undefined && rec.name !== null && typeof rec.name !== 'string') {
+                throw new MeetingError('INVALID_PAYLOAD', `Room ${i + 1}: name must be a string`);
+            }
+            if (rec.members !== undefined && (!Array.isArray(rec.members) || rec.members.some((m) => typeof m !== 'string'))) {
+                throw new MeetingError('INVALID_PAYLOAD', `Room ${i + 1}: members must be an array of userIds`);
+            }
             const name = typeof rec.name === 'string' && rec.name.trim() ? rec.name.trim().slice(0, MAX_ROOM_NAME_LENGTH) : `Room ${i + 1}`;
             let id = typeof rec.id === 'string' ? rec.id : '';
             if (id && !BREAKOUT_ROOM_ID_PATTERN.test(id)) throw new MeetingError('INVALID_PAYLOAD', `Invalid room id: ${id}`);

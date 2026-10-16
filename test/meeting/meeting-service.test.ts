@@ -506,3 +506,35 @@ describe('MeetingService — announcement history (0.130.0)', () => {
     });
 });
 
+describe('MeetingService — configure refuses what the catalog refuses (0.131.0)', () => {
+    it.each([
+        ['a misspelled mode', { rooms: [{ id: 'r1' }], mode: 'self_select' }],
+        ['a non-boolean allowReturnToMain', { rooms: [{ id: 'r1' }], allowReturnToMain: 'yes' }],
+        ['a room that is not an object', { rooms: ['Room 1'] }],
+        ['a room that is null', { rooms: [null] }],
+        ['a numeric room name', { rooms: [{ id: 'r1', name: 42 }] }],
+        ['members that are not userIds', { rooms: [{ id: 'r1', members: ['u-a', 7] }] }],
+    ])('refuses %s with INVALID_PAYLOAD and changes nothing', async (_why, payload) => {
+        const { router, svc } = await setup();
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'keep' }], mode: 'assigned' });
+        const before = (await svc.getState(M))!;
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, ...payload });
+        expect(router.last('c-org', 'error').error.code).toBe('INVALID_PAYLOAD');
+        const after = (await svc.getState(M))!;
+        expect(after.version).toBe(before.version);
+        expect(after.breakout.mode).toBe('assigned');
+        svc.dispose();
+    });
+
+    it('absent fields still keep their current values', async () => {
+        const { svc } = await setup();
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1' }], mode: 'assigned', allowReturnToMain: false });
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1', name: null }] });
+        const b = (await svc.getState(M))!.breakout;
+        expect(b.mode).toBe('assigned');
+        expect(b.settings.allowReturnToMain).toBe(false);
+        expect(b.rooms[0]!.name).toBe('Room 1');
+        svc.dispose();
+    });
+});
+

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## 0.131.0 — 2026-10-16
+
+### Changed
+
+- **`breakout.configure` refuses malformed fields** (`./meeting`) with
+  `INVALID_PAYLOAD` instead of ignoring them, matching the event-catalog
+  `meeting@1.0.0` schema: a `mode` other than `assigned`/`self-select`, a
+  non-boolean `allowReturnToMain`, a room draft that is not an object, a
+  non-string room `name`, or `members` that are not an array of userIds.
+  Absent fields still keep their current values. A misspelled mode used to
+  leave the old mode in place silently.
+
 ## 0.130.0 — 2026-10-16
 
 ### Added
