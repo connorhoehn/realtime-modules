@@ -79,13 +79,19 @@ export interface UseMeetingResult {
     assign(assignments: Record<string, string | null>): void;
     autoAssign(userIds: string[]): void;
     openRooms(roomIds?: string[]): void;
-    closeRooms(roomIds?: string[]): void;
+    /**
+     * Close some rooms (by id, at once) or all of them. With a server
+     * `closingGraceMs`, closing all starts the countdown (`breakout.closing`);
+     * `{ immediate: true }` or a second call closes at once.
+     */
+    closeRooms(roomIds?: string[], opts?: { immediate?: boolean }): void;
     /** Minutes are the common unit in the UI; pass null to clear. */
     setTimer(durationMs: number | null): void;
     broadcast(message: string): void;
     joinRoom(roomId: string): void;
     returnToMain(): void;
-    endBreakouts(): void;
+    /** End the session; the same countdown and `immediate` as `closeRooms()`. */
+    endBreakouts(opts?: { immediate?: boolean }): void;
     dismissAnnouncement(): void;
 }
 
@@ -165,7 +171,11 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
     const assign = useCallback((assignments: Record<string, string | null>) => act('breakout.assign', { assignments }), [act]);
     const autoAssign = useCallback((userIds: string[]) => act('breakout.autoAssign', { userIds }), [act]);
     const openRooms = useCallback((roomIds?: string[]) => act('breakout.open', roomIds ? { roomIds } : {}), [act]);
-    const closeRooms = useCallback((roomIds?: string[]) => act('breakout.close', roomIds ? { roomIds } : {}), [act]);
+    const closeRooms = useCallback(
+        (roomIds?: string[], o: { immediate?: boolean } = {}) =>
+            act('breakout.close', { ...(roomIds ? { roomIds } : {}), ...(o.immediate ? { immediate: true } : {}) }),
+        [act],
+    );
     const setTimer = useCallback((durationMs: number | null) => act('breakout.timer', { durationMs }), [act]);
     const broadcast = useCallback(
         (message: string) => act('breakout.broadcast', { message, ...(displayNameRef.current ? { displayName: displayNameRef.current } : {}) }),
@@ -173,7 +183,10 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
     );
     const joinRoom = useCallback((roomId: string) => act('breakout.join', { roomId }), [act]);
     const returnToMain = useCallback(() => act('breakout.leave'), [act]);
-    const endBreakouts = useCallback(() => act('breakout.end'), [act]);
+    const endBreakouts = useCallback(
+        (o: { immediate?: boolean } = {}) => act('breakout.end', o.immediate ? { immediate: true } : {}),
+        [act],
+    );
     const dismissAnnouncement = useCallback(() => dispatch({ kind: 'dismissAnnouncement' }), []);
     const clearError = useCallback(() => dispatch({ kind: 'clearError' }), []);
 

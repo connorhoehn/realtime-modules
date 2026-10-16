@@ -55,13 +55,23 @@ export interface UseMeetingResult {
     assign(assignments: Record<string, string | null>): void;
     autoAssign(userIds: string[]): void;
     openRooms(roomIds?: string[]): void;
-    closeRooms(roomIds?: string[]): void;
+    /**
+     * Close some rooms (by id, at once) or all of them. With a server
+     * `closingGraceMs`, closing all starts the countdown (`breakout.closing`);
+     * `{ immediate: true }` or a second call closes at once.
+     */
+    closeRooms(roomIds?: string[], opts?: {
+        immediate?: boolean;
+    }): void;
     /** Minutes are the common unit in the UI; pass null to clear. */
     setTimer(durationMs: number | null): void;
     broadcast(message: string): void;
     joinRoom(roomId: string): void;
     returnToMain(): void;
-    endBreakouts(): void;
+    /** End the session; the same countdown and `immediate` as `closeRooms()`. */
+    endBreakouts(opts?: {
+        immediate?: boolean;
+    }): void;
     dismissAnnouncement(): void;
 }
 export declare function useMeeting(meetingId: string | null, opts?: UseMeetingOptions): UseMeetingResult;

@@ -53,12 +53,12 @@ The `meeting` service owns coordination state only:
 | `breakout.rename` `{ meetingId, roomId, name }` | organizer | renames a room in any phase; names are 1–80 characters after trimming |
 | `breakout.assign` `{ meetingId, assignments: { [userId]: roomId \| null } }` | organizer | moves people between rooms |
 | `breakout.autoAssign` `{ meetingId, userIds }` | organizer | round-robins the listed people over the rooms |
-| `breakout.open` / `breakout.close` `{ meetingId, roomIds? }` | organizer | opens or closes some or all rooms; closing every room ends the session |
+| `breakout.open` / `breakout.close` `{ meetingId, roomIds?, immediate? }` | organizer | opens or closes some or all rooms; closing every room ends the session. With `closingGraceMs`, closing all (no `roomIds`) first sets `closing: true` and `endsAt` to the end of the grace; a second close or `immediate` closes at once, and an open cancels it |
 | `breakout.timer` `{ meetingId, durationMs \| null }` | organizer | sets or clears `endsAt`; at expiry the server closes every room |
 | `breakout.broadcast` `{ meetingId, message }` | organizer | sends an announcement into every room |
 | `breakout.join` `{ meetingId, roomId }` | self; allowed in `self-select` mode, or the room you were assigned | moves self |
 | `breakout.leave` `{ meetingId }` | self | returns self to the main meeting |
-| `breakout.end` `{ meetingId }` | organizer | closes every room and recalls everyone |
+| `breakout.end` `{ meetingId, immediate? }` | organizer | closes every room and recalls everyone, after the closing grace when one is configured |
 
 Server frames: `{ type: 'meeting', action: 'meeting.snapshot' | 'hands.changed' | 'breakout.changed' | 'breakout.announcement' | 'error', meetingId, data }`.
 Every change frame carries the full slice (hands or breakout), never a diff, so

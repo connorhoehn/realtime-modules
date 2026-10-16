@@ -6,6 +6,7 @@ export declare class MeetingService {
     private readonly isOrganizerHook;
     private readonly maxRooms;
     private readonly maxTimerMs;
+    private readonly closingGraceMs;
     private readonly now;
     private readonly onChange;
     private readonly clients;
@@ -51,6 +52,12 @@ export declare class MeetingService {
     /** Pure state transition. Returns null for a no-op (nothing is broadcast). */
     private apply;
     private commit;
+    /**
+     * The closing countdown for a whole-session close, or null to close now:
+     * no grace configured, rooms not open, `immediate`, or already closing
+     * (a second close means now).
+     */
+    private startClosing;
     private scheduleTimer;
     /** Close every room when the timer has run out (on the timer, and lazily on any access). */
     private expireIfDue;

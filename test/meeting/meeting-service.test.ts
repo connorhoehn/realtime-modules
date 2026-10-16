@@ -5,7 +5,7 @@ import { connectAs, fakeRouter, type FakeRouter } from './helpers';
 
 const M = 'orgiq:initiative:p-demo';
 
-async function setup(opts: { isOrganizer?: any; now?: () => number } = {}) {
+async function setup(opts: { isOrganizer?: any; now?: () => number; closingGraceMs?: number } = {}) {
     const router = fakeRouter();
     const store = new InMemoryMeetingStateStore();
     const svc = new MeetingService({ router, config: { store, ...opts } });
@@ -348,6 +348,90 @@ describe('MeetingService — breakout rooms', () => {
         await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
         await svc.handleAction('c-org', 'breakout.timer', { meetingId: M, durationMs: 5 * 60 * 60 * 1000 });
         expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
+        svc.dispose();
+    });
+});
+
+describe('MeetingService — closing grace (closingGraceMs)', () => {
+    const T0 = Date.parse('2026-10-16T12:00:00Z');
+    async function openWithGrace(graceMs = 30_000) {
+        jest.useFakeTimers();
+        jest.setSystemTime(T0);
+        const clock = { now: T0 };
+        const ctx = await setup({ now: () => clock.now, closingGraceMs: graceMs });
+        await ctx.svc.handleAction('c-org', 'breakout.configure', {
+            meetingId: M, mode: 'self-select', rooms: [{ id: 'r1', name: 'A', members: ['u-a'] }, { id: 'r2', name: 'B' }],
+        });
+        await ctx.svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        const advance = async (ms: number) => {
+            clock.now += ms;
+            jest.advanceTimersByTime(ms);
+            await jest.runOnlyPendingTimersAsync();
+            for (let i = 0; i < 10; i++) await Promise.resolve();
+        };
+        return { ...ctx, clock, advance };
+    }
+    afterEach(() => jest.useRealTimers());
+
+    it('closing all rooms counts down, refuses joins, then closes when the grace runs out', async () => {
+        const { router, svc, advance } = await openWithGrace();
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M });
+        let b = router.last('c-a', 'breakout.changed').data.breakout;
+        expect(b).toMatchObject({ phase: 'open', closing: true, endsAt: '2026-10-16T12:00:30.000Z' });
+        expect(b.rooms.every((r: any) => r.state === 'open')).toBe(true);
+        expect(svc.admitsBreakoutLobbySync('u-a', breakoutLobbyName(M, 'r1'))).toBe(true);
+        await svc.handleAction('c-b', 'breakout.join', { meetingId: M, roomId: 'r2' });
+        expect(err(router, 'c-b')).toMatchObject({ code: 'CONFLICT', message: 'The rooms are closing' });
+        await advance(30_000);
+        b = router.last('c-a', 'breakout.changed').data.breakout;
+        expect(b).toMatchObject({ phase: 'draft', closing: false, endsAt: null });
+        expect(svc.admitsBreakoutLobbySync('u-a', breakoutLobbyName(M, 'r1'))).toBe(false);
+        svc.dispose();
+    });
+
+    it('a second close, immediate: true, or end during the countdown closes at once', async () => {
+        const { svc } = await openWithGrace();
+        await svc.handleAction('c-org', 'breakout.end', { meetingId: M });
+        expect((await svc.getState(M))!.breakout.closing).toBe(true);
+        await svc.handleAction('c-org', 'breakout.end', { meetingId: M });
+        expect((await svc.getState(M))!.breakout).toMatchObject({ phase: 'draft', closing: false });
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M, immediate: true });
+        expect((await svc.getState(M))!.breakout).toMatchObject({ phase: 'draft', closing: false });
+        svc.dispose();
+    });
+
+    it('opening rooms cancels the countdown; a timer replaces it; closing some rooms keeps it', async () => {
+        const { svc } = await openWithGrace();
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M, roomIds: ['r2'] });
+        expect((await svc.getState(M))!.breakout).toMatchObject({ closing: true, endsAt: '2026-10-16T12:00:30.000Z' });
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M, roomIds: ['r2'] });
+        expect((await svc.getState(M))!.breakout).toMatchObject({ phase: 'open', closing: false, endsAt: null });
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.timer', { meetingId: M, durationMs: 120_000 });
+        expect((await svc.getState(M))!.breakout).toMatchObject({ closing: false, endsAt: '2026-10-16T12:02:00.000Z' });
+        svc.dispose();
+    });
+
+    it('a running timer that ends sooner than the grace keeps its deadline', async () => {
+        const { svc } = await openWithGrace(60_000);
+        await svc.handleAction('c-org', 'breakout.timer', { meetingId: M, durationMs: 10_000 });
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M });
+        expect((await svc.getState(M))!.breakout).toMatchObject({ closing: true, endsAt: '2026-10-16T12:00:10.000Z' });
+        svc.dispose();
+    });
+
+    it('without a grace (the default) closing is immediate; the grace is clamped to five minutes', async () => {
+        const plain = await setup();
+        await plain.svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1' }] });
+        await plain.svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        await plain.svc.handleAction('c-org', 'breakout.close', { meetingId: M });
+        expect((await plain.svc.getState(M))!.breakout).toMatchObject({ phase: 'draft', closing: false });
+        plain.svc.dispose();
+        const { svc } = await openWithGrace(60 * 60_000);
+        await svc.handleAction('c-org', 'breakout.close', { meetingId: M });
+        expect((await svc.getState(M))!.breakout.endsAt).toBe('2026-10-16T12:05:00.000Z');
         svc.dispose();
     });
 });

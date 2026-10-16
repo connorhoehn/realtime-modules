@@ -14,9 +14,9 @@ import { connectAs, fakeRouter } from '../../meeting/helpers';
 
 const M = 'orgiq:initiative:p-demo';
 
-function harness() {
+function harness(config: ConstructorParameters<typeof MeetingService>[0]['config'] = {}) {
   const router = fakeRouter();
-  const svc = new MeetingService({ router });
+  const svc = new MeetingService({ router, config });
   const handlers = new Map<string, Set<(m: GatewayMessage) => void>>();
   const sent = new Map<string, Record<string, any>[]>();
   // Deliver every frame the router records for a client to that client's hook.
@@ -124,6 +124,24 @@ describe('useMeeting', () => {
     expect(ana.result.current.breakout.phase).toBe('open');
     act(() => ana.result.current.renameRoom('r1', 'mine'));
     await waitFor(() => expect(ana.result.current.error?.code).toBe('FORBIDDEN'));
+    h.svc.dispose();
+  });
+
+  it('closing grace: closeRooms() counts down for everyone; closeRooms(undefined, { immediate }) closes now', async () => {
+    const h = harness({ closingGraceMs: 30_000 });
+    const org = (() => { const sk = h.socketFor('c-org', 'u-org', 'Olive'); return renderHook(() => useMeeting(M, { socket: sk })); })();
+    const ana = (() => { const sk = h.socketFor('c-a', 'u-a', 'Ana'); return renderHook(() => useMeeting(M, { socket: sk })); })();
+    await waitFor(() => expect(ana.result.current.ready).toBe(true));
+    act(() => org.result.current.configureBreakouts([{ id: 'r1', name: 'Room 1', members: ['u-a'] }]));
+    act(() => org.result.current.openRooms());
+    await waitFor(() => expect(ana.result.current.activeLobby).toBe(`${M}~breakout~r1`));
+    act(() => org.result.current.closeRooms());
+    await waitFor(() => expect(ana.result.current.breakout.closing).toBe(true));
+    expect(ana.result.current.breakout.endsAt).not.toBeNull();
+    expect(ana.result.current.activeLobby).toBe(`${M}~breakout~r1`);
+    act(() => org.result.current.closeRooms(undefined, { immediate: true }));
+    await waitFor(() => expect(ana.result.current.activeLobby).toBe(M));
+    expect(org.result.current.state.error).toBeNull();
     h.svc.dispose();
   });
 

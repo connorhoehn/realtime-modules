@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## 0.124.0 — 2026-10-16
+
+### Added
+
+- **Closing grace for breakout rooms** (`meeting({ closingGraceMs })`, default
+  0, clamped to 5 minutes). When an organizer closes all rooms or ends the
+  session while rooms are open, rooms stay open for the grace: the breakout
+  slice carries `closing: true` and `endsAt` is the deadline (an earlier
+  running timer keeps its own), new joins are refused with `CONFLICT`, and the
+  server's timer closes everything when it runs out. A second close/end, or
+  `immediate: true`, closes at once; opening rooms cancels the countdown and
+  setting a timer replaces it; closing rooms by id keeps it running. Clients
+  older than this see an ordinary timer counting down. `useMeeting`:
+  `closeRooms(roomIds?, { immediate })` and `endBreakouts({ immediate })`.
+
 ## 0.123.0 — 2026-10-16
 
 ### Added

@@ -52,6 +52,7 @@ exports.EMPTY_BREAKOUT = Object.freeze({
     rooms: [],
     returned: [],
     endsAt: null,
+    closing: false,
     announcement: null,
     settings: { allowReturnToMain: true },
 });

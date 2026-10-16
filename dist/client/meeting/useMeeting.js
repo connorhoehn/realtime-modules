@@ -80,12 +80,12 @@ function useMeeting(meetingId, opts = {}) {
     const assign = (0, react_1.useCallback)((assignments) => act('breakout.assign', { assignments }), [act]);
     const autoAssign = (0, react_1.useCallback)((userIds) => act('breakout.autoAssign', { userIds }), [act]);
     const openRooms = (0, react_1.useCallback)((roomIds) => act('breakout.open', roomIds ? { roomIds } : {}), [act]);
-    const closeRooms = (0, react_1.useCallback)((roomIds) => act('breakout.close', roomIds ? { roomIds } : {}), [act]);
+    const closeRooms = (0, react_1.useCallback)((roomIds, o = {}) => act('breakout.close', { ...(roomIds ? { roomIds } : {}), ...(o.immediate ? { immediate: true } : {}) }), [act]);
     const setTimer = (0, react_1.useCallback)((durationMs) => act('breakout.timer', { durationMs }), [act]);
     const broadcast = (0, react_1.useCallback)((message) => act('breakout.broadcast', { message, ...(displayNameRef.current ? { displayName: displayNameRef.current } : {}) }), [act]);
     const joinRoom = (0, react_1.useCallback)((roomId) => act('breakout.join', { roomId }), [act]);
     const returnToMain = (0, react_1.useCallback)(() => act('breakout.leave'), [act]);
-    const endBreakouts = (0, react_1.useCallback)(() => act('breakout.end'), [act]);
+    const endBreakouts = (0, react_1.useCallback)((o = {}) => act('breakout.end', o.immediate ? { immediate: true } : {}), [act]);
     const dismissAnnouncement = (0, react_1.useCallback)(() => dispatch({ kind: 'dismissAnnouncement' }), []);
     const clearError = (0, react_1.useCallback)(() => dispatch({ kind: 'clearError' }), []);
     const myRoomId = (0, lobby_1.breakoutRoomFor)(state.breakout, selfId);

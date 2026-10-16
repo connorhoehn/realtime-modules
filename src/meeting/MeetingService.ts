@@ -36,6 +36,7 @@ import {
 
 const DEFAULT_MAX_ROOMS = 50;
 const DEFAULT_MAX_TIMER_MS = 4 * 60 * 60 * 1000;
+const MAX_CLOSING_GRACE_MS = 5 * 60 * 1000;
 
 const NOOP_LOGGER: MeetingLogger = {
     debug: () => undefined,
@@ -70,6 +71,7 @@ export class MeetingService {
     private readonly isOrganizerHook: MeetingConfig['isOrganizer'] | null;
     private readonly maxRooms: number;
     private readonly maxTimerMs: number;
+    private readonly closingGraceMs: number;
     private readonly now: () => number;
     private readonly onChange: MeetingConfig['onChange'] | null;
 
@@ -91,6 +93,8 @@ export class MeetingService {
         this.isOrganizerHook = config.isOrganizer ?? null;
         this.maxRooms = config.maxRooms ?? DEFAULT_MAX_ROOMS;
         this.maxTimerMs = config.maxTimerMs ?? DEFAULT_MAX_TIMER_MS;
+        const grace = Number(config.closingGraceMs ?? 0);
+        this.closingGraceMs = Number.isFinite(grace) ? Math.min(MAX_CLOSING_GRACE_MS, Math.max(0, Math.round(grace))) : 0;
         this.now = config.now ?? Date.now;
         this.onChange = config.onChange ?? null;
     }
@@ -351,6 +355,7 @@ export class MeetingService {
                     rooms,
                     returned: [],
                     endsAt: null,
+                    closing: false,
                     announcement: null,
                     settings: { allowReturnToMain },
                 };
@@ -413,6 +418,10 @@ export class MeetingService {
             case 'breakout.close': {
                 if (b.rooms.length === 0) throw new MeetingError('CONFLICT', 'Create rooms first');
                 const ids = parseIds(data.roomIds);
+                if (verb === 'breakout.close' && !ids) {
+                    const graced = this.startClosing(b, data);
+                    if (graced) { next.breakout = graced; return { state: next, breakout: true }; }
+                }
                 const target: 'open' | 'closed' = verb === 'breakout.open' ? 'open' : 'closed';
                 const rooms = b.rooms.map((r) => (!ids || ids.has(r.id) ? { ...r, state: target } : r));
                 const anyOpen = rooms.some((r) => r.state === 'open');
@@ -421,7 +430,10 @@ export class MeetingService {
                     rooms,
                     phase: anyOpen ? 'open' : 'draft',
                     returned: anyOpen ? b.returned : [],
-                    endsAt: anyOpen ? b.endsAt : null,
+                    // Opening anything cancels a closing countdown (and the deadline it set).
+                    endsAt: anyOpen && !(verb === 'breakout.open' && b.closing) ? b.endsAt : null,
+                    // Closing a few rooms by id during the countdown keeps it running.
+                    closing: verb === 'breakout.close' && anyOpen ? b.closing === true : false,
                 };
                 return { state: next, breakout: true };
             }
@@ -429,14 +441,14 @@ export class MeetingService {
                 const raw = data.durationMs;
                 if (raw === null || raw === undefined) {
                     if (b.endsAt === null) return null;
-                    next.breakout = { ...b, endsAt: null };
+                    next.breakout = { ...b, endsAt: null, closing: false };
                     return { state: next, breakout: true };
                 }
                 if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0 || raw > this.maxTimerMs) {
                     throw new MeetingError('INVALID_PAYLOAD', `durationMs must be between 1 and ${this.maxTimerMs}`);
                 }
                 if (b.phase !== 'open') throw new MeetingError('CONFLICT', 'Open the rooms before starting a timer');
-                next.breakout = { ...b, endsAt: new Date(this.now() + raw).toISOString() };
+                next.breakout = { ...b, endsAt: new Date(this.now() + raw).toISOString(), closing: false };
                 return { state: next, breakout: true };
             }
             case 'breakout.broadcast': {
@@ -460,6 +472,7 @@ export class MeetingService {
                 const room = b.rooms.find((r) => r.id === roomId);
                 if (!room) throw new MeetingError('NOT_FOUND', 'No such room');
                 if (b.phase !== 'open' || room.state !== 'open') throw new MeetingError('CONFLICT', 'That room is closed');
+                if (b.closing) throw new MeetingError('CONFLICT', 'The rooms are closing');
                 const assigned = room.members.includes(userId);
                 // Organizers may visit any room.
                 if (b.mode === 'assigned' && !assigned && !isOrganizer) {
@@ -486,6 +499,8 @@ export class MeetingService {
             }
             case 'breakout.end': {
                 if (b.phase === 'none') return null;
+                const graced = this.startClosing(b, data);
+                if (graced) { next.breakout = graced; return { state: next, breakout: true }; }
                 next.breakout = closeAll(b);
                 return { state: next, breakout: true };
             }
@@ -526,6 +541,18 @@ export class MeetingService {
                 this.logger.warn('meeting onChange threw', { error: String(err) });
             }
         }
+    }
+
+    /**
+     * The closing countdown for a whole-session close, or null to close now:
+     * no grace configured, rooms not open, `immediate`, or already closing
+     * (a second close means now).
+     */
+    private startClosing(b: BreakoutState, data: Record<string, unknown>): BreakoutState | null {
+        if (this.closingGraceMs <= 0 || b.phase !== 'open' || b.closing || data.immediate === true) return null;
+        const graceEnd = this.now() + this.closingGraceMs;
+        const current = b.endsAt ? Date.parse(b.endsAt) : Infinity;
+        return { ...b, closing: true, endsAt: new Date(Math.min(current, graceEnd)).toISOString() };
     }
 
     // ── timers ────────────────────────────────────────────────────────────────
@@ -725,6 +752,7 @@ function closeAll(b: BreakoutState): BreakoutState {
         rooms: b.rooms.map((r) => ({ ...r, state: 'closed' as const })),
         returned: [],
         endsAt: null,
+        closing: false,
     };
 }
 

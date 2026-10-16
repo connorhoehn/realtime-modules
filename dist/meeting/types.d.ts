@@ -50,6 +50,12 @@ export interface BreakoutState {
     returned: string[];
     /** ISO-8601 when every room closes, or null for no timer. */
     endsAt: string | null;
+    /**
+     * True while rooms are in the closing grace period (0.124.0): an organizer
+     * closed or ended the session, `endsAt` is the end of the grace, and joins
+     * are refused. Absent on older servers; read it as false.
+     */
+    closing?: boolean;
     announcement: BreakoutAnnouncement | null;
     settings: BreakoutSettings;
 }
@@ -162,6 +168,16 @@ export interface MeetingConfig {
     maxRooms?: number;
     /** Max breakout timer. Default 4 hours. */
     maxTimerMs?: number;
+    /**
+     * Grace before rooms close when an organizer closes all rooms or ends the
+     * session while rooms are open, so people can finish a sentence (Teams'
+     * countdown). During it `breakout.closing` is true, `endsAt` counts down
+     * and joins are refused. Default 0: close at once. Clamped to 0–5 min.
+     * A second close/end, or `immediate: true`, closes at once; opening rooms
+     * or setting a timer cancels it. Closing some rooms by id and the timer
+     * running out still close at once.
+     */
+    closingGraceMs?: number;
     /** Clock, for tests. */
     now?: () => number;
     /** Observes every accepted mutation (metrics, audit). Never awaited; a throw is logged. */

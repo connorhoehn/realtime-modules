@@ -21,6 +21,7 @@ const realtime = attachRealtime(httpServer, {
 
 - The meetingId **is** the main call's lobby name.
 - Without `isOrganizer`, the meeting's first subscriber is its organizer. Supply the hook in a product.
+- `closingGraceMs` (e.g. `30_000`) gives people a countdown before rooms close when an organizer closes all rooms or ends the session (`breakout.closing` is true, `endsAt` is the deadline, joins are refused). A second close, or `closeRooms(undefined, { immediate: true })`, closes at once; opening rooms cancels it. Default 0.
 - A breakout room is an ordinary LVS hangout at `breakoutLobbyName(meetingId, roomId)`. Make the lobby guard ask the service:
 
 ```ts
