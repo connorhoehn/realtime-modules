@@ -12,7 +12,7 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | Repo | Path | What is ours |
 |---|---|---|
 | realtime-modules | `~/Projects/realtime-modules` | `src/meeting/**`, `src/client/meeting/**`, `test/meeting/**`, `test/client/meeting/**`, `docs/design/meeting-rooms*.md`, `docs/recipes/meetings.md` |
-| ui-components | `~/Projects/ui-components` | `src/components/video/{Meeting*,Breakout*,RaisedHandBadge,RecordingConsentNotice}*`, `src/integrations/realtime/meeting.tsx`, the hand props on `ParticipantTile`/`CallTileRow`/`RosterPanel`/`HangoutGrid`/`HangoutSpotlight`, `handFor` on `ConversationCallDock`/`WrappedLVSHangoutLayout` |
+| ui-components | `~/Projects/ui-components` | `src/components/video/{Meeting*,Breakout*,RaisedHandBadge,RecordingConsentNotice}*`, and for goal G7/G8 only `ReactionOverlay.tsx` (`tone`) and `forms/InlineEditableText.tsx` (focus restore), `src/integrations/realtime/meeting.tsx`, the hand props on `ParticipantTile`/`CallTileRow`/`RosterPanel`/`HangoutGrid`/`HangoutSpotlight`, `handFor` on `ConversationCallDock`/`WrappedLVSHangoutLayout` |
 
 - Another session works in these repos and in aws-agentcore. Never edit or
   revert anything outside the table, never touch a main checkout's
@@ -129,6 +129,10 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 
 ## Backlog (top first)
 
+The definition of done is `meeting-rooms-goal.md` (G1–G10); these items track it.
+
+- [ ] **G6 Fictional demo content.** Replace names copied from the reference screenshot in stories and tests.
+
 - [x] **H. Toolbar keyboard roving.** — ui-components 2.458.2 (`useRovingToolbar`; one tab stop, arrows wrap, Home/End, disabled skipped, chevrons reachable). `MeetingToolbar` declares `role="toolbar"` but Tab walks every button; arrow keys should move focus (Home/End, wrap) per WAI-ARIA. ui-components has `shared/RovingToolbar` — reuse it, test with fireEvent keyDown.
 - [x] **Follow the active lobby.** — realtime-modules 0.122.0 (`useFollowMeetingLobby`, 8 tests: order, no overlap, latest wins, debounce, unrelated call, lagging host, failure). Every app must write "when `activeLobby` changes, leave the call and join the new lobby". Add `useFollowMeetingLobby(activeLobby, { leave, join, debounceMs })` to `./client/meeting` with tests (no double join, no join while leaving, ignores the first render).
 - [x] **Rename and add rooms while open.** — realtime-modules 0.123.0 (`breakout.addRoom`/`breakout.rename`, `addRoom`/`renameRoom`, 4 tests) + ui-components 2.459.0 (`onRenameRoom` via `InlineEditableText`, `onAddRoom`, `maxRooms`; optional on `RMMeetingSource` for older pins). Teams allows both. Server verbs `breakout.rename { roomId, name }` and `breakout.addRoom { name? }` (organizer, any phase, name limits); `useMeeting` methods; inline rename in `BreakoutRoomsPanel` (organizer, via `forms/Input`) and an Add room button; wrapper bindings.
@@ -138,11 +142,16 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 - [x] **Consent remembered.** — ui-components 2.462.0 (`useConsentDismissal(key, { storage })`, session by default, guarded storage with a memory fallback; 3 tests). `RecordingConsentNotice` dismissal per meeting+recording session via a small `useConsentDismissal(key)` helper (try/catch storage).
 - [x] **React button.** — ui-components 2.463.0 (`MeetingToolbarItem.popover(close)`, `popoverLabel`, `popoverPlacement`; `InlinePopover`, never folds into More; 3 tests). Toolbar items gain an optional `popover` slot so React can host the existing `ReactionPickerButton`/`ReactionPicker` instead of a menu.
 - [x] **Shared store.** — realtime-modules 0.125.0 (`RedisMeetingStateStore`: Lua compare-and-set on `version` + publish; service retries a lost write up to 5×, never deletes shared idle state, `watch` keeps lobby mirrors and timers on every following replica — the CAS lets exactly one close commit; 8 tests, 5 fail without the change). `RedisMeetingStateStore` (injected client like `RedisRoomStateStore`) with a version compare-and-set, plus one timer owner across replicas. Needed before any multi-replica deploy.
-- [ ] **Brand color.** (user, 2026-10-16) Our highlights use the library `accent` (fixed purple); the portal points `--color-primary` at the tenant brand. Move the toolbar active underline, pressed state, focus ring and the consent privacy link to the `primary` tokens; keep semantic warning (hands) and danger (closing). Add a ratchet test that fails on `accent`, raw palette classes or `white` in our files, and stories under a teal brand override.
-- [ ] **Library primitives, not hand-drawn bits.** The `×` close glyphs (banner, consent, pane) become the library close button; the consent card's drawn radio, the hand badge's `text-white` and raw sizes (`text-[10px]`, `font-semibold`) move to `T` and tokens.
-- [ ] **Announcements in the meeting chat.** (user, 2026-10-16: "this send box … would need to be in the main chat dialogue") Remove the pane's announcement box (keep `onAnnounce` for old pins, unused by default); organizers send from the chat composer with a "To: all rooms" target, and announcements render as marked messages in the main and room chats, merged client-side from the existing `breakout.announce` frame. The banner keeps the latest announcement.
+- [ ] **G1 Brand color.** (user, 2026-10-16) Our highlights use the library `accent` (fixed purple); the portal points `--color-primary` at the tenant brand. Move the toolbar active underline, pressed state, focus ring and the consent privacy link to the `primary` tokens; keep semantic warning (hands) and danger (closing). Add a ratchet test that fails on `accent`, raw palette classes or `white` in our files, and stories under a teal brand override.
+- [ ] **G2 Library primitives, not hand-drawn bits.** The `×` close glyphs (banner, consent, pane) become the library close button; the consent card's drawn radio, the hand badge's `text-white` and raw sizes (`text-[10px]`, `font-semibold`) move to `T` and tokens.
+- [ ] **G3 Announcements in the meeting chat.** (user, 2026-10-16: "this send box … would need to be in the main chat dialogue") Remove the pane's announcement box (keep `onAnnounce` for old pins, unused by default); organizers send from the chat composer with a "To: all rooms" target, and announcements render as marked messages in the main and room chats, merged client-side from the existing `breakout.announce` frame. The banner keeps the latest announcement.
 - [ ] **Brand visual check.** Every story in light and dark under the default and a teal brand; compare.
-- [ ] **event-catalog declarations** for the `meeting` frames (`~/Projects/event-catalog` if present, else `blocked:` with a note), then `satisfies` annotations in `useMeeting`.
+- [ ] **G5 React binding.** `meetingToolbarItems({ onReact })`.
+- [ ] **G7 ReactionPicker surface tone.**
+- [ ] **G4 Room chat channel.** `meetingChatChannel(meetingId, roomId?)`.
+- [ ] **G8 Rename focus restore** (`InlineEditableText`).
+- [ ] **G9 Organizer verdict across replicas.**
+- [ ] **G10 event-catalog declarations** for the `meeting` frames (`~/Projects/event-catalog` if present, else `blocked:` with a note), then `satisfies` annotations in `useMeeting`.
 - [ ] blocked: **App wiring** (aws-agentcore portal/BFF) — the user said not yet.
 
 ## Tick log
