@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## 0.126.0 — 2026-10-16
+
+### Added
+
+- **A chat channel per breakout room** (`./meeting`, `./client/meeting`).
+  `meetingChatChannel(meetingId, roomId?)` names the main meeting's chat (the
+  meeting id) or a room's, and `activeMeetingChat(meetingId, breakout,
+  userId)` is the one a participant should read now. A room's chat is named
+  exactly like its media lobby, so the guard a host runs for breakout lobbies
+  (`admitsBreakoutLobby` / `admitsBreakoutLobbySync`) also decides who reads
+  and posts in the room's chat. `useMeeting` returns `activeChat` beside
+  `activeLobby`.
+
 ## 0.125.0 — 2026-10-16
 
 ### Added

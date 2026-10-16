@@ -1,4 +1,4 @@
-import { activeMeetingLobby, breakoutLobbyName, breakoutRoomFor, isBreakoutLobby, parseBreakoutLobby } from '../../src/meeting/lobby';
+import { activeMeetingChat, activeMeetingLobby, breakoutLobbyName, meetingChatChannel, breakoutRoomFor, isBreakoutLobby, parseBreakoutLobby } from '../../src/meeting/lobby';
 import { EMPTY_BREAKOUT, type BreakoutState } from '../../src/meeting/types';
 
 const open: BreakoutState = {
@@ -35,3 +35,21 @@ describe('meeting lobby names', () => {
         expect(breakoutRoomFor(open, null)).toBeNull();
     });
 });
+
+describe('room chat channels (0.126.0)', () => {
+    it('a room chat is named like its lobby, so one guard covers media and chat', () => {
+        expect(meetingChatChannel('m:1')).toBe('m:1');
+        expect(meetingChatChannel('m:1', null)).toBe('m:1');
+        expect(meetingChatChannel('m:1', 'r1')).toBe(breakoutLobbyName('m:1', 'r1'));
+        expect(parseBreakoutLobby(meetingChatChannel('m:1', 'r1'))).toEqual({ meetingId: 'm:1', roomId: 'r1' });
+    });
+
+    it('activeMeetingChat follows the member into their open room and back', () => {
+        expect(activeMeetingChat('m:1', open, 'u-a')).toBe('m:1~breakout~r1');
+        expect(activeMeetingChat('m:1', open, 'u-b')).toBe('m:1'); // their room is closed
+        expect(activeMeetingChat('m:1', { ...open, returned: ['u-a'] }, 'u-a')).toBe('m:1');
+        expect(activeMeetingChat('m:1', open, null)).toBe('m:1');
+        expect(activeMeetingChat('m:1', open, 'u-a')).toBe(activeMeetingLobby('m:1', open, 'u-a'));
+    });
+});
+

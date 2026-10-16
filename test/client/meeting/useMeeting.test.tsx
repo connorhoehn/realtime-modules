@@ -91,6 +91,8 @@ describe('useMeeting', () => {
     act(() => org.result.current.openRooms());
     await waitFor(() => expect(ana.result.current.myRoom?.id).toBe('r1'));
     expect(ana.result.current.activeLobby).toBe(`${M}~breakout~r1`);
+    expect(ana.result.current.activeChat).toBe(`${M}~breakout~r1`);
+    expect(org.result.current.activeChat).toBe(M);
     expect(org.result.current.activeLobby).toBe(M);
 
     act(() => org.result.current.broadcast('Wrap up in two minutes'));

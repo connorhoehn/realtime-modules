@@ -40,6 +40,11 @@ export interface UseMeetingResult {
     myRoom: BreakoutRoom | null;
     /** The lobby your media should be in: your room's, or the meeting's. */
     activeLobby: string | null;
+    /**
+     * The chat channel this user should read right now: their open room's, or
+     * the meeting's (0.126.0). Hand it to `useChat`; it moves with `activeLobby`.
+     */
+    activeChat: string | null;
     configureBreakouts(rooms: BreakoutRoomDraft[], opts?: {
         mode?: BreakoutMode;
         allowReturnToMain?: boolean;

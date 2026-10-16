@@ -14,10 +14,12 @@ export { MEETING_CAS_SCRIPT, RedisMeetingStateStore } from './RedisMeetingStateS
 export type { MeetingStateRedis, MeetingStateSubscriber, RedisMeetingStateStoreOptions } from './RedisMeetingStateStore';
 export {
     BREAKOUT_LOBBY_SEPARATOR,
+    activeMeetingChat,
     activeMeetingLobby,
     breakoutLobbyName,
     breakoutRoomFor,
     isBreakoutLobby,
+    meetingChatChannel,
     parseBreakoutLobby,
 } from './lobby';
 export type { ParsedBreakoutLobby } from './lobby';

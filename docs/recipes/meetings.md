@@ -58,6 +58,14 @@ useFollowMeetingLobby(meeting.activeLobby, {
 verbs (`joinRoom`, `returnToMain`), `isOrganizer`, `error`, and the standing `state.announcement`.
 Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activeMeetingLobby`, `meetingOfLobby`.
 
+## Room chat
+
+Read `meeting.activeChat` with `useChat` (0.126.0): it is the meeting's chat in
+the main meeting and the room's chat inside a room, and it moves when
+`activeLobby` does. Room chat channels are named like room lobbies
+(`meetingChatChannel(meetingId, roomId)`), so route chat channel checks through
+the same `admitsBreakoutLobby` guard as lobbies.
+
 ## UI
 
 ui-components `/video`: `MeetingToolbar` (an item's `popover: (close) => <ReactionPicker … />` makes React

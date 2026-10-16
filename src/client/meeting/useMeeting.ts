@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
 import type { BreakoutMode, BreakoutRoom, BreakoutState, RaisedHand } from '../../meeting/types';
-import { activeMeetingLobby, breakoutRoomFor } from '../../meeting/lobby';
+import { activeMeetingChat, activeMeetingLobby, breakoutRoomFor } from '../../meeting/lobby';
 import {
     INITIAL_MEETING_STATE,
     handPosition,
@@ -70,6 +70,11 @@ export interface UseMeetingResult {
     myRoom: BreakoutRoom | null;
     /** The lobby your media should be in: your room's, or the meeting's. */
     activeLobby: string | null;
+    /**
+     * The chat channel this user should read right now: their open room's, or
+     * the meeting's (0.126.0). Hand it to `useChat`; it moves with `activeLobby`.
+     */
+    activeChat: string | null;
     configureBreakouts(rooms: BreakoutRoomDraft[], opts?: { mode?: BreakoutMode; allowReturnToMain?: boolean }): void;
     /** Adds one closed room in any phase (default name `Room N`); open it with `openRooms([id])`. */
     addRoom(opts?: { id?: string; name?: string }): void;
@@ -196,6 +201,7 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
         [myRoomId, state.breakout.rooms],
     );
     const activeLobby = enabled && meetingId ? activeMeetingLobby(meetingId, state.breakout, selfId) : null;
+    const activeChat = enabled && meetingId ? activeMeetingChat(meetingId, state.breakout, selfId) : null;
 
     return {
         state,
@@ -212,6 +218,7 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
         breakout: state.breakout,
         myRoom,
         activeLobby,
+        activeChat,
         configureBreakouts,
         addRoom,
         renameRoom,

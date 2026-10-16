@@ -5,7 +5,7 @@
 // Raised hands and breakout rooms for a call on LVS — the client half of the
 // `meeting` service (`./meeting`). Design: docs/design/meeting-rooms.md.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseBreakoutLobby = exports.isBreakoutLobby = exports.breakoutRoomFor = exports.breakoutLobbyName = exports.activeMeetingLobby = exports.BREAKOUT_LOBBY_SEPARATOR = exports.unassignedUsers = exports.meetingReducer = exports.handPosition = exports.breakoutRemainingMs = exports.INITIAL_MEETING_STATE = exports.meetingOfLobby = exports.useFollowMeetingLobby = exports.useMeeting = void 0;
+exports.parseBreakoutLobby = exports.meetingChatChannel = exports.isBreakoutLobby = exports.breakoutRoomFor = exports.breakoutLobbyName = exports.activeMeetingLobby = exports.activeMeetingChat = exports.BREAKOUT_LOBBY_SEPARATOR = exports.unassignedUsers = exports.meetingReducer = exports.handPosition = exports.breakoutRemainingMs = exports.INITIAL_MEETING_STATE = exports.meetingOfLobby = exports.useFollowMeetingLobby = exports.useMeeting = void 0;
 var useMeeting_1 = require("./useMeeting");
 Object.defineProperty(exports, "useMeeting", { enumerable: true, get: function () { return useMeeting_1.useMeeting; } });
 var useFollowMeetingLobby_1 = require("./useFollowMeetingLobby");
@@ -19,9 +19,11 @@ Object.defineProperty(exports, "meetingReducer", { enumerable: true, get: functi
 Object.defineProperty(exports, "unassignedUsers", { enumerable: true, get: function () { return reducer_1.unassignedUsers; } });
 var lobby_1 = require("../../meeting/lobby");
 Object.defineProperty(exports, "BREAKOUT_LOBBY_SEPARATOR", { enumerable: true, get: function () { return lobby_1.BREAKOUT_LOBBY_SEPARATOR; } });
+Object.defineProperty(exports, "activeMeetingChat", { enumerable: true, get: function () { return lobby_1.activeMeetingChat; } });
 Object.defineProperty(exports, "activeMeetingLobby", { enumerable: true, get: function () { return lobby_1.activeMeetingLobby; } });
 Object.defineProperty(exports, "breakoutLobbyName", { enumerable: true, get: function () { return lobby_1.breakoutLobbyName; } });
 Object.defineProperty(exports, "breakoutRoomFor", { enumerable: true, get: function () { return lobby_1.breakoutRoomFor; } });
 Object.defineProperty(exports, "isBreakoutLobby", { enumerable: true, get: function () { return lobby_1.isBreakoutLobby; } });
+Object.defineProperty(exports, "meetingChatChannel", { enumerable: true, get: function () { return lobby_1.meetingChatChannel; } });
 Object.defineProperty(exports, "parseBreakoutLobby", { enumerable: true, get: function () { return lobby_1.parseBreakoutLobby; } });
 //# sourceMappingURL=index.js.map

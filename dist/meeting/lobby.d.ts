@@ -16,4 +16,18 @@ export declare function breakoutRoomFor(breakout: BreakoutState, userId: string 
  * or the meeting's own. Hand this to useLVSHangout / the conversation call.
  */
 export declare function activeMeetingLobby(meetingId: string, breakout: BreakoutState, userId: string | null | undefined): string;
+/**
+ * The chat channel for the main meeting or one of its rooms (0.126.0). A
+ * room's chat is named exactly like its media lobby, so the guard a host
+ * already runs for breakout lobbies (`admitsBreakoutLobby` /
+ * `admitsBreakoutLobbySync`) answers for the room's chat too: members and
+ * organizers read and post, everyone else is refused. The main meeting's chat
+ * is the meeting id itself.
+ */
+export declare function meetingChatChannel(meetingId: string, roomId?: string | null): string;
+/**
+ * The chat a participant should be reading right now: their open room's, or
+ * the meeting's. Moves with them exactly as `activeMeetingLobby` moves media.
+ */
+export declare function activeMeetingChat(meetingId: string, breakout: BreakoutState, userId: string | null | undefined): string;
 //# sourceMappingURL=lobby.d.ts.map

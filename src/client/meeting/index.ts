@@ -31,10 +31,12 @@ export {
 
 export {
     BREAKOUT_LOBBY_SEPARATOR,
+    activeMeetingChat,
     activeMeetingLobby,
     breakoutLobbyName,
     breakoutRoomFor,
     isBreakoutLobby,
+    meetingChatChannel,
     parseBreakoutLobby,
     type ParsedBreakoutLobby,
 } from '../../meeting/lobby';

@@ -54,3 +54,27 @@ export function activeMeetingLobby(
     const roomId = breakoutRoomFor(breakout, userId);
     return roomId ? breakoutLobbyName(meetingId, roomId) : meetingId;
 }
+
+/**
+ * The chat channel for the main meeting or one of its rooms (0.126.0). A
+ * room's chat is named exactly like its media lobby, so the guard a host
+ * already runs for breakout lobbies (`admitsBreakoutLobby` /
+ * `admitsBreakoutLobbySync`) answers for the room's chat too: members and
+ * organizers read and post, everyone else is refused. The main meeting's chat
+ * is the meeting id itself.
+ */
+export function meetingChatChannel(meetingId: string, roomId?: string | null): string {
+    return roomId ? breakoutLobbyName(meetingId, roomId) : meetingId;
+}
+
+/**
+ * The chat a participant should be reading right now: their open room's, or
+ * the meeting's. Moves with them exactly as `activeMeetingLobby` moves media.
+ */
+export function activeMeetingChat(
+    meetingId: string,
+    breakout: BreakoutState,
+    userId: string | null | undefined,
+): string {
+    return meetingChatChannel(meetingId, breakoutRoomFor(breakout, userId));
+}

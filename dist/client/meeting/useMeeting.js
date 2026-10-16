@@ -91,6 +91,7 @@ function useMeeting(meetingId, opts = {}) {
     const myRoomId = (0, lobby_1.breakoutRoomFor)(state.breakout, selfId);
     const myRoom = (0, react_1.useMemo)(() => (myRoomId ? state.breakout.rooms.find((r) => r.id === myRoomId) ?? null : null), [myRoomId, state.breakout.rooms]);
     const activeLobby = enabled && meetingId ? (0, lobby_1.activeMeetingLobby)(meetingId, state.breakout, selfId) : null;
+    const activeChat = enabled && meetingId ? (0, lobby_1.activeMeetingChat)(meetingId, state.breakout, selfId) : null;
     return {
         state,
         ready: state.ready,
@@ -106,6 +107,7 @@ function useMeeting(meetingId, opts = {}) {
         breakout: state.breakout,
         myRoom,
         activeLobby,
+        activeChat,
         configureBreakouts,
         addRoom,
         renameRoom,
