@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## 0.122.1 — 2026-10-16
+
+### Fixed
+
+- **`useFollowMeetingLobby` no longer rejoins a call for someone who left.**
+  Unmounting the hook (the user navigated away) or setting `enabled: false`
+  while a move was in flight still ran `join` once `leave` settled, putting the
+  person back into the meeting. The loop now re-checks both before every move
+  and after the leave. Found by the meeting audit loop (review question C).
+
 ## 0.122.0 — 2026-10-16
 
 ### Added

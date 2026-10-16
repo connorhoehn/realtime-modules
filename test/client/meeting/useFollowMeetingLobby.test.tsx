@@ -132,4 +132,36 @@ describe('useFollowMeetingLobby', () => {
     await waitFor(() => expect(join).toHaveBeenLastCalledWith(R2));
     expect(result.current.error).toBeNull();
   });
+
+  it('unmounting mid-move stops after the leave: no join for someone who left (0.122.1)', async () => {
+    const gate = deferred();
+    const leave = jest.fn(async () => { await gate.promise; });
+    const join = jest.fn(async (_lobby: string) => {});
+    const { rerender, unmount } = renderHook(
+      (p: { active: string; current: string }) => useFollowMeetingLobby(p.active, { currentLobby: p.current, leave, join, debounceMs: 0 }),
+      { initialProps: { active: M, current: M } },
+    );
+    rerender({ active: R1, current: M });
+    await waitFor(() => expect(leave).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => { gate.resolve(); });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(join).not.toHaveBeenCalled();
+  });
+
+  it('disabling mid-move stops after the leave too (0.122.1)', async () => {
+    const gate = deferred();
+    const leave = jest.fn(async () => { await gate.promise; });
+    const join = jest.fn(async (_lobby: string) => {});
+    const { rerender } = renderHook(
+      (p: { active: string; current: string; enabled: boolean }) => useFollowMeetingLobby(p.active, { currentLobby: p.current, leave, join, debounceMs: 0, enabled: p.enabled }),
+      { initialProps: { active: M, current: M, enabled: true } },
+    );
+    rerender({ active: R1, current: M, enabled: true });
+    await waitFor(() => expect(leave).toHaveBeenCalledTimes(1));
+    rerender({ active: R1, current: M, enabled: false });
+    await act(async () => { gate.resolve(); });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(join).not.toHaveBeenCalled();
+  });
 });

@@ -20,6 +20,8 @@
 //     reopen" does not bounce media through the main meeting.
 //   - A failed leave/join stops following and is reported in `error` until the
 //     next target change.
+//   - Unmounting, or `enabled` going false, mid-move stops after the leave:
+//     the join never runs (0.122.1).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.meetingOfLobby = meetingOfLobby;
 exports.useFollowMeetingLobby = useFollowMeetingLobby;
@@ -47,6 +49,8 @@ function useFollowMeetingLobby(activeLobby, opts) {
     const runningRef = (0, react_1.useRef)(false);
     const failedRef = (0, react_1.useRef)(false);
     const aliveRef = (0, react_1.useRef)(true);
+    const enabledRef = (0, react_1.useRef)(enabled);
+    enabledRef.current = enabled;
     (0, react_1.useEffect)(() => {
         aliveRef.current = true;
         return () => { aliveRef.current = false; };
@@ -64,6 +68,9 @@ function useFollowMeetingLobby(activeLobby, opts) {
         runningRef.current = true;
         try {
             for (;;) {
+                // Unmounted (the user left the page) or held: never start a move.
+                if (!aliveRef.current || !enabledRef.current)
+                    break;
                 const want = wantRef.current;
                 const here = where();
                 if (!want || !here || want === here || failedRef.current)
@@ -76,6 +83,11 @@ function useFollowMeetingLobby(activeLobby, opts) {
                 }
                 try {
                     await leaveRef.current();
+                    // Re-check after the leave settles: joining a call for
+                    // someone who has gone, or who paused following, would put
+                    // them back in a meeting they walked away from.
+                    if (!aliveRef.current || !enabledRef.current)
+                        break;
                     await joinRef.current(want);
                     landedFromRef.current = currentRef.current;
                     landedRef.current = want;

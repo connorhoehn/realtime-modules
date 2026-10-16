@@ -114,6 +114,7 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | 2026-10-15 | D: a meetingId containing `~breakout~` parsed as another meeting's breakout lobby | 0.121.1: refused with `INVALID_PAYLOAD` |
 | 2026-10-15 | F: `CallTileRow` (the dock the app renders) dropped `handRaised` at every tile site; no way to feed hands to `ConversationCallDock` or `WrappedLVSHangoutLayout` | ui-components 2.458.1: hands on all variants with the position in the accessible name; `handFor` on both wrappers |
 | 2026-10-15 | Organizer could not delete drafted rooms to start over | 2.458.1: `onDeleteRooms` / Delete rooms in draft; End only while open |
+| 2026-10-16 | C: `useFollowMeetingLobby` still joined after unmount or `enabled: false` mid-move, rejoining a call the user had left | realtime-modules 0.122.1: re-check before each move and after the leave; 2 regression tests (fail without the fix) |
 
 ## Backlog (top first)
 
@@ -136,3 +137,4 @@ Reference picture: `/Users/connorhoehn/Downloads/teams-snapshot-with-rooms.png`.
 | 2026-10-15 sweep | rm meeting 45/45 (full 2423 pass; `work-graph/streamService` flaky 1/3, not ours), ui affected 69/69 | B, C, D, F findings (above) | light, 4 stories, matches reference | 0.121.1 / 2.458.1 |
 | 2026-10-16 00:10 | rm meeting 45/45, types ok; ui targeted 61/61, types ok; full 11142 pass | no changes to our code since last tick → A–J ok; 15/15 verbs have a server test and a hook method; `UseMeetingResult → RMMeetingSource` compiles | light + dark, 5 stories, clean (first dark attempt was a harness artefact, now documented) | 2.458.2 toolbar roving; dark pass closed |
 | 2026-10-16 01:10 | rm meeting 45/45, ui 64/64, types ok | changed since last tick: toolbar roving → A–F n/a, G ok (shared hook), H fixed by it, I ok (no RM runtime import), J ok | light + dark, 5 stories clean; live toolbar has 1 tab stop; draft story shows Delete rooms | 0.122.0 useFollowMeetingLobby |
+| 2026-10-16 02:10 | rm meeting 53/53, ui 64/64, types ok | changed: useFollowMeetingLobby → C finding (join after unmount/disable); A, B, D, E, F n/a; G–J ok | skipped (no UI change; visual done today) | 0.122.1 fix |
