@@ -18,6 +18,8 @@ export type MeetingAction =
     | 'hand.lower'
     | 'hand.lowerAll'
     | 'breakout.configure'
+    | 'breakout.addRoom'
+    | 'breakout.rename'
     | 'breakout.assign'
     | 'breakout.autoAssign'
     | 'breakout.open'
@@ -35,6 +37,8 @@ export const MEETING_ACTIONS: ReadonlySet<MeetingAction> = new Set<MeetingAction
     'hand.lower',
     'hand.lowerAll',
     'breakout.configure',
+    'breakout.addRoom',
+    'breakout.rename',
     'breakout.assign',
     'breakout.autoAssign',
     'breakout.open',
@@ -50,6 +54,8 @@ export const MEETING_ACTIONS: ReadonlySet<MeetingAction> = new Set<MeetingAction
 export const ORGANIZER_ACTIONS: ReadonlySet<MeetingAction> = new Set<MeetingAction>([
     'hand.lowerAll',
     'breakout.configure',
+    'breakout.addRoom',
+    'breakout.rename',
     'breakout.assign',
     'breakout.autoAssign',
     'breakout.open',

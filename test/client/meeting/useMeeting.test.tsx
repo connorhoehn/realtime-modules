@@ -109,6 +109,24 @@ describe('useMeeting', () => {
     h.svc.dispose();
   });
 
+  it('addRoom and renameRoom while rooms are open reach every client', async () => {
+    const h = harness();
+    const org = (() => { const sk = h.socketFor('c-org', 'u-org', 'Olive'); return renderHook(() => useMeeting(M, { socket: sk })); })();
+    const ana = (() => { const sk = h.socketFor('c-a', 'u-a', 'Ana'); return renderHook(() => useMeeting(M, { socket: sk })); })();
+    await waitFor(() => expect(ana.result.current.ready).toBe(true));
+    act(() => org.result.current.configureBreakouts([{ id: 'r1', name: 'Room 1' }]));
+    act(() => org.result.current.openRooms());
+    act(() => org.result.current.addRoom({ id: 'r2' }));
+    act(() => org.result.current.addRoom({ name: 'Overflow' }));
+    act(() => org.result.current.renameRoom('r1', 'Design crit'));
+    await waitFor(() => expect(ana.result.current.breakout.rooms.map((r) => r.name)).toEqual(['Design crit', 'Room 2', 'Overflow']));
+    expect(ana.result.current.breakout.rooms.map((r) => r.state)).toEqual(['open', 'closed', 'closed']);
+    expect(ana.result.current.breakout.phase).toBe('open');
+    act(() => ana.result.current.renameRoom('r1', 'mine'));
+    await waitFor(() => expect(ana.result.current.error?.code).toBe('FORBIDDEN'));
+    h.svc.dispose();
+  });
+
   it('surfaces a refusal as error and clears it', async () => {
     const h = harness();
     (() => { const sk = h.socketFor('c-org', 'u-org', 'Olive'); return renderHook(() => useMeeting(M, { socket: sk })); })();

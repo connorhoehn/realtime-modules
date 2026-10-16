@@ -44,6 +44,13 @@ export interface UseMeetingResult {
         mode?: BreakoutMode;
         allowReturnToMain?: boolean;
     }): void;
+    /** Adds one closed room in any phase (default name `Room N`); open it with `openRooms([id])`. */
+    addRoom(opts?: {
+        id?: string;
+        name?: string;
+    }): void;
+    /** Renames a room in any phase; 1–80 characters after trimming. */
+    renameRoom(roomId: string, name: string): void;
     /** userId → roomId, or null to unassign. */
     assign(assignments: Record<string, string | null>): void;
     autoAssign(userIds: string[]): void;

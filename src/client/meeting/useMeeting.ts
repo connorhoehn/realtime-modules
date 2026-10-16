@@ -71,6 +71,10 @@ export interface UseMeetingResult {
     /** The lobby your media should be in: your room's, or the meeting's. */
     activeLobby: string | null;
     configureBreakouts(rooms: BreakoutRoomDraft[], opts?: { mode?: BreakoutMode; allowReturnToMain?: boolean }): void;
+    /** Adds one closed room in any phase (default name `Room N`); open it with `openRooms([id])`. */
+    addRoom(opts?: { id?: string; name?: string }): void;
+    /** Renames a room in any phase; 1–80 characters after trimming. */
+    renameRoom(roomId: string, name: string): void;
     /** userId → roomId, or null to unassign. */
     assign(assignments: Record<string, string | null>): void;
     autoAssign(userIds: string[]): void;
@@ -150,6 +154,14 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
         }),
         [act],
     );
+    const addRoom = useCallback<UseMeetingResult['addRoom']>(
+        (o = {}) => act('breakout.addRoom', {
+            ...(o.id ? { id: o.id } : {}),
+            ...(typeof o.name === 'string' ? { name: o.name } : {}),
+        }),
+        [act],
+    );
+    const renameRoom = useCallback((roomId: string, name: string) => act('breakout.rename', { roomId, name }), [act]);
     const assign = useCallback((assignments: Record<string, string | null>) => act('breakout.assign', { assignments }), [act]);
     const autoAssign = useCallback((userIds: string[]) => act('breakout.autoAssign', { userIds }), [act]);
     const openRooms = useCallback((roomIds?: string[]) => act('breakout.open', roomIds ? { roomIds } : {}), [act]);
@@ -188,6 +200,8 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
         myRoom,
         activeLobby,
         configureBreakouts,
+        addRoom,
+        renameRoom,
         assign,
         autoAssign,
         openRooms,

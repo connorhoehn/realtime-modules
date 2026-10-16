@@ -20,6 +20,8 @@ exports.MEETING_ACTIONS = new Set([
     'hand.lower',
     'hand.lowerAll',
     'breakout.configure',
+    'breakout.addRoom',
+    'breakout.rename',
     'breakout.assign',
     'breakout.autoAssign',
     'breakout.open',
@@ -34,6 +36,8 @@ exports.MEETING_ACTIONS = new Set([
 exports.ORGANIZER_ACTIONS = new Set([
     'hand.lowerAll',
     'breakout.configure',
+    'breakout.addRoom',
+    'breakout.rename',
     'breakout.assign',
     'breakout.autoAssign',
     'breakout.open',

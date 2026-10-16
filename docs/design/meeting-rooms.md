@@ -49,6 +49,8 @@ The `meeting` service owns coordination state only:
 | `hand.lower` `{ meetingId, userId }` | organizer | lowers someone else |
 | `hand.lowerAll` `{ meetingId }` | organizer | clears the queue |
 | `breakout.configure` `{ meetingId, rooms: [{ id?, name }], mode }` | organizer | replaces the draft; ids are minted when absent |
+| `breakout.addRoom` `{ meetingId, id?, name? }` | organizer | appends one closed room in any phase (default name `Room N`); open it with `breakout.open { roomIds }` |
+| `breakout.rename` `{ meetingId, roomId, name }` | organizer | renames a room in any phase; names are 1–80 characters after trimming |
 | `breakout.assign` `{ meetingId, assignments: { [userId]: roomId \| null } }` | organizer | moves people between rooms |
 | `breakout.autoAssign` `{ meetingId, userIds }` | organizer | round-robins the listed people over the rooms |
 | `breakout.open` / `breakout.close` `{ meetingId, roomIds? }` | organizer | opens or closes some or all rooms; closing every room ends the session |

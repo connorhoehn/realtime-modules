@@ -212,6 +212,74 @@ describe('MeetingService — breakout rooms', () => {
         svc.dispose();
     });
 
+    it('addRoom appends a closed room in any phase, with a free default name; open rooms stay open', async () => {
+        const { router, svc } = await setup();
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M });
+        let b = (await svc.getState(M))!.breakout;
+        expect(b.phase).toBe('draft');
+        expect(b.rooms.map((r) => r.name)).toEqual(['Room 1']);
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1', name: 'Room 2' }, { id: 'r2', name: 'B' }] });
+        await svc.handleAction('c-org', 'breakout.assign', { meetingId: M, assignments: { 'u-a': 'r1' } });
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M, id: 'late', name: '  Late arrivals  ' });
+        b = router.last('c-a', 'breakout.changed').data.breakout;
+        expect(b.phase).toBe('open');
+        expect(b.rooms.map((r: any) => [r.id.length > 0, r.name, r.state])).toEqual([
+            [true, 'Room 2', 'open'], [true, 'B', 'open'], [true, 'Room 3', 'closed'], [true, 'Late arrivals', 'closed'],
+        ]);
+        expect(b.rooms[0].members).toEqual(['u-a']);
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M, roomIds: ['late'] });
+        expect((await svc.getState(M))!.breakout.rooms.find((r) => r.id === 'late')!.state).toBe('open');
+        svc.dispose();
+    });
+
+    it('addRoom refuses non-organizers, bad or duplicate ids, bad names and the room cap', async () => {
+        const router = fakeRouter();
+        const svc = new MeetingService({ router, config: { maxRooms: 2 } });
+        connectAs(router, 'c-org', 'u-org');
+        connectAs(router, 'c-a', 'u-a');
+        for (const c of ['c-org', 'c-a']) await svc.handleAction(c, 'subscribe', { meetingId: M });
+        await svc.handleAction('c-a', 'breakout.addRoom', { meetingId: M });
+        expect(err(router, 'c-a').code).toBe('FORBIDDEN');
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M, id: 'a b' });
+        expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M, name: '   ' });
+        expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M, name: 'x'.repeat(81) });
+        expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M, id: 'r1' });
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M, id: 'r1' });
+        expect(err(router, 'c-org').code).toBe('CONFLICT');
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.addRoom', { meetingId: M });
+        expect(err(router, 'c-org').message).toMatch(/At most 2/);
+        expect((await svc.getState(M))!.breakout.rooms).toHaveLength(2);
+        svc.dispose();
+    });
+
+    it('rename changes one room in any phase; no-op renames broadcast nothing; limits are enforced', async () => {
+        const { router, svc } = await withRooms();
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        const before = router.framesFor('c-a', 'breakout.changed').length;
+        await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r2', name: ' Design crit ' });
+        const b = router.last('c-a', 'breakout.changed').data.breakout;
+        expect(b.rooms.map((r: any) => r.name)).toEqual(["Hilla's Room", 'Design crit']);
+        expect(b.phase).toBe('open');
+        await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r2', name: 'Design crit' });
+        expect(router.framesFor('c-a', 'breakout.changed')).toHaveLength(before + 1);
+        await svc.handleAction('c-a', 'breakout.rename', { meetingId: M, roomId: 'r2', name: 'mine' });
+        expect(err(router, 'c-a').code).toBe('FORBIDDEN');
+        await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'nope', name: 'x' });
+        expect(err(router, 'c-org').code).toBe('NOT_FOUND');
+        await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r1', name: '' });
+        expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
+        await svc.handleAction('c-org', 'breakout.rename', { meetingId: M, roomId: 'r1', name: 7 });
+        expect(err(router, 'c-org').code).toBe('INVALID_PAYLOAD');
+        expect((await svc.getState(M))!.breakout.rooms[0]!.name).toBe("Hilla's Room");
+        svc.dispose();
+    });
+
     it('cannot reconfigure open rooms; closing the last open room returns to draft', async () => {
         const { router, svc } = await withRooms();
         await svc.handleAction('c-org', 'breakout.open', { meetingId: M });

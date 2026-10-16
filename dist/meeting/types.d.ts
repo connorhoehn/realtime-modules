@@ -1,5 +1,5 @@
 /** Client → server verbs. */
-export type MeetingAction = 'subscribe' | 'unsubscribe' | 'hand.raise' | 'hand.lower' | 'hand.lowerAll' | 'breakout.configure' | 'breakout.assign' | 'breakout.autoAssign' | 'breakout.open' | 'breakout.close' | 'breakout.timer' | 'breakout.broadcast' | 'breakout.join' | 'breakout.leave' | 'breakout.end';
+export type MeetingAction = 'subscribe' | 'unsubscribe' | 'hand.raise' | 'hand.lower' | 'hand.lowerAll' | 'breakout.configure' | 'breakout.addRoom' | 'breakout.rename' | 'breakout.assign' | 'breakout.autoAssign' | 'breakout.open' | 'breakout.close' | 'breakout.timer' | 'breakout.broadcast' | 'breakout.join' | 'breakout.leave' | 'breakout.end';
 export declare const MEETING_ACTIONS: ReadonlySet<MeetingAction>;
 /** Verbs only an organizer may send. `hand.lower` is organizer-only when it names someone else. */
 export declare const ORGANIZER_ACTIONS: ReadonlySet<MeetingAction>;

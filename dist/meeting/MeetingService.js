@@ -329,6 +329,39 @@ class MeetingService {
                 };
                 return { state: next, breakout: true };
             }
+            case 'breakout.addRoom': {
+                // Allowed in any phase: Teams adds a room while the others are open.
+                // The new room starts closed; open it with `breakout.open { roomIds }`.
+                if (b.rooms.length >= this.maxRooms)
+                    throw new MeetingError('CONFLICT', `At most ${this.maxRooms} rooms`);
+                let id = typeof data.id === 'string' ? data.id : '';
+                if (id && !types_1.BREAKOUT_ROOM_ID_PATTERN.test(id))
+                    throw new MeetingError('INVALID_PAYLOAD', `Invalid room id: ${id}`);
+                if (id && b.rooms.some((r) => r.id === id))
+                    throw new MeetingError('CONFLICT', `Duplicate room id: ${id}`);
+                if (!id)
+                    id = this.mintRoomId();
+                const name = data.name === undefined || data.name === null
+                    ? nextRoomName(b.rooms)
+                    : parseRoomName(data.name);
+                next.breakout = {
+                    ...b,
+                    phase: b.phase === 'none' ? 'draft' : b.phase,
+                    rooms: [...b.rooms, { id, name, state: 'closed', members: [] }],
+                };
+                return { state: next, breakout: true };
+            }
+            case 'breakout.rename': {
+                const roomId = typeof data.roomId === 'string' ? data.roomId : '';
+                const room = b.rooms.find((r) => r.id === roomId);
+                if (!room)
+                    throw new MeetingError('NOT_FOUND', 'No such room');
+                const name = parseRoomName(data.name);
+                if (name === room.name)
+                    return null;
+                next.breakout = { ...b, rooms: b.rooms.map((r) => (r.id === roomId ? { ...r, name } : r)) };
+                return { state: next, breakout: true };
+            }
             case 'breakout.assign': {
                 const assignments = data.assignments;
                 if (!assignments || typeof assignments !== 'object' || Array.isArray(assignments)) {
@@ -683,5 +716,21 @@ function closeAll(b) {
         returned: [],
         endsAt: null,
     };
+}
+/** A room name from a client: trimmed, 1–MAX_ROOM_NAME_LENGTH characters, refused otherwise. */
+function parseRoomName(raw) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (!name || name.length > types_1.MAX_ROOM_NAME_LENGTH) {
+        throw new MeetingError('INVALID_PAYLOAD', `name must be 1–${types_1.MAX_ROOM_NAME_LENGTH} characters`);
+    }
+    return name;
+}
+/** `Room N` for the first N past the room count that no room is already called. */
+function nextRoomName(rooms) {
+    const taken = new Set(rooms.map((r) => r.name));
+    let n = rooms.length + 1;
+    while (taken.has(`Room ${n}`))
+        n += 1;
+    return `Room ${n}`;
 }
 //# sourceMappingURL=MeetingService.js.map

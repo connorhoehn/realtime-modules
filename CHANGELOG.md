@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## 0.123.0 — 2026-10-16
+
+### Added
+
+- **Add and rename breakout rooms while they are open** (`./meeting`,
+  `./client/meeting`). New organizer verbs `breakout.addRoom { id?, name? }`
+  and `breakout.rename { roomId, name }` work in any phase, as in Teams:
+  an added room starts closed (open it with `openRooms([id])`) and takes the
+  first free `Room N` name when none is given; open rooms, placements and the
+  timer are untouched. Names are trimmed and must be 1–80 characters (refused,
+  not truncated), ids follow the room id pattern and must be unique, and the
+  `maxRooms` cap holds (`CONFLICT`). `useMeeting` gains `addRoom(opts?)` and
+  `renameRoom(roomId, name)`.
+
 ## 0.122.1 — 2026-10-16
 
 ### Fixed

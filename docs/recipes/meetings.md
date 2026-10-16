@@ -52,7 +52,7 @@ useFollowMeetingLobby(meeting.activeLobby, {
 ```
 
 `useMeeting` returns `hands`, `myHandPosition`, `raiseHand`/`lowerHand`/`toggleHand`/`lowerAllHands`,
-`breakout`, `myRoom`, `activeLobby`, the organizer verbs (`configureBreakouts`, `assign`,
+`breakout`, `myRoom`, `activeLobby`, the organizer verbs (`configureBreakouts`, `addRoom`, `renameRoom`, `assign`,
 `autoAssign`, `openRooms`, `closeRooms`, `setTimer`, `broadcast`, `endBreakouts`), the participant
 verbs (`joinRoom`, `returnToMain`), `isOrganizer`, `error`, and the standing `state.announcement`.
 Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activeMeetingLobby`, `meetingOfLobby`.

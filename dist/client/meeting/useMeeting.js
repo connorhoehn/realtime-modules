@@ -72,6 +72,11 @@ function useMeeting(meetingId, opts = {}) {
         ...(o.mode ? { mode: o.mode } : {}),
         ...(typeof o.allowReturnToMain === 'boolean' ? { allowReturnToMain: o.allowReturnToMain } : {}),
     }), [act]);
+    const addRoom = (0, react_1.useCallback)((o = {}) => act('breakout.addRoom', {
+        ...(o.id ? { id: o.id } : {}),
+        ...(typeof o.name === 'string' ? { name: o.name } : {}),
+    }), [act]);
+    const renameRoom = (0, react_1.useCallback)((roomId, name) => act('breakout.rename', { roomId, name }), [act]);
     const assign = (0, react_1.useCallback)((assignments) => act('breakout.assign', { assignments }), [act]);
     const autoAssign = (0, react_1.useCallback)((userIds) => act('breakout.autoAssign', { userIds }), [act]);
     const openRooms = (0, react_1.useCallback)((roomIds) => act('breakout.open', roomIds ? { roomIds } : {}), [act]);
@@ -102,6 +107,8 @@ function useMeeting(meetingId, opts = {}) {
         myRoom,
         activeLobby,
         configureBreakouts,
+        addRoom,
+        renameRoom,
         assign,
         autoAssign,
         openRooms,
