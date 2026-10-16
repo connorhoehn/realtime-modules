@@ -580,3 +580,41 @@ describe('MeetingService — rate limit (0.132.0)', () => {
     });
 });
 
+describe('MeetingService — resetMeeting (0.135.0)', () => {
+    it('clears hands, rooms and announcements for everyone still subscribed, with a newer version', async () => {
+        const { router, svc } = await setup({ rateLimit: false });
+        await svc.handleAction('c-a', 'hand.raise', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1', members: ['u-a'] }], mode: 'assigned' });
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.broadcast', { meetingId: M, message: 'two minutes' });
+        await svc.handleAction('c-org', 'breakout.timer', { meetingId: M, durationMs: 60_000 });
+        const before = (await svc.getState(M))!.version;
+        await svc.resetMeeting(M);
+        const s = (await svc.getState(M))!;
+        expect(s.hands).toEqual([]);
+        expect(s.breakout.phase).toBe('none');
+        expect(s.breakout.rooms).toEqual([]);
+        expect(s.breakout.announcement).toBeNull();
+        expect(s.breakout.announcements).toEqual([]);
+        expect(s.breakout.endsAt).toBeNull();
+        expect(s.version).toBeGreaterThan(before);
+        expect(s.createdBy).toBe('u-org');
+        expect(router.last('c-a', 'breakout.changed').data.breakout.phase).toBe('none');
+        expect(router.last('c-a', 'hands.changed').data.hands).toEqual([]);
+        // The organizer can run a fresh session in the same lobby.
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r9' }] });
+        expect((await svc.getState(M))!.breakout.rooms.map((r) => r.id)).toEqual(['r9']);
+        svc.dispose();
+    });
+
+    it('is idempotent and leaves an unknown meeting alone', async () => {
+        const { router, svc } = await setup();
+        const frames = router.framesFor('c-a').length;
+        await svc.resetMeeting(M); // nothing live: no frames
+        await svc.resetMeeting('never:opened');
+        expect(router.framesFor('c-a').length).toBe(frames);
+        expect(await svc.getState('never:opened')).toBeNull();
+        svc.dispose();
+    });
+});
+

@@ -251,6 +251,35 @@ class MeetingService {
         this.buckets.set(key, b);
         return true;
     }
+    /**
+     * Wipe a meeting when its call ends (0.135.0): hands down, rooms gone,
+     * announcements cleared, timer stopped. The creator stays (the default
+     * organizer rule needs one; a host's `isOrganizer` hook decides anyway). A host calls
+     * this from its call-ended hook; without it a new call in the same lobby
+     * inherited the last call's rooms and history. The version keeps
+     * climbing (the state is rewritten, not deleted), so a client still
+     * subscribed applies the cleared frames instead of dropping them as stale.
+     * Idempotent; a meeting nobody opened is left alone.
+     */
+    async resetMeeting(meetingId) {
+        await this.serial(meetingId, async () => {
+            const state = await this.store.get(meetingId);
+            if (!state)
+                return;
+            const empty = state.hands.length === 0 && state.breakout.phase === 'none'
+                && (state.breakout.announcements ?? []).length === 0 && !state.breakout.announcement;
+            if (empty)
+                return;
+            const next = this.bump(state);
+            next.hands = [];
+            next.breakout = { ...(0, types_1.cloneState)(types_1.EMPTY_BREAKOUT), announcements: [] };
+            const t = this.timers.get(meetingId);
+            if (t)
+                clearTimeout(t);
+            this.timers.delete(meetingId);
+            await this.commit({ state: next, hands: true, breakout: true }, 'breakout.end', 'system');
+        });
+    }
     /** Stop every breakout timer (tests, shutdown). */
     dispose() {
         this.unwatch?.();

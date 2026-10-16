@@ -53,6 +53,17 @@ export declare class MeetingService {
     private releaseIfIdle;
     /** One token from this person's bucket in this meeting, or false when it is empty. */
     private take;
+    /**
+     * Wipe a meeting when its call ends (0.135.0): hands down, rooms gone,
+     * announcements cleared, timer stopped. The creator stays (the default
+     * organizer rule needs one; a host's `isOrganizer` hook decides anyway). A host calls
+     * this from its call-ended hook; without it a new call in the same lobby
+     * inherited the last call's rooms and history. The version keeps
+     * climbing (the state is rewritten, not deleted), so a client still
+     * subscribed applies the cleared frames instead of dropping them as stale.
+     * Idempotent; a meeting nobody opened is left alone.
+     */
+    resetMeeting(meetingId: string): Promise<void>;
     /** Stop every breakout timer (tests, shutdown). */
     dispose(): void;
     private subscribe;

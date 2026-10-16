@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## 0.135.0 — 2026-10-16
+
+### Added
+
+- **`MeetingService.resetMeeting(meetingId)`** (lane L8 of aws-agentcore
+  `docs/meeting-rooms-app-goal.md`): wipe a meeting when its call ends —
+  hands down, rooms gone, announcements cleared, timer stopped (the creator
+  stays). A host calls it from its call-ended hook; without it a new call in
+  the same lobby inherited the last call's rooms and announcement history.
+  The state is rewritten with a newer version rather than deleted, so a
+  client still subscribed applies the cleared frames. Idempotent; a meeting
+  nobody opened is left alone.
+
 ## 0.134.0 — 2026-10-16
 
 ### Added

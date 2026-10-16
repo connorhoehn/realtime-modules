@@ -69,6 +69,12 @@ ui-components' `Video/MeetingRehearsal` story builds the whole stage this way.
 Breakout deadlines are server time. Count down from
 `Date.now() + meeting.clockOffsetMs` (0.129.0); the ui-components wrappers do.
 
+## When the call ends
+
+Call `meetingService.resetMeeting(lobbyName)` from the host's call-ended hook
+(0.135.0), so the next call in that lobby starts with no rooms, hands or
+announcements.
+
 ## Room chat
 
 Read `meeting.activeChat` with `useChat` (0.126.0): it is the meeting's chat in
