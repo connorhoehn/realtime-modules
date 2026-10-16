@@ -1,5 +1,34 @@
 # Meeting rooms — goal (2026-10-16)
 
+**Status: done (2026-10-16).** G1–G21 are met; the judge for each is below
+and the evidence is in `meeting-rooms-audit.md` (backlog ticks, findings,
+tick log). Out of scope by design: app wiring (aws-agentcore portal and BFF),
+which waits on the user.
+
+| # | Closed by |
+|---|---|
+| G1 brand colour | ui-components 2.464.0 |
+| G2 library primitives | ui-components 2.464.0 |
+| G3 announcements in chat | ui-components 2.466.0 (2.468.0 merged into the thread) |
+| G4 room chat channel | realtime-modules 0.126.0 |
+| G5 React binding | ui-components 2.465.0 |
+| G6 fictional demo content | ui-components 2.464.0 |
+| G7 picker surface tone | ui-components 2.465.0 |
+| G8 rename keeps focus | ui-components 2.467.0 |
+| G9 organizer on every replica | realtime-modules 0.127.0 |
+| G10 event-catalog declarations | event-catalog 0.8.6 (`meeting@1.0.0`) |
+| G11 wiring rehearsal | realtime-modules 0.128.0 + ui-components 2.468.0 |
+| G12 clock skew | realtime-modules 0.129.0 + ui-components 2.469.0 |
+| G13 announcement history | realtime-modules 0.130.0 + ui-components 2.471.0 |
+| G14 rate limits | realtime-modules 0.132.0 |
+| G15 server refuses what the catalog refuses | realtime-modules 0.131.0 (+ event-catalog 0.8.7 `meeting@1.1.0`) |
+| G16 which chat am I in | ui-components 2.470.0 |
+| G17 narrow widths | ui-components 2.472.0 |
+| G18 DOM and accessibility audit | ui-components 2.473.0 |
+| G19 scale budgets | test-only (both repos): 0.09 ms/hand, 0.3 ms auto-assign of 300, 30 KB snapshot |
+| G20 typed frames | realtime-modules 0.133.0 |
+| G21 live media | test-only, `test/e2e-media` (`db0309f`): real SFU, two headless browsers; producers move main → room ARNs and back, forged join refused; re-run independently and passing |
+
 The definition of done for the Teams-style meeting library work (raise hand,
 reactions, people queue, breakout rooms) after the first build and nine audit
 ticks. `meeting-rooms-audit.md` stays the protocol and log; this file lists
