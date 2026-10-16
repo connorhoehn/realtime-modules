@@ -12,6 +12,13 @@ export {
 } from './useMeeting';
 
 export {
+    useFollowMeetingLobby,
+    meetingOfLobby,
+    type UseFollowMeetingLobbyOptions,
+    type UseFollowMeetingLobbyResult,
+} from './useFollowMeetingLobby';
+
+export {
     INITIAL_MEETING_STATE,
     breakoutRemainingMs,
     handPosition,

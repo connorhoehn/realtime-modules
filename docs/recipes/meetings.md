@@ -39,15 +39,23 @@ which reads the store rather than this process's mirror.
 import { useMeeting } from '@connorhoehn/realtime-modules/client/meeting';
 
 const meeting = useMeeting(mainLobby, { displayName: me.name });
-// Media follows the room: when activeLobby changes, leave the call and join that lobby.
-const call = useConversationCall({ lobbyName: meeting.activeLobby ?? mainLobby, ... });
+const [lobby, setLobby] = useState(mainLobby);
+const call = useConversationCall({ lobbyName: lobby, ... });
+
+// Media follows the room (0.122.0): when activeLobby moves, leave and join.
+// One move at a time, bursts debounced, never out of an unrelated call.
+useFollowMeetingLobby(meeting.activeLobby, {
+    currentLobby: call.phase === 'live' ? lobby : null,
+    leave: () => call.leave(),
+    join: async (next) => { setLobby(next); /* then start/rejoin the call for `next` */ },
+});
 ```
 
 `useMeeting` returns `hands`, `myHandPosition`, `raiseHand`/`lowerHand`/`toggleHand`/`lowerAllHands`,
 `breakout`, `myRoom`, `activeLobby`, the organizer verbs (`configureBreakouts`, `assign`,
 `autoAssign`, `openRooms`, `closeRooms`, `setTimer`, `broadcast`, `endBreakouts`), the participant
 verbs (`joinRoom`, `returnToMain`), `isOrganizer`, `error`, and the standing `state.announcement`.
-Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activeMeetingLobby`.
+Pure selectors: `handPosition`, `breakoutRemainingMs`, `unassignedUsers`, `activeMeetingLobby`, `meetingOfLobby`.
 
 ## UI
 

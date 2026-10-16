@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## 0.122.0 — 2026-10-16
+
+### Added
+
+- **`useFollowMeetingLobby(activeLobby, { currentLobby, leave, join, debounceMs?, enabled? })`**
+  (`./client/meeting`): keeps a participant's media in the lobby
+  `useMeeting().activeLobby` names. Moves only while `currentLobby` belongs to
+  the same meeting (never out of an unrelated call, never into a call you have
+  not joined); leave settles before join; one move at a time, a target that
+  changes mid-move is honoured after it settles (latest wins); bursts are
+  debounced (300 ms); a failed move is reported in `error` and stops
+  following until the target changes; a host whose `currentLobby` lags after
+  a join does not trigger a second move. Returns `{ moving, target, error }`.
+  Also `meetingOfLobby(lobby)`.
+
 ## 0.121.1 — 2026-10-15
 
 Audit sweep of the meeting feature (`docs/design/meeting-rooms-audit.md`).

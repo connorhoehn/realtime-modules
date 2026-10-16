@@ -5,9 +5,12 @@
 // Raised hands and breakout rooms for a call on LVS — the client half of the
 // `meeting` service (`./meeting`). Design: docs/design/meeting-rooms.md.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseBreakoutLobby = exports.isBreakoutLobby = exports.breakoutRoomFor = exports.breakoutLobbyName = exports.activeMeetingLobby = exports.BREAKOUT_LOBBY_SEPARATOR = exports.unassignedUsers = exports.meetingReducer = exports.handPosition = exports.breakoutRemainingMs = exports.INITIAL_MEETING_STATE = exports.useMeeting = void 0;
+exports.parseBreakoutLobby = exports.isBreakoutLobby = exports.breakoutRoomFor = exports.breakoutLobbyName = exports.activeMeetingLobby = exports.BREAKOUT_LOBBY_SEPARATOR = exports.unassignedUsers = exports.meetingReducer = exports.handPosition = exports.breakoutRemainingMs = exports.INITIAL_MEETING_STATE = exports.meetingOfLobby = exports.useFollowMeetingLobby = exports.useMeeting = void 0;
 var useMeeting_1 = require("./useMeeting");
 Object.defineProperty(exports, "useMeeting", { enumerable: true, get: function () { return useMeeting_1.useMeeting; } });
+var useFollowMeetingLobby_1 = require("./useFollowMeetingLobby");
+Object.defineProperty(exports, "useFollowMeetingLobby", { enumerable: true, get: function () { return useFollowMeetingLobby_1.useFollowMeetingLobby; } });
+Object.defineProperty(exports, "meetingOfLobby", { enumerable: true, get: function () { return useFollowMeetingLobby_1.meetingOfLobby; } });
 var reducer_1 = require("./reducer");
 Object.defineProperty(exports, "INITIAL_MEETING_STATE", { enumerable: true, get: function () { return reducer_1.INITIAL_MEETING_STATE; } });
 Object.defineProperty(exports, "breakoutRemainingMs", { enumerable: true, get: function () { return reducer_1.breakoutRemainingMs; } });
