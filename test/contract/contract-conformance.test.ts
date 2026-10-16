@@ -130,7 +130,34 @@ type ExpectedOutboundFrameName =
   | 'client.videohangout.toggle-video'
   | 'client.videohangout.toggle-audio'
   | 'client.subscribe.subscribe'
-  | 'client.subscribe.unsubscribe';
+  | 'client.subscribe.unsubscribe'
+  // event-catalog 0.6.4 → 0.8.7 (realtime-modules 0.133.0): document-call
+  // host frames, the CRDT seed request, and the meeting service (meeting@1.1.0).
+  | 'client.call.meta'
+  | 'client.call.mute-participant'
+  | 'client.call.present'
+  | 'client.call.remove-participant'
+  | 'client.call.set-documents'
+  | 'client.call.set-title'
+  | 'client.call.transfer-host'
+  | 'client.crdt.seed-document'
+  | 'client.meeting.subscribe'
+  | 'client.meeting.unsubscribe'
+  | 'client.meeting.hand.raise'
+  | 'client.meeting.hand.lower'
+  | 'client.meeting.hand.lowerAll'
+  | 'client.meeting.breakout.configure'
+  | 'client.meeting.breakout.addRoom'
+  | 'client.meeting.breakout.rename'
+  | 'client.meeting.breakout.assign'
+  | 'client.meeting.breakout.autoAssign'
+  | 'client.meeting.breakout.open'
+  | 'client.meeting.breakout.close'
+  | 'client.meeting.breakout.timer'
+  | 'client.meeting.breakout.broadcast'
+  | 'client.meeting.breakout.join'
+  | 'client.meeting.breakout.leave'
+  | 'client.meeting.breakout.end';
 
 type _outboundNamesPinned = Assert<
   Equivalent<keyof ClientFramePayloadMap, ExpectedOutboundFrameName>

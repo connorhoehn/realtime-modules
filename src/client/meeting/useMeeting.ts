@@ -13,6 +13,9 @@
 // with neither a socket nor a provider the hook is inert.
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+// Type-only (erased at build): every frame this hook sends is checked against
+// the event-catalog declaration, meeting@1.1.0 (0.133.0).
+import type { ClientFramePayload, MeetingOutboundFrame } from '@connorhoehn/event-catalog/client-frames';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
 import type { BreakoutMode, BreakoutRoom, BreakoutState, RaisedHand } from '../../meeting/types';
@@ -108,6 +111,19 @@ export interface UseMeetingResult {
     dismissAnnouncement(): void;
 }
 
+/** A meeting verb the catalog declares. */
+type MeetingVerb = MeetingOutboundFrame['action'];
+/**
+ * The fields a verb carries beyond the envelope, from its catalog frame. The
+ * generated frames have an index signature (`[key: string]: unknown`), which
+ * `Omit` would turn into "any string key": the `as` clause drops it and keeps
+ * the named fields, so a misspelt or mistyped field fails to compile.
+ */
+type VerbFields<A extends MeetingVerb> = {
+    [K in keyof Extract<MeetingOutboundFrame, { action: A }> as string extends K ? never
+        : K extends 'service' | 'action' | 'meetingId' | 'channel' ? never : K]?: Extract<MeetingOutboundFrame, { action: A }>[K];
+};
+
 function noopSend(): void {}
 function inertOnMessage(): () => void {
     return () => {};
@@ -150,14 +166,14 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
     useEffect(() => {
         dispatch({ kind: 'reset', meetingId: enabled ? meetingId : null });
         if (!enabled || !meetingId) return;
-        sendRef.current({ service: 'meeting', action: 'subscribe', meetingId });
+        sendRef.current({ service: 'meeting', action: 'subscribe', meetingId } satisfies ClientFramePayload<'client.meeting.subscribe'>);
         return () => {
-            sendRef.current({ service: 'meeting', action: 'unsubscribe', meetingId });
+            sendRef.current({ service: 'meeting', action: 'unsubscribe', meetingId } satisfies ClientFramePayload<'client.meeting.unsubscribe'>);
         };
     }, [enabled, meetingId, sessionEpoch]);
 
     const act = useCallback(
-        (action: string, extra: Record<string, unknown> = {}) => {
+        <A extends MeetingVerb>(action: A, extra: VerbFields<A> = {}) => {
             if (!enabled || !meetingId) return;
             sendRef.current({ service: 'meeting', action, meetingId, ...extra });
         },
@@ -174,7 +190,9 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
 
     const configureBreakouts = useCallback<UseMeetingResult['configureBreakouts']>(
         (rooms, o = {}) => act('breakout.configure', {
-            rooms,
+            // Copied into plain objects: an interface has no implicit index
+            // signature, and the catalog's room draft allows extra keys.
+            rooms: rooms.map((r) => ({ ...r })),
             ...(o.mode ? { mode: o.mode } : {}),
             ...(typeof o.allowReturnToMain === 'boolean' ? { allowReturnToMain: o.allowReturnToMain } : {}),
         }),

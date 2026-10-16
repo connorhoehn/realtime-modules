@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## 0.133.0 — 2026-10-16
+
+### Changed
+
+- **`useMeeting` sends only frames the event catalog declares**: the
+  `@connorhoehn/event-catalog` dev pin moves to 0.8.7 (`meeting@1.1.0`) and
+  every outbound meeting frame is type-checked against it (a misspelt or
+  mistyped field no longer compiles). Type-only: nothing changes at runtime,
+  and the published declarations do not reference the catalog.
+
 ## 0.132.0 — 2026-10-16
 
 ### Added

@@ -75,7 +75,9 @@ function useMeeting(meetingId, opts = {}) {
     const toggleHand = (0, react_1.useCallback)(() => (myHandPosition ? lowerHand() : raiseHand()), [myHandPosition, lowerHand, raiseHand]);
     const lowerAllHands = (0, react_1.useCallback)(() => act('hand.lowerAll'), [act]);
     const configureBreakouts = (0, react_1.useCallback)((rooms, o = {}) => act('breakout.configure', {
-        rooms,
+        // Copied into plain objects: an interface has no implicit index
+        // signature, and the catalog's room draft allows extra keys.
+        rooms: rooms.map((r) => ({ ...r })),
         ...(o.mode ? { mode: o.mode } : {}),
         ...(typeof o.allowReturnToMain === 'boolean' ? { allowReturnToMain: o.allowReturnToMain } : {}),
     }), [act]);
