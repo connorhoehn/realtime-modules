@@ -465,14 +465,16 @@ class MeetingService {
                 if (!message || message.length > types_1.MAX_ANNOUNCEMENT_LENGTH) {
                     throw new MeetingError('INVALID_PAYLOAD', `message must be 1–${types_1.MAX_ANNOUNCEMENT_LENGTH} characters`);
                 }
+                const announcement = {
+                    message,
+                    fromUserId: userId,
+                    fromDisplayName: this.displayNameOf(clientId, data),
+                    at: this.iso(),
+                };
                 next.breakout = {
                     ...b,
-                    announcement: {
-                        message,
-                        fromUserId: userId,
-                        fromDisplayName: this.displayNameOf(clientId, data),
-                        at: this.iso(),
-                    },
+                    announcement,
+                    announcements: [...(b.announcements ?? []), announcement].slice(-types_1.MAX_ANNOUNCEMENT_HISTORY),
                 };
                 return { state: next, breakout: true, announcement: true };
             }

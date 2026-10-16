@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## 0.130.0 — 2026-10-16
+
+### Added
+
+- **Announcement history** (`./meeting`). `BreakoutState.announcements`
+  keeps the last `MAX_ANNOUNCEMENT_HISTORY` (20) announcements, oldest first,
+  across sessions like chat; the snapshot carries them, so a late joiner or a
+  reload sees the history rather than only the latest. `announcement` stays
+  the latest for older clients. The field is optional: older servers and
+  stored state read as `[]`.
+
 ## 0.129.0 — 2026-10-16
 
 ### Added

@@ -11,7 +11,7 @@
 // Every change frame carries the FULL slice it changed (all hands, or the
 // whole breakout state), never a diff, so a client reducer only overwrites.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_DISPLAY_NAME_LENGTH = exports.MAX_ANNOUNCEMENT_LENGTH = exports.MAX_ROOM_NAME_LENGTH = exports.BREAKOUT_ROOM_ID_PATTERN = exports.MEETING_ID_PATTERN = exports.meetingChannel = exports.MEETING_CHANNEL_PREFIX = exports.EMPTY_BREAKOUT = exports.ORGANIZER_ACTIONS = exports.MEETING_ACTIONS = void 0;
+exports.MAX_DISPLAY_NAME_LENGTH = exports.MAX_ANNOUNCEMENT_LENGTH = exports.MAX_ROOM_NAME_LENGTH = exports.BREAKOUT_ROOM_ID_PATTERN = exports.MEETING_ID_PATTERN = exports.meetingChannel = exports.MEETING_CHANNEL_PREFIX = exports.EMPTY_BREAKOUT = exports.MAX_ANNOUNCEMENT_HISTORY = exports.ORGANIZER_ACTIONS = exports.MEETING_ACTIONS = void 0;
 exports.cloneState = cloneState;
 exports.MEETING_ACTIONS = new Set([
     'subscribe',
@@ -46,6 +46,8 @@ exports.ORGANIZER_ACTIONS = new Set([
     'breakout.broadcast',
     'breakout.end',
 ]);
+/** How many announcements the breakout state keeps (0.130.0). */
+exports.MAX_ANNOUNCEMENT_HISTORY = 20;
 exports.EMPTY_BREAKOUT = Object.freeze({
     phase: 'none',
     mode: 'self-select',
@@ -54,6 +56,7 @@ exports.EMPTY_BREAKOUT = Object.freeze({
     endsAt: null,
     closing: false,
     announcement: null,
+    announcements: [],
     settings: { allowReturnToMain: true },
 });
 exports.MEETING_CHANNEL_PREFIX = 'meeting:';

@@ -28,6 +28,7 @@ export type { ParsedBreakoutLobby } from './lobby';
 export {
     BREAKOUT_ROOM_ID_PATTERN,
     EMPTY_BREAKOUT,
+    MAX_ANNOUNCEMENT_HISTORY,
     MAX_ANNOUNCEMENT_LENGTH,
     MAX_DISPLAY_NAME_LENGTH,
     MAX_ROOM_NAME_LENGTH,

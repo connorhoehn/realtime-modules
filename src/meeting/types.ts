@@ -126,8 +126,18 @@ export interface BreakoutState {
      */
     closing?: boolean;
     announcement: BreakoutAnnouncement | null;
+    /**
+     * The last MAX_ANNOUNCEMENT_HISTORY announcements, oldest first (0.130.0),
+     * so a late joiner's chat shows the history, not only the latest. Kept
+     * across sessions like chat; `announcement` stays the latest one for
+     * older clients. Absent on older servers and stored state: read it as [].
+     */
+    announcements?: BreakoutAnnouncement[];
     settings: BreakoutSettings;
 }
+
+/** How many announcements the breakout state keeps (0.130.0). */
+export const MAX_ANNOUNCEMENT_HISTORY = 20;
 
 export interface MeetingState {
     /** Also the main meeting's LVS lobby name. */
@@ -150,6 +160,7 @@ export const EMPTY_BREAKOUT: BreakoutState = Object.freeze({
     endsAt: null,
     closing: false,
     announcement: null,
+    announcements: [],
     settings: { allowReturnToMain: true },
 }) as BreakoutState;
 

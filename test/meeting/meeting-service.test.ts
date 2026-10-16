@@ -471,3 +471,38 @@ describe('MeetingService — concurrency', () => {
         svc.dispose();
     });
 });
+
+describe('MeetingService — announcement history (0.130.0)', () => {
+    it('keeps the last 20, oldest first; a late joiner gets them; a new session keeps them', async () => {
+        const { router, store, svc } = await setup();
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1' }] });
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        for (let i = 1; i <= 25; i++) await svc.handleAction('c-org', 'breakout.broadcast', { meetingId: M, message: `note ${i}` });
+        const b = (await svc.getState(M))!.breakout;
+        expect(b.announcements!.map((a) => a.message)).toEqual(Array.from({ length: 20 }, (_, i) => `note ${i + 6}`));
+        expect(b.announcement!.message).toBe('note 25');
+        connectAs(router, 'c-late', 'u-late', 'Late');
+        await svc.handleAction('c-late', 'subscribe', { meetingId: M });
+        expect(router.last('c-late', 'meeting.snapshot').data.breakout.announcements).toHaveLength(20);
+        await svc.handleAction('c-org', 'breakout.end', { meetingId: M });
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r2' }] });
+        const again = (await svc.getState(M))!.breakout;
+        expect(again.announcement).toBeNull();
+        expect(again.announcements).toHaveLength(20);
+        void store;
+        svc.dispose();
+    });
+
+    it('stored state from before the field still takes announcements', async () => {
+        const { store, svc } = await setup();
+        await svc.handleAction('c-org', 'breakout.configure', { meetingId: M, rooms: [{ id: 'r1' }] });
+        await svc.handleAction('c-org', 'breakout.open', { meetingId: M });
+        const old = (await store.get(M))!;
+        delete (old.breakout as { announcements?: unknown }).announcements;
+        await store.put(old);
+        await svc.handleAction('c-org', 'breakout.broadcast', { meetingId: M, message: 'hello' });
+        expect((await svc.getState(M))!.breakout.announcements!.map((a) => a.message)).toEqual(['hello']);
+        svc.dispose();
+    });
+});
+

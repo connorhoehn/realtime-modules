@@ -14,6 +14,7 @@ import {
     BREAKOUT_ROOM_ID_PATTERN,
     EMPTY_BREAKOUT,
     cloneState,
+    MAX_ANNOUNCEMENT_HISTORY,
     MAX_ANNOUNCEMENT_LENGTH,
     MAX_DISPLAY_NAME_LENGTH,
     MAX_ROOM_NAME_LENGTH,
@@ -477,14 +478,16 @@ export class MeetingService {
                 if (!message || message.length > MAX_ANNOUNCEMENT_LENGTH) {
                     throw new MeetingError('INVALID_PAYLOAD', `message must be 1–${MAX_ANNOUNCEMENT_LENGTH} characters`);
                 }
+                const announcement = {
+                    message,
+                    fromUserId: userId,
+                    fromDisplayName: this.displayNameOf(clientId, data),
+                    at: this.iso(),
+                };
                 next.breakout = {
                     ...b,
-                    announcement: {
-                        message,
-                        fromUserId: userId,
-                        fromDisplayName: this.displayNameOf(clientId, data),
-                        at: this.iso(),
-                    },
+                    announcement,
+                    announcements: [...(b.announcements ?? []), announcement].slice(-MAX_ANNOUNCEMENT_HISTORY),
                 };
                 return { state: next, breakout: true, announcement: true };
             }
