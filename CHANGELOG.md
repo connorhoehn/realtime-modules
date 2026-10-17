@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.137.0 — 2026-10-16
+
+### Added
+
+- **`useConversationCall().recording`**: whether the media session this client
+  sits in records — platform-api's decision (`{ enabled, reason }`) when the
+  session is found or created, with its `sessionId` so a consent notice can
+  remember a dismissal per session. Null outside a call, before the session
+  answers, or from a server that does not say. Hosts show recording consent
+  from it (aws-agentcore meeting goal U3).
+
 ## 0.136.0 — 2026-10-16
 
 ### Fixed

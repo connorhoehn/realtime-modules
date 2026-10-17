@@ -307,7 +307,7 @@ function useConversationCall(opts) {
         const lobby = a.mediaLobby || o.lobbyName;
         quietJoin.current = how.quiet === true;
         enterInFlight.current += 1;
-        setActive({ ...a, sessionId: null, stageToken: null, participantId: null });
+        setActive({ ...a, sessionId: null, stageToken: null, participantId: null, recording: null });
         setBusy(a.role === 'caller' ? 'creating' : 'joining');
         setError(null);
         setEnded(null);
@@ -327,7 +327,10 @@ function useConversationCall(opts) {
                 throw new Error('No session id from the server');
             if (activeRef.current?.callId !== a.callId)
                 return false; // hung up meanwhile
-            setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId } : cur));
+            const decided = created.recording && typeof created.recording === 'object'
+                ? created.recording : null;
+            const recordingState = decided ? { enabled: decided.enabled === true, reason: typeof decided.reason === 'string' ? decided.reason : null } : null;
+            setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId, recording: recordingState } : cur));
             const gatewayClientId = str(gwRef.current?.clientId);
             const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
                 lobbyName: lobby,
@@ -1297,6 +1300,7 @@ function useConversationCall(opts) {
     return {
         phase,
         recordingBinding,
+        recording: active?.sessionId && active.recording ? { ...active.recording, sessionId: active.sessionId } : null,
         call,
         incoming,
         error,

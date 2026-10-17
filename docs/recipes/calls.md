@@ -296,3 +296,10 @@ reading the lobby (`lobbyForCallLobbyChannel(channel)` recovers the lobby).
 `useConversationCall({ discover: true })` uses the same watch, so a page that
 already runs the call hook needs nothing more. `nameFor(userId)` lets the host
 name people the call's signalling only knows by id.
+
+## Is this call recorded? (0.137.0)
+
+`call.recording` is platform-api's recording decision for the session you sit
+in: `{ enabled, reason, sessionId }`, or null outside a call and before the
+session answers. Show a consent notice while `recording?.enabled` is true, and
+key its dismissal on `sessionId` (ui-components `useConsentDismissal`).

@@ -130,6 +130,12 @@ export interface UseConversationCallOptions {
 export interface ConversationCallResult {
   phase: ConversationCallPhase;
   /** Independent of call/media health. Only a durable native ACK can mark this bound. */
+  /**
+   * Whether the media session this client sits in records (platform-api's
+   * decision when the session was found or created; 0.137.0). Null outside a
+   * call or before the session answers. A consent notice keys on `sessionId`.
+   */
+  recording?: { enabled: boolean; reason: string | null; sessionId: string } | null;
   recordingBinding?: { status: 'disabled' | 'pending' | 'bound' | 'unavailable'; callId?: string; error?: string;
     documentContext?: { tenant: 'assessment'; sourceId: string; lobbyName: string } };
   /** The call you are in — or, while idle, a live call in this lobby you could join (`rejoin()`). */
@@ -192,6 +198,8 @@ interface ActiveCall {
   media: MediaStreamConstraints;
   /** The lobby `sessionId` belongs to: `lobbyName`, or a breakout's (0.134.0). */
   mediaLobby: string;
+  /** platform-api's recording decision for `sessionId` (0.137.0). */
+  recording?: { enabled: boolean; reason: string | null } | null;
 }
 
 interface RosterEntry {
@@ -463,7 +471,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const lobby = a.mediaLobby || o.lobbyName;
     quietJoin.current = how.quiet === true;
     enterInFlight.current += 1;
-    setActive({ ...a, sessionId: null, stageToken: null, participantId: null });
+    setActive({ ...a, sessionId: null, stageToken: null, participantId: null, recording: null });
     setBusy(a.role === 'caller' ? 'creating' : 'joining');
     setError(null);
     setEnded(null);
@@ -481,7 +489,10 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       const sessionId = str(created.sessionId);
       if (!sessionId) throw new Error('No session id from the server');
       if (activeRef.current?.callId !== a.callId) return false; // hung up meanwhile
-      setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId } : cur));
+      const decided = created.recording && typeof created.recording === 'object'
+        ? created.recording as { enabled?: unknown; reason?: unknown } : null;
+      const recordingState = decided ? { enabled: decided.enabled === true, reason: typeof decided.reason === 'string' ? decided.reason : null } : null;
+      setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId, recording: recordingState } : cur));
       const gatewayClientId = str(gwRef.current?.clientId);
       const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
         lobbyName: lobby,
@@ -1325,6 +1336,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   return {
     phase,
     recordingBinding,
+    recording: active?.sessionId && active.recording ? { ...active.recording, sessionId: active.sessionId } : null,
     call,
     incoming,
     error,

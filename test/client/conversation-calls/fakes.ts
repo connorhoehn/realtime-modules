@@ -4,7 +4,7 @@ import type { UseLVSHangoutOptions, UseLVSHangoutResult, HangoutParticipant } fr
 export { makeFakeGateway } from '../document-calls/fakeGateway';
 
 /** Fake platform-api for the conversation hook (getIdToken, not headers). */
-export function makeFakePlatformApi(opts: { joinStatus?: number } = {}) {
+export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { enabled: boolean; reason: string } } = {}) {
   const calls: Array<{ method: string; path: string; body: any; headers: Record<string, string> }> = [];
   let n = 0;
   const fetchImpl = (async (url: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}) => {
@@ -12,7 +12,7 @@ export function makeFakePlatformApi(opts: { joinStatus?: number } = {}) {
     const method = init.method ?? 'GET';
     calls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined, headers: init.headers ?? {} });
     const json = (status: number, b: unknown) => ({ ok: status < 400, status, json: async () => b });
-    if (method === 'POST' && path === '/api/video/sessions') return json(201, { sessionId: `sess-${++n}` });
+    if (method === 'POST' && path === '/api/video/sessions') return json(201, { sessionId: `sess-${++n}`, ...(opts.recording ? { recording: opts.recording } : {}) });
     if (method === 'POST' && /\/join$/.test(path)) {
       if (opts.joinStatus && opts.joinStatus >= 400) return json(opts.joinStatus, { error: 'gone' });
       return json(200, { token: 'stage-token', participantId: `p-self-${n}`, userId: 'u' });

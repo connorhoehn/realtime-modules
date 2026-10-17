@@ -94,6 +94,16 @@ export interface UseConversationCallOptions {
 export interface ConversationCallResult {
     phase: ConversationCallPhase;
     /** Independent of call/media health. Only a durable native ACK can mark this bound. */
+    /**
+     * Whether the media session this client sits in records (platform-api's
+     * decision when the session was found or created; 0.137.0). Null outside a
+     * call or before the session answers. A consent notice keys on `sessionId`.
+     */
+    recording?: {
+        enabled: boolean;
+        reason: string | null;
+        sessionId: string;
+    } | null;
     recordingBinding?: {
         status: 'disabled' | 'pending' | 'bound' | 'unavailable';
         callId?: string;
