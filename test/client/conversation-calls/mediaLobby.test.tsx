@@ -246,4 +246,30 @@ describe('useConversationCall mediaLobby (lane L1)', () => {
     expect(s.pa.calls).toEqual([]);
     expect(s.hook.result.current.mediaLobby).toBeNull();
   });
+
+  it('inside a room the tiles are the room only; the directory names people the roster has no name for (0.136.0)', async () => {
+    const s = setup(LOBBY);
+    const callId = await goLive(s);
+    // Bob is in the meeting by signalling (no name on the wire); the directory knows him.
+    act(() => { s.g.push('participant-state', { callId, userId: 'u-bob', status: 'in-call', lobbyName: LOBBY }); });
+    s.hook.rerender({ mediaLobby: LOBBY });
+    await waitFor(() => expect(s.hook.result.current.call!.participants.map((p: { userId: string }) => p.userId)).toEqual(['u-alice', 'u-bob']));
+    // Alice moves into Room 1; Bob stays in the main meeting, so no tile for him there.
+    s.hook.rerender({ mediaLobby: R1 });
+    await waitFor(() => expect(s.hook.result.current.mediaLobby).toBe(R1));
+    expect(s.hook.result.current.call!.participants.map((p: { userId: string }) => p.userId)).toEqual(['u-alice']);
+  });
+
+  it('nameFor fills a name the call signalling does not carry (0.136.0)', async () => {
+    const g = makeFakeGateway(); const m = makeFakeMedia(); const pa = gatedPlatformApi();
+    const hook = renderHook(() => useConversationCall({ lobbyName: LOBBY, self: alice, platformApi: pa.platformApi, gateway: g.gw, fetch: pa.fetchImpl,
+      deviceStorage: null, useMedia: m.useFakeMedia, endedHoldMs: 50, nameFor: (uid) => uid === 'u-bob' ? { displayName: 'Bob Diaz', avatarUrl: '/b.png' } : null }));
+    await act(async () => { await hook.result.current.start([]); });
+    act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+    await waitFor(() => expect(hook.result.current.phase).toBe('live'));
+    const callId = hook.result.current.call!.callId;
+    act(() => { g.push('participant-state', { callId, userId: 'u-bob', status: 'in-call', lobbyName: LOBBY }); });
+    await waitFor(() => expect(hook.result.current.call!.participants.find((p: { userId: string }) => p.userId === 'u-bob')).toMatchObject({ displayName: 'Bob Diaz', avatarUrl: '/b.png' }));
+  });
 });
+

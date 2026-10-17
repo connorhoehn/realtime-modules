@@ -74,6 +74,12 @@ export interface UseConversationCallOptions {
    */
   mediaLobby?: string | null;
   self: { userId: string; displayName: string; avatarUrl?: string };
+  /**
+   * The host's directory: a person's name and picture when the call's own
+   * signalling has none (a page huddle rings nobody, so its roster often
+   * carries ids only) (0.136.0). Asked before a tile falls back to the id.
+   */
+  nameFor?: (userId: string) => { displayName: string; avatarUrl?: string } | null | undefined;
   /** platform-api access — props, never env. `getIdToken` is called per request. */
   platformApi: { baseUrl: string; getIdToken: () => string | Promise<string> };
   /** The gateway socket the app already holds. Defaults to the surrounding GatewaySocketProvider. */
@@ -1196,8 +1202,14 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         screenStream: local?.screenStream ?? null,
       });
     }
+    const directory = (uid: string) => { try { return o.nameFor?.(uid) ?? null; } catch { return null; } };
     const targetName = (uid: string) => active?.targets.find((t) => t.userId === uid)?.displayName
-      ?? invitationRequests.find(row => row.callId === active?.callId && row.userId === uid)?.displayName;
+      ?? invitationRequests.find(row => row.callId === active?.callId && row.userId === uid)?.displayName
+      ?? directory(uid)?.displayName;
+    const avatarFor = (uid: string, r?: RosterEntry) => r?.avatarUrl ?? directory(uid)?.avatarUrl;
+    // In a breakout room the tiles are the room's media session only: the call's
+    // signalling still knows everyone in the meeting, who are not in this room.
+    const inRoom = !!active && active.mediaLobby !== lobbyName;
     const byPid = new Map<string, string>();
     for (const [uid, r] of Object.entries(roster)) if (r.participantId) byPid.set(r.participantId, uid);
     // The SFU stamps each producer with the stage token's `sub`: when that is
@@ -1222,7 +1234,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         id: m.participantId,
         userId: uid,
         displayName: r?.displayName ?? targetName(uid) ?? m.displayName ?? uid,
-        ...(r?.avatarUrl ? { avatarUrl: r.avatarUrl } : {}),
+        ...(avatarFor(uid, r) ? { avatarUrl: avatarFor(uid, r)! } : {}),
         isLocal: false,
         state: r?.status ?? 'in-call',
         audioOn: r?.audioOn ?? m.hasAudio,
@@ -1237,7 +1249,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       id: uid,
       userId: uid,
       displayName: r?.displayName ?? targetName(uid) ?? (incoming?.callerId === uid ? incoming.callerName : uid),
-      ...(r?.avatarUrl ? { avatarUrl: r.avatarUrl } : {}),
+      ...(avatarFor(uid, r) ? { avatarUrl: avatarFor(uid, r)! } : {}),
       isLocal: false,
       state,
       audioOn: r?.audioOn ?? true,
@@ -1247,13 +1259,13 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       stream: null,
       screenStream: null,
     });
-    // In the call by signalling, media not here yet.
-    for (const [uid, r] of Object.entries(roster)) {
+    // In the call by signalling, media not here yet (not inside a room: see inRoom).
+    if (!inRoom) for (const [uid, r] of Object.entries(roster)) {
       if (seen.has(uid)) continue;
       seen.add(uid);
       out.push(person(uid, r.status, r));
     }
-    for (const uid of accepted) {
+    if (!inRoom) for (const uid of accepted) {
       if (seen.has(uid)) continue;
       seen.add(uid);
       out.push(person(uid, 'in-call'));
@@ -1272,7 +1284,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, invitationRequests]);
+  }, [active, lobbyName, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, opts.nameFor, invitationRequests]);
 
   const participantCount = participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length;
 
