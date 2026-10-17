@@ -228,5 +228,22 @@ describe('useMeeting', () => {
     expect(leftLocal).toBeGreaterThan(99_000); // the naive reading is 40 s too long
     expect(Math.abs(leftServer - 60_000)).toBeLessThan(1_500);
   });
+
+  it('roleKey: a page that subscribed before its call started learns it organizes once the key changes (0.136.0)', async () => {
+    // The host's rule reads the call: no call yet, not an organizer; the caller of the call, an organizer.
+    let callerOf: string | null = null;
+    const h = harness({ isOrganizer: ({ userId }) => userId === callerOf });
+    const socket = h.socketFor('c-vera', 'u-vera', 'Vera');
+    const { result, rerender } = renderHook(({ key }: { key: string | null }) => useMeeting(M, { socket, roleKey: key }), { initialProps: { key: null as string | null } });
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.isOrganizer).toBe(false);
+    rerender({ key: null });
+    expect(h.sent.get('c-vera')!.filter((f) => f.action === 'subscribe')).toHaveLength(1);
+    callerOf = 'u-vera';
+    rerender({ key: 'call-1:joined' });
+    await waitFor(() => expect(result.current.isOrganizer).toBe(true));
+    expect(h.sent.get('c-vera')!.filter((f) => f.action === 'subscribe')).toHaveLength(2);
+    h.svc.dispose();
+  });
 });
 

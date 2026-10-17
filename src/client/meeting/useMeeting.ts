@@ -49,6 +49,14 @@ export interface UseMeetingOptions {
      * is `meetingChatChannel` as before.
      */
     chatChannel?: string;
+    /**
+     * Whatever the host's organizer rule reads, as one key (e.g. the caller's
+     * call id and phase) (0.136.0). The server tells a client whether it is an
+     * organizer when it subscribes; a page that subscribes before its call
+     * starts would keep `isOrganizer: false` after starting it. When this key
+     * changes the hook asks again (a fresh snapshot, nothing reset).
+     */
+    roleKey?: string | number | null;
 }
 
 export interface BreakoutRoomDraft {
@@ -180,6 +188,16 @@ export function useMeeting(meetingId: string | null, opts: UseMeetingOptions = {
             sendRef.current({ service: 'meeting', action: 'unsubscribe', meetingId } satisfies ClientFramePayload<'client.meeting.unsubscribe'>);
         };
     }, [enabled, meetingId, sessionEpoch]);
+
+    // Ask again when the host's organizer inputs change; the first key rides the subscribe above.
+    const roleKey = opts.roleKey ?? null;
+    const askedRoleRef = useRef<{ meetingId: string | null; roleKey: string | number | null }>({ meetingId: null, roleKey: null });
+    useEffect(() => {
+        const asked = askedRoleRef.current;
+        askedRoleRef.current = { meetingId: enabled ? meetingId : null, roleKey };
+        if (!enabled || !meetingId || asked.meetingId !== meetingId || asked.roleKey === roleKey) return;
+        sendRef.current({ service: 'meeting', action: 'subscribe', meetingId } satisfies ClientFramePayload<'client.meeting.subscribe'>);
+    }, [enabled, meetingId, roleKey]);
 
     const act = useCallback(
         <A extends MeetingVerb>(action: A, extra: VerbFields<A> = {}) => {
