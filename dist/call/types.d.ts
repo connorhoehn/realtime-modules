@@ -34,6 +34,19 @@ export type CallAction = 'invite'
  | 'forget'
 /** Server → client ack for `forget`. data: { callId, forgotten: true }. */
  | 'forgotten'
+/** 0.136.0 (lane L9) — client → server: "tell me when this lobby's call
+ *  starts, changes and ends". data: { lobbyName }. Runs the host's channel
+ *  authority on `callLobbyChannel(lobbyName)` (refused → error frame,
+ *  nothing subscribed), subscribes the sender there, then answers it
+ *  alone with a `lobby-occupancy` snapshot. Grants no seat. */
+ | 'watch'
+/** 0.136.0 — client → server: stop watching. data: { lobbyName }. */
+ | 'unwatch'
+/** 0.136.0 — server → client, on `callLobbyChannel(lobbyName)` (and to a
+ *  watcher as its snapshot): a `CallLobbyOccupancy`. Server-only, and a
+ *  name of its own: `active-call` is the answer to `status` / `join`, and
+ *  an in-call page huddle re-announces itself on every one. */
+ | 'lobby-occupancy'
 /** Document calls (2026-09-24) — client → server: "send me this call's
  *  meta". data: { callId }. Replies `call-meta` to the asker only. */
  | 'meta'
@@ -291,6 +304,42 @@ export interface CallMessageRouter {
      * trusting the index + sendToClient's silent-false return.
      */
     isClientLive?(clientId: string): boolean | null;
+    /**
+     * 0.136.0 (lane L9) — channel fan-out for lobby occupancy (`watch`), the
+     * same slice MeetingService uses. `subscribeToChannel` runs the host's
+     * channel authority and answers false on refusal; without it,
+     * `checkChannel('subscribe', …)` is asked instead and false refuses. A
+     * router without `sendToChannel` never publishes `lobby-occupancy` (a
+     * watcher still gets its snapshot).
+     */
+    subscribeToChannel?(clientId: string, channel: string): Promise<boolean | void> | boolean | void;
+    unsubscribeFromChannel?(clientId: string, channel: string): Promise<void> | void;
+    sendToChannel?(channel: string, message: unknown, excludeClientId?: string | null): Promise<void> | void;
+    checkChannel?(kind: 'subscribe' | 'publish', clientId: string, channel: string): boolean | Promise<boolean>;
+}
+/**
+ * 0.136.0 (lane L9) — the `data` of a `lobby-occupancy` frame: who is in a
+ * lobby's call right now, for people who are not in it. Sent on
+ * `callLobbyChannel(lobbyName)` (debounced per lobby) after anyone is seated,
+ * leaves, drops past the rejoin grace, departs on another node, or the call
+ * ends (`active: false`); and to a `watch`er alone as its snapshot.
+ */
+export interface CallLobbyOccupancy {
+    lobbyName: string;
+    active: boolean;
+    /** null when `active` is false. */
+    callId: string | null;
+    /** Distinct people (never connections) in the call. Empty when inactive. */
+    participantUserIds: string[];
+    /** `participantUserIds.length`: two tabs of one person count once. */
+    participantCount: number;
+    /** ISO time the call started, when known; null otherwise. */
+    startedAt: string | null;
+    /** The call's caller / first joiner, when active. */
+    callerId?: string;
+    callerName?: string;
+    /** A call nobody was rung for: joining it is a `join`, not an `accepted`. */
+    pageHuddle?: boolean;
 }
 /**
  * Optional construction-time tunables. All hooks default to no-op /
@@ -599,6 +648,9 @@ export interface ActiveCallState {
      */
     seatedUserIds?: Set<string>;
     invitedAt?: number;
+    /** Epoch ms this node first registered the call (0.136.0): the
+     *  `lobby-occupancy` start time of a call nobody was rung into. */
+    createdAt?: number;
     inviteExpiresAt?: number;
     /** Epoch ms of the first `accepted` — when the call became a call. */
     acceptedAt?: number;

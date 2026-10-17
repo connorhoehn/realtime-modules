@@ -24,6 +24,7 @@
 // once it grew past the cap: the same people in a smaller group could call,
 // and nothing anywhere said why.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.CALL_LOBBY_CHANNEL_PREFIX = void 0;
 exports.lobbyForChannel = lobbyForChannel;
 exports.channelForLobby = channelForLobby;
 exports.lobbyForChatLobbyChannel = lobbyForChatLobbyChannel;
@@ -35,6 +36,8 @@ exports.isDmLobby = isDmLobby;
 exports.lobbyConversationKind = lobbyConversationKind;
 exports.dmLobbyMembers = dmLobbyMembers;
 exports.shouldKnockToJoin = shouldKnockToJoin;
+exports.callLobbyChannel = callLobbyChannel;
+exports.lobbyForCallLobbyChannel = lobbyForCallLobbyChannel;
 /** `chat:dm:alice:bob` → `dm:alice:bob`; `chat:dmg:<hash>` → `dmg:<hash>`;
  *  `room:design` → `room:design`. */
 function lobbyForChannel(channel) {
@@ -304,5 +307,24 @@ function shouldKnockToJoin(lobby, userId) {
     if (!members || !userId)
         return true;
     return !members.includes(userId);
+}
+/**
+ * The prefix of a call lobby's OCCUPANCY channel (0.136.0, lane L9). A page
+ * that wants to see a huddle go live without being in it subscribes here (the
+ * call service's `watch` verb does that, after the host's channel authority
+ * admits it) and receives `lobby-occupancy` frames as the call starts, people
+ * join and leave, and it ends.
+ */
+exports.CALL_LOBBY_CHANNEL_PREFIX = 'call-lobby:';
+/** `callLobbyChannel('acme:room:design')` → `call-lobby:acme:room:design`. The lobby is used verbatim. */
+function callLobbyChannel(lobby) {
+    return `${exports.CALL_LOBBY_CHANNEL_PREFIX}${lobby}`;
+}
+/** The inverse of `callLobbyChannel`: `call-lobby:acme:room:design` → `acme:room:design`; anything else (or an empty lobby) → null. */
+function lobbyForCallLobbyChannel(channel) {
+    if (!channel || !channel.startsWith(exports.CALL_LOBBY_CHANNEL_PREFIX))
+        return null;
+    const lobby = channel.slice(exports.CALL_LOBBY_CHANNEL_PREFIX.length);
+    return lobby.length > 0 ? lobby : null;
 }
 //# sourceMappingURL=lobbyChannel.js.map

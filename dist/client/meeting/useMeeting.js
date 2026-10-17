@@ -63,6 +63,16 @@ function useMeeting(meetingId, opts = {}) {
             sendRef.current({ service: 'meeting', action: 'unsubscribe', meetingId });
         };
     }, [enabled, meetingId, sessionEpoch]);
+    // Ask again when the host's organizer inputs change; the first key rides the subscribe above.
+    const roleKey = opts.roleKey ?? null;
+    const askedRoleRef = (0, react_1.useRef)({ meetingId: null, roleKey: null });
+    (0, react_1.useEffect)(() => {
+        const asked = askedRoleRef.current;
+        askedRoleRef.current = { meetingId: enabled ? meetingId : null, roleKey };
+        if (!enabled || !meetingId || asked.meetingId !== meetingId || asked.roleKey === roleKey)
+            return;
+        sendRef.current({ service: 'meeting', action: 'subscribe', meetingId });
+    }, [enabled, meetingId, roleKey]);
     const act = (0, react_1.useCallback)((action, extra = {}) => {
         if (!enabled || !meetingId)
             return;

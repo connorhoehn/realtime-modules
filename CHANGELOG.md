@@ -1,6 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## 0.136.0 — 2026-10-16
+
+### Fixed
+
+- **Breakout tiles show the room only.** Inside a room (`mediaLobby` is a
+  breakout of the call's lobby) `useConversationCall` no longer pads the tiles
+  with everyone the call's signalling knows; the room's media session is the
+  room. Outside rooms nothing changes.
+- **`useConversationCall({ nameFor })`**: the host's directory names a person
+  (and their picture) before a tile falls back to the raw user id; a page
+  huddle rings nobody, so its roster often carries ids only.
+
 
 ### Added
 

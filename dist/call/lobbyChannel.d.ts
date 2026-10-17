@@ -146,4 +146,16 @@ export declare function dmLobbyMembers(lobby: string | null | undefined, opts?: 
  * request, not a rejection.
  */
 export declare function shouldKnockToJoin(lobby: string | null | undefined, userId: string | null | undefined): boolean;
+/**
+ * The prefix of a call lobby's OCCUPANCY channel (0.136.0, lane L9). A page
+ * that wants to see a huddle go live without being in it subscribes here (the
+ * call service's `watch` verb does that, after the host's channel authority
+ * admits it) and receives `lobby-occupancy` frames as the call starts, people
+ * join and leave, and it ends.
+ */
+export declare const CALL_LOBBY_CHANNEL_PREFIX = "call-lobby:";
+/** `callLobbyChannel('acme:room:design')` → `call-lobby:acme:room:design`. The lobby is used verbatim. */
+export declare function callLobbyChannel(lobby: string): string;
+/** The inverse of `callLobbyChannel`: `call-lobby:acme:room:design` → `acme:room:design`; anything else (or an empty lobby) → null. */
+export declare function lobbyForCallLobbyChannel(channel: string | null | undefined): string | null;
 //# sourceMappingURL=lobbyChannel.d.ts.map

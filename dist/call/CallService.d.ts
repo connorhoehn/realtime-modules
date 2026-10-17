@@ -128,6 +128,12 @@ export declare class CallService {
     private lastRingingPush;
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning;
+    /** 0.136.0 (lane L9) — lobbies each local client `watch`es. */
+    private lobbyWatchers;
+    /** Pending `lobby-occupancy` publish per lobby (debounced). */
+    private lobbyPublishTimers;
+    /** How long `publishLobby` coalesces changes before it sends. */
+    static LOBBY_OCCUPANCY_DEBOUNCE_MS: number;
     /** Fixed service-start deadline; status polling cannot extend recovery. */
     private storedRecoveryUntil;
     constructor(opts: CallServiceOptions);
@@ -275,6 +281,26 @@ export declare class CallService {
     private pushRosterToRinging;
     /** The `active-call` answer for a lobby (see handleStatusQuery). */
     private buildActiveCallData;
+    /** The `lobby-occupancy` data for a lobby, from the `active-call` answer:
+     *  people (distinct user ids), never connections. */
+    private buildLobbyOccupancy;
+    private occupancyFrame;
+    /** `watch { lobbyName }`: the host's channel authority on
+     *  `callLobbyChannel(lobby)`, the subscription, then a snapshot to the
+     *  sender alone. A refusal subscribes nothing and sends no snapshot. */
+    private handleWatch;
+    private handleUnwatch;
+    /** A closed socket watches nothing. */
+    private dropLobbyWatcher;
+    private publishCallLobbies;
+    /**
+     * Tell `callLobbyChannel(lobby)` who is in the lobby's call now. Debounced
+     * per lobby (LOBBY_OCCUPANCY_DEBOUNCE_MS): a burst of seats and removals
+     * is one frame, read from the state as it stands when the timer fires.
+     * Published whether or not this node holds a watcher — watchers on other
+     * replicas are reached through the channel. No-op without `sendToChannel`.
+     */
+    private publishLobby;
     handleAction(clientId: string, action: string, data: CallInvite | null | undefined): Promise<void>;
     handleCallEvent(clientId: string, action: CallAction, data: CallInvite | null | undefined): Promise<void>;
     /**

@@ -46,6 +46,10 @@ exports.ALLOWED_CALL_ACTIONS = new Set([
     // call. `forgotten` (the ack) is server→client only, like
     // `active-call`.
     'forget',
+    // 0.136.0 (lane L9) — lobby occupancy subscription. `lobby-occupancy`
+    // (the push) is server → client only.
+    'watch',
+    'unwatch',
     // Document calls (2026-09-24). `call-meta` and `invite-expired` are
     // server → client only and deliberately absent.
     'meta',

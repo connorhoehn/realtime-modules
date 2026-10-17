@@ -23,6 +23,15 @@ export interface UseConversationCallOptions {
         displayName: string;
         avatarUrl?: string;
     };
+    /**
+     * The host's directory: a person's name and picture when the call's own
+     * signalling has none (a page huddle rings nobody, so its roster often
+     * carries ids only) (0.136.0). Asked before a tile falls back to the id.
+     */
+    nameFor?: (userId: string) => {
+        displayName: string;
+        avatarUrl?: string;
+    } | null | undefined;
     /** platform-api access — props, never env. `getIdToken` is called per request. */
     platformApi: {
         baseUrl: string;
@@ -67,7 +76,12 @@ export interface UseConversationCallOptions {
     acceptedJoinTimeoutMs?: number;
     /** How long `ended` shows before the phase returns to idle. Default 4 s. */
     endedHoldMs?: number;
-    /** Ask the gateway for a live call in this lobby on mount / reconnect (`status`). Default true. */
+    /**
+     * Watch this lobby for a live call (`watch`, 0.136.0): the gateway answers
+     * with a `lobby-occupancy` snapshot and pushes another whenever a call
+     * starts, changes or ends, so a call started after mount is offered without
+     * a refresh. Re-watched on reconnect. Default true.
+     */
     discover?: boolean;
     /** Injectable for tests. */
     fetch?: typeof fetch;

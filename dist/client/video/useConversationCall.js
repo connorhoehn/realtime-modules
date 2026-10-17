@@ -12,7 +12,9 @@
 //   signalling  the gateway's `call` service (invite / accepted / declined /
 //               cancelled / ended / user-status / participant-state / status).
 //               Every frame this hook sends is TARGETED — at the people rung,
-//               the people in the call, or yourself. An untargeted call frame
+//               the people in the call, or yourself — except the lobby
+//               queries (`watch` / `unwatch`, 0.136.0), which the server
+//               answers to the sender and never fans out. An untargeted call frame
 //               is broadcast to every connected client by the server, which a
 //               multi-tenant host must never do.
 //   session     platform-api: POST /api/video/sessions (findOrCreate on the
@@ -37,6 +39,7 @@ const useMediaDevices_1 = require("./useMediaDevices");
 const useDevicePreferences_1 = require("./useDevicePreferences");
 const useIncomingConversationCalls_1 = require("./useIncomingConversationCalls");
 const conversationLobby_1 = require("./conversationLobby");
+const useLobbyCall_1 = require("./useLobbyCall");
 const str = (v) => (typeof v === 'string' && v ? v : undefined);
 const mintCallId = () => `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 /** "Alice", "Alice & Bob", "Alice, Bob & 2 others". */
@@ -749,6 +752,26 @@ function useConversationCall(opts) {
                     }
                     return;
                 }
+                case 'lobby-occupancy': {
+                    // Pushed to watchers (0.136.0). Never re-announces: a page huddle
+                    // we are in hears one on every seat change.
+                    const occ = (0, useLobbyCall_1.parseLobbyOccupancy)(d);
+                    if (!occ || occ.lobbyName !== o.lobbyName)
+                        return;
+                    if (!occ.active) {
+                        setDiscovered(null);
+                        return;
+                    }
+                    if (occ.callId === a?.callId)
+                        return;
+                    const prev = discoveredRef.current;
+                    const ids = occ.participantUserIds;
+                    if (prev && prev.callId === occ.callId && !!prev.pageHuddle === !!occ.pageHuddle
+                        && prev.userIds.length === ids.length && prev.userIds.every((u, i) => u === ids[i]))
+                        return;
+                    setDiscovered({ callId: occ.callId, userIds: ids, ...(occ.pageHuddle ? { pageHuddle: true } : {}) });
+                    return;
+                }
                 case 'invite': {
                     if (d.lobbyName !== o.lobbyName || d.admit === true)
                         return;
@@ -914,8 +937,12 @@ function useConversationCall(opts) {
         setDiscovered(null);
         setIncoming(null);
         mountedAt.current = Date.now();
-        if (discover)
-            send({ service: 'call', action: 'status', lobbyName });
+        if (!discover)
+            return;
+        // One subscription: the snapshot answers what `status` used to, and
+        // later changes arrive as they happen.
+        send({ service: 'call', action: 'watch', lobbyName });
+        return () => { send({ service: 'call', action: 'unwatch', lobbyName }); };
     }, [lobbyName, discover, send, setIncoming]);
     const epoch = gw?.sessionEpoch;
     const connectionState = gw?.connectionState;
@@ -930,7 +957,7 @@ function useConversationCall(opts) {
         if (!(epochBumped || cameBack))
             return;
         if (discover)
-            send({ service: 'call', action: 'status', lobbyName: optsRef.current.lobbyName });
+            send({ service: 'call', action: 'watch', lobbyName: optsRef.current.lobbyName });
         announceSelf();
     }, [epoch, connectionState, discover, send, announceSelf]);
     // ---- media joined: say so, apply the join state -----------------------------------
@@ -1137,8 +1164,19 @@ function useConversationCall(opts) {
                 screenStream: local?.screenStream ?? null,
             });
         }
+        const directory = (uid) => { try {
+            return o.nameFor?.(uid) ?? null;
+        }
+        catch {
+            return null;
+        } };
         const targetName = (uid) => active?.targets.find((t) => t.userId === uid)?.displayName
-            ?? invitationRequests.find(row => row.callId === active?.callId && row.userId === uid)?.displayName;
+            ?? invitationRequests.find(row => row.callId === active?.callId && row.userId === uid)?.displayName
+            ?? directory(uid)?.displayName;
+        const avatarFor = (uid, r) => r?.avatarUrl ?? directory(uid)?.avatarUrl;
+        // In a breakout room the tiles are the room's media session only: the call's
+        // signalling still knows everyone in the meeting, who are not in this room.
+        const inRoom = !!active && active.mediaLobby !== lobbyName;
         const byPid = new Map();
         for (const [uid, r] of Object.entries(roster))
             if (r.participantId)
@@ -1167,7 +1205,7 @@ function useConversationCall(opts) {
                 id: m.participantId,
                 userId: uid,
                 displayName: r?.displayName ?? targetName(uid) ?? m.displayName ?? uid,
-                ...(r?.avatarUrl ? { avatarUrl: r.avatarUrl } : {}),
+                ...(avatarFor(uid, r) ? { avatarUrl: avatarFor(uid, r) } : {}),
                 isLocal: false,
                 state: r?.status ?? 'in-call',
                 audioOn: r?.audioOn ?? m.hasAudio,
@@ -1182,7 +1220,7 @@ function useConversationCall(opts) {
             id: uid,
             userId: uid,
             displayName: r?.displayName ?? targetName(uid) ?? (incoming?.callerId === uid ? incoming.callerName : uid),
-            ...(r?.avatarUrl ? { avatarUrl: r.avatarUrl } : {}),
+            ...(avatarFor(uid, r) ? { avatarUrl: avatarFor(uid, r) } : {}),
             isLocal: false,
             state,
             audioOn: r?.audioOn ?? true,
@@ -1192,19 +1230,21 @@ function useConversationCall(opts) {
             stream: null,
             screenStream: null,
         });
-        // In the call by signalling, media not here yet.
-        for (const [uid, r] of Object.entries(roster)) {
-            if (seen.has(uid))
-                continue;
-            seen.add(uid);
-            out.push(person(uid, r.status, r));
-        }
-        for (const uid of accepted) {
-            if (seen.has(uid))
-                continue;
-            seen.add(uid);
-            out.push(person(uid, 'in-call'));
-        }
+        // In the call by signalling, media not here yet (not inside a room: see inRoom).
+        if (!inRoom)
+            for (const [uid, r] of Object.entries(roster)) {
+                if (seen.has(uid))
+                    continue;
+                seen.add(uid);
+                out.push(person(uid, r.status, r));
+            }
+        if (!inRoom)
+            for (const uid of accepted) {
+                if (seen.has(uid))
+                    continue;
+                seen.add(uid);
+                out.push(person(uid, 'in-call'));
+            }
         if (!active && discovered) {
             for (const uid of discovered.userIds) {
                 if (seen.has(uid))
@@ -1221,7 +1261,7 @@ function useConversationCall(opts) {
         }
         return out;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [active, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, invitationRequests]);
+    }, [active, lobbyName, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, opts.nameFor, invitationRequests]);
     const participantCount = participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length;
     const call = (0, react_1.useMemo)(() => {
         if (active) {

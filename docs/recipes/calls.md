@@ -274,3 +274,25 @@ The target's own connections get `mute-participant` / `remove-participant`
 invite reads `removed` and only a new invite lets them back. In the hook:
 `muteParticipant`, `removeParticipant`, `transferHost`, plus the local-only
 `setMutedForMe` (`participant.mutedForMe`) and `moderation` for a toast.
+
+## Who is in a page's call, live (0.136.0)
+
+A page that only wants to show "huddle live · N joined · Join" watches its
+lobby instead of joining it. `useLobbyCall(lobbyName)` sends `watch` (and
+`unwatch` on cleanup or lobby change, again after every reconnect); the
+gateway answers with a `lobby-occupancy` snapshot and pushes one whenever
+someone joins or leaves, and `active: false` when the call ends.
+
+```tsx
+import { useLobbyCall } from '@connorhoehn/realtime-modules/client/video';
+
+const live = useLobbyCall('orgiq:initiative:p-auth');
+// { live, callId, participantUserIds, count, startedAt }
+```
+
+The watch rides channel `callLobbyChannel(lobby)` (`call-lobby:<lobby>`), so
+the host's channel authority decides it: admit it with the same rule as
+reading the lobby (`lobbyForCallLobbyChannel(channel)` recovers the lobby).
+`useConversationCall({ discover: true })` uses the same watch, so a page that
+already runs the call hook needs nothing more. `nameFor(userId)` lets the host
+name people the call's signalling only knows by id.

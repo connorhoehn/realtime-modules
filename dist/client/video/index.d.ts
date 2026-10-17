@@ -14,10 +14,11 @@ export { useDocumentCall, mergeDocumentCall, toDocumentCallSession, type Documen
 export { useIncomingDocumentCalls, parseDocumentInvite, type IncomingDocumentCall, type IncomingDocumentCallPerson, type UseIncomingDocumentCallsOptions, type UseIncomingDocumentCallsResult, } from './useIncomingDocumentCalls';
 export type { DocumentCallGateway } from './documentCallGateway';
 export { useConversationCall, callingLabel, type UseConversationCallOptions, type ConversationCallResult, } from './useConversationCall';
+export { useLobbyCall, parseLobbyOccupancy, type UseLobbyCallOptions, type UseLobbyCallResult, type CallLobbyOccupancy, } from './useLobbyCall';
 export { useIncomingConversationCalls, parseConversationInvite, type UseIncomingConversationCallsOptions, type UseIncomingConversationCallsResult, } from './useIncomingConversationCalls';
 export { conversationCallDockProps, DOCK_PHASE, type ConversationCallDockState, type ConversationCallDockUi, type ConversationCallDockProps, type ConversationCallDockParticipant, } from './conversationCallDockProps';
 export { useDevicePreferences, readDevicePreferences, deviceConstraints, DEVICE_PREFERENCES_KEY, } from './useDevicePreferences';
-export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChannel, isDmLobby } from './conversationLobby';
+export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChannel, isDmLobby, CALL_LOBBY_CHANNEL_PREFIX, callLobbyChannel, lobbyForCallLobbyChannel } from './conversationLobby';
 export type { ParsedDmLobby } from './conversationLobby';
 export type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallInvitationRequest, ConversationCallInviteResult, ConversationCallParticipant, ConversationCallPhase, DevicePreferences, IncomingConversationCall, } from './conversationCallTypes';
 export { DEFAULT_AUDIO_VIDEO_SETTINGS, type AudioVideoSettings, type CallQuality, type DeviceOption, type DocumentCallAwarenessParticipant, type DocumentCallInvite, type DocumentCallMediaMember, type DocumentCallMeta, type DocumentCallParticipant, type DocumentCallParticipantState, type DocumentCallPresenting, type DocumentCallSession, type MediaPermission, } from './documentCallTypes';

@@ -22,6 +22,14 @@ export interface UseMeetingOptions {
      * is `meetingChatChannel` as before.
      */
     chatChannel?: string;
+    /**
+     * Whatever the host's organizer rule reads, as one key (e.g. the caller's
+     * call id and phase) (0.136.0). The server tells a client whether it is an
+     * organizer when it subscribes; a page that subscribes before its call
+     * starts would keep `isOrganizer: false` after starting it. When this key
+     * changes the hook asks again (a fresh snapshot, nothing reset).
+     */
+    roleKey?: string | number | null;
 }
 export interface BreakoutRoomDraft {
     id?: string;
