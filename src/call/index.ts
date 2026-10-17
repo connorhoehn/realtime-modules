@@ -17,6 +17,7 @@ export {
 } from './types';
 export type {
     ActiveCallState,
+    CallLobbyOccupancy,
     CallAction,
     CallConfig,
     CallCrossNodePubSub,
@@ -67,6 +68,9 @@ export {
   parseDmLobby,
   lobbyForChatLobbyChannel,
   shouldKnockToJoin,
+  CALL_LOBBY_CHANNEL_PREFIX,
+  callLobbyChannel,
+  lobbyForCallLobbyChannel,
 } from './lobbyChannel';
 export type { ParsedDmLobby } from './lobbyChannel';
 

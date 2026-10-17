@@ -42,9 +42,9 @@ function setup(extra: Partial<UseConversationCallOptions> = {}, pa = makeFakePla
 
 const ui = { title: 'Bob Stone', onOpenPeople: () => undefined, onOpenSettings: () => undefined, tile: () => undefined };
 
-/** Every call frame except the `status` query names who it is for. */
+/** Every call frame except the lobby queries (`status`, `watch`, `unwatch`) names who it is for. */
 function expectAllTargeted(sent: Record<string, any>[]) {
-  for (const f of sent.filter((x) => x.service === 'call' && x.action !== 'status')) {
+  for (const f of sent.filter((x) => x.service === 'call' && !['status', 'watch', 'unwatch'].includes(x.action))) {
     expect(Array.isArray(f.targetUserIds) && f.targetUserIds.length > 0).toBe(true);
   }
 }
@@ -87,7 +87,8 @@ describe('useConversationCall — caller', () => {
 
   it('start → PA session on the verbatim lobby, a targeted invite, phase calling', async () => {
     const { g, pa, hook } = setup();
-    expect(g.callFrames('status')[0]).toMatchObject({ lobbyName: LOBBY });
+    expect(g.callFrames('watch')[0]).toMatchObject({ lobbyName: LOBBY });
+    expect(g.callFrames('status')).toHaveLength(0);
     await act(async () => { await hook.result.current.start([{ userId: 'u-bob', displayName: 'Bob Stone' }]); });
 
     const create = pa.calls.find((c) => c.path === '/api/video/sessions')!;
@@ -353,7 +354,7 @@ describe('useConversationCall — discovery', () => {
     expect(hook.result.current.call!.callId).toBe('call-live');
   });
 
-  it('a reconnect re-asks status and re-announces', async () => {
+  it('a reconnect watches again and re-announces', async () => {
     const { g, hook } = setup();
     await act(async () => { await hook.result.current.start([{ userId: 'u-bob' }]); });
     const callId = hook.result.current.call!.callId;
@@ -361,7 +362,9 @@ describe('useConversationCall — discovery', () => {
     const before = g.callFrames('participant-state').length;
     g.gw.sessionEpoch = 2;
     hook.rerender();
-    expect(g.callFrames('status')).toHaveLength(2);
+    expect(g.callFrames('watch')).toHaveLength(2);
+    expect(g.callFrames('watch').every((f) => f.lobbyName === LOBBY)).toBe(true);
+    expect(g.callFrames('status')).toHaveLength(0);
     expect(g.callFrames('participant-state').length).toBeGreaterThan(before);
   });
 });

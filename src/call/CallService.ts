@@ -46,6 +46,7 @@ import {
     type CallErrorFrame,
     type CallEvent,
     type CallInvite,
+    type CallLobbyOccupancy,
     type CallLogger,
     type CallMessageRouter,
     type CallServiceOptions,
@@ -57,7 +58,7 @@ import {
     type DocumentCallOfflineInvite,
     type ParticipantStateBroadcast,
 } from './types';
-import { lobbyConversationKind } from './lobbyChannel';
+import { callLobbyChannel, lobbyConversationKind } from './lobbyChannel';
 
 // Tracing is an injected seam (CallServiceOptions.withSpan) rather than a
 // require('distributed-core') — this library does not depend on
@@ -309,6 +310,12 @@ export class CallService {
     private lastRingingPush = new Map<string, number>();
     /** Guards against two overlapping sweep ticks (the tick is async now). */
     private sweepRunning = false;
+    /** 0.136.0 (lane L9) — lobbies each local client `watch`es. */
+    private lobbyWatchers = new Map<string /*clientId*/, Set<string /*lobby*/>>();
+    /** Pending `lobby-occupancy` publish per lobby (debounced). */
+    private lobbyPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /** How long `publishLobby` coalesces changes before it sends. */
+    static LOBBY_OCCUPANCY_DEBOUNCE_MS = 250;
     /** Fixed service-start deadline; status polling cannot extend recovery. */
     private storedRecoveryUntil: number;
 
@@ -440,6 +447,9 @@ export class CallService {
         //    lobbies) doesn't drop the second.
         let totalNotified = 0;
         for (const callId of candidateCallIds) {
+            const known = this.activeCalls.get(callId);
+            if (known) this.publishCallLobbies(known);
+            if (evt.lobbyName) this.publishLobby(evt.lobbyName);
             await this.notifyLocalPeersOfDeparture(callId, evt.departedClientId, evt.callerId, evt.lobbyName, evt.callContinues === true, evt.notified === true, evt)
                 .then((n) => { totalNotified += n; })
                 .catch((e: any) => this.logger.warn(
@@ -586,6 +596,9 @@ export class CallService {
 
     /** Stop the cross-node subscription. Called on service shutdown. */
     async dispose(): Promise<void> {
+        for (const t of this.lobbyPublishTimers.values()) clearTimeout(t);
+        this.lobbyPublishTimers.clear();
+        this.lobbyWatchers.clear();
         for (const t of this.rejoinGraceTimers.values()) clearTimeout(t);
         this.rejoinGraceTimers.clear();
         this.rejoinGraceInfo.clear();
@@ -653,7 +666,7 @@ export class CallService {
         }
         let state = this.activeCalls.get(callId);
         if (!state) {
-            state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set() };
+            state = { callerId, lobbyName, targetUserIds, participantClientIds: new Set(), createdAt: Date.now() };
             this.activeCalls.set(callId, state);
         }
         state.participantClientIds.add(clientId);
@@ -666,6 +679,7 @@ export class CallService {
             this.clientToCalls.set(clientId, calls);
         }
         calls.add(callId);
+        this.publishLobby(lobbyName);
         // A peer must see this durable seat before its next signaling
         // transition. Call-event callers await the write; local-only paths
         // still register synchronously when no shared store is configured.
@@ -871,6 +885,7 @@ export class CallService {
         const state = this.activeCalls.get(callId);
         if (!state) return;
         const departedParticipants = Array.from(state.participantClientIds);
+        this.publishCallLobbies(state);
 
         this._announceCallEnded(callId, state, missedReason, endedAt);
         for (const cid of departedParticipants) {
@@ -1426,6 +1441,129 @@ export class CallService {
         return data;
     }
 
+    // -----------------------------------------------------------------
+    // Lobby occupancy (0.136.0, lane L9)
+    // -----------------------------------------------------------------
+
+    /** The `lobby-occupancy` data for a lobby, from the `active-call` answer:
+     *  people (distinct user ids), never connections. */
+    private async buildLobbyOccupancy(lobbyName: string): Promise<CallLobbyOccupancy> {
+        const data = await this.buildActiveCallData(lobbyName);
+        const active = data.active === true && typeof data.callId === 'string';
+        if (!active) {
+            return { lobbyName, active: false, callId: null, participantUserIds: [], participantCount: 0, startedAt: null };
+        }
+        const userIds = Array.isArray(data.participantUserIds)
+            ? Array.from(new Set((data.participantUserIds as unknown[]).filter((u): u is string => typeof u === 'string' && u.length > 0)))
+            : [];
+        const out: CallLobbyOccupancy = {
+            lobbyName,
+            active: true,
+            callId: data.callId as string,
+            participantUserIds: userIds,
+            participantCount: userIds.length,
+            startedAt: typeof data.startedAt === 'string' ? data.startedAt : null,
+        };
+        const createdAt = this.activeCalls.get(out.callId!)?.createdAt;
+        if (!out.startedAt && typeof createdAt === 'number') out.startedAt = new Date(createdAt).toISOString();
+        if (typeof data.callerId === 'string' && data.callerId) out.callerId = data.callerId;
+        if (typeof data.callerName === 'string' && data.callerName) out.callerName = data.callerName;
+        if (data.pageHuddle === true) out.pageHuddle = true;
+        return out;
+    }
+
+    private occupancyFrame(data: CallLobbyOccupancy): CallEvent {
+        return { type: 'call', action: 'lobby-occupancy', data: data as unknown as CallEvent['data'], timestamp: new Date().toISOString() };
+    }
+
+    /** `watch { lobbyName }`: the host's channel authority on
+     *  `callLobbyChannel(lobby)`, the subscription, then a snapshot to the
+     *  sender alone. A refusal subscribes nothing and sends no snapshot. */
+    private async handleWatch(clientId: string, payload: CallInvite): Promise<void> {
+        const lobbyName = typeof payload.lobbyName === 'string' ? payload.lobbyName : '';
+        if (!lobbyName) {
+            this.sendError(clientId, 'lobbyName is required on watch', { action: 'watch' });
+            return;
+        }
+        const channel = callLobbyChannel(lobbyName);
+        let allowed = true;
+        try {
+            if (this.messageRouter.subscribeToChannel) {
+                allowed = (await this.messageRouter.subscribeToChannel(clientId, channel)) !== false;
+            } else if (this.messageRouter.checkChannel) {
+                allowed = (await this.messageRouter.checkChannel('subscribe', clientId, channel)) !== false;
+            }
+        } catch (e: any) {
+            this.logger.warn(`[CallService] watch authority failed for ${clientId} on ${channel}: ${e?.message ?? e}`);
+            allowed = false;
+        }
+        if (!allowed) {
+            this.sendError(clientId, 'Not allowed to watch this lobby', { code: 'watch-denied', action: 'watch', lobbyName });
+            return;
+        }
+        const lobbies = this.lobbyWatchers.get(clientId) ?? new Set<string>();
+        lobbies.add(lobbyName);
+        this.lobbyWatchers.set(clientId, lobbies);
+        await this.sendToClients([clientId], this.occupancyFrame(await this.buildLobbyOccupancy(lobbyName)));
+    }
+
+    private async handleUnwatch(clientId: string, payload: CallInvite): Promise<void> {
+        const lobbyName = typeof payload.lobbyName === 'string' ? payload.lobbyName : '';
+        if (!lobbyName) {
+            this.sendError(clientId, 'lobbyName is required on unwatch', { action: 'unwatch' });
+            return;
+        }
+        const lobbies = this.lobbyWatchers.get(clientId);
+        lobbies?.delete(lobbyName);
+        if (lobbies && lobbies.size === 0) this.lobbyWatchers.delete(clientId);
+        try { await this.messageRouter.unsubscribeFromChannel?.(clientId, callLobbyChannel(lobbyName)); }
+        catch { /* best-effort */ }
+    }
+
+    /** A closed socket watches nothing. */
+    private dropLobbyWatcher(clientId: string): void {
+        const lobbies = this.lobbyWatchers.get(clientId);
+        if (!lobbies) return;
+        this.lobbyWatchers.delete(clientId);
+        for (const lobby of lobbies) {
+            try {
+                const r = this.messageRouter.unsubscribeFromChannel?.(clientId, callLobbyChannel(lobby));
+                if (r && typeof (r as Promise<void>).catch === 'function') void (r as Promise<void>).catch(() => undefined);
+            } catch { /* best-effort */ }
+        }
+    }
+
+    private publishCallLobbies(state: Pick<ActiveCallState, 'lobbyName' | 'originalLobbyName'>): void {
+        if (state.lobbyName) this.publishLobby(state.lobbyName);
+        if (state.originalLobbyName && state.originalLobbyName !== state.lobbyName) this.publishLobby(state.originalLobbyName);
+    }
+
+    /**
+     * Tell `callLobbyChannel(lobby)` who is in the lobby's call now. Debounced
+     * per lobby (LOBBY_OCCUPANCY_DEBOUNCE_MS): a burst of seats and removals
+     * is one frame, read from the state as it stands when the timer fires.
+     * Published whether or not this node holds a watcher — watchers on other
+     * replicas are reached through the channel. No-op without `sendToChannel`.
+     */
+    private publishLobby(lobby: string): void {
+        if (!lobby || typeof this.messageRouter.sendToChannel !== 'function') return;
+        if (this.lobbyPublishTimers.has(lobby)) return;
+        const timer = setTimeout(() => {
+            this.lobbyPublishTimers.delete(lobby);
+            if (this.messageRouter.isReady?.() === false) return;
+            void (async () => {
+                try {
+                    const data = await this.buildLobbyOccupancy(lobby);
+                    await Promise.resolve(this.messageRouter.sendToChannel!(callLobbyChannel(lobby), this.occupancyFrame(data)));
+                } catch (e: any) {
+                    this.logger.warn(`[CallService] lobby-occupancy publish failed for ${lobby}: ${e?.message ?? e}`);
+                }
+            })();
+        }, CallService.LOBBY_OCCUPANCY_DEBOUNCE_MS);
+        if (typeof (timer as any).unref === 'function') (timer as any).unref();
+        this.lobbyPublishTimers.set(lobby, timer);
+    }
+
     async handleAction(clientId: string, action: string, data: CallInvite | null | undefined): Promise<void> {
         if (this.messageRouter.isReady?.() === false) return;
         // Wrap the whole action in a per-verb span so the trace UI shows
@@ -1559,6 +1697,16 @@ export class CallService {
         // resumable call for THIS user only.
         if (action === 'forget') {
             await this.handleForgetRequest(clientId, payload);
+            return;
+        }
+
+        // 0.136.0 (lane L9) — lobby occupancy for people not in the call.
+        if (action === 'watch') {
+            await this.handleWatch(clientId, payload);
+            return;
+        }
+        if (action === 'unwatch') {
+            await this.handleUnwatch(clientId, payload);
             return;
         }
 
@@ -2057,6 +2205,8 @@ export class CallService {
             // Drop this client from the call; if it was the last
             // participant, forget the call entirely.
             const state = this.activeCalls.get(callId);
+            if (state) this.publishCallLobbies(state);
+            else if (sharedBefore?.lobbyName) this.publishLobby(sharedBefore.lobbyName);
             if (state) {
                 if (sharedBefore) {
                     state.callerId = sharedBefore.callerId;
@@ -2631,6 +2781,7 @@ export class CallService {
      * manually. Best-effort: failures to deliver are logged, not retried.
      */
     async handleDisconnect(clientId: string): Promise<void> {
+        this.dropLobbyWatcher(clientId);
         if (this.messageRouter.isReady?.() === false) {
             // Retirement after transport/lease loss cannot end a shared call
             // or revoke the user's durable seat/history. A new owner proves
@@ -2834,6 +2985,8 @@ export class CallService {
                     until: Date.now() + this.rejoinGraceMs,
                 });
             }
+            if (lobbyNameForPayload) this.publishLobby(lobbyNameForPayload);
+            if (state) this.publishCallLobbies(state);
             if (callContinues || graceDeferred) {
                 // F1 — participant-grain removal: drop ONLY the departed
                 // client; the call (and every other participant's state)
@@ -2918,6 +3071,8 @@ export class CallService {
                         }
                     } catch { /* local view stands */ }
                 }
+                // The grace is over either way: watchers see who is left.
+                if (state) this.publishCallLobbies(state);
                 if (remaining >= 2) return; // rejoined — call lives
                 if (this.messageRouter.isReady?.() === false) return;
                 const envelope: CallEvent = {
@@ -3208,6 +3363,7 @@ export class CallService {
     private removeClientFromCallEverywhere(callId: string, clientId: string): void {
         const state = this.activeCalls.get(callId);
         if (state) state.participantClientIds.delete(clientId);
+        if (state) this.publishCallLobbies(state);
         const cs = this.clientToCalls.get(clientId);
         if (cs) {
             cs.delete(callId);

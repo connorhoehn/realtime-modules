@@ -11,7 +11,9 @@
 //   signalling  the gateway's `call` service (invite / accepted / declined /
 //               cancelled / ended / user-status / participant-state / status).
 //               Every frame this hook sends is TARGETED — at the people rung,
-//               the people in the call, or yourself. An untargeted call frame
+//               the people in the call, or yourself — except the lobby
+//               queries (`watch` / `unwatch`, 0.136.0), which the server
+//               answers to the sender and never fans out. An untargeted call frame
 //               is broadcast to every connected client by the server, which a
 //               multi-tenant host must never do.
 //   session     platform-api: POST /api/video/sessions (findOrCreate on the
@@ -39,6 +41,7 @@ import {
   parseConversationInvite,
 } from './useIncomingConversationCalls';
 import { channelForLobby } from './conversationLobby';
+import { parseLobbyOccupancy } from './useLobbyCall';
 import type {
   ConversationCall,
   ConversationCallDeclineReason,
@@ -102,7 +105,12 @@ export interface UseConversationCallOptions {
   acceptedJoinTimeoutMs?: number;
   /** How long `ended` shows before the phase returns to idle. Default 4 s. */
   endedHoldMs?: number;
-  /** Ask the gateway for a live call in this lobby on mount / reconnect (`status`). Default true. */
+  /**
+   * Watch this lobby for a live call (`watch`, 0.136.0): the gateway answers
+   * with a `lobby-occupancy` snapshot and pushes another whenever a call
+   * starts, changes or ends, so a call started after mount is offered without
+   * a refresh. Re-watched on reconnect. Default true.
+   */
   discover?: boolean;
   /** Injectable for tests. */
   fetch?: typeof fetch;
@@ -853,6 +861,20 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
           }
           return;
         }
+        case 'lobby-occupancy': {
+          // Pushed to watchers (0.136.0). Never re-announces: a page huddle
+          // we are in hears one on every seat change.
+          const occ = parseLobbyOccupancy(d);
+          if (!occ || occ.lobbyName !== o.lobbyName) return;
+          if (!occ.active) { setDiscovered(null); return; }
+          if (occ.callId === a?.callId) return;
+          const prev = discoveredRef.current;
+          const ids = occ.participantUserIds;
+          if (prev && prev.callId === occ.callId && !!prev.pageHuddle === !!occ.pageHuddle
+            && prev.userIds.length === ids.length && prev.userIds.every((u, i) => u === ids[i])) return;
+          setDiscovered({ callId: occ.callId!, userIds: ids, ...(occ.pageHuddle ? { pageHuddle: true } : {}) });
+          return;
+        }
         case 'invite': {
           if (d.lobbyName !== o.lobbyName || d.admit === true) return;
           const parsed = parseConversationInvite(d, me);
@@ -991,7 +1013,11 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     setDiscovered(null);
     setIncoming(null);
     mountedAt.current = Date.now();
-    if (discover) send({ service: 'call', action: 'status', lobbyName });
+    if (!discover) return;
+    // One subscription: the snapshot answers what `status` used to, and
+    // later changes arrive as they happen.
+    send({ service: 'call', action: 'watch', lobbyName });
+    return () => { send({ service: 'call', action: 'unwatch', lobbyName }); };
   }, [lobbyName, discover, send, setIncoming]);
 
   const epoch = gw?.sessionEpoch;
@@ -1005,7 +1031,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     lastEpoch.current = epoch;
     wasConnected.current = isConnected;
     if (!(epochBumped || cameBack)) return;
-    if (discover) send({ service: 'call', action: 'status', lobbyName: optsRef.current.lobbyName });
+    if (discover) send({ service: 'call', action: 'watch', lobbyName: optsRef.current.lobbyName });
     announceSelf();
   }, [epoch, connectionState, discover, send, announceSelf]);
 

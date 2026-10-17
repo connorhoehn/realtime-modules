@@ -135,6 +135,16 @@ export {
   type ConversationCallResult,
 } from './useConversationCall';
 
+// Lobby occupancy (0.136.0, lane L9): is a call live in this lobby, and who
+// is in it, for a page that is not in the call — pushed, not polled.
+export {
+  useLobbyCall,
+  parseLobbyOccupancy,
+  type UseLobbyCallOptions,
+  type UseLobbyCallResult,
+  type CallLobbyOccupancy,
+} from './useLobbyCall';
+
 export {
   useIncomingConversationCalls,
   parseConversationInvite,
@@ -158,7 +168,7 @@ export {
   DEVICE_PREFERENCES_KEY,
 } from './useDevicePreferences';
 
-export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChannel, isDmLobby } from './conversationLobby';
+export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChannel, isDmLobby, CALL_LOBBY_CHANNEL_PREFIX, callLobbyChannel, lobbyForCallLobbyChannel } from './conversationLobby';
 export type { ParsedDmLobby } from './conversationLobby';
 
 export type {

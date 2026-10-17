@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Lobby occupancy: a page sees a huddle go live and end without a refresh**
+  (lane L9 of aws-agentcore `docs/meeting-rooms-app-goal.md`). Before, a page
+  learned of a live call only from one `status` query on mount or reconnect,
+  so a huddle started after the page loaded stayed invisible until a refresh.
+  - `CallService` verbs `watch { lobbyName }` and `unwatch { lobbyName }`
+    (`./call`). `watch` runs the host's channel authority on
+    `callLobbyChannel(lobbyName)`: `router.subscribeToChannel` when the router
+    has it, else `router.checkChannel('subscribe', clientId, channel)`. A
+    refusal sends `{ type: 'error', service: 'call', code: 'watch-denied',
+    action: 'watch', lobbyName }` and subscribes nothing. Otherwise the sender
+    alone gets a `lobby-occupancy` snapshot. The `authorize` hook and
+    `lobbyGuard` gate both verbs like every other verb. Watchers are
+    unsubscribed when their socket closes. A watch grants no seat.
+  - New server→client frame `{ type: 'call', action: 'lobby-occupancy', data:
+    { lobbyName, active, callId, participantUserIds, participantCount,
+    startedAt, callerId?, callerName?, pageHuddle? } }`, typed as
+    `CallLobbyOccupancy`. It counts distinct users, not connections, and an
+    ended call is `active: false, callId: null, participantUserIds: [],
+    participantCount: 0, startedAt: null`. It is published on the lobby
+    channel after anyone is seated, after every removal (hang-up, decline,
+    disconnect, document-call leave, moderation removal), when the rejoin grace
+    runs out, on a departure heard from another node, and when the call ends
+    or is forgotten. Publishes are debounced 250 ms per lobby
+    (`CallService.LOBBY_OCCUPANCY_DEBOUNCE_MS`), and `dispose()` drops pending
+    ones. The frame has its own action name: `active-call` stays the answer to
+    `status` and `join`, which an in-call page huddle re-announces on.
+  - `CallMessageRouter` gains optional `subscribeToChannel`,
+    `unsubscribeFromChannel`, `sendToChannel` and `checkChannel`, the same
+    slice `MeetingService` uses. A router without `sendToChannel` publishes
+    nothing; a watcher still gets its snapshot. `ActiveCallState` gains an
+    optional `createdAt`. `CallManifest.channels` is now `['call-lobby:*']`.
+  - `CALL_LOBBY_CHANNEL_PREFIX` (`'call-lobby:'`), `callLobbyChannel(lobby)`
+    and `lobbyForCallLobbyChannel(channel)` are exported from `./call` and
+    `./client/video`. A host's channel `authorize` hook receives
+    `call-lobby:<lobby>`. `baseChannel` does not unwrap it, so a tenant rule
+    should judge `lobbyForCallLobbyChannel(channel)`.
+  - `useLobbyCall(lobbyName, { enabled?, socket? })` (`./client/video`)
+    returns `{ live, callId, participantUserIds, count, startedAt }`. It sends
+    `watch` on mount and again after every reconnect (`sessionEpoch`), and
+    `unwatch` on unmount or lobby change. Frames for another lobby are
+    ignored. `parseLobbyOccupancy` and the `UseLobbyCallOptions` and
+    `UseLobbyCallResult` types are exported with it.
+  - `useConversationCall` discovery now uses `watch` instead of `status`, so
+    there is one subscription per lobby. A `lobby-occupancy` frame for another
+    call in the lobby offers it (`call` while idle, `rejoin()` joins it), and
+    `active: false` clears the offer. Frames for the call you are in are
+    ignored and never re-announce you. A reconnect re-watches and
+    re-announces as before. `active-call` frames are still handled. This needs
+    a gateway on this release: an older one refuses `watch` as an unknown
+    action, and nothing is discovered.
+- **`useMeeting(meetingId, { roleKey })`** (`./client/meeting`): pass whatever
+  the host's organizer rule reads (for example the caller's call id and phase)
+  as one key. When it changes, the hook subscribes again and gets a fresh
+  snapshot with `you.organizer`, without resetting anything. Before, a page
+  that subscribed before its call started kept `isOrganizer: false` after
+  starting the call.
+
 ## 0.135.0 — 2026-10-16
 
 ### Added

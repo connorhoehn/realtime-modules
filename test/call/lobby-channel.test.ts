@@ -218,3 +218,34 @@ describe('tenant-prefixed lobbies', () => {
     }
   });
 });
+
+import { CALL_LOBBY_CHANNEL_PREFIX, callLobbyChannel, lobbyForCallLobbyChannel } from '../../src/call/lobbyChannel';
+import * as callEntry from '../../src/call';
+import * as videoEntry from '../../src/client/video';
+
+describe('call lobby occupancy channel (0.136.0)', () => {
+  it('round-trips every lobby shape verbatim', () => {
+    for (const lobby of ['dm:alice:bob', 'acme:dm:alice:bob', 'dmg:9f2c1a4b', 'room:design', 'acme:room:design', 'assessment:team:T-1', 'global-hangout']) {
+      const channel = callLobbyChannel(lobby);
+      expect(channel).toBe(`call-lobby:${lobby}`);
+      expect(channel.startsWith(CALL_LOBBY_CHANNEL_PREFIX)).toBe(true);
+      expect(lobbyForCallLobbyChannel(channel)).toBe(lobby);
+    }
+  });
+
+  it('parses only its own channels', () => {
+    for (const other of ['call-lobby:', 'room:design', 'chat:dm:a:b', 'presence:call-lobby:x', '', null, undefined]) {
+      expect(lobbyForCallLobbyChannel(other)).toBeNull();
+    }
+  });
+
+  it('is exported from /call and /client/video', () => {
+    expect(callEntry.callLobbyChannel).toBe(callLobbyChannel);
+    expect(callEntry.lobbyForCallLobbyChannel).toBe(lobbyForCallLobbyChannel);
+    expect(callEntry.CALL_LOBBY_CHANNEL_PREFIX).toBe('call-lobby:');
+    expect(videoEntry.callLobbyChannel).toBe(callLobbyChannel);
+    expect(videoEntry.lobbyForCallLobbyChannel).toBe(lobbyForCallLobbyChannel);
+    expect(videoEntry.CALL_LOBBY_CHANNEL_PREFIX).toBe('call-lobby:');
+    expect(typeof videoEntry.useLobbyCall).toBe('function');
+  });
+});

@@ -279,3 +279,24 @@ export function shouldKnockToJoin(
   if (!members || !userId) return true;
   return !members.includes(userId);
 }
+
+/**
+ * The prefix of a call lobby's OCCUPANCY channel (0.136.0, lane L9). A page
+ * that wants to see a huddle go live without being in it subscribes here (the
+ * call service's `watch` verb does that, after the host's channel authority
+ * admits it) and receives `lobby-occupancy` frames as the call starts, people
+ * join and leave, and it ends.
+ */
+export const CALL_LOBBY_CHANNEL_PREFIX = 'call-lobby:';
+
+/** `callLobbyChannel('acme:room:design')` → `call-lobby:acme:room:design`. The lobby is used verbatim. */
+export function callLobbyChannel(lobby: string): string {
+  return `${CALL_LOBBY_CHANNEL_PREFIX}${lobby}`;
+}
+
+/** The inverse of `callLobbyChannel`: `call-lobby:acme:room:design` → `acme:room:design`; anything else (or an empty lobby) → null. */
+export function lobbyForCallLobbyChannel(channel: string | null | undefined): string | null {
+  if (!channel || !channel.startsWith(CALL_LOBBY_CHANNEL_PREFIX)) return null;
+  const lobby = channel.slice(CALL_LOBBY_CHANNEL_PREFIX.length);
+  return lobby.length > 0 ? lobby : null;
+}
