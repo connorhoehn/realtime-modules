@@ -428,7 +428,11 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     const durationMs = a.startedAt ? at - a.startedAt : null;
     const base = eventBase(a.callId);
     if (a.startedAt) optsRef.current.onCallEnded?.({ ...base, reason, durationMs });
-    else if (a.role === 'caller' && reason === 'no-answer') optsRef.current.onCallMissed?.({ ...base, direction: 'outgoing' });
+    else if (a.role === 'caller' && a.targets.length > 0 && ['no-answer', 'left', 'switched'].includes(reason)) {
+      // An unanswered ring is still a history event when the caller cancels
+      // it (or switches calls), not only when the ring timer expires.
+      optsRef.current.onCallMissed?.({ ...base, direction: 'outgoing' });
+    }
     setActive(null);
     setBusy(null);
     setError(null);

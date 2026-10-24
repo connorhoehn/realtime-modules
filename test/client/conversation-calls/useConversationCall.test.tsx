@@ -144,7 +144,7 @@ describe('useConversationCall — caller', () => {
   });
 
   it('leave → left to the peer, ended to yourself, PA end, media leave, onCallEnded', async () => {
-    const { g, m, pa, hook, onCallEnded } = setup();
+    const { g, m, pa, hook, onCallEnded, onCallMissed } = setup();
     await act(async () => { await hook.result.current.start([{ userId: 'u-bob', displayName: 'Bob Stone' }]); });
     const callId = hook.result.current.call!.callId;
     act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
@@ -158,6 +158,7 @@ describe('useConversationCall — caller', () => {
     expect(pa.calls.find((c) => c.path.endsWith('/end'))!.body).toMatchObject({ lobbyName: LOBBY, participantId: 'p-self-1', userId: 'u-alice' });
     expect(m.calls).toContain('leave');
     expect(onCallEnded).toHaveBeenCalledWith(expect.objectContaining({ callId, reason: 'left' }));
+    expect(onCallMissed).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe('ended');
     expect(conversationCallDockProps(hook.result.current, ui)!.phase).toBe('ended');
     await waitFor(() => expect(hook.result.current.phase).toBe('idle'));
@@ -165,12 +166,23 @@ describe('useConversationCall — caller', () => {
     expectAllTargeted(g.sent);
   });
 
-  it('hanging up before an answer cancels the ring', async () => {
-    const { g, hook, onCallEnded } = setup();
+  it('hanging up before an answer cancels the ring and reports its history once', async () => {
+    const { g, hook, onCallEnded, onCallMissed } = setup();
     await act(async () => { await hook.result.current.start([{ userId: 'u-bob' }]); });
+    const callId = hook.result.current.call!.callId;
     await act(async () => { await hook.result.current.leave(); });
     expect(g.callFrames('cancelled')[0]).toMatchObject({ targetUserIds: ['u-bob'], lobbyName: LOBBY });
     expect(onCallEnded).not.toHaveBeenCalled();
+    expect(onCallMissed).toHaveBeenCalledWith(expect.objectContaining({ callId, lobbyName: LOBBY, peerUserIds: ['u-bob'], direction: 'outgoing' }));
+    await act(async () => { await hook.result.current.leave(); });
+    expect(onCallMissed).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaving a room opened alone does not report a missed ring', async () => {
+    const { hook, onCallMissed } = setup({ lobbyName: 'social:room:lounge' });
+    await act(async () => { await hook.result.current.start([]); });
+    await act(async () => { await hook.result.current.leave(); });
+    expect(onCallMissed).not.toHaveBeenCalled();
   });
 
   it('a decline from everyone rung ends the attempt', async () => {
