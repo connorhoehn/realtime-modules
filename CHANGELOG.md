@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.138.0 — 2026-10-25
+
+- `useConversationCall().rejoin({ audioOnly: true })` honors a hangout's camera-off entry setting when joining a discovered live call. Existing active-call device preferences remain intact on retry.
+- Concurrent returns from breakout rooms retry only the known main-lobby claim conflict, up to three total attempts. Leaving cancels further attempts; authorization failures and unrelated conflicts are not retried.
+- Verified by 91 conversation-call and meeting integration tests, lint and all 35 built export checks, plus the AgentCore two-person local media journey.
+
 ## 0.137.0 — 2026-10-16
 
 ### Added

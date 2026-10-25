@@ -355,6 +355,14 @@ describe('useConversationCall — callee', () => {
 });
 
 describe('useConversationCall — discovery', () => {
+  it('honors the persistent hangout audio setting when joining a discovered call', async () => {
+    const { g, m, hook } = setup({ initialMedia: { micOn: true, cameraOn: true } });
+    act(() => { g.push('active-call', { lobbyName: LOBBY, active: true, callId: 'call-live', participantUserIds: ['u-bob'] }); });
+    await act(async () => { await hook.result.current.rejoin({ audioOnly: true }); });
+    expect(m.lastOpts.current!.media).toEqual({ audio: true, video: false });
+    expect(hook.result.current.call?.audioOnly).toBe(true);
+    expect(hook.result.current.self.cameraOn).toBe(false);
+  });
   it('a live call in the lobby is offered; rejoin joins it', async () => {
     const { g, pa, hook } = setup();
     act(() => { g.push('active-call', { lobbyName: LOBBY, active: true, callId: 'call-live', participantUserIds: ['u-bob'] }); });

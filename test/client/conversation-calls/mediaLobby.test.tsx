@@ -20,7 +20,7 @@ const alice = { userId: 'u-alice', displayName: 'Alice Chen' };
 type Call = { path: string; body: any };
 
 /** platform-api with an optional hold on every request and a refusal per lobby. */
-function gatedPlatformApi(opts: { refuseLobby?: string } = {}) {
+function gatedPlatformApi(opts: { refuseLobby?: string; createConflict?: { lobby: string; remaining: number; status?: number; error?: string } } = {}) {
   const calls: Call[] = [];
   const log: string[] = [];
   let held = false;
@@ -40,6 +40,10 @@ function gatedPlatformApi(opts: { refuseLobby?: string } = {}) {
       if (held) await new Promise<void>((r) => waiting.push(r));
       if (path === '/api/video/sessions') {
         log.push(`create:${body.lobbyName}`);
+        const conflict = opts.createConflict;
+        if (conflict && body.lobbyName === conflict.lobby && conflict.remaining-- > 0) {
+          return json(conflict.status ?? 409, { error: conflict.error ?? 'lobbyName already claimed' });
+        }
         return json(201, { sessionId: `sess-${++n}` });
       }
       if (/\/join$/.test(path)) {
@@ -93,6 +97,43 @@ async function goLive(s: ReturnType<typeof setup>) {
 }
 
 describe('useConversationCall mediaLobby (lane L1)', () => {
+  it('joins the winning main session after a simultaneous return loses the lobby claim', async () => {
+    const s = setup(R1, gatedPlatformApi({ createConflict: { lobby: LOBBY, remaining: 1 } }));
+    const callId = await goLive(s);
+    const frames = s.g.callFrames().length;
+    s.hook.rerender({ mediaLobby: LOBBY });
+    await waitFor(() => expect(s.hook.result.current.phase).toBe('live'));
+    expect(s.pa.log.slice(2)).toEqual([`end:${R1}`, `create:${LOBBY}`, `create:${LOBBY}`, `join:${LOBBY}`]);
+    expect(s.hook.result.current.call!.callId).toBe(callId);
+    expect(s.hook.result.current.error).toBeNull();
+    expect(s.g.callFrames().slice(frames)).toEqual([]);
+  });
+
+  it.each([
+    [409, 'lobbyName already claimed', 3],
+    [409, 'Media session changed', 1],
+    [403, 'Not admitted', 1],
+  ])('bounds retry and preserves refusal %s %s', async (status, error, attempts) => {
+    const s = setup(R1, gatedPlatformApi({ createConflict: { lobby: LOBBY, remaining: 10, status, error } }));
+    await goLive(s);
+    s.hook.rerender({ mediaLobby: LOBBY });
+    await waitFor(() => expect(s.hook.result.current.phase).toBe('failed'));
+    expect(s.pa.log.filter(v => v === `create:${LOBBY}`)).toHaveLength(attempts);
+    expect(s.pa.log).not.toContain(`join:${LOBBY}`);
+    expect(s.hook.result.current.error).toMatchObject({ status, message: error });
+  });
+
+  it('does not retry the claim after leaving during backoff', async () => {
+    const s = setup(R1, gatedPlatformApi({ createConflict: { lobby: LOBBY, remaining: 10 } }));
+    await goLive(s);
+    s.hook.rerender({ mediaLobby: LOBBY });
+    await waitFor(() => expect(s.pa.log).toContain(`create:${LOBBY}`));
+    await act(async () => { await s.hook.result.current.leave(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 150)); });
+    expect(s.pa.log.filter(v => v === `create:${LOBBY}`)).toHaveLength(1);
+    expect(s.hook.result.current.call).toBeNull();
+  });
+
   it('without mediaLobby the media joins the call lobby, as before', async () => {
     const s = setup(undefined);
     await goLive(s);

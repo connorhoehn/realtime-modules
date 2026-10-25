@@ -161,7 +161,9 @@ export interface ConversationCallResult {
     /** Hang up (cancels the ring when nobody answered). While 'ended', dismisses. */
     leave(): Promise<void>;
     /** After a failure, join the same call again; while idle, join the live call in this lobby. */
-    rejoin(): Promise<void>;
+    rejoin(opts?: {
+        audioOnly?: boolean;
+    }): Promise<void>;
     toggleMic(): void;
     toggleCamera(): void;
     toggleScreenShare(): void;

@@ -318,13 +318,32 @@ function useConversationCall(opts) {
             const recording = o.recordingProfile
                 ? { recordingConfiguration: { enabled: o.recordingProfile !== 'none', recordingProfile: o.recordingProfile } }
                 : {};
-            const created = await api('/api/video/sessions', {
+            const createBody = {
                 lobbyName: lobby,
                 documentId: lobby, // platform-api's back-compat alias
                 displayName: o.self.displayName,
                 findOrCreate: true,
                 ...recording,
-            });
+            };
+            // Simultaneous returns from breakouts can both miss the main lobby.
+            // The SFU's atomic claim chooses one winner; findOrCreate picks it up
+            // on a bounded retry. Never retry a different conflict or admission denial.
+            let created = {};
+            for (let attempt = 0;; attempt++) {
+                if (activeRef.current?.callId !== a.callId)
+                    return false;
+                try {
+                    created = await api('/api/video/sessions', createBody);
+                    break;
+                }
+                catch (error) {
+                    const conflict = error;
+                    if (attempt >= 2 || conflict.status !== 409
+                        || !(conflict.code === 'LOBBY_TAKEN' || conflict.message === 'lobbyName already claimed'))
+                        throw error;
+                    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+                }
+            }
             const sessionId = str(created.sessionId);
             if (!sessionId)
                 throw new Error('No session id from the server');
@@ -564,7 +583,7 @@ function useConversationCall(opts) {
         }
         hangUp('left');
     }, [hangUp]);
-    const rejoin = (0, react_1.useCallback)(async () => {
+    const rejoin = (0, react_1.useCallback)(async (opts) => {
         // Never overlap a media-lobby move: let it settle, then rejoin where it left you.
         if (moving.current)
             await moving.current;
@@ -585,7 +604,8 @@ function useConversationCall(opts) {
             return;
         const o = optsRef.current;
         const others = d.userIds.filter((u) => u !== o.self.userId);
-        joinSelf(false);
+        const audioOnly = opts?.audioOnly === true;
+        joinSelf(audioOnly);
         setRoster(() => Object.fromEntries(others.map((u) => [u, { status: 'in-call' }])));
         const startedAt = Date.now();
         // Registers you with the call on the server (an accept of the live call).
@@ -601,8 +621,8 @@ function useConversationCall(opts) {
             send({ service: 'call', action: 'accepted', callId: d.callId, callerId: o.self.userId, userId: o.self.userId, displayName: o.self.displayName, targetUserIds: others, lobbyName: o.lobbyName });
         }
         const ok = await enter({
-            callId: d.callId, role: 'joiner', host: others[0] ?? '', audioOnly: false, targets: [],
-            sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(false),
+            callId: d.callId, role: 'joiner', host: others[0] ?? '', audioOnly, targets: [],
+            sessionId: null, stageToken: null, participantId: null, startedAt, media: joinMedia(audioOnly),
             mediaLobby: mediaLobbyTargetRef.current,
             ...(d.pageHuddle ? { pageHuddle: true } : {}),
         });
