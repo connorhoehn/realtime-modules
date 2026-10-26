@@ -8,6 +8,10 @@
 
 // Types
 export type {
+  HangoutPlan,
+  HangoutPlanInput,
+  HangoutPlanContent,
+  SavedHangoutRoom,
   CreateRoomInput,
   JoinRoomResult,
   ListRoomsQuery,

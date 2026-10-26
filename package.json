@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.138.0",
+  "version": "0.139.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -114,6 +114,9 @@
       ],
       "testing": [
         "dist/testing/index.d.ts"
+      ],
+      "hangout-rooms": [
+        "dist/hangout-rooms/index.d.ts"
       ]
     }
   },
@@ -263,6 +266,10 @@
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
+    },
+    "./hangout-rooms": {
+      "types": "./dist/hangout-rooms/index.d.ts",
+      "default": "./dist/hangout-rooms/index.js"
     }
   },
   "files": [
@@ -292,11 +299,11 @@
     "distributed-core": "github:connorhoehn/distributed-core#077d7594cc412e3153ace47ce0f0b4be60df84d5",
     "lib0": "^0.2.117",
     "lru-cache": "^10.4.3",
-    "yjs": "^13.0.0"
+    "yjs": "^13.0.0",
+    "@connorhoehn/service-runtime": "github:connorhoehn/service-runtime#c01db0e6dfe0e6b91081ae92ee5cc3c1e77d2ad6"
   },
   "peerDependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
-    "@connorhoehn/service-runtime": ">=0.2.0 <1",
     "@tiptap/extension-collaboration": "^3.0.0",
     "@tiptap/extension-placeholder": "^3.0.0",
     "@tiptap/extension-task-item": "^3.0.0",
@@ -317,11 +324,6 @@
         "./server/stores/dynamo"
       ],
       "_note": "The DynamoDB chat stores import the low-level command classes from here; the consumer injects the client (a DynamoDBClient, or a DynamoDBDocumentClient from @aws-sdk/lib-dynamodb, which wraps one)."
-    },
-    "@connorhoehn/service-runtime": {
-      "optional": true,
-      "_note": "Required only when using GatewayProxyClient with serviceAuthSecret. The client includes an inlined compatible implementation; install this package when you need server-side verify/require-service-auth utilities.",
-      "_range": "Deliberately wide. This peer is not published to the registry — every consumer installs it from a git SHA, currently 0.3.4 — so a narrow range that the installed package does not satisfy sends npm to the registry to look for one, where it 404s and takes the WHOLE install down. That is what `^0.2.0` did to realtime-examples: no npm install could complete there at all, which in turn made it impossible to repin any sibling."
     },
     "@tiptap/extension-collaboration": {
       "optional": true,

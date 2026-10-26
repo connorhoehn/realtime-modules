@@ -198,6 +198,7 @@ is the same as an unpublished one.
 | `./client/video` | Camera/mic capture + publishing primitives | Surfaces that publish video |
 | `./client/media-effects` | Blur, virtual backgrounds, face sprites — lazy MediaPipe engine | Camera surfaces wanting effects |
 | `./client/voice` | Ambient push-to-talk capture + `ContextFrame` (where an utterance attaches) | Dictation / spoken remarks outside a call |
+| `./hangout-rooms` | Framework-free room types, saved-layout validator/limits and REST client. Hosts own audit metadata, access checks and atomic version writes. |
 | `./client/hangout-rooms` | Hangout room hooks + the REST functions behind them | Multi-room video apps |
 | `./client/meeting` | `useMeeting` — raised hands and breakout rooms for a live call; `activeLobby` says which LVS lobby to be in | Teams-style meetings: Raise, Rooms pane, breakout timer |
 | `./client/pipelines` | `usePipelineRunStatus` — live run status merged from `pipeline:event` frames and a REST snapshot; `usePipelineCatalog` — the pipelines directory (work-type/kind enum, last-run rollups kept current from `pipeline:all`, `statusPillFor`, `generatePipelineDraft`); pure helpers for SSR/scripts | Rendering a pipeline-run card or the pipelines page |
@@ -516,3 +517,43 @@ HTTP (using `./proxy-client`).
 - [docs/USEWEBSOCKET-GAP-vs-GATEWAY.md](./docs/USEWEBSOCKET-GAP-vs-GATEWAY.md) — `useWebSocket` vs gateway protocol gaps.
 - [CHANGELOG.md](./CHANGELOG.md).
 - [LICENSE](./LICENSE) — MIT.
+
+## Realtime composition and saved layouts (0.139)
+
+`attachRealtime` and `createRealtimeServer` preflight the complete manifest graph
+before creating services or installing a listener. Dependencies may name a
+manifest or its wire alias. Missing dependencies, duplicate identities, alias
+collisions and cycles fail synchronously. Independent features retain input
+priority; dependencies construct first and shut down last. `ctx.service(name)`
+resolves either name. Legacy wire names stay unchanged; `pipeline-ws` explicitly
+maps to `pipeline`. Unknown legacy features now throw with an `attachRealtime` /
+`defineFeature` migration hint instead of silently disappearing.
+
+A manifest may declare `adapterRequirements: [{ provider: 'chat-store',
+capabilities: ['conditional-write'] }]`. Supply matching `capabilityProviders`
+to either entry point. This uses service-runtime's static evaluator; declarations
+do not prove availability. Hosts still need live readiness probes and must
+accurately describe their actual injected adapters. The runtime dependency is
+pinned to service-runtime 0.5.1, rather than relying on its former optional peer.
+
+Attached factories register partially acquired resources with `ctx.onCleanup?.(fn)` during
+`create()`. This hook is supplied by attachment; callers invoking factories directly
+remain responsible for their resources. Returned services automatically receive `shutdown()` or `stop()`
+once; do not also register the same service's shutdown. Disposal drains sockets,
+then reverses service/resource construction, then closes the router. Repeated
+`dispose()` calls return the same promise. Cleanup continues after errors and
+rejects with `AggregateError` after all resources have been attempted. Startup
+still throws synchronously: a `RealtimeStartupError` retains the original `cause`
+and exposes `cleanup`, a promise of cleanup failures (empty on successful
+rollback). Await it before retrying attachment. Factories must be synchronous;
+the host owns asynchronous dependency readiness before attaching.
+
+Import `HangoutPlan`, `HangoutPlanInput`, `parseHangoutPlanInput` and
+`HANGOUT_PLAN_LIMITS` from `@connorhoehn/realtime-modules/hangout-rooms`. This
+entry point and its REST client need no React, Node builtin or server SDK.
+The validator normalizes names and strips untrusted metadata. Hosts stamp
+`updatedBy`/`updatedAt`, increment the validated version, and atomically compare
+`expectedVersion` at storage. A plan supports 50 rooms and 500 unique assignments;
+assignments do not grant private-room access or represent live/IVS participants.
+The older `client/hangout-rooms` type imports remain compatible. `updateRoom`
+now unwraps platform-api's `{ room }` response like `createRoom` and `getRoom`.

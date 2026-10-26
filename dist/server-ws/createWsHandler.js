@@ -103,6 +103,9 @@ function createWsHandler(opts) {
     const cleanupFns = new Map();
     /** Async disconnect hooks must finish before a host closes shared ports. */
     const closing = new Set();
+    const registering = new Set();
+    const authenticating = new Set();
+    let disposing = false;
     /** clientId -> inbound frames accepted and not yet finished (lane R6). */
     const queueDepths = new Map();
     /** clientId -> the end of the window it is currently over budget in. */
@@ -131,22 +134,41 @@ function createWsHandler(opts) {
                 return;
             }
         }
+        if (disposing) {
+            denyUpgrade(socket, 503, 'Service Unavailable');
+            return;
+        }
         let ctx = {};
+        authenticating.add(socket);
         if (auth) {
             try {
                 ctx = (await auth(req)) || {};
             }
             catch {
+                authenticating.delete(socket);
                 denyUpgrade(socket, 401, 'Unauthorized');
                 return;
             }
         }
-        wss.handleUpgrade(req, socket, head, (ws) => {
-            wss.emit('connection', ws, req, ctx);
-        });
+        authenticating.delete(socket);
+        if (disposing || socket.destroyed) {
+            denyUpgrade(socket, 503, 'Service Unavailable');
+            return;
+        }
+        try {
+            wss.handleUpgrade(req, socket, head, (ws) => {
+                wss.emit('connection', ws, req, ctx);
+            });
+        }
+        catch {
+            denyUpgrade(socket, 503, 'Service Unavailable');
+        }
     };
-    server.on('upgrade', upgradeListener);
-    wss.on('connection', async (ws, _req, ctx = {}) => {
+    const registerConnection = async (ws, ctx = {}) => {
+        if (disposing) {
+            ws.terminate();
+            return;
+        }
         const clientId = generateClientId();
         if (clients.has(clientId)) {
             ws.once('error', () => undefined);
@@ -194,7 +216,7 @@ function createWsHandler(opts) {
         };
         try {
             await beforeConnect?.(clientId, ctx);
-            if (ws.readyState !== 1)
+            if (disposing || ws.readyState !== 1)
                 throw new Error('Connection closed during registration');
         }
         catch {
@@ -214,7 +236,7 @@ function createWsHandler(opts) {
                     console.warn(`[realtime-modules] service '${name}' onClientConnect failed`, err);
                 }
             }
-            if (ws.readyState !== 1) {
+            if (disposing || ws.readyState !== 1) {
                 await rollback();
                 return;
             }
@@ -435,7 +457,30 @@ function createWsHandler(opts) {
         };
         ws.on('close', close);
         ws.on('error', close);
+    };
+    wss.on('connection', (ws, _req, ctx = {}) => {
+        const task = registerConnection(ws, ctx).catch(() => { ws.terminate(); });
+        registering.add(task);
+        void task.finally(() => registering.delete(task));
     });
+    // Install last: a host emitter may reject listener registration. Roll back
+    // even when it adds the listener and then throws (for example newListener hooks).
+    try {
+        server.on('upgrade', upgradeListener);
+    }
+    catch (error) {
+        loop?.disable();
+        const remove = server.removeListener ?? server.off;
+        try {
+            remove?.call(server, 'upgrade', upgradeListener);
+        }
+        catch { /* preserve startup cause */ }
+        try {
+            wss.close();
+        }
+        catch { /* no connections were admitted */ }
+        throw error;
+    }
     return {
         wss,
         listClients() {
@@ -491,7 +536,11 @@ function createWsHandler(opts) {
             return out;
         },
         async dispose() {
+            disposing = true;
             loop?.disable();
+            for (const socket of authenticating)
+                socket.destroy();
+            authenticating.clear();
             // Remove our upgrade listener (best-effort across http.Server APIs).
             const removeFn = server.removeListener || server.off;
             if (typeof removeFn === 'function') {
@@ -518,6 +567,9 @@ function createWsHandler(opts) {
                     resolve();
                 }
             });
+            // Registration may still be awaiting a host/service hook. Its
+            // rollback must finish before composition closes those services.
+            await Promise.all([...registering]);
             await Promise.all([...closing]);
         },
     };

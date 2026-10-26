@@ -1,5 +1,6 @@
 import type { FeatureManifest } from '../feature-manifest/types';
 import type { WsHandlerHandle, WsHandlerOptions } from '../server-ws/types';
+import { type CapabilityProvider } from './composition';
 import { type ChatStore } from '../chat/ChatStore';
 import { type ActivityHistoryStore } from '../activity/ActivityHistoryStore';
 /**
@@ -106,6 +107,8 @@ export declare function inMemoryAdapters(): AdapterMap;
  * which the factory builds from `features`) with feature/adapter config.
  */
 export interface RealtimeServerOptions extends Omit<WsHandlerOptions, 'services'> {
+    /** Static guarantees, validated by the same planner as attachRealtime. */
+    capabilityProviders?: readonly CapabilityProvider[];
     /**
      * Optional lifecycle plugins. Each plugin's hooks are called in array
      * order. Calls are fire-and-forget — errors are logged but never
@@ -131,7 +134,7 @@ export interface RealtimeServerOptions extends Omit<WsHandlerOptions, 'services'
  *
  * @param features  Array of FeatureManifest objects — only manifests whose
  *                  `name` appears in the built-in registry are instantiated.
- *                  Unknown names are silently skipped.
+ *                  Unknown names fail with an attachRealtime migration hint.
  * @param adapters  Storage backends. Either a flat `AdapterMap` (or the result
  *                  of `inMemoryAdapters()`) or a `PerFeatureAdapters` object.
  *                  Pass `inMemoryAdapters()` for dev/tests, or provide real

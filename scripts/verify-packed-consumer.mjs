@@ -22,12 +22,66 @@ try {
     const tgz = join(work, JSON.parse(packOut)[0].filename);
     const consumer = join(work, 'consumer');
     run('mkdir', ['-p', consumer], work);
-    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', private: true, version: '0.0.0', dependencies: { rtm: `file:${tgz}` } }));
+    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', private: true, version: '0.0.0', dependencies: { rtm: `file:${tgz}`, ws: '^8.0.0', 'y-protocols': '^1.0.0' } }));
     run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--legacy-peer-deps'], consumer);
 
     const installed = join(consumer, 'node_modules', 'rtm');
     const ipkg = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
     if (ipkg.name !== pkg.name) errors.push(`installed name ${ipkg.name} != ${pkg.name} (installed under key "rtm")`);
+
+    // Required runtime dependencies may not be mistaken for optional peers.
+    const serverProbe = `
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const { attachRealtime, planRealtimeComposition, RealtimeStartupError } = require('rtm/server');
+const feature = { manifest: { name: 'durable', version: '1', adapterRequirements: [{ provider: 'store', capabilities: ['conditional-write'] }] }, create: () => ({ handleAction() {} }) };
+assert.throws(() => planRealtimeComposition([feature]), /missing-provider/);
+const handle = attachRealtime(http.createServer(), { features: [feature], capabilityProviders: [{ id: 'store', capabilities: ['conditional-write'] }] });
+handle.dispose().catch(error => { console.error(error); process.exitCode = 1; });
+assert.equal(typeof RealtimeStartupError, 'function');`;
+    run(process.execPath, ['-e', serverProbe], consumer);
+
+    // Run the pure entry point in a browser-like VM without Node globals or
+    // external requires. Every transitive import must stay inside the package.
+    const browserProbe = `
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
+const entry = require.resolve('rtm/hangout-rooms');
+const dist = path.resolve('node_modules/rtm/dist') + path.sep;
+const context = vm.createContext({ URL, URLSearchParams, fetch, Response, AbortController });
+const cache = new Map();
+function load(file) {
+  assert.ok(file.startsWith(dist), 'browser import escaped package: ' + file);
+  if (cache.has(file)) return cache.get(file).exports;
+  const module = { exports: {} }; cache.set(file, module);
+  const localRequire = spec => {
+    assert.ok(spec.startsWith('.'), 'browser import loaded an external module: ' + spec);
+    return load(require.resolve(path.resolve(path.dirname(file), spec)));
+  };
+  const factory = vm.runInContext('(function(require, module, exports) {' + fs.readFileSync(file, 'utf8') + String.fromCharCode(10) + '})', context);
+  factory(localRequire, module, module.exports);
+  return module.exports;
+}
+const api = load(entry);
+assert.equal(api.parseHangoutPlanInput({ expectedVersion: 0, mode: 'assigned', allowReturnToMain: true, rooms: [] }).expectedVersion, 0);
+assert.equal(typeof api.updateRoom, 'function');
+assert.ok([...cache.keys()].every(file => !file.includes('/server/') && !file.includes('/use')));`;
+    run(process.execPath, ['-e', browserProbe], consumer);
+    writeFileSync(join(consumer, 'esm.mjs'), `import { parseHangoutPlanInput } from 'rtm/hangout-rooms';
+if (parseHangoutPlanInput({ expectedVersion: 0, mode: 'assigned', allowReturnToMain: true, rooms: [] }).expectedVersion !== 0) throw Error('ESM contract');
+`);
+    run(process.execPath, ['esm.mjs'], consumer);
+    writeFileSync(join(consumer, 'contract.ts'), `import { parseHangoutPlanInput, type HangoutPlanInput, type Room, type UpdateRoomInput } from 'rtm/hangout-rooms';
+const plan: HangoutPlanInput = parseHangoutPlanInput({});
+const patch: UpdateRoomInput = { plan };
+const read = (room: Room): number | undefined => room.plan?.version;
+void patch; void read;
+`);
+    for (const resolution of ['node', 'nodenext']) {
+        run(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'es2022', '--module', resolution === 'node' ? 'commonjs' : 'nodenext', '--moduleResolution', resolution, 'contract.ts'], consumer);
+    }
 
     const probe = `
 const pkg = JSON.parse(require('fs').readFileSync('node_modules/rtm/package.json','utf8'));
@@ -45,7 +99,7 @@ for (const sub of Object.keys(pkg.exports)) {
   }
 }
 console.log(JSON.stringify(out));`;
-    const res = JSON.parse(run('node', ['-e', probe], consumer).trim().split('\n').pop());
+    const res = JSON.parse(run(process.execPath, ['-e', probe], consumer).trim().split('\n').pop());
     errors.push(...res);
     for (const [sub, t] of Object.entries(pkg.exports)) {
         const types = typeof t === 'object' && t.types;

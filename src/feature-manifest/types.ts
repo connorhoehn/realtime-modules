@@ -33,6 +33,9 @@ export interface FeatureManifest {
   /** Other feature names this one requires to be installed first. */
   dependencies?: string[];
 
+  /** Static adapter guarantees; the host declares providers separately from live readiness probes. */
+  adapterRequirements?: Array<Omit<import('@connorhoehn/service-runtime/capabilities').CapabilityRequirement, 'feature'>>;
+
   /** Optional install hooks the host application can call. */
   install?: {
     /** Module path to a backend route-mounter (e.g. (app) => void). */

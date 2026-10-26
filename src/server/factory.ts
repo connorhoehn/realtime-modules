@@ -30,7 +30,7 @@
 //
 //   - Each feature manifest has a `name` field (e.g. 'chat', 'presence')
 //     that maps to a service factory registered in FEATURE_REGISTRY below.
-//     Manifests for unknown features are silently skipped.
+//     Unknown features fail before construction; use attachRealtime for custom factories.
 //
 //   - Services need a `messageRouter.sendToClient` — but that lives on the
 //     WsHandlerHandle returned by createWsHandler, which is created last.
@@ -47,6 +47,8 @@
 import type { FeatureManifest } from '../feature-manifest/types';
 import type { WsHandlerHandle, WsHandlerOptions } from '../server-ws/types';
 import { createWsHandler } from '../server-ws/createWsHandler';
+import { planRealtimeComposition, type CapabilityProvider } from './composition';
+import { CompositionLifecycle, RealtimeStartupError, serviceCleanup } from './compositionLifecycle';
 import { InMemoryChatStore, type ChatStore } from '../chat/ChatStore';
 import { InMemoryActivityHistoryStore, type ActivityHistoryStore } from '../activity/ActivityHistoryStore';
 
@@ -358,6 +360,12 @@ class LocalMessageRouter {
         }
     }
 
+    shutdown(): void {
+        this.channelMembers.clear();
+        this.clientChannels.clear();
+        this.handleRef = null;
+    }
+
     getClientData(_clientId: string): null {
         return null;
     }
@@ -384,7 +392,7 @@ type ServiceFactory = (
 /**
  * Registry mapping manifest.name → service factory.
  * When a feature manifest appears in the `features` array, its factory is
- * called to instantiate the service. Unknown names are silently skipped.
+ * called to instantiate the service. Unknown names fail before construction.
  */
 const FEATURE_REGISTRY: Record<string, ServiceFactory> = {
     chat: (router, adapters) => {
@@ -496,6 +504,8 @@ const FEATURE_REGISTRY: Record<string, ServiceFactory> = {
  * which the factory builds from `features`) with feature/adapter config.
  */
 export interface RealtimeServerOptions extends Omit<WsHandlerOptions, 'services'> {
+    /** Static guarantees, validated by the same planner as attachRealtime. */
+    capabilityProviders?: readonly CapabilityProvider[];
     /**
      * Optional lifecycle plugins. Each plugin's hooks are called in array
      * order. Calls are fire-and-forget — errors are logged but never
@@ -522,7 +532,7 @@ export interface RealtimeServerOptions extends Omit<WsHandlerOptions, 'services'
  *
  * @param features  Array of FeatureManifest objects — only manifests whose
  *                  `name` appears in the built-in registry are instantiated.
- *                  Unknown names are silently skipped.
+ *                  Unknown names fail with an attachRealtime migration hint.
  * @param adapters  Storage backends. Either a flat `AdapterMap` (or the result
  *                  of `inMemoryAdapters()`) or a `PerFeatureAdapters` object.
  *                  Pass `inMemoryAdapters()` for dev/tests, or provide real
@@ -535,37 +545,39 @@ export function createRealtimeServer(
     adapters: AdapterConfig = {},
     opts: RealtimeServerOptions,
 ): WsHandlerHandle {
-    const { plugins = [], ...wsOpts } = opts;
-    const router = new LocalMessageRouter(plugins);
-
-    // Normalise AdapterConfig → flat AdapterMap for the service factories.
-    const flatAdapters = resolveAdapters(adapters);
-
-    // Instantiate one service per recognised feature manifest name.
-    const services: Record<string, import('../server-ws/types').WsService> = {};
-    for (const manifest of features) {
-        const factory = FEATURE_REGISTRY[manifest.name];
-        if (!factory) continue; // unknown feature — skip silently
-        services[manifest.name] = factory(router, flatAdapters);
-    }
-
-    // Compose onDisconnect: call the consumer's hook first, then removeClient.
-    const consumerOnDisconnect = wsOpts.onDisconnect;
-    const composedOnDisconnect = (clientId: string): void => {
-        try { consumerOnDisconnect?.(clientId); } catch { /* swallow */ }
-        router.removeClient(clientId);
-    };
-
-    // Build the handler. At this point `router.handleRef` is still null —
-    // services must not call sendToClient during construction (they don't).
-    const handle = createWsHandler({
-        ...wsOpts,
-        services,
-        onDisconnect: composedOnDisconnect,
+    const { plugins = [], capabilityProviders, ...wsOpts } = opts;
+    const definitions = features.map(manifest => {
+        // Existing legacy frames keep their names. The exported pipeline
+        // manifest has always been named pipeline-ws; its wire key is pipeline.
+        const serviceName = manifest.name === 'pipeline-ws' ? 'pipeline' : manifest.name;
+        if (!Object.prototype.hasOwnProperty.call(FEATURE_REGISTRY, serviceName)) {
+            throw new Error(`createRealtimeServer: unsupported feature '${manifest.name}'; use attachRealtime with defineFeature for custom features`);
+        }
+        return { manifest, serviceName, create: FEATURE_REGISTRY[serviceName]! };
     });
-
-    // Now wire the handle into the router so sendToClient works at runtime.
-    router._setHandle(handle);
-
-    return handle;
+    const plan = planRealtimeComposition(definitions, capabilityProviders);
+    const router = new LocalMessageRouter(plugins);
+    const lifecycle = new CompositionLifecycle();
+    lifecycle.add('router', () => router.shutdown());
+    try {
+        const flatAdapters = resolveAdapters(adapters);
+        const services: Record<string, import('../server-ws/types').WsService> = Object.create(null);
+        for (const feature of plan.features) {
+            const service = feature.create(router, flatAdapters);
+            lifecycle.add(feature.serviceName, serviceCleanup(service));
+            services[feature.serviceName] = service;
+        }
+        const consumerOnDisconnect = wsOpts.onDisconnect;
+        const handle = createWsHandler({ ...wsOpts, services,
+            onDisconnect: async clientId => {
+                try { await consumerOnDisconnect?.(clientId); } catch { /* consumer errors stay theirs */ }
+                router.removeClient(clientId);
+            },
+        });
+        lifecycle.add('websocket handler', () => handle.dispose());
+        router._setHandle(handle);
+        return { ...handle, dispose: lifecycle.disposer() };
+    } catch (error) {
+        throw new RealtimeStartupError(error, lifecycle.close());
+    }
 }

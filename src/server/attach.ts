@@ -38,6 +38,8 @@
 //      a shared config type.
 
 import type { FeatureManifest } from '../feature-manifest/types';
+import { planRealtimeComposition, type CapabilityProvider } from './composition';
+import { CompositionLifecycle, RealtimeStartupError, serviceCleanup, type RealtimeCleanup } from './compositionLifecycle';
 import type { WsHandlerHandle, WsHandlerOptions, WsHandlerStats, WsService } from '../server-ws/types';
 import { createWsHandler } from '../server-ws/createWsHandler';
 import {
@@ -85,8 +87,10 @@ export interface FeatureContext {
      * after its own I/O.
      */
     principal?: FeaturePrincipal;
-    /** 0.118: another attached feature's service by wire name (resolved lazily; undefined until attached). */
+    /** A service by manifest identity or wire alias. Declared dependencies are already constructed. */
     service?: (name: string) => unknown;
+    /** Register a partially acquired resource synchronously during create(). Runs after service shutdown. */
+    onCleanup?: (cleanup: RealtimeCleanup) => void;
 }
 
 /** A pluggable realtime capability: manifest + service factory. */
@@ -550,6 +554,8 @@ export function collabDocs(opts: {
 export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services' | 'server'> {
     /** The capabilities to attach. Built-ins and defineFeature() results mix freely. */
     features: RealtimeFeature[];
+    /** Explicit adapter guarantees checked before construction; not live availability. */
+    capabilityProviders?: readonly CapabilityProvider[];
     /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
     authorize?: ChannelAuthorize;
     /** Last-mile direct/broadcast/channel delivery filtering for the local router. */
@@ -671,8 +677,12 @@ export function attachRealtime(
     server: WsHandlerOptions['server'],
     opts: AttachRealtimeOptions,
 ): RealtimeHandle {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal,
+    const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal,
         authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
+    const plan = planRealtimeComposition(features, capabilityProviders);
+    for (const feature of plan.features) {
+        if (typeof feature.create !== 'function') throw new Error(`Realtime composition: '${feature.manifest.name}' requires a create factory`);
+    }
     const log = logger ?? NOOP_LOGGER;
     // Composition, inside out: host hooks → verdict cache → principal
     // revalidation (verdictCache.ts V4: revalidation runs on every check,
@@ -699,69 +709,58 @@ export function attachRealtime(
         },
     } : undefined;
 
-    const services: Record<string, WsService> = {};  // widened to RealtimeServices on the handle
+    const lifecycle = new CompositionLifecycle();
+    lifecycle.add('router', () => router.shutdown?.());
+    const services: Record<string, WsService> = Object.create(null);
     const manifests: FeatureManifest[] = [];
-    for (const feature of features) {
-        const name = feature.serviceName ?? feature.manifest.name;
-        if (services[name]) {
-            throw new Error(`attachRealtime: duplicate feature '${name}'`);
-        }
-        services[name] = feature.create({ router, logger: log, service: (n: string) => services[n], ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
-        manifests.push(feature.manifest);
-    }
-
-    // Channel membership itself, always present. Not a feature to attach —
-    // useWebSocket's subscribe()/unsubscribe(), and the autoResubscribe replay
-    // on every reconnect, address `service: 'subscribe'`; with nothing under
-    // that name each of those frames came back SERVICE_NOT_AVAILABLE.
-    //
-    // Registered after the loop and only if free, so a consumer who ships
-    // their own 'subscribe' feature keeps it rather than colliding with this.
-    if (!services.subscribe) {
-        services.subscribe = createSubscribeService(router as RealtimeRouter);
-    }
-
-    const consumerOnDisconnect = wsOpts.onDisconnect;
-    const consumerBeforeConnect = wsOpts.beforeConnect;
-    const handle = createWsHandler({
-        ...wsOpts,
-        server,
-        services,
-        beforeConnect: async (clientId, ctx) => {
-            await router.onClientConnect?.(clientId, ctx);
-            await consumerBeforeConnect?.(clientId, ctx);
-        },
-        onDisconnect: async (clientId: string) => {
-            try { await consumerOnDisconnect?.(clientId); } catch { /* consumer errors stay theirs */ }
-            router.removeClient?.(clientId);
-            verdictCache?.invalidateConnection(clientId); // V7
-        },
-    });
-
-    router._setHandle?.(handle);
-
-    // Lifecycle-aware dispose: services with a shutdown()/stop() get it
-    // called after socket frames/disconnect hooks drain — CRDT flushes
-    // snapshots and sweep/eviction timers clear after their last mutation.
-    // Best-effort per service; one feature's
-    // teardown failure never blocks the rest.
-    const baseDispose = handle.dispose.bind(handle);
-    const dispose = async (): Promise<void> => {
-        await baseDispose();
-        for (const [name, svc] of Object.entries(services)) {
-            const s = svc as { shutdown?: () => Promise<void> | void; stop?: () => Promise<void> | void };
+    let handle: WsHandlerHandle;
+    try {
+        for (const feature of plan.features) {
+            const name = plan.serviceName(feature.manifest.name)!;
+            let constructing = true;
+            let service: WsService;
             try {
-                if (typeof s.shutdown === 'function') await s.shutdown();
-                else if (typeof s.stop === 'function') await s.stop();
-            } catch (err) {
-                log.warn(`[attachRealtime] '${name}' teardown failed`, err);
+                service = feature.create({ router, logger: log,
+                    service: (alias: string) => services[plan.serviceName(alias) ?? alias],
+                    onCleanup: cleanup => {
+                        if (!constructing) throw new Error(`'${name}' must register cleanup during create()`);
+                        lifecycle.add(`${name} resource`, cleanup);
+                    },
+                    ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
+            } finally { constructing = false; }
+            lifecycle.add(name, serviceCleanup(service));
+            if (!service || typeof service.handleAction !== 'function') {
+                throw new Error(`'${name}' factory must return a synchronous WS service`);
             }
+            services[name] = service;
+            manifests.push(feature.manifest);
         }
-        await router.shutdown?.();
-    };
+        // Consumers may still supply their own multiplexer.
+        if (!services.subscribe) services.subscribe = createSubscribeService(router);
+        const consumerOnDisconnect = wsOpts.onDisconnect;
+        const consumerBeforeConnect = wsOpts.beforeConnect;
+        handle = createWsHandler({
+            ...wsOpts, server, services,
+            beforeConnect: async (clientId, ctx) => {
+                await router.onClientConnect?.(clientId, ctx);
+                await consumerBeforeConnect?.(clientId, ctx);
+            },
+            onDisconnect: async (clientId: string) => {
+                try { await consumerOnDisconnect?.(clientId); } catch { /* consumer errors stay theirs */ }
+                router.removeClient?.(clientId);
+                verdictCache?.invalidateConnection(clientId);
+            },
+        });
+        lifecycle.add('websocket handler', () => handle.dispose());
+        router._setHandle?.(handle);
+    } catch (error) {
+        throw new RealtimeStartupError(error, lifecycle.close());
+    }
 
     let histogram: ReturnType<typeof monitorEventLoopDelay> | null = null;
+    let disposed = false;
     const loopHistogram = () => {
+        if (disposed) throw new Error('Realtime attachment is disposed');
         if (!histogram) { histogram = monitorEventLoopDelay({ resolution: 20 }); histogram.enable(); }
         return histogram;
     };
@@ -791,6 +790,7 @@ export function attachRealtime(
         return out;
     };
     const onStats = (listener: (s: RealtimeStats) => void, o: { intervalMs?: number } = {}): (() => void) => {
+        if (disposed) throw new Error('Realtime attachment is disposed');
         const interval = o.intervalMs && o.intervalMs > 0 ? o.intervalMs : 60_000;
         const timer = setInterval(() => {
             let reading: RealtimeStats | null = null;
@@ -801,11 +801,14 @@ export function attachRealtime(
         statTimers.add(timer);
         return () => { clearInterval(timer); statTimers.delete(timer); };
     };
-    const disposeAll = async (): Promise<void> => {
+    lifecycle.add('stats', () => {
         for (const t of statTimers) clearInterval(t);
         statTimers.clear();
-        try { await dispose(); } finally { histogram?.disable(); histogram = null; }
-    };
+        histogram?.disable();
+        histogram = null;
+    });
+    const dispose = lifecycle.disposer();
+    const disposeAll = (): Promise<void> => { disposed = true; return dispose(); };
     return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats,
         ...(verdictCache ? { authorityCache: verdictCache } : {}) });
 }

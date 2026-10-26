@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.139.0 — 2026-10-26
+
+- Validate the full feature graph and explicit adapter capabilities before startup; resolve dependency aliases and reject unknown legacy features.
+- Roll back partial startup, expose awaited cleanup on `RealtimeStartupError`, and dispose once in reverse dependency order. Drain registration rollback and refuse late authenticated upgrades before closing services.
+- Publish the framework-free `hangout-rooms` contract and REST client; validate saved layouts once, reject version overflow and unwrap room-update responses. Preserve existing client type paths and direct factory callers.
+- Verified all 216 runnable suites across the full run and targeted reruns (five suites remain gated), build/contract/lint checks, 54 focused Node 20 checks, and packed Node 20/25 consumers including browser-isolated and ESM imports.
+
 ## 0.138.0 — 2026-10-25
 
 - `useConversationCall().rejoin({ audioOnly: true })` honors a hangout's camera-off entry setting when joining a discovered live call. Existing active-call device preferences remain intact on retry.

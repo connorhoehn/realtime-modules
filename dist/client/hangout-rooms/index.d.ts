@@ -1,4 +1,4 @@
-export type { CreateRoomInput, JoinRoomResult, ListRoomsQuery, Room, RoomMember, RoomMemberRole, RoomOccupancy, RoomSettings, RoomState, RoomVisibility, UpdateRoomInput, } from './types';
+export type { HangoutPlan, HangoutPlanInput, HangoutPlanContent, SavedHangoutRoom, CreateRoomInput, JoinRoomResult, ListRoomsQuery, Room, RoomMember, RoomMemberRole, RoomOccupancy, RoomSettings, RoomState, RoomVisibility, UpdateRoomInput, } from './types';
 export { RoomApiError, addMember, archiveRoom, createRoom, getRoom, joinRoom, leaveRoom, listMembers, listRooms, removeMember, updateRoom, type RoomApiOptions, type MemberNames, } from './api';
 export { useHangoutRooms, type RoomEvent, type RoomEventSubscriber, type UseHangoutRoomsOptions, type UseHangoutRoomsResult, } from './useHangoutRooms';
 export { useRoomOccupancy, type RoomsIndexSubscriber, type UseRoomOccupancyOptions, type UseRoomOccupancyResult, } from './useRoomOccupancy';

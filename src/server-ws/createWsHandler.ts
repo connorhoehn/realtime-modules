@@ -127,6 +127,9 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
     const cleanupFns = new Map<string, () => void>();
     /** Async disconnect hooks must finish before a host closes shared ports. */
     const closing = new Set<Promise<void>>();
+    const registering = new Set<Promise<void>>();
+    const authenticating = new Set<import('node:stream').Duplex>();
+    let disposing = false;
     /** clientId -> inbound frames accepted and not yet finished (lane R6). */
     const queueDepths = new Map<string, number>();
     /** clientId -> the end of the window it is currently over budget in. */
@@ -156,24 +159,30 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             }
         }
 
+        if (disposing) { denyUpgrade(socket, 503, 'Service Unavailable'); return; }
         let ctx: WsAuthContext = {};
+        authenticating.add(socket);
         if (auth) {
             try {
                 ctx = (await auth(req)) || {};
             } catch {
+                authenticating.delete(socket);
                 denyUpgrade(socket, 401, 'Unauthorized');
                 return;
             }
         }
 
-        wss.handleUpgrade(req, socket, head, (ws: any) => {
-            wss.emit('connection', ws, req, ctx);
-        });
+        authenticating.delete(socket);
+        if (disposing || socket.destroyed) { denyUpgrade(socket, 503, 'Service Unavailable'); return; }
+        try {
+            wss.handleUpgrade(req, socket, head, (ws: any) => {
+                wss.emit('connection', ws, req, ctx);
+            });
+        } catch { denyUpgrade(socket, 503, 'Service Unavailable'); }
     };
 
-    server.on('upgrade', upgradeListener);
-
-    wss.on('connection', async (ws: any, _req: any, ctx: WsAuthContext = {}) => {
+    const registerConnection = async (ws: any, ctx: WsAuthContext = {}) => {
+        if (disposing) { ws.terminate(); return; }
         const clientId = generateClientId();
         if (clients.has(clientId)) {
             ws.once('error', () => undefined);
@@ -212,7 +221,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
 
         try {
             await beforeConnect?.(clientId, ctx);
-            if (ws.readyState !== 1) throw new Error('Connection closed during registration');
+            if (disposing || ws.readyState !== 1) throw new Error('Connection closed during registration');
         } catch {
             await rollback();
             return;
@@ -230,7 +239,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
                     console.warn(`[realtime-modules] service '${name}' onClientConnect failed`, err);
                 }
             }
-            if (ws.readyState !== 1) { await rollback(); return; }
+            if (disposing || ws.readyState !== 1) { await rollback(); return; }
         }
 
         // User connect hook last so it sees a fully-registered client.
@@ -443,7 +452,23 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         };
         ws.on('close', close);
         ws.on('error', close);
+    };
+    wss.on('connection', (ws: any, _req: any, ctx: WsAuthContext = {}) => {
+        const task = registerConnection(ws, ctx).catch(() => { ws.terminate(); });
+        registering.add(task);
+        void task.finally(() => registering.delete(task));
     });
+
+    // Install last: a host emitter may reject listener registration. Roll back
+    // even when it adds the listener and then throws (for example newListener hooks).
+    try { server.on('upgrade', upgradeListener); }
+    catch (error) {
+        loop?.disable();
+        const remove = server.removeListener ?? server.off;
+        try { remove?.call(server, 'upgrade', upgradeListener); } catch { /* preserve startup cause */ }
+        try { wss.close(); } catch { /* no connections were admitted */ }
+        throw error;
+    }
 
     return {
         wss,
@@ -494,7 +519,10 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             return out;
         },
         async dispose(): Promise<void> {
+            disposing = true;
             loop?.disable();
+            for (const socket of authenticating) socket.destroy();
+            authenticating.clear();
             // Remove our upgrade listener (best-effort across http.Server APIs).
             const removeFn = (server as any).removeListener || (server as any).off;
             if (typeof removeFn === 'function') {
@@ -519,6 +547,9 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
                     resolve();
                 }
             });
+            // Registration may still be awaiting a host/service hook. Its
+            // rollback must finish before composition closes those services.
+            await Promise.all([...registering]);
             await Promise.all([...closing]);
         },
     };

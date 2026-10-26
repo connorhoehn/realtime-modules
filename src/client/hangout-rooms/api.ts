@@ -194,7 +194,7 @@ export async function updateRoom(
   slug: string,
   patch: UpdateRoomInput,
 ): Promise<Room> {
-  return request<Room>(opts, 'PATCH', `/api/rooms/${encodeURIComponent(slug)}`, patch);
+  return unwrapRoom(await request<Room | { room: Room }>(opts, 'PATCH', `/api/rooms/${encodeURIComponent(slug)}`, patch));
 }
 
 /** Archive a room (soft-delete). `POST /api/rooms/:slug/archive` — the

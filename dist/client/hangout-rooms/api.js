@@ -147,7 +147,7 @@ function unwrapRoom(data) {
 }
 /** Update mutable fields on an existing room. `PATCH /api/rooms/:slug`. */
 async function updateRoom(opts, slug, patch) {
-    return request(opts, 'PATCH', `/api/rooms/${encodeURIComponent(slug)}`, patch);
+    return unwrapRoom(await request(opts, 'PATCH', `/api/rooms/${encodeURIComponent(slug)}`, patch));
 }
 /** Archive a room (soft-delete). `POST /api/rooms/:slug/archive` — the
  *  route platform-api serves (owner or admin only). There is no

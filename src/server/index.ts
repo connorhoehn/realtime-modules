@@ -56,6 +56,10 @@ export * as config from './config';
 
 // FeatureManifest — apps read this to discover env vars + channels.
 export { crdtManifest } from './manifest';
+export { planRealtimeComposition } from './composition';
+export type { CompositionFeature, RealtimeComposition, CapabilityProvider, CapabilityRequirement } from './composition';
+export { RealtimeStartupError } from './compositionLifecycle';
+export type { RealtimeCleanup, RealtimeCleanupFailure } from './compositionLifecycle';
 
 // Zero-config factory — createRealtimeServer + inMemoryAdapters.
 export {

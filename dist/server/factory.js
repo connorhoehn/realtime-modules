@@ -31,7 +31,7 @@
 //
 //   - Each feature manifest has a `name` field (e.g. 'chat', 'presence')
 //     that maps to a service factory registered in FEATURE_REGISTRY below.
-//     Manifests for unknown features are silently skipped.
+//     Unknown features fail before construction; use attachRealtime for custom factories.
 //
 //   - Services need a `messageRouter.sendToClient` — but that lives on the
 //     WsHandlerHandle returned by createWsHandler, which is created last.
@@ -48,6 +48,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.inMemoryAdapters = inMemoryAdapters;
 exports.createRealtimeServer = createRealtimeServer;
 const createWsHandler_1 = require("../server-ws/createWsHandler");
+const composition_1 = require("./composition");
+const compositionLifecycle_1 = require("./compositionLifecycle");
 const ChatStore_1 = require("../chat/ChatStore");
 const ActivityHistoryStore_1 = require("../activity/ActivityHistoryStore");
 // ---- resolveAdapters ----------------------------------------------------------
@@ -233,6 +235,11 @@ class LocalMessageRouter {
             }
         }
     }
+    shutdown() {
+        this.channelMembers.clear();
+        this.clientChannels.clear();
+        this.handleRef = null;
+    }
     getClientData(_clientId) {
         return null;
     }
@@ -251,7 +258,7 @@ const NOOP_LOGGER = {
 /**
  * Registry mapping manifest.name → service factory.
  * When a feature manifest appears in the `features` array, its factory is
- * called to instantiate the service. Unknown names are silently skipped.
+ * called to instantiate the service. Unknown names fail before construction.
  */
 const FEATURE_REGISTRY = {
     chat: (router, adapters) => {
@@ -361,7 +368,7 @@ const FEATURE_REGISTRY = {
  *
  * @param features  Array of FeatureManifest objects — only manifests whose
  *                  `name` appears in the built-in registry are instantiated.
- *                  Unknown names are silently skipped.
+ *                  Unknown names fail with an attachRealtime migration hint.
  * @param adapters  Storage backends. Either a flat `AdapterMap` (or the result
  *                  of `inMemoryAdapters()`) or a `PerFeatureAdapters` object.
  *                  Pass `inMemoryAdapters()` for dev/tests, or provide real
@@ -370,36 +377,44 @@ const FEATURE_REGISTRY = {
  *                  Optionally include `plugins` for lifecycle hooks.
  */
 function createRealtimeServer(features, adapters = {}, opts) {
-    const { plugins = [], ...wsOpts } = opts;
-    const router = new LocalMessageRouter(plugins);
-    // Normalise AdapterConfig → flat AdapterMap for the service factories.
-    const flatAdapters = resolveAdapters(adapters);
-    // Instantiate one service per recognised feature manifest name.
-    const services = {};
-    for (const manifest of features) {
-        const factory = FEATURE_REGISTRY[manifest.name];
-        if (!factory)
-            continue; // unknown feature — skip silently
-        services[manifest.name] = factory(router, flatAdapters);
-    }
-    // Compose onDisconnect: call the consumer's hook first, then removeClient.
-    const consumerOnDisconnect = wsOpts.onDisconnect;
-    const composedOnDisconnect = (clientId) => {
-        try {
-            consumerOnDisconnect?.(clientId);
+    const { plugins = [], capabilityProviders, ...wsOpts } = opts;
+    const definitions = features.map(manifest => {
+        // Existing legacy frames keep their names. The exported pipeline
+        // manifest has always been named pipeline-ws; its wire key is pipeline.
+        const serviceName = manifest.name === 'pipeline-ws' ? 'pipeline' : manifest.name;
+        if (!Object.prototype.hasOwnProperty.call(FEATURE_REGISTRY, serviceName)) {
+            throw new Error(`createRealtimeServer: unsupported feature '${manifest.name}'; use attachRealtime with defineFeature for custom features`);
         }
-        catch { /* swallow */ }
-        router.removeClient(clientId);
-    };
-    // Build the handler. At this point `router.handleRef` is still null —
-    // services must not call sendToClient during construction (they don't).
-    const handle = (0, createWsHandler_1.createWsHandler)({
-        ...wsOpts,
-        services,
-        onDisconnect: composedOnDisconnect,
+        return { manifest, serviceName, create: FEATURE_REGISTRY[serviceName] };
     });
-    // Now wire the handle into the router so sendToClient works at runtime.
-    router._setHandle(handle);
-    return handle;
+    const plan = (0, composition_1.planRealtimeComposition)(definitions, capabilityProviders);
+    const router = new LocalMessageRouter(plugins);
+    const lifecycle = new compositionLifecycle_1.CompositionLifecycle();
+    lifecycle.add('router', () => router.shutdown());
+    try {
+        const flatAdapters = resolveAdapters(adapters);
+        const services = Object.create(null);
+        for (const feature of plan.features) {
+            const service = feature.create(router, flatAdapters);
+            lifecycle.add(feature.serviceName, (0, compositionLifecycle_1.serviceCleanup)(service));
+            services[feature.serviceName] = service;
+        }
+        const consumerOnDisconnect = wsOpts.onDisconnect;
+        const handle = (0, createWsHandler_1.createWsHandler)({ ...wsOpts, services,
+            onDisconnect: async (clientId) => {
+                try {
+                    await consumerOnDisconnect?.(clientId);
+                }
+                catch { /* consumer errors stay theirs */ }
+                router.removeClient(clientId);
+            },
+        });
+        lifecycle.add('websocket handler', () => handle.dispose());
+        router._setHandle(handle);
+        return { ...handle, dispose: lifecycle.disposer() };
+    }
+    catch (error) {
+        throw new compositionLifecycle_1.RealtimeStartupError(error, lifecycle.close());
+    }
 }
 //# sourceMappingURL=factory.js.map

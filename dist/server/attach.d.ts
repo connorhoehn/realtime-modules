@@ -1,4 +1,6 @@
 import type { FeatureManifest } from '../feature-manifest/types';
+import { type CapabilityProvider } from './composition';
+import { type RealtimeCleanup } from './compositionLifecycle';
 import type { WsHandlerHandle, WsHandlerOptions, WsHandlerStats, WsService } from '../server-ws/types';
 import { type ChannelAuthorize, type ChannelAuthorizeBatch, type ClientMessageFilter, type FeaturePlugin, type RealtimeRouter, type RouterLogger } from './router';
 import type { ChatService } from '../chat/ChatService';
@@ -19,8 +21,10 @@ export interface FeatureContext {
      * after its own I/O.
      */
     principal?: FeaturePrincipal;
-    /** 0.118: another attached feature's service by wire name (resolved lazily; undefined until attached). */
+    /** A service by manifest identity or wire alias. Declared dependencies are already constructed. */
     service?: (name: string) => unknown;
+    /** Register a partially acquired resource synchronously during create(). Runs after service shutdown. */
+    onCleanup?: (cleanup: RealtimeCleanup) => void;
 }
 /** A pluggable realtime capability: manifest + service factory. */
 export interface RealtimeFeature {
@@ -167,6 +171,8 @@ export declare function collabDocs(opts?: {
 export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services' | 'server'> {
     /** The capabilities to attach. Built-ins and defineFeature() results mix freely. */
     features: RealtimeFeature[];
+    /** Explicit adapter guarantees checked before construction; not live availability. */
+    capabilityProviders?: readonly CapabilityProvider[];
     /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
     authorize?: ChannelAuthorize;
     /** Last-mile direct/broadcast/channel delivery filtering for the local router. */

@@ -55,6 +55,8 @@ exports.notifications = notifications;
 exports.fileUploads = fileUploads;
 exports.collabDocs = collabDocs;
 exports.attachRealtime = attachRealtime;
+const composition_1 = require("./composition");
+const compositionLifecycle_1 = require("./compositionLifecycle");
 const createWsHandler_1 = require("../server-ws/createWsHandler");
 const router_1 = require("./router");
 const node_perf_hooks_1 = require("node:perf_hooks");
@@ -406,7 +408,12 @@ function collabDocs(opts = {}) {
  * All HTTP routes, middleware and listeners you already have are untouched.
  */
 function attachRealtime(server, opts) {
-    const { features, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
+    const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
+    const plan = (0, composition_1.planRealtimeComposition)(features, capabilityProviders);
+    for (const feature of plan.features) {
+        if (typeof feature.create !== 'function')
+            throw new Error(`Realtime composition: '${feature.manifest.name}' requires a create factory`);
+    }
     const log = logger ?? NOOP_LOGGER;
     // Composition, inside out: host hooks → verdict cache → principal
     // revalidation (verdictCache.ts V4: revalidation runs on every check,
@@ -445,70 +452,67 @@ function attachRealtime(server, opts) {
             }
         },
     } : undefined;
-    const services = {}; // widened to RealtimeServices on the handle
+    const lifecycle = new compositionLifecycle_1.CompositionLifecycle();
+    lifecycle.add('router', () => router.shutdown?.());
+    const services = Object.create(null);
     const manifests = [];
-    for (const feature of features) {
-        const name = feature.serviceName ?? feature.manifest.name;
-        if (services[name]) {
-            throw new Error(`attachRealtime: duplicate feature '${name}'`);
-        }
-        services[name] = feature.create({ router, logger: log, service: (n) => services[n], ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
-        manifests.push(feature.manifest);
-    }
-    // Channel membership itself, always present. Not a feature to attach —
-    // useWebSocket's subscribe()/unsubscribe(), and the autoResubscribe replay
-    // on every reconnect, address `service: 'subscribe'`; with nothing under
-    // that name each of those frames came back SERVICE_NOT_AVAILABLE.
-    //
-    // Registered after the loop and only if free, so a consumer who ships
-    // their own 'subscribe' feature keeps it rather than colliding with this.
-    if (!services.subscribe) {
-        services.subscribe = (0, subscribeService_1.createSubscribeService)(router);
-    }
-    const consumerOnDisconnect = wsOpts.onDisconnect;
-    const consumerBeforeConnect = wsOpts.beforeConnect;
-    const handle = (0, createWsHandler_1.createWsHandler)({
-        ...wsOpts,
-        server,
-        services,
-        beforeConnect: async (clientId, ctx) => {
-            await router.onClientConnect?.(clientId, ctx);
-            await consumerBeforeConnect?.(clientId, ctx);
-        },
-        onDisconnect: async (clientId) => {
+    let handle;
+    try {
+        for (const feature of plan.features) {
+            const name = plan.serviceName(feature.manifest.name);
+            let constructing = true;
+            let service;
             try {
-                await consumerOnDisconnect?.(clientId);
+                service = feature.create({ router, logger: log,
+                    service: (alias) => services[plan.serviceName(alias) ?? alias],
+                    onCleanup: cleanup => {
+                        if (!constructing)
+                            throw new Error(`'${name}' must register cleanup during create()`);
+                        lifecycle.add(`${name} resource`, cleanup);
+                    },
+                    ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
             }
-            catch { /* consumer errors stay theirs */ }
-            router.removeClient?.(clientId);
-            verdictCache?.invalidateConnection(clientId); // V7
-        },
-    });
-    router._setHandle?.(handle);
-    // Lifecycle-aware dispose: services with a shutdown()/stop() get it
-    // called after socket frames/disconnect hooks drain — CRDT flushes
-    // snapshots and sweep/eviction timers clear after their last mutation.
-    // Best-effort per service; one feature's
-    // teardown failure never blocks the rest.
-    const baseDispose = handle.dispose.bind(handle);
-    const dispose = async () => {
-        await baseDispose();
-        for (const [name, svc] of Object.entries(services)) {
-            const s = svc;
-            try {
-                if (typeof s.shutdown === 'function')
-                    await s.shutdown();
-                else if (typeof s.stop === 'function')
-                    await s.stop();
+            finally {
+                constructing = false;
             }
-            catch (err) {
-                log.warn(`[attachRealtime] '${name}' teardown failed`, err);
+            lifecycle.add(name, (0, compositionLifecycle_1.serviceCleanup)(service));
+            if (!service || typeof service.handleAction !== 'function') {
+                throw new Error(`'${name}' factory must return a synchronous WS service`);
             }
+            services[name] = service;
+            manifests.push(feature.manifest);
         }
-        await router.shutdown?.();
-    };
+        // Consumers may still supply their own multiplexer.
+        if (!services.subscribe)
+            services.subscribe = (0, subscribeService_1.createSubscribeService)(router);
+        const consumerOnDisconnect = wsOpts.onDisconnect;
+        const consumerBeforeConnect = wsOpts.beforeConnect;
+        handle = (0, createWsHandler_1.createWsHandler)({
+            ...wsOpts, server, services,
+            beforeConnect: async (clientId, ctx) => {
+                await router.onClientConnect?.(clientId, ctx);
+                await consumerBeforeConnect?.(clientId, ctx);
+            },
+            onDisconnect: async (clientId) => {
+                try {
+                    await consumerOnDisconnect?.(clientId);
+                }
+                catch { /* consumer errors stay theirs */ }
+                router.removeClient?.(clientId);
+                verdictCache?.invalidateConnection(clientId);
+            },
+        });
+        lifecycle.add('websocket handler', () => handle.dispose());
+        router._setHandle?.(handle);
+    }
+    catch (error) {
+        throw new compositionLifecycle_1.RealtimeStartupError(error, lifecycle.close());
+    }
     let histogram = null;
+    let disposed = false;
     const loopHistogram = () => {
+        if (disposed)
+            throw new Error('Realtime attachment is disposed');
         if (!histogram) {
             histogram = (0, node_perf_hooks_1.monitorEventLoopDelay)({ resolution: 20 });
             histogram.enable();
@@ -547,6 +551,8 @@ function attachRealtime(server, opts) {
         return out;
     };
     const onStats = (listener, o = {}) => {
+        if (disposed)
+            throw new Error('Realtime attachment is disposed');
         const interval = o.intervalMs && o.intervalMs > 0 ? o.intervalMs : 60_000;
         const timer = setInterval(() => {
             let reading = null;
@@ -569,18 +575,15 @@ function attachRealtime(server, opts) {
         statTimers.add(timer);
         return () => { clearInterval(timer); statTimers.delete(timer); };
     };
-    const disposeAll = async () => {
+    lifecycle.add('stats', () => {
         for (const t of statTimers)
             clearInterval(t);
         statTimers.clear();
-        try {
-            await dispose();
-        }
-        finally {
-            histogram?.disable();
-            histogram = null;
-        }
-    };
+        histogram?.disable();
+        histogram = null;
+    });
+    const dispose = lifecycle.disposer();
+    const disposeAll = () => { disposed = true; return dispose(); };
     return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats,
         ...(verdictCache ? { authorityCache: verdictCache } : {}) });
 }
