@@ -16,6 +16,8 @@ export declare class CallService {
      *  conversation). */
     private static INVITE_TTL_SEC;
     private static ACCEPTED_CALL_TTL_SEC;
+    /** How long a lobby's page-huddle claim waits for its call to register. */
+    private static LOBBY_HUDDLE_CLAIM_TTL_SEC;
     messageRouter: CallMessageRouter;
     logger: CallLogger;
     private authorize;

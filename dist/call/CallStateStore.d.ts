@@ -149,6 +149,19 @@ export interface CallStateStore {
      *  Idempotent; the indexes remain liveness-filtered on read, so this
      *  is hygiene rather than correctness. */
     forgetLobbyCall?(lobbyName: string, callId: string): Promise<void>;
+    /**
+     * One page huddle per lobby, decided atomically (0.140.0). Two first
+     * joiners that each minted their own id both miss the live-call check
+     * when they arrive together; whoever claims first owns the lobby's
+     * huddle and the other adopts its id. Returns the winning callId. The
+     * claim only has to cover the gap until the winner's call is registered
+     * (the live-call check finds it after that), and the winner releases it
+     * then. Past a short grace, a claim whose call is not live is taken over
+     * (its node died between the steps); the TTL bounds it too.
+     */
+    claimLobbyHuddle?(lobbyName: string, callId: string, ttlSec: number): Promise<string>;
+    /** Drop the lobby's huddle claim if `callId` holds it. Idempotent. */
+    releaseLobbyHuddle?(lobbyName: string, callId: string): Promise<void>;
     /** J2 — evict a callId from a user's index. Idempotent. */
     forgetUserCall?(userId: string, callId: string): Promise<void>;
 }
@@ -165,6 +178,7 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     private recentInvites;
     private userToCalls;
     private lobbyToCalls;
+    private lobbyHuddles;
     resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds?: string[]): Promise<boolean>;
     forgetCallIfUnchanged(callId: string, expected: ActiveCallStateView): Promise<boolean>;
     registerParticipant(callId: string, clientId: string, callerId: string, lobbyName: string, targetUserIds: string[], channel?: string): Promise<void>;
@@ -178,6 +192,8 @@ export declare class InMemoryCallStateStore implements CallStateStore {
     registerLobbyCall(lobbyName: string, callId: string, _ttlSec: number): Promise<void>;
     getCallIdsByLobby(lobbyName: string): Promise<string[]>;
     forgetLobbyCall(lobbyName: string, callId: string): Promise<void>;
+    claimLobbyHuddle(lobbyName: string, callId: string, ttlSec: number): Promise<string>;
+    releaseLobbyHuddle(lobbyName: string, callId: string): Promise<void>;
     forgetUserCall(userId: string, callId: string): Promise<void>;
     setInviteMetadata(callId: string, meta: {
         invitedAt?: number;
@@ -256,6 +272,8 @@ export declare class RedisCallStateStore implements CallStateStore {
     registerLobbyCall(lobbyName: string, callId: string, ttlSec: number): Promise<void>;
     getCallIdsByLobby(lobbyName: string): Promise<string[]>;
     forgetLobbyCall(lobbyName: string, callId: string): Promise<void>;
+    releaseLobbyHuddle(lobbyName: string, callId: string): Promise<void>;
+    claimLobbyHuddle(lobbyName: string, callId: string, ttlSec: number): Promise<string>;
     forgetUserCall(userId: string, callId: string): Promise<void>;
     getCallIdsByClient(clientId: string): Promise<string[]>;
     forgetCall(callId: string): Promise<void>;

@@ -162,10 +162,66 @@ describe('page huddle seats: three people, one leaves (Redis double, two nodes)'
       await flush();
     }
     expect(await store.getCall('h-ana')).toBeNull();
+    await sleep(20);
     // After it ended, a join starts a new huddle rather than adopting the dead one.
     await c.A.svc.handleCallEvent('a-ana', 'join', { callId: 'h-new', lobbyName: LOBBY, callerId: 'u-ana' });
     await flush();
     expect(await store.getCall('h-new')).toMatchObject({ participantClientIds: ['a-ana'] });
     await c.dispose();
+  });
+});
+
+describe('two first joiners at the same moment (0.140.0)', () => {
+  it.each([['one node', false], ['two nodes', true]])('share one huddle on %s; the claim goes once the call is registered', async (_name, split) => {
+    const c = makeCluster({ rejoinGraceMs: 0 });
+    c.connect('a-ana', 'u-ana', 'A'); c.connect('x-bea', 'u-bea', split ? 'B' : 'A');
+    const beaNode = split ? c.B : c.A;
+    const store = new RedisCallStateStore(c.redis as any);
+    // Each minted its own id before either join reached the gateway.
+    await Promise.all([
+      c.A.svc.handleCallEvent('a-ana', 'join', { callId: 'h-ana', lobbyName: LOBBY, callerId: 'u-ana' }),
+      beaNode.svc.handleCallEvent('x-bea', 'join', { callId: 'h-bea', lobbyName: LOBBY, callerId: 'u-bea' }),
+    ]);
+    await flush();
+    const ana = await store.getCall('h-ana'); const bea = await store.getCall('h-bea');
+    const live = [ana, bea].filter(Boolean);
+    expect(live).toHaveLength(1);
+    expect(live[0]!.participantClientIds.sort()).toEqual(['a-ana', 'x-bea']);
+    const winner = ana ? 'h-ana' : 'h-bea';
+    const loser = winner === 'h-ana' ? 'x-bea' : 'a-ana';
+    expect(c.frames(loser, 'active-call').some((f: any) => f.data?.callId === winner)).toBe(true);
+    // Once the winner's call is registered, its claim is released.
+    await sleep(20);
+    expect(await (c.redis as any).get(`call:lobby-huddle:${LOBBY}`)).toBeNull();
+    // Both leave; the next join starts fresh.
+    for (const [cid, node, uid] of [['a-ana', c.A, 'u-ana'], ['x-bea', beaNode, 'u-bea']] as const) {
+      await node.svc.handleCallEvent(cid, 'ended', { callId: winner, lobbyName: LOBBY, callerId: uid, targetUserIds: [uid] });
+      await flush();
+    }
+    expect(await store.getCall(winner)).toBeNull();
+    // A claim left by a node that died before registering its call is taken over.
+    await (c.redis as any).set(`call:lobby-huddle:${LOBBY}`, `h-dead@${Date.now() - 10_000}`);
+    await c.A.svc.handleCallEvent('a-ana', 'join', { callId: 'h-next', lobbyName: LOBBY, callerId: 'u-ana' });
+    await flush();
+    expect(await store.getCall('h-next')).toMatchObject({ participantClientIds: ['a-ana'] });
+    await c.dispose();
+  });
+});
+
+describe('InMemoryCallStateStore.claimLobbyHuddle', () => {
+  it('first claim wins until released, or until a claim whose call is not live passes the grace', async () => {
+    const store = new InMemoryCallStateStore();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    try {
+      expect(await store.claimLobbyHuddle('L', 'c1', 30)).toBe('c1');
+      expect(await store.claimLobbyHuddle('L', 'c2', 30)).toBe('c1');
+      await store.releaseLobbyHuddle('L', 'c2'); // not the holder: no effect
+      expect(await store.claimLobbyHuddle('L', 'c2', 30)).toBe('c1');
+      await store.releaseLobbyHuddle('L', 'c1');
+      expect(await store.claimLobbyHuddle('L', 'c2', 30)).toBe('c2');
+      // c2 never registered a call: past the grace its claim is taken over.
+      now.mockReturnValue(1_000_000 + 6_000);
+      expect(await store.claimLobbyHuddle('L', 'c3', 30)).toBe('c3');
+    } finally { now.mockRestore(); }
   });
 });

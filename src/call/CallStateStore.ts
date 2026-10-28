@@ -212,6 +212,20 @@ export interface CallStateStore {
      *  Idempotent; the indexes remain liveness-filtered on read, so this
      *  is hygiene rather than correctness. */
     forgetLobbyCall?(lobbyName: string, callId: string): Promise<void>;
+
+    /**
+     * One page huddle per lobby, decided atomically (0.140.0). Two first
+     * joiners that each minted their own id both miss the live-call check
+     * when they arrive together; whoever claims first owns the lobby's
+     * huddle and the other adopts its id. Returns the winning callId. The
+     * claim only has to cover the gap until the winner's call is registered
+     * (the live-call check finds it after that), and the winner releases it
+     * then. Past a short grace, a claim whose call is not live is taken over
+     * (its node died between the steps); the TTL bounds it too.
+     */
+    claimLobbyHuddle?(lobbyName: string, callId: string, ttlSec: number): Promise<string>;
+    /** Drop the lobby's huddle claim if `callId` holds it. Idempotent. */
+    releaseLobbyHuddle?(lobbyName: string, callId: string): Promise<void>;
     /** J2 — evict a callId from a user's index. Idempotent. */
     forgetUserCall?(userId: string, callId: string): Promise<void>;
 }
@@ -266,6 +280,7 @@ export class InMemoryCallStateStore implements CallStateStore {
     // Append-only; readers liveness-filter through getCall.
     private userToCalls = new Map<string, Set<string>>();
     private lobbyToCalls = new Map<string, Set<string>>();
+    private lobbyHuddles = new Map<string, { callId: string; claimedAt: number; expiresAt: number }>();
 
     async resumeParticipant(callId: string, clientId: string, userId: string, lobbyName: string, departedClientIds: string[] = []): Promise<boolean> {
         const state = this.activeCalls.get(callId);
@@ -393,6 +408,19 @@ export class InMemoryCallStateStore implements CallStateStore {
         if (!set) return;
         set.delete(callId);
         if (set.size === 0) this.lobbyToCalls.delete(lobbyName);
+    }
+
+    async claimLobbyHuddle(lobbyName: string, callId: string, ttlSec: number): Promise<string> {
+        const now = Date.now();
+        const held = this.lobbyHuddles.get(lobbyName);
+        if (held && held.expiresAt > now && (held.callId === callId || now - held.claimedAt < LOBBY_HUDDLE_GRACE_MS
+            || this.activeCalls.get(held.callId)?.lobbyName === lobbyName)) return held.callId;
+        this.lobbyHuddles.set(lobbyName, { callId, claimedAt: now, expiresAt: now + ttlSec * 1000 });
+        return callId;
+    }
+
+    async releaseLobbyHuddle(lobbyName: string, callId: string): Promise<void> {
+        if (this.lobbyHuddles.get(lobbyName)?.callId === callId) this.lobbyHuddles.delete(lobbyName);
     }
 
     async forgetUserCall(userId: string, callId: string): Promise<void> {
@@ -617,6 +645,9 @@ const USER_INVITES_PREFIX = 'call:invites:user:';   // hash: callId → expiresA
 // F2/F3 — discovery indexes (sets of callIds; liveness-filtered on read).
 const USER_CALLS_PREFIX = 'call:user:';             // set: callIds a userId joined
 const LOBBY_CALLS_PREFIX = 'call:lobby:';           // set: callIds in a lobbyName
+const LOBBY_HUDDLE_PREFIX = 'call:lobby-huddle:';   // string: SETNX `<callId>@<ms>`, the lobby's one page huddle
+/** A huddle claim younger than this is trusted before its call registers. */
+const LOBBY_HUDDLE_GRACE_MS = 5_000;
 const ACCEPTED_KEY_PREFIX = 'call:accepted:';        // string: SETNX with TTL
 const RECENT_INVITE_PREFIX = 'call:recent-invite:'; // string: SETNX with TTL
 const TTL_SECONDS = 4 * 60 * 60;
@@ -916,6 +947,35 @@ export class RedisCallStateStore implements CallStateStore {
 
     async forgetLobbyCall(lobbyName: string, callId: string): Promise<void> {
         await this.srem(`${LOBBY_CALLS_PREFIX}${lobbyName}`, callId);
+    }
+
+    async releaseLobbyHuddle(lobbyName: string, callId: string): Promise<void> {
+        const key = `${LOBBY_HUDDLE_PREFIX}${lobbyName}`;
+        const r: any = this.redis as any;
+        const raw: unknown = typeof r.get === 'function' ? await r.get(key) : null;
+        if (typeof raw === 'string' && raw.startsWith(`${callId}@`) && typeof r.del === 'function') await r.del(key);
+    }
+
+    async claimLobbyHuddle(lobbyName: string, callId: string, ttlSec: number): Promise<string> {
+        const key = `${LOBBY_HUDDLE_PREFIX}${lobbyName}`;
+        const r: any = this.redis as any;
+        for (let round = 0; round < 2; round++) {
+            const now = Date.now();
+            if (await this.setNxEx(key, `${callId}@${now}`, ttlSec)) return callId;
+            const raw: unknown = typeof r.get === 'function' ? await r.get(key) : null;
+            if (typeof raw !== 'string' || !raw) continue; // expired meanwhile: claim again
+            const at = raw.lastIndexOf('@');
+            const held = at > 0 ? raw.slice(0, at) : raw;
+            const claimedAt = at > 0 ? Number(raw.slice(at + 1)) : 0;
+            if (held === callId) return callId;
+            // A claim whose call never registered (its node died between the
+            // two steps) or has since ended: past the grace, take it over.
+            if (now - claimedAt < LOBBY_HUDDLE_GRACE_MS) return held;
+            const live = await this.getCall(held);
+            if (live && live.lobbyName === lobbyName) return held;
+            if (await r.get(key) === raw && typeof r.del === 'function') await r.del(key);
+        }
+        return callId;
     }
 
     async forgetUserCall(userId: string, callId: string): Promise<void> {

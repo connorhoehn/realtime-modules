@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.140.0 — 2026-10-27
+
+- Two people who join the same lobby's page huddle at the same moment now share one call. Each client mints its own call id before it knows of the other; the gateway's live-call check missed a call that was not registered yet, so both registered separate one-seat calls and neither seat was ever accepted (the deployed social room's "Accepted call seat required" on both legs). An atomic per-lobby claim (`CallStateStore.claimLobbyHuddle` / `releaseLobbyHuddle`, optional; in-memory and Redis implementations) now picks one id and the other joiner adopts it through the existing `active-call` path. The claim covers only the gap until the winner's call is registered, is released then, and a claim whose call is not live is taken over after 5 s.
+- Stores without the methods behave as before.
+
 ## 0.139.0 — 2026-10-26
 
 - Validate the full feature graph and explicit adapter capabilities before startup; resolve dependency aliases and reject unknown legacy features.

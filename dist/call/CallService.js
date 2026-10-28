@@ -123,6 +123,8 @@ class CallService {
      *  conversation). */
     static INVITE_TTL_SEC = 60;
     static ACCEPTED_CALL_TTL_SEC = 4 * 60 * 60;
+    /** How long a lobby's page-huddle claim waits for its call to register. */
+    static LOBBY_HUDDLE_CLAIM_TTL_SEC = 30;
     messageRouter;
     logger;
     authorize;
@@ -2513,6 +2515,7 @@ class CallService {
         // join minted its own call id. Seat it in the lobby's live page huddle
         // instead of registering a second call, and tell it the real id.
         let callId = askedCallId;
+        let wonHuddleClaim = false;
         if (!(this.metaStore && await this.getDocumentMeta(askedCallId))) {
             try {
                 const live = await this.buildActiveCallData(lobbyName);
@@ -2520,6 +2523,19 @@ class CallService {
                     callId = live.callId;
             }
             catch { /* the asked id stands */ }
+            // Two first joiners arriving together both miss that check; the
+            // lobby's huddle claim picks one id for both (0.140.0). It only
+            // has to outlive the gap until the winner's call is registered,
+            // after which the check above finds it.
+            if (callId === askedCallId && typeof this.stateStore?.claimLobbyHuddle === 'function') {
+                try {
+                    callId = await this.stateStore.claimLobbyHuddle(lobbyName, askedCallId, CallService.LOBBY_HUDDLE_CLAIM_TTL_SEC);
+                    wonHuddleClaim = callId === askedCallId;
+                }
+                catch (e) {
+                    this.logger.warn(`[CallService] claimLobbyHuddle failed for ${lobbyName}/${askedCallId}: ${e?.message ?? e}`);
+                }
+            }
         }
         if (this.metaStore && await this.getDocumentMeta(callId)) {
             this.sendError(clientId, 'A document call is joined with its own verbs', { action: 'join', callId, lobbyName });
@@ -2605,14 +2621,23 @@ class CallService {
                 void this.stateStore.registerUserCall(userId, callId, CallService.ACCEPTED_CALL_TTL_SEC)
                     .catch((e) => this.logger.warn(`[CallService] registerUserCall failed for ${userId}/${callId}: ${e?.message ?? e}`));
             }
+            let lobbyIndexed = Promise.resolve();
             if (typeof this.stateStore.registerLobbyCall === 'function') {
-                void this.stateStore.registerLobbyCall(lobbyName, callId, CallService.ACCEPTED_CALL_TTL_SEC)
+                lobbyIndexed = this.stateStore.registerLobbyCall(lobbyName, callId, CallService.ACCEPTED_CALL_TTL_SEC)
                     .catch((e) => this.logger.warn(`[CallService] registerLobbyCall failed for ${lobbyName}/${callId}: ${e?.message ?? e}`));
             }
             // A lobby call is live while anyone is seated: resume and
             // status must treat it as accepted, not as an unanswered invite.
             if (typeof this.stateStore.markAccepted === 'function') {
                 await this.stateStore.markAccepted(callId, CallService.ACCEPTED_CALL_TTL_SEC);
+            }
+            // The live-call check finds the huddle from here on, so the claim
+            // that covered the gap goes; a later join after the call ends
+            // starts a fresh one.
+            if (wonHuddleClaim && typeof this.stateStore.releaseLobbyHuddle === 'function') {
+                const store = this.stateStore;
+                void lobbyIndexed.then(() => store.releaseLobbyHuddle(lobbyName, callId))
+                    .catch((e) => this.logger.warn(`[CallService] releaseLobbyHuddle failed for ${lobbyName}/${callId}: ${e?.message ?? e}`));
             }
         }
         this.acceptedCallIds.add(callId);

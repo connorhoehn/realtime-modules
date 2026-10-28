@@ -51,6 +51,7 @@ class InMemoryCallStateStore {
     // Append-only; readers liveness-filter through getCall.
     userToCalls = new Map();
     lobbyToCalls = new Map();
+    lobbyHuddles = new Map();
     async resumeParticipant(callId, clientId, userId, lobbyName, departedClientIds = []) {
         const state = this.activeCalls.get(callId);
         if (!state || state.lobbyName !== lobbyName || !this.userToCalls.get(userId)?.has(callId)
@@ -200,6 +201,19 @@ class InMemoryCallStateStore {
         set.delete(callId);
         if (set.size === 0)
             this.lobbyToCalls.delete(lobbyName);
+    }
+    async claimLobbyHuddle(lobbyName, callId, ttlSec) {
+        const now = Date.now();
+        const held = this.lobbyHuddles.get(lobbyName);
+        if (held && held.expiresAt > now && (held.callId === callId || now - held.claimedAt < LOBBY_HUDDLE_GRACE_MS
+            || this.activeCalls.get(held.callId)?.lobbyName === lobbyName))
+            return held.callId;
+        this.lobbyHuddles.set(lobbyName, { callId, claimedAt: now, expiresAt: now + ttlSec * 1000 });
+        return callId;
+    }
+    async releaseLobbyHuddle(lobbyName, callId) {
+        if (this.lobbyHuddles.get(lobbyName)?.callId === callId)
+            this.lobbyHuddles.delete(lobbyName);
     }
     async forgetUserCall(userId, callId) {
         const set = this.userToCalls.get(userId);
@@ -397,6 +411,9 @@ const USER_INVITES_PREFIX = 'call:invites:user:'; // hash: callId → expiresAtM
 // F2/F3 — discovery indexes (sets of callIds; liveness-filtered on read).
 const USER_CALLS_PREFIX = 'call:user:'; // set: callIds a userId joined
 const LOBBY_CALLS_PREFIX = 'call:lobby:'; // set: callIds in a lobbyName
+const LOBBY_HUDDLE_PREFIX = 'call:lobby-huddle:'; // string: SETNX `<callId>@<ms>`, the lobby's one page huddle
+/** A huddle claim younger than this is trusted before its call registers. */
+const LOBBY_HUDDLE_GRACE_MS = 5_000;
 const ACCEPTED_KEY_PREFIX = 'call:accepted:'; // string: SETNX with TTL
 const RECENT_INVITE_PREFIX = 'call:recent-invite:'; // string: SETNX with TTL
 const TTL_SECONDS = 4 * 60 * 60;
@@ -708,6 +725,40 @@ class RedisCallStateStore {
     }
     async forgetLobbyCall(lobbyName, callId) {
         await this.srem(`${LOBBY_CALLS_PREFIX}${lobbyName}`, callId);
+    }
+    async releaseLobbyHuddle(lobbyName, callId) {
+        const key = `${LOBBY_HUDDLE_PREFIX}${lobbyName}`;
+        const r = this.redis;
+        const raw = typeof r.get === 'function' ? await r.get(key) : null;
+        if (typeof raw === 'string' && raw.startsWith(`${callId}@`) && typeof r.del === 'function')
+            await r.del(key);
+    }
+    async claimLobbyHuddle(lobbyName, callId, ttlSec) {
+        const key = `${LOBBY_HUDDLE_PREFIX}${lobbyName}`;
+        const r = this.redis;
+        for (let round = 0; round < 2; round++) {
+            const now = Date.now();
+            if (await this.setNxEx(key, `${callId}@${now}`, ttlSec))
+                return callId;
+            const raw = typeof r.get === 'function' ? await r.get(key) : null;
+            if (typeof raw !== 'string' || !raw)
+                continue; // expired meanwhile: claim again
+            const at = raw.lastIndexOf('@');
+            const held = at > 0 ? raw.slice(0, at) : raw;
+            const claimedAt = at > 0 ? Number(raw.slice(at + 1)) : 0;
+            if (held === callId)
+                return callId;
+            // A claim whose call never registered (its node died between the
+            // two steps) or has since ended: past the grace, take it over.
+            if (now - claimedAt < LOBBY_HUDDLE_GRACE_MS)
+                return held;
+            const live = await this.getCall(held);
+            if (live && live.lobbyName === lobbyName)
+                return held;
+            if (await r.get(key) === raw && typeof r.del === 'function')
+                await r.del(key);
+        }
+        return callId;
     }
     async forgetUserCall(userId, callId) {
         await this.srem(`${USER_CALLS_PREFIX}${userId}`, callId);
