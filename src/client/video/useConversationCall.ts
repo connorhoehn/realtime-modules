@@ -34,6 +34,7 @@ import { asCallFrame, gatewaySend, useDocumentCallGateway } from './documentCall
 import { useSafeLVSContext } from './LVSProvider';
 import { useLVSHangout, type UseLVSHangoutOptions, type UseLVSHangoutResult } from './useLVSHangout';
 import { useMediaDevices, type UseMediaDevicesResult } from './useMediaDevices';
+import { useCallMediaEffects } from './useCallMediaEffects';
 import { deviceConstraints, useDevicePreferences } from './useDevicePreferences';
 import {
   announceRingSettled,
@@ -358,11 +359,13 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
 
   // ---- media -----------------------------------------------------------------
   const useMedia = opts.useMedia ?? useLVSHangout;
+  const cameraEffects = useCallMediaEffects();
   const lvsCtx = useSafeLVSContext();
   const stageTokenRef = useRef<string | null>(null);
   stageTokenRef.current = active?.stageToken ?? null;
   const getAuthToken = useCallback(() => stageTokenRef.current ?? '', []);
   const media = useMedia({
+    cameraEffects,
     stageToken: active?.stageToken ?? null,
     participantId: active?.participantId ?? null,
     userId: opts.self.displayName,

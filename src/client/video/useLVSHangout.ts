@@ -55,6 +55,12 @@ const DEFAULT_MEDIA: MediaStreamConstraints = {
 };
 
 export interface UseLVSHangoutOptions {
+  /** Optional camera processing; screen sharing and microphone tracks stay separate. */
+  cameraEffects?: {
+    processStream(stream: MediaStream): MediaStream;
+    detach(): void;
+    outputTrack: MediaStreamTrack | null;
+  };
   /** Participant token from platform-api `/api/video/sessions/:id/join`.
    *  Decoded to extract the `arn` claim (the SFU channel ARN). */
   stageToken: string | null;
@@ -307,6 +313,28 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // Local capture state. The publisher hook is headless (caller-owned
   // capture), so this layer owns getUserMedia + screen-share swap.
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [processedCamera, setProcessedCamera] = useState<{ source: MediaStream; stream: MediaStream } | null>(null);
+  const effectsRef = useRef(opts.cameraEffects);
+  effectsRef.current = opts.cameraEffects;
+  const processCamera = useCallback((stream: MediaStream) => {
+    const source = stream.getVideoTracks()[0];
+    if (!source) { effectsRef.current?.detach(); return stream; }
+    const processed = effectsRef.current?.processStream(stream) ?? stream;
+    if (source) for (const track of processed.getVideoTracks()) track.enabled = source.enabled;
+    return processed;
+  }, []);
+  useEffect(() => {
+    if (!localStream) { setProcessedCamera(null); return; }
+    const stream = processCamera(localStream);
+    setProcessedCamera(previous => previous?.source === localStream
+      && previous.stream.getTracks().length === stream.getTracks().length
+      && previous.stream.getTracks().every((track, index) => track === stream.getTracks()[index])
+      ? previous : { source: localStream, stream });
+  }, [localStream, opts.cameraEffects?.outputTrack, processCamera]);
+  useEffect(() => () => effectsRef.current?.detach(), []);
+  const outgoingCamera = opts.cameraEffects
+    ? processedCamera?.source === localStream ? processedCamera.stream : null
+    : localStream;
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -575,12 +603,18 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // both stream + channelArn are set. Idle while null.
   const publisher = useLVSPublisher({
     channelArn: channelArn ?? '',
-    stream: channelArn ? localStream : null,
+    stream: channelArn ? outgoingCamera : null,
     participantId: participantId ?? undefined,
     autoStart: true,
     baseUrl,
     getAuthToken: resolveAuthToken,
   });
+  useEffect(() => {
+    if (!opts.cameraEffects || !outgoingCamera || publisher.phase !== 'live') return;
+    void publisher.replaceStream(outgoingCamera).catch(error => {
+      setCaptureError(`Could not apply camera effects: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, [outgoingCamera, !!opts.cameraEffects, publisher.phase, publisher.replaceStream]);
 
   // Second publisher dedicated to screen-share. Uses a synthetic
   // participantId suffix `${participantId}:screen` so the SFU treats
@@ -1619,6 +1653,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     const s = localStreamRef.current;
     if (!s) return;
     for (const t of s.getVideoTracks()) t.enabled = !off;
+    if (effectsRef.current?.outputTrack) effectsRef.current.outputTrack.enabled = !off;
     setLocalFlagsTick((n) => n + 1);
   }, []);
 
@@ -1714,6 +1749,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     const live = tracks.find(t => t.readyState === 'live');
     if (live) {
       tracks.filter(t => t.readyState === 'live').forEach(t => { t.enabled = on; });
+      if (kind === 'video' && effectsRef.current?.outputTrack) effectsRef.current.outputTrack.enabled = on;
       setLocalFlagsTick(n => n + 1); return;
     }
     if (!on) return;
@@ -1745,8 +1781,9 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         setLocalStream(merged);
         try {
           // Adding a missing kind needs a real sender, not replaceStream's no-op.
-          if (previousTracks.some(t => t.kind === kind)) await publisher.replaceStream(merged);
-          else await publisher.republish(merged);
+          const outgoing = processCamera(merged);
+          if (previousTracks.some(t => t.kind === kind)) await publisher.replaceStream(outgoing);
+          else await publisher.republish(outgoing);
           if (!valid()) throw new Error('The call ended while enabling the device.');
         } catch (error) {
           if (valid() && localStreamRef.current === merged) {
@@ -1771,7 +1808,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       if (valid()) setCaptureError(`Failed to enable ${kind === 'audio' ? 'microphone' : 'camera'}: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     } finally { flight.current = false; }
-  }, [channelArn, participantId, media, publisher]);
+  }, [channelArn, participantId, media, publisher, processCamera]);
   const setCameraEnabled = useCallback((on: boolean, constraints?: MediaTrackConstraints) => setDeviceEnabled('video', on, constraints), [setDeviceEnabled]);
   const enableCamera = useCallback(() => setCameraEnabled(true), [setCameraEnabled]);
   const setMicrophoneEnabled = useCallback((on: boolean, constraints?: MediaTrackConstraints) => setDeviceEnabled('audio', on, constraints), [setDeviceEnabled]);
@@ -1829,6 +1866,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     }
     localStreamRef.current = null;
     cameraStreamRef.current = null;
+    effectsRef.current?.detach();
     setLocalStream(null);
     setLocalScreenStream(null);
     setRemoteParticipants(new Map());
@@ -1883,7 +1921,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // getUserMedia resolves; consumers can render a placeholder.
     if (participantId) {
       const localStreams: MediaStream[] = [];
-      if (localStreamRef.current) localStreams.push(localStreamRef.current);
+      if (outgoingCamera) localStreams.push(outgoingCamera);
       const flags = computeMediaFlags(localStreams);
       list.push({
         participantId,
@@ -1943,7 +1981,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // flag changes / screen-share toggles recompute. nowTick drives the
     // ghost-producer subscriberMs recomputation every 1s.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantId, userId, remoteParticipants, remoteIdentities, localStream, localScreenStream, localFlagsTick, nowTick]);
+  }, [participantId, userId, remoteParticipants, remoteIdentities, outgoingCamera, localScreenStream, localFlagsTick, nowTick]);
 
   // isJoined: a both-off receiver joins only after authenticated discovery ack.
   // Otherwise publisher live is the primary signal — we've successfully

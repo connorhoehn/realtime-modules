@@ -36,6 +36,7 @@ const documentCallGateway_1 = require("./documentCallGateway");
 const LVSProvider_1 = require("./LVSProvider");
 const useLVSHangout_1 = require("./useLVSHangout");
 const useMediaDevices_1 = require("./useMediaDevices");
+const useCallMediaEffects_1 = require("./useCallMediaEffects");
 const useDevicePreferences_1 = require("./useDevicePreferences");
 const useIncomingConversationCalls_1 = require("./useIncomingConversationCalls");
 const conversationLobby_1 = require("./conversationLobby");
@@ -188,11 +189,13 @@ function useConversationCall(opts) {
     }), [peerIds]);
     // ---- media -----------------------------------------------------------------
     const useMedia = opts.useMedia ?? useLVSHangout_1.useLVSHangout;
+    const cameraEffects = (0, useCallMediaEffects_1.useCallMediaEffects)();
     const lvsCtx = (0, LVSProvider_1.useSafeLVSContext)();
     const stageTokenRef = (0, react_1.useRef)(null);
     stageTokenRef.current = active?.stageToken ?? null;
     const getAuthToken = (0, react_1.useCallback)(() => stageTokenRef.current ?? '', []);
     const media = useMedia({
+        cameraEffects,
         stageToken: active?.stageToken ?? null,
         participantId: active?.participantId ?? null,
         userId: opts.self.displayName,

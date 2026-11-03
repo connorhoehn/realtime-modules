@@ -1,4 +1,10 @@
 export interface UseLVSHangoutOptions {
+    /** Optional camera processing; screen sharing and microphone tracks stay separate. */
+    cameraEffects?: {
+        processStream(stream: MediaStream): MediaStream;
+        detach(): void;
+        outputTrack: MediaStreamTrack | null;
+    };
     /** Participant token from platform-api `/api/video/sessions/:id/join`.
      *  Decoded to extract the `arn` claim (the SFU channel ARN). */
     stageToken: string | null;

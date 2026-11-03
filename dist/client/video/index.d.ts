@@ -26,4 +26,5 @@ export { whipPublish, whepPublish, fetchIceServers, resolveResourceLocation, LVS
 export type { TransportLog } from './lib/transport';
 export { decodeJwt, decodeArn } from './lib/jwt';
 export { waitForIceGather, formatBitrate, classifyNetQ, type NetQuality, } from './lib/sdp';
+export { useCallMediaEffects, CALL_MEDIA_EFFECTS_KEY } from './useCallMediaEffects';
 //# sourceMappingURL=index.d.ts.map

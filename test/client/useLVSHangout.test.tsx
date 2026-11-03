@@ -312,13 +312,14 @@ interface HarnessHandle {
   result: ReturnType<typeof useLVSHangout> | null;
 }
 
-function Harness({ token, pid, handle, media }: { token: string; pid: string; handle: HarnessHandle; media?: MediaStreamConstraints }) {
+function Harness({ token, pid, handle, media, cameraEffects }: { token: string; pid: string; handle: HarnessHandle; media?: MediaStreamConstraints; cameraEffects?: Parameters<typeof useLVSHangout>[0]['cameraEffects'] }) {
   const r = useLVSHangout({
     stageToken: token,
     participantId: pid,
     userId: 'me',
     baseUrl: 'http://localhost:3901',
     ...(media ? { media } : {}),
+    cameraEffects,
   });
   handle.result = r;
   return null;
@@ -1111,6 +1112,35 @@ describe('useLVSHangout — explicit initial capture intent', () => {
     stream.addTrack(track);
     return { stream: stream as unknown as MediaStream, track };
   }
+  it('publishes processed camera video with original audio and preserves mute/cleanup', async () => {
+    const camera = captured('video');
+    const microphone = captured('audio');
+    camera.stream.addTrack(microphone.track as unknown as MediaStreamTrack);
+    const filtered = captured('video');
+    filtered.track.id = 'processed-camera';
+    filtered.stream.addTrack(microphone.track as unknown as MediaStreamTrack);
+    const cameraEffects = {
+      processStream: jest.fn(() => filtered.stream), detach: jest.fn(),
+      outputTrack: filtered.track as unknown as MediaStreamTrack,
+    };
+    (navigator.mediaDevices.getUserMedia as jest.Mock).mockImplementation(async () => camera.stream);
+    const handle: HarnessHandle = { result: null };
+    const view = render(<Harness token={TOKEN} pid={PID} handle={handle} cameraEffects={cameraEffects} />);
+    await act(async () => { await flush(); });
+    const sent = pcInstances.flatMap(pc => pc.addTrack.mock.calls.map(([track]) => track));
+    expect(sent).toContain(filtered.track);
+    expect(sent).toContain(microphone.track);
+    expect(sent).not.toContain(camera.track);
+    expect(handle.result!.participants.find(p => p.isLocal)!.streams).toContain(filtered.stream);
+    await act(async () => { await handle.result!.setCameraEnabled(false); });
+    expect(camera.track.enabled).toBe(false);
+    expect(filtered.track.enabled).toBe(false);
+    act(() => { handle.result!.leave(); });
+    expect(camera.track.stop).toHaveBeenCalled();
+    expect(microphone.track.stop).toHaveBeenCalled();
+    expect(cameraEffects.detach).toHaveBeenCalled();
+    view.unmount();
+  });
   it('both-off uses no getUserMedia or WHIP; joins only on subscribed ack and receives a peer', async () => {
     const f = await receiver();
     expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();

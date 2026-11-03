@@ -139,6 +139,36 @@ function useLVSHangout(opts) {
     // Local capture state. The publisher hook is headless (caller-owned
     // capture), so this layer owns getUserMedia + screen-share swap.
     const [localStream, setLocalStream] = (0, react_1.useState)(null);
+    const [processedCamera, setProcessedCamera] = (0, react_1.useState)(null);
+    const effectsRef = (0, react_1.useRef)(opts.cameraEffects);
+    effectsRef.current = opts.cameraEffects;
+    const processCamera = (0, react_1.useCallback)((stream) => {
+        const source = stream.getVideoTracks()[0];
+        if (!source) {
+            effectsRef.current?.detach();
+            return stream;
+        }
+        const processed = effectsRef.current?.processStream(stream) ?? stream;
+        if (source)
+            for (const track of processed.getVideoTracks())
+                track.enabled = source.enabled;
+        return processed;
+    }, []);
+    (0, react_1.useEffect)(() => {
+        if (!localStream) {
+            setProcessedCamera(null);
+            return;
+        }
+        const stream = processCamera(localStream);
+        setProcessedCamera(previous => previous?.source === localStream
+            && previous.stream.getTracks().length === stream.getTracks().length
+            && previous.stream.getTracks().every((track, index) => track === stream.getTracks()[index])
+            ? previous : { source: localStream, stream });
+    }, [localStream, opts.cameraEffects?.outputTrack, processCamera]);
+    (0, react_1.useEffect)(() => () => effectsRef.current?.detach(), []);
+    const outgoingCamera = opts.cameraEffects
+        ? processedCamera?.source === localStream ? processedCamera.stream : null
+        : localStream;
     const [localScreenStream, setLocalScreenStream] = (0, react_1.useState)(null);
     const [error, setError] = (0, react_1.useState)(null);
     /**
@@ -358,12 +388,19 @@ function useLVSHangout(opts) {
     // both stream + channelArn are set. Idle while null.
     const publisher = (0, useLVSPublisher_1.useLVSPublisher)({
         channelArn: channelArn ?? '',
-        stream: channelArn ? localStream : null,
+        stream: channelArn ? outgoingCamera : null,
         participantId: participantId ?? undefined,
         autoStart: true,
         baseUrl,
         getAuthToken: resolveAuthToken,
     });
+    (0, react_1.useEffect)(() => {
+        if (!opts.cameraEffects || !outgoingCamera || publisher.phase !== 'live')
+            return;
+        void publisher.replaceStream(outgoingCamera).catch(error => {
+            setCaptureError(`Could not apply camera effects: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }, [outgoingCamera, !!opts.cameraEffects, publisher.phase, publisher.replaceStream]);
     // Second publisher dedicated to screen-share. Uses a synthetic
     // participantId suffix `${participantId}:screen` so the SFU treats
     // it as a separate publisher and remote subscribers can WHEP it as
@@ -1475,6 +1512,8 @@ function useLVSHangout(opts) {
             return;
         for (const t of s.getVideoTracks())
             t.enabled = !off;
+        if (effectsRef.current?.outputTrack)
+            effectsRef.current.outputTrack.enabled = !off;
         setLocalFlagsTick((n) => n + 1);
     }, []);
     const stopScreenShare = (0, react_1.useCallback)(() => {
@@ -1575,6 +1614,8 @@ function useLVSHangout(opts) {
         const live = tracks.find(t => t.readyState === 'live');
         if (live) {
             tracks.filter(t => t.readyState === 'live').forEach(t => { t.enabled = on; });
+            if (kind === 'video' && effectsRef.current?.outputTrack)
+                effectsRef.current.outputTrack.enabled = on;
             setLocalFlagsTick(n => n + 1);
             return;
         }
@@ -1612,10 +1653,11 @@ function useLVSHangout(opts) {
                 setLocalStream(merged);
                 try {
                     // Adding a missing kind needs a real sender, not replaceStream's no-op.
+                    const outgoing = processCamera(merged);
                     if (previousTracks.some(t => t.kind === kind))
-                        await publisher.replaceStream(merged);
+                        await publisher.replaceStream(outgoing);
                     else
-                        await publisher.republish(merged);
+                        await publisher.republish(outgoing);
                     if (!valid())
                         throw new Error('The call ended while enabling the device.');
                 }
@@ -1659,7 +1701,7 @@ function useLVSHangout(opts) {
         finally {
             flight.current = false;
         }
-    }, [channelArn, participantId, media, publisher]);
+    }, [channelArn, participantId, media, publisher, processCamera]);
     const setCameraEnabled = (0, react_1.useCallback)((on, constraints) => setDeviceEnabled('video', on, constraints), [setDeviceEnabled]);
     const enableCamera = (0, react_1.useCallback)(() => setCameraEnabled(true), [setCameraEnabled]);
     const setMicrophoneEnabled = (0, react_1.useCallback)((on, constraints) => setDeviceEnabled('audio', on, constraints), [setDeviceEnabled]);
@@ -1722,6 +1764,7 @@ function useLVSHangout(opts) {
         }
         localStreamRef.current = null;
         cameraStreamRef.current = null;
+        effectsRef.current?.detach();
         setLocalStream(null);
         setLocalScreenStream(null);
         setRemoteParticipants(new Map());
@@ -1778,8 +1821,8 @@ function useLVSHangout(opts) {
         // getUserMedia resolves; consumers can render a placeholder.
         if (participantId) {
             const localStreams = [];
-            if (localStreamRef.current)
-                localStreams.push(localStreamRef.current);
+            if (outgoingCamera)
+                localStreams.push(outgoingCamera);
             const flags = computeMediaFlags(localStreams);
             list.push({
                 participantId,
@@ -1837,7 +1880,7 @@ function useLVSHangout(opts) {
         // flag changes / screen-share toggles recompute. nowTick drives the
         // ghost-producer subscriberMs recomputation every 1s.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [participantId, userId, remoteParticipants, remoteIdentities, localStream, localScreenStream, localFlagsTick, nowTick]);
+    }, [participantId, userId, remoteParticipants, remoteIdentities, outgoingCamera, localScreenStream, localFlagsTick, nowTick]);
     // isJoined: a both-off receiver joins only after authenticated discovery ack.
     // Otherwise publisher live is the primary signal — we've successfully
     // pushed bytes to the SFU. Parallel WHEPs may legitimately be absent

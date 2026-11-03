@@ -219,3 +219,4 @@ export {
   classifyNetQ,
   type NetQuality,
 } from './lib/sdp';
+export { useCallMediaEffects, CALL_MEDIA_EFFECTS_KEY } from './useCallMediaEffects';
