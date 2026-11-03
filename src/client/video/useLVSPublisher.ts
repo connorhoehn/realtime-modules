@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  whipPublish, whipTeardown, fetchIceServers, LVSApiError,
+  whipPublish, whipTeardown, fetchIceConfig, LVSApiError,
 } from './lib/transport';
 import {
   waitForIceGather, formatBitrate, classifyNetQ, type NetQuality,
@@ -442,10 +442,10 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
         log(`stage token expires in ${ttl}s — refresh recommended`, 'warn');
       }
 
-      const ice = await fetchIceServers(baseUrl);
+      const { iceServers: ice, iceTransportPolicy } = await fetchIceConfig({ baseUrl, authToken: token });
       check();
-      log(`fetched ${ice.length} ICE server(s)`, 'info');
-      const pc = new RTCPeerConnection({ iceServers: ice });
+      log(`fetched ${ice.length} ICE server(s), policy ${iceTransportPolicy}`, 'info');
+      const pc = new RTCPeerConnection({ iceServers: ice, iceTransportPolicy });
       ownedPc = pc;
       pcRef.current = pc;
 

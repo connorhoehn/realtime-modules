@@ -22,8 +22,8 @@ export { dmLobbyName, dmLobbyPrefix, parseDmLobby, channelForLobby, lobbyForChan
 export type { ParsedDmLobby } from './conversationLobby';
 export type { ConversationCall, ConversationCallDeclineReason, ConversationCallEvent, ConversationCallGateway, ConversationCallInvitationRequest, ConversationCallInviteResult, ConversationCallParticipant, ConversationCallPhase, DevicePreferences, IncomingConversationCall, } from './conversationCallTypes';
 export { DEFAULT_AUDIO_VIDEO_SETTINGS, type AudioVideoSettings, type CallQuality, type DeviceOption, type DocumentCallAwarenessParticipant, type DocumentCallInvite, type DocumentCallMediaMember, type DocumentCallMeta, type DocumentCallParticipant, type DocumentCallParticipantState, type DocumentCallPresenting, type DocumentCallSession, type MediaPermission, } from './documentCallTypes';
-export { whipPublish, whepPublish, fetchIceServers, resolveResourceLocation, LVSApiError, } from './lib/transport';
-export type { TransportLog } from './lib/transport';
+export { whipPublish, whepPublish, fetchIceServers, fetchIceConfig, resolveResourceLocation, LVSApiError, } from './lib/transport';
+export type { TransportLog, IceConfig, IceServerConfig, IceTransportPolicyConfig, FetchIceConfigOptions } from './lib/transport';
 export { decodeJwt, decodeArn } from './lib/jwt';
 export { waitForIceGather, formatBitrate, classifyNetQ, type NetQuality, } from './lib/sdp';
 export { useCallMediaEffects, CALL_MEDIA_EFFECTS_KEY } from './useCallMediaEffects';

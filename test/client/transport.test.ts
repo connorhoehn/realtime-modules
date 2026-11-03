@@ -19,6 +19,7 @@ import {
   computeTooEarlyBackoffMs,
   LVSApiError,
   fetchIceServers,
+  fetchIceConfig,
 } from '../../src/client/video/lib/transport';
 
 // ---------------------------------------------------------------------------
@@ -390,5 +391,86 @@ describe('fetchIceServers', () => {
     ['a network error', jest.fn(async (_url: string): Promise<Response> => { throw new TypeError('fetch failed'); })],
   ])('falls back to public STUN on %s', async (_label, f) => {
     await expect(fetchIceServers('http://sfu', f as unknown as typeof fetch)).resolves.toEqual(STUN);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ICE config with the stage token — the SFU includes TURN entries only for a
+// request carrying a valid stage token, and may require relay-only gathering.
+// ---------------------------------------------------------------------------
+
+describe('fetchIceConfig', () => {
+  const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const TURN = [{ urls: 'turn:t.example:3478', username: 'u', credential: 'c' }];
+  const respond = (status: number, body: string) =>
+    jest.fn(async (_url: string, _init?: RequestInit) => new Response(body, { status }));
+  const authHeader = (f: ReturnType<typeof respond>) => {
+    const init = f.mock.calls[0]?.[1] as RequestInit | undefined;
+    return new Headers(init?.headers).get('Authorization');
+  };
+
+  it('sends the stage token as a Bearer header when one is given', async () => {
+    const f = respond(200, JSON.stringify({ iceServers: TURN, iceTransportPolicy: 'all' }));
+    await expect(fetchIceConfig({ baseUrl: 'http://sfu', authToken: 'stage.jwt', fetchImpl: f as unknown as typeof fetch }))
+      .resolves.toEqual({ iceServers: TURN, iceTransportPolicy: 'all' });
+    expect(f.mock.calls[0]?.[0]).toBe('http://sfu/api/ice-servers');
+    expect(authHeader(f)).toBe('Bearer stage.jwt');
+  });
+
+  it.each([['no token', undefined], ['an empty token', ''], ['a null token', null]])(
+    'sends no Authorization header with %s',
+    async (_label, authToken) => {
+      const f = respond(200, JSON.stringify({ iceServers: [] }));
+      await fetchIceConfig({ baseUrl: 'http://sfu', authToken, fetchImpl: f as unknown as typeof fetch });
+      expect(f).toHaveBeenCalledWith('http://sfu/api/ice-servers');
+      expect(authHeader(f)).toBeNull();
+    },
+  );
+
+  it('honours the relay policy', async () => {
+    const f = respond(200, JSON.stringify({ iceServers: TURN, iceTransportPolicy: 'relay' }));
+    await expect(fetchIceConfig({ baseUrl: 'http://sfu', authToken: 't', fetchImpl: f as unknown as typeof fetch }))
+      .resolves.toEqual({ iceServers: TURN, iceTransportPolicy: 'relay' });
+  });
+
+  it.each([['absent', undefined], ['unknown', 'public'], ['not a string', 1]])(
+    'defaults the policy to all when it is %s',
+    async (_label, policy) => {
+      const f = respond(200, JSON.stringify({ iceServers: TURN, iceTransportPolicy: policy }));
+      await expect(fetchIceConfig({ baseUrl: 'http://sfu', fetchImpl: f as unknown as typeof fetch }))
+        .resolves.toEqual({ iceServers: TURN, iceTransportPolicy: 'all' });
+    },
+  );
+
+  it('honours an explicit empty list, with or without a token', async () => {
+    for (const authToken of [undefined, 'stage.jwt']) {
+      const f = respond(200, JSON.stringify({ iceServers: [], iceTransportPolicy: 'all' }));
+      await expect(fetchIceConfig({ baseUrl: 'http://sfu', authToken, fetchImpl: f as unknown as typeof fetch }))
+        .resolves.toEqual({ iceServers: [], iceTransportPolicy: 'all' });
+    }
+  });
+
+  it.each([
+    ['a non-2xx answer', respond(503, 'down')],
+    ['a 401 answer', respond(401, 'unauthorized')],
+    ['a body without iceServers', respond(200, '{"iceTransportPolicy":"relay"}')],
+    ['a null body', respond(200, 'null')],
+    ['a non-JSON body', respond(200, '<html>')],
+    ['a network error', jest.fn(async (_url: string, _init?: RequestInit): Promise<Response> => { throw new TypeError('fetch failed'); })],
+  ])('falls back to public STUN with policy all on %s', async (_label, f) => {
+    await expect(fetchIceConfig({ baseUrl: 'http://sfu', authToken: 't', fetchImpl: f as unknown as typeof fetch }))
+      .resolves.toEqual({ iceServers: STUN, iceTransportPolicy: 'all' });
+  });
+
+  it('defaults to same-origin', async () => {
+    const f = respond(200, JSON.stringify({ iceServers: [] }));
+    await fetchIceConfig({ fetchImpl: f as unknown as typeof fetch });
+    expect(f).toHaveBeenCalledWith('/api/ice-servers');
+  });
+
+  it('fetchIceServers forwards an optional token as its third argument', async () => {
+    const f = respond(200, JSON.stringify({ iceServers: TURN, iceTransportPolicy: 'relay' }));
+    await expect(fetchIceServers('http://sfu', f as unknown as typeof fetch, 'stage.jwt')).resolves.toEqual(TURN);
+    expect(authHeader(f)).toBe('Bearer stage.jwt');
   });
 });

@@ -206,10 +206,11 @@ export {
   whipPublish,
   whepPublish,
   fetchIceServers,
+  fetchIceConfig,
   resolveResourceLocation,
   LVSApiError,
 } from './lib/transport';
-export type { TransportLog } from './lib/transport';
+export type { TransportLog, IceConfig, IceServerConfig, IceTransportPolicyConfig, FetchIceConfigOptions } from './lib/transport';
 
 export { decodeJwt, decodeArn } from './lib/jwt';
 

@@ -372,11 +372,36 @@ export interface IceServerConfig {
   credential?: string;
 }
 
-/** Fetch ICE-server config from the SFU. The SFU's answer is authoritative,
- *  INCLUDING an empty list: `{ iceServers: [] }` means "host candidates are
- *  enough" (the local stack answers exactly that). Public STUN is only the
- *  fallback when the endpoint can't be reached or answers something that is
- *  not a config.
+/** How the browser may gather candidates, as the SFU decides it. `'relay'`
+ *  means TURN only (no host or server-reflexive candidates). */
+export type IceTransportPolicyConfig = 'all' | 'relay';
+
+export interface IceConfig {
+  iceServers: IceServerConfig[];
+  /** `'relay'` only when the SFU says so; anything else is `'all'`. */
+  iceTransportPolicy: IceTransportPolicyConfig;
+}
+
+export interface FetchIceConfigOptions {
+  /** Base URL of the SFU. Defaults to same-origin. */
+  baseUrl?: string;
+  /** Stage token (the same JWT sent on WHIP/WHEP). Sent as
+   *  `Authorization: Bearer <token>`; the SFU includes TURN entries only
+   *  for a valid one. Omitted or empty: the request is anonymous and the
+   *  SFU answers its TURN-free list. */
+  authToken?: string | null;
+  /** Optional fetch override for tests / SSR. */
+  fetchImpl?: typeof fetch;
+}
+
+const PUBLIC_STUN_FALLBACK: IceServerConfig[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+/** Fetch ICE config from the SFU: `{ iceServers, iceTransportPolicy }`,
+ *  ready for `new RTCPeerConnection(config)`. The SFU's answer is
+ *  authoritative, INCLUDING an empty list: `{ iceServers: [] }` means "host
+ *  candidates are enough" (the local stack answers exactly that). Public STUN
+ *  (with policy `'all'`) is only the fallback when the endpoint can't be
+ *  reached or answers something that is not a config.
  *
  *  Why an empty list must be honoured: every WHIP/WHEP offer waits for ICE
  *  gathering to complete (no trickle), capped at 3 s. With STUN configured,
@@ -385,16 +410,41 @@ export interface IceServerConfig {
  *  with no servers), so replacing the SFU's `[]` with Google STUN put the
  *  full 3 s cap on every publish and every subscribe — a second participant
  *  showed up in a room call ~3 s after joining. lvs-react already honours
- *  the empty list. */
-export async function fetchIceServers(baseUrl?: string, fetchImpl?: typeof fetch): Promise<IceServerConfig[]> {
-  const base = baseUrl ?? '';
-  const f = fetchImpl ?? fetch;
+ *  the empty list.
+ *
+ *  The relay policy is honoured as given, even with a list that holds no
+ *  TURN entry (such a connection gathers no candidates): the SFU owns that
+ *  decision and the client does not widen it. */
+export async function fetchIceConfig(opts: FetchIceConfigOptions = {}): Promise<IceConfig> {
+  const base = opts.baseUrl ?? '';
+  const f = opts.fetchImpl ?? fetch;
+  const url = `${base}/api/ice-servers`;
   try {
-    const r = await f(`${base}/api/ice-servers`);
+    // No token: call with the URL only, exactly as before tokens existed.
+    const r = opts.authToken
+      ? await f(url, { headers: { Authorization: `Bearer ${opts.authToken}` } })
+      : await f(url);
     if (r.ok) {
-      const json = (await r.json()) as { iceServers?: IceServerConfig[] };
-      if (Array.isArray(json.iceServers)) return json.iceServers;
+      const json = (await r.json()) as { iceServers?: IceServerConfig[]; iceTransportPolicy?: unknown };
+      if (json && Array.isArray(json.iceServers)) {
+        return {
+          iceServers: json.iceServers,
+          iceTransportPolicy: json.iceTransportPolicy === 'relay' ? 'relay' : 'all',
+        };
+      }
     }
   } catch { /* fall through to public STUN */ }
-  return [{ urls: 'stun:stun.l.google.com:19302' }];
+  return { iceServers: PUBLIC_STUN_FALLBACK.map((s) => ({ ...s })), iceTransportPolicy: 'all' };
+}
+
+/** Fetch only the ICE-server list from the SFU (see `fetchIceConfig`, which
+ *  also returns the SFU's `iceTransportPolicy`). `authToken`, when given, is
+ *  sent as a Bearer header so the SFU can include TURN entries. Kept for
+ *  existing callers; same empty-list and fallback rules. */
+export async function fetchIceServers(
+  baseUrl?: string,
+  fetchImpl?: typeof fetch,
+  authToken?: string | null,
+): Promise<IceServerConfig[]> {
+  return (await fetchIceConfig({ baseUrl, fetchImpl, authToken })).iceServers;
 }

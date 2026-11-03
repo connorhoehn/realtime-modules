@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.142.0 — 2026-11-03
+
+- The video client authenticates its ICE-server fetch: `GET <base>/api/ice-servers` now carries `Authorization: Bearer <stage token>` (the same token sent on WHIP/WHEP) from `useLVSPublisher`, `useLVSSubscriber` and `useLVSHangout`, so the SFU can hand TURN credentials only to holders of a valid stage token. `useLVSSubscriber` resolves its token before the ICE fetch instead of after ICE gathering; it still resolves it once per start and sends the same token on WHEP.
+- The SFU's `iceTransportPolicy` is honoured: every peer connection is built with `{ iceServers, iceTransportPolicy }`, `'relay'` when the SFU says so and `'all'` otherwise.
+- New `fetchIceConfig({ baseUrl, authToken, fetchImpl })` returns `{ iceServers, iceTransportPolicy }`. `fetchIceServers(baseUrl, fetchImpl, authToken?)` keeps its return type and gains an optional third argument; without a token both send no header and call fetch exactly as before. An empty `iceServers` list stays authoritative; public STUN (policy `'all'`) is still only the fallback when the endpoint is unreachable or answers something that is not a config.
+- 0.141.0 (`85417b5`) shipped `useCallMediaEffects`: camera effects shared between previews and live calls.
+
 ## 0.140.0 — 2026-10-27
 
 - Two people who join the same lobby's page huddle at the same moment now share one call. Each client mints its own call id before it knows of the other; the gateway's live-call check missed a call that was not registered yet, so both registered separate one-seat calls and neither seat was ever accepted (the deployed social room's "Accepted call seat required" on both legs). An atomic per-lobby claim (`CallStateStore.claimLobbyHuddle` / `releaseLobbyHuddle`, optional; in-memory and Redis implementations) now picks one id and the other joiner adopts it through the existing `active-call` path. The claim covers only the gap until the winner's call is registered, is released then, and a claim whose call is not live is taken over after 5 s.

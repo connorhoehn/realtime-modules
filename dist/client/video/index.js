@@ -6,7 +6,7 @@
 // advanced cases (custom retry, headless tests).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fetchIceServers = exports.whepPublish = exports.whipPublish = exports.DEFAULT_AUDIO_VIDEO_SETTINGS = exports.lobbyForCallLobbyChannel = exports.callLobbyChannel = exports.CALL_LOBBY_CHANNEL_PREFIX = exports.isDmLobby = exports.lobbyForChannel = exports.channelForLobby = exports.parseDmLobby = exports.dmLobbyPrefix = exports.dmLobbyName = exports.DEVICE_PREFERENCES_KEY = exports.deviceConstraints = exports.readDevicePreferences = exports.useDevicePreferences = exports.DOCK_PHASE = exports.conversationCallDockProps = exports.parseConversationInvite = exports.useIncomingConversationCalls = exports.parseLobbyOccupancy = exports.useLobbyCall = exports.callingLabel = exports.useConversationCall = exports.parseDocumentInvite = exports.useIncomingDocumentCalls = exports.toDocumentCallSession = exports.mergeDocumentCall = exports.useDocumentCall = exports.AUDIO_VIDEO_SETTINGS_KEY = exports.audioVideoConstraints = exports.readAudioVideoSettings = exports.useAudioVideoSettings = exports.isSpeakerSelectionSupported = exports.toDeviceOptions = exports.useMediaDevices = exports.useLiveCaptions = exports.useLVSHlsPlayer = exports.useLVSViewerCount = exports.useLVSLiveHls = exports.useLVSRecordings = exports.useLVSHangoutShared = exports.LVSHangoutSessionProvider = exports.LVSHangoutSessionContext = exports.useLVSHangout = exports.useLVSSubscriber = exports.useLVSPublisher = exports.useLVSContext = exports.LVSProvider = void 0;
-exports.CALL_MEDIA_EFFECTS_KEY = exports.useCallMediaEffects = exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.resolveResourceLocation = void 0;
+exports.CALL_MEDIA_EFFECTS_KEY = exports.useCallMediaEffects = exports.classifyNetQ = exports.formatBitrate = exports.waitForIceGather = exports.decodeArn = exports.decodeJwt = exports.LVSApiError = exports.resolveResourceLocation = exports.fetchIceConfig = void 0;
 var LVSProvider_1 = require("./LVSProvider");
 Object.defineProperty(exports, "LVSProvider", { enumerable: true, get: function () { return LVSProvider_1.LVSProvider; } });
 Object.defineProperty(exports, "useLVSContext", { enumerable: true, get: function () { return LVSProvider_1.useLVSContext; } });
@@ -95,6 +95,7 @@ var transport_1 = require("./lib/transport");
 Object.defineProperty(exports, "whipPublish", { enumerable: true, get: function () { return transport_1.whipPublish; } });
 Object.defineProperty(exports, "whepPublish", { enumerable: true, get: function () { return transport_1.whepPublish; } });
 Object.defineProperty(exports, "fetchIceServers", { enumerable: true, get: function () { return transport_1.fetchIceServers; } });
+Object.defineProperty(exports, "fetchIceConfig", { enumerable: true, get: function () { return transport_1.fetchIceConfig; } });
 Object.defineProperty(exports, "resolveResourceLocation", { enumerable: true, get: function () { return transport_1.resolveResourceLocation; } });
 Object.defineProperty(exports, "LVSApiError", { enumerable: true, get: function () { return transport_1.LVSApiError; } });
 var jwt_1 = require("./lib/jwt");

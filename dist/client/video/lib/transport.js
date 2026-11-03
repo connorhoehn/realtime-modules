@@ -15,6 +15,7 @@ exports.whipPublish = whipPublish;
 exports.whipTeardown = whipTeardown;
 exports.whepPublish = whepPublish;
 exports.whepTeardown = whepTeardown;
+exports.fetchIceConfig = fetchIceConfig;
 exports.fetchIceServers = fetchIceServers;
 class LVSApiError extends Error {
     status;
@@ -244,11 +245,13 @@ async function whepTeardown(resourceUrl, authToken, fetchImpl) {
     }
     catch { /* best-effort */ }
 }
-/** Fetch ICE-server config from the SFU. The SFU's answer is authoritative,
- *  INCLUDING an empty list: `{ iceServers: [] }` means "host candidates are
- *  enough" (the local stack answers exactly that). Public STUN is only the
- *  fallback when the endpoint can't be reached or answers something that is
- *  not a config.
+const PUBLIC_STUN_FALLBACK = [{ urls: 'stun:stun.l.google.com:19302' }];
+/** Fetch ICE config from the SFU: `{ iceServers, iceTransportPolicy }`,
+ *  ready for `new RTCPeerConnection(config)`. The SFU's answer is
+ *  authoritative, INCLUDING an empty list: `{ iceServers: [] }` means "host
+ *  candidates are enough" (the local stack answers exactly that). Public STUN
+ *  (with policy `'all'`) is only the fallback when the endpoint can't be
+ *  reached or answers something that is not a config.
  *
  *  Why an empty list must be honoured: every WHIP/WHEP offer waits for ICE
  *  gathering to complete (no trickle), capped at 3 s. With STUN configured,
@@ -257,19 +260,38 @@ async function whepTeardown(resourceUrl, authToken, fetchImpl) {
  *  with no servers), so replacing the SFU's `[]` with Google STUN put the
  *  full 3 s cap on every publish and every subscribe — a second participant
  *  showed up in a room call ~3 s after joining. lvs-react already honours
- *  the empty list. */
-async function fetchIceServers(baseUrl, fetchImpl) {
-    const base = baseUrl ?? '';
-    const f = fetchImpl ?? fetch;
+ *  the empty list.
+ *
+ *  The relay policy is honoured as given, even with a list that holds no
+ *  TURN entry (such a connection gathers no candidates): the SFU owns that
+ *  decision and the client does not widen it. */
+async function fetchIceConfig(opts = {}) {
+    const base = opts.baseUrl ?? '';
+    const f = opts.fetchImpl ?? fetch;
+    const url = `${base}/api/ice-servers`;
     try {
-        const r = await f(`${base}/api/ice-servers`);
+        // No token: call with the URL only, exactly as before tokens existed.
+        const r = opts.authToken
+            ? await f(url, { headers: { Authorization: `Bearer ${opts.authToken}` } })
+            : await f(url);
         if (r.ok) {
             const json = (await r.json());
-            if (Array.isArray(json.iceServers))
-                return json.iceServers;
+            if (json && Array.isArray(json.iceServers)) {
+                return {
+                    iceServers: json.iceServers,
+                    iceTransportPolicy: json.iceTransportPolicy === 'relay' ? 'relay' : 'all',
+                };
+            }
         }
     }
     catch { /* fall through to public STUN */ }
-    return [{ urls: 'stun:stun.l.google.com:19302' }];
+    return { iceServers: PUBLIC_STUN_FALLBACK.map((s) => ({ ...s })), iceTransportPolicy: 'all' };
+}
+/** Fetch only the ICE-server list from the SFU (see `fetchIceConfig`, which
+ *  also returns the SFU's `iceTransportPolicy`). `authToken`, when given, is
+ *  sent as a Bearer header so the SFU can include TURN entries. Kept for
+ *  existing callers; same empty-list and fallback rules. */
+async function fetchIceServers(baseUrl, fetchImpl, authToken) {
+    return (await fetchIceConfig({ baseUrl, fetchImpl, authToken })).iceServers;
 }
 //# sourceMappingURL=transport.js.map

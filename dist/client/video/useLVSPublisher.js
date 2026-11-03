@@ -364,10 +364,10 @@ function useLVSPublisher(opts) {
             if (ttl !== null && ttl !== Infinity && ttl < 60) {
                 log(`stage token expires in ${ttl}s — refresh recommended`, 'warn');
             }
-            const ice = await (0, transport_1.fetchIceServers)(baseUrl);
+            const { iceServers: ice, iceTransportPolicy } = await (0, transport_1.fetchIceConfig)({ baseUrl, authToken: token });
             check();
-            log(`fetched ${ice.length} ICE server(s)`, 'info');
-            const pc = new RTCPeerConnection({ iceServers: ice });
+            log(`fetched ${ice.length} ICE server(s), policy ${iceTransportPolicy}`, 'info');
+            const pc = new RTCPeerConnection({ iceServers: ice, iceTransportPolicy });
             ownedPc = pc;
             pcRef.current = pc;
             pc.addEventListener('connectionstatechange', () => {

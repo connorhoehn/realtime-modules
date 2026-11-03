@@ -31,7 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decodeArn } from './lib/jwt';
 import { useLVSPublisher } from './useLVSPublisher';
-import { whepPublish, whepTeardown, fetchIceServers } from './lib/transport';
+import { whepPublish, whepTeardown, fetchIceConfig } from './lib/transport';
 import { useSafeLVSContext, type LVSConfig } from './LVSProvider';
 import { waitForIceGather } from './lib/sdp';
 
@@ -949,14 +949,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       try {
         const authToken = await resolveAuthToken();
         if (!checkAlive()) { bail(null, null, authToken); return; }
-        const ice = await fetchIceServers(baseUrl);
+        const { iceServers: ice, iceTransportPolicy } = await fetchIceConfig({ baseUrl, authToken });
         if (!checkAlive()) { bail(null, null, authToken); return; }
         // Permanent diagnostic — log every parallel WHEP attempt so the
         // next regression is one browser-console scroll away. Pair with
         // SFU-side `WHEP producer found` log lines via fullPid to verify
         // the WHEP reached the server with the right selector.
-        console.info('[remote-pc] open', { fullPid, kind, epoch: myEpoch, hasIce: ice.length > 0 });
-        const pc = new RTCPeerConnection({ iceServers: ice });
+        console.info('[remote-pc] open', { fullPid, kind, epoch: myEpoch, hasIce: ice.length > 0, iceTransportPolicy });
+        const pc = new RTCPeerConnection({ iceServers: ice, iceTransportPolicy });
         // Install a pending entry into the ref BEFORE setRemoteDescription
         // fires `ontrack` — otherwise track.ended (which can fire within
         // the same task drain if the SFU's consumer transport closes

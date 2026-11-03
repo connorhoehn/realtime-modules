@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   whepPublish,
   whepTeardown,
-  fetchIceServers,
+  fetchIceConfig,
   LVSApiError,
 } from './lib/transport';
 import {
@@ -373,10 +373,13 @@ export function useLVSSubscriber(
     );
 
     try {
-      const iceServers = await fetchIceServers(baseUrl);
-      log(`ICE servers: ${iceServers.length}`);
+      // The stage token is resolved before the ICE fetch so the SFU can
+      // include TURN entries for it; it is the same token sent on WHEP.
+      const token = await getAuthToken();
+      const { iceServers, iceTransportPolicy } = await fetchIceConfig({ baseUrl, authToken: token });
+      log(`ICE servers: ${iceServers.length}, policy ${iceTransportPolicy}`);
 
-      const pc = new RTCPeerConnection({ iceServers });
+      const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy });
       pcRef.current = pc;
 
       pc.addTransceiver('video', { direction: 'recvonly' });
@@ -443,7 +446,6 @@ export function useLVSSubscriber(
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error('failed to generate local SDP');
 
-      const token = await getAuthToken();
       const ttl = jwtSecondsRemaining(token);
       if (ttl !== null && ttl <= 0) {
         throw new Error(`stage token expired ${Math.abs(ttl)}s ago — refresh before subscribing`);

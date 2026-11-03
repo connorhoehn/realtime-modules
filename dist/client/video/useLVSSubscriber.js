@@ -266,9 +266,12 @@ function useLVSSubscriber(opts) {
             ? 'subscriber start'
             : `subscriber reconnect attempt ${reconnectAttemptRef.current}`);
         try {
-            const iceServers = await (0, transport_1.fetchIceServers)(baseUrl);
-            log(`ICE servers: ${iceServers.length}`);
-            const pc = new RTCPeerConnection({ iceServers });
+            // The stage token is resolved before the ICE fetch so the SFU can
+            // include TURN entries for it; it is the same token sent on WHEP.
+            const token = await getAuthToken();
+            const { iceServers, iceTransportPolicy } = await (0, transport_1.fetchIceConfig)({ baseUrl, authToken: token });
+            log(`ICE servers: ${iceServers.length}, policy ${iceTransportPolicy}`);
+            const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy });
             pcRef.current = pc;
             pc.addTransceiver('video', { direction: 'recvonly' });
             pc.addTransceiver('audio', { direction: 'recvonly' });
@@ -326,7 +329,6 @@ function useLVSSubscriber(opts) {
             const sdp = pc.localDescription?.sdp;
             if (!sdp)
                 throw new Error('failed to generate local SDP');
-            const token = await getAuthToken();
             const ttl = (0, jwt_1.jwtSecondsRemaining)(token);
             if (ttl !== null && ttl <= 0) {
                 throw new Error(`stage token expired ${Math.abs(ttl)}s ago — refresh before subscribing`);

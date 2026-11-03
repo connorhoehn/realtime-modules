@@ -66,8 +66,10 @@ class FakePeerConnection {
   senders: Array<{ track: { kind: string; id: string }; replaceTrack: jest.Mock }> = [];
   receivers: Array<{ track: unknown }> = [];
 
-  constructor(config: { iceServers?: unknown[] } = {}) {
+  iceTransportPolicy: RTCIceTransportPolicy | undefined;
+  constructor(config: { iceServers?: unknown[]; iceTransportPolicy?: RTCIceTransportPolicy } = {}) {
     this.iceServers = config.iceServers ?? [];
+    this.iceTransportPolicy = config.iceTransportPolicy;
     pcInstances.push(this);
   }
 
@@ -599,4 +601,39 @@ describe('publisher pending operation cancellation', () => {
     expect(fetchHandle.whipCalls.some(c => c.url.endsWith('/whip/stale') && c.method === 'DELETE')).toBe(true);
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// ICE config — the stage token rides the ICE fetch (so the SFU can hand out
+// TURN) and the SFU's relay policy reaches the peer connection.
+// ---------------------------------------------------------------------------
+
+describe('useLVSPublisher — authenticated ICE config', () => {
+  it('sends the stage token on the ICE fetch and builds the PC with the SFU policy', async () => {
+    const handle: PubHandle = { result: null };
+    const previousFetch = globalThis.fetch;
+    const iceInits: Array<RequestInit | undefined> = [];
+    const turn = [{ urls: 'turn:t.example:3478', username: 'u', credential: 'c' }];
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => {
+      if (String(url).includes('/api/ice-servers')) {
+        iceInits.push(init);
+        return makeResponse(JSON.stringify({ iceServers: turn, iceTransportPolicy: 'relay' }), { status: 200 });
+      }
+      return previousFetch(url, init);
+    }) as typeof fetch;
+    await act(async () => { render(<PublisherHarness stream={makeStream()} handle={handle} getAuthToken={() => 'stage.jwt'} />); });
+    await act(async () => { await flush(); });
+    expect(iceInits).toHaveLength(1);
+    expect(new Headers(iceInits[0]?.headers).get('Authorization')).toBe('Bearer stage.jwt');
+    expect(pcInstances).toHaveLength(1);
+    expect(pcInstances[0]!.iceServers).toEqual(turn);
+    expect(pcInstances[0]!.iceTransportPolicy).toBe('relay');
+  });
+
+  it("defaults the PC policy to 'all' when the SFU does not say relay", async () => {
+    const handle: PubHandle = { result: null };
+    await act(async () => { render(<PublisherHarness stream={makeStream()} handle={handle} />); });
+    await act(async () => { await flush(); });
+    expect(pcInstances[0]!.iceTransportPolicy).toBe('all');
+  });
 });

@@ -88,8 +88,10 @@ class FakePeerConnection {
   gatheringStateListeners: Array<() => void> = [];
   closeMock = jest.fn();
 
-  constructor(config: { iceServers?: unknown[] } = {}) {
+  iceTransportPolicy: RTCIceTransportPolicy | undefined;
+  constructor(config: { iceServers?: unknown[]; iceTransportPolicy?: RTCIceTransportPolicy } = {}) {
     this.iceServers = config.iceServers ?? [];
+    this.iceTransportPolicy = config.iceTransportPolicy;
     pcInstances.push(this);
   }
 
@@ -1310,4 +1312,37 @@ describe('useLVSHangout — explicit initial capture intent', () => {
     expect(pcInstances.filter(p => !p.isRecvOnly).every(p => p.closed)).toBe(true);
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// ICE config — every remote WHEP PC fetches ICE with the stage token and is
+// built with the SFU's transport policy.
+// ---------------------------------------------------------------------------
+
+describe('useLVSHangout — authenticated ICE config', () => {
+  it('sends the stage token on the ICE fetch and builds remote PCs with the relay policy', async () => {
+    const turn = [{ urls: 'turn:t.example:3478', username: 'u', credential: 'c' }];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => String(url).includes('/api/ice-servers')
+      ? makeResponse(JSON.stringify({ iceServers: turn, iceTransportPolicy: 'relay' }), { status: 200 })
+      : previousFetch(url, init)) as typeof fetch;
+    const iceCalls = () => (globalThis.fetch as unknown as jest.Mock).mock.calls
+      .filter(([url]) => String(url).includes('/api/ice-servers'));
+    const handle: HarnessHandle = { result: null };
+    await act(async () => { render(<Harness token={TOKEN} pid={PID} handle={handle} />); await flush(); });
+    const ws = wsInstances[wsInstances.length - 1]!;
+    await act(async () => {
+      ws.triggerOpen();
+      ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video' });
+      await flush();
+    });
+    const remote = whepPcs();
+    expect(remote).toHaveLength(1);
+    expect(remote[0]!.iceServers).toEqual(turn);
+    expect(remote[0]!.iceTransportPolicy).toBe('relay');
+    expect(iceCalls().length).toBeGreaterThan(0);
+    for (const [, init] of iceCalls()) {
+      expect(new Headers((init as RequestInit | undefined)?.headers).get('Authorization')).toBe(`Bearer ${TOKEN}`);
+    }
+  });
 });

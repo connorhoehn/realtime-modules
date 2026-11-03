@@ -748,7 +748,7 @@ function useLVSHangout(opts) {
                     bail(null, null, authToken);
                     return;
                 }
-                const ice = await (0, transport_1.fetchIceServers)(baseUrl);
+                const { iceServers: ice, iceTransportPolicy } = await (0, transport_1.fetchIceConfig)({ baseUrl, authToken });
                 if (!checkAlive()) {
                     bail(null, null, authToken);
                     return;
@@ -757,8 +757,8 @@ function useLVSHangout(opts) {
                 // next regression is one browser-console scroll away. Pair with
                 // SFU-side `WHEP producer found` log lines via fullPid to verify
                 // the WHEP reached the server with the right selector.
-                console.info('[remote-pc] open', { fullPid, kind, epoch: myEpoch, hasIce: ice.length > 0 });
-                const pc = new RTCPeerConnection({ iceServers: ice });
+                console.info('[remote-pc] open', { fullPid, kind, epoch: myEpoch, hasIce: ice.length > 0, iceTransportPolicy });
+                const pc = new RTCPeerConnection({ iceServers: ice, iceTransportPolicy });
                 // Install a pending entry into the ref BEFORE setRemoteDescription
                 // fires `ontrack` — otherwise track.ended (which can fire within
                 // the same task drain if the SFU's consumer transport closes
