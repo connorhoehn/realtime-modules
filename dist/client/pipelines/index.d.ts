@@ -6,4 +6,8 @@ export { usePipelineCatalog, fetchPipelineCatalog, normalizeCatalogEntry, genera
 export type { PipelineCatalogRequestError, PipelineCatalogResponse, GeneratePipelineMode, GeneratePipelineDraftInput, GeneratePipelineDraftResponse, UsePipelineCatalogOptions, UsePipelineCatalogResult, } from './usePipelineCatalog';
 export { RunEventSequencer, synthesizeRunStarted } from './runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './runEventSequencer';
+export { createSharedSocketTransport, defaultChannelService } from '../sharedSocketTransport';
+export type { SharedSocketTransport, SharedSocketTransportOptions, SharedSocketSubscribeOptions, SharedSocketChannelService, SharedSocketFrame, SharedPipelineRunTransport, SharedChannelTransport, } from '../sharedSocketTransport';
+export { useSharedSocketTransport, useSharedWebSocket } from '../useSharedSocketTransport';
+export type { SharedSocketBinding, UseSharedSocketTransportOptions, UseSharedWebSocketResult, } from '../useSharedSocketTransport';
 //# sourceMappingURL=index.d.ts.map

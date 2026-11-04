@@ -9,7 +9,7 @@
 // approve runs with the same code the hook uses.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.kindOf = exports.workTypeOf = exports.isTerminalRunStatus = exports.isActiveRunStatus = exports.isFailedRunStatus = exports.isPipelineKind = exports.isWorkType = exports.emptyRollup = exports.RUN_EVENT_STATUS = exports.RECENT_LIMIT = exports.ROLLUP_RECENT_LIMIT = exports.RUN_ITEM_STATUSES = exports.MAX_ROUTE_ENTRIES = exports.MAX_INSTRUCTION_CHARS = exports.ORIGIN_KINDS = exports.PIPELINE_KINDS = exports.KIND_LABEL = exports.KIND_WORK_TYPE = exports.KIND_MARK = exports.PIPELINE_KIND_ORDER = exports.WORK_TYPE_ORDER = exports.WORK_TYPE_LABEL = exports.reviewPipelineRun = exports.approvePipelineRun = exports.requestPipelineRun = exports.mergeDetails = exports.documentFromOutputs = exports.snippetFromOutline = exports.opsFromApplyOutput = exports.stepTimelineLabel = exports.snapshotNeedsStepOrder = exports.orderStepsByDefinition = exports.stepsFromSnapshot = exports.detailsFromSnapshot = exports.enrichTerminalStatus = exports.statusFromSnapshot = exports.statusFromEvent = exports.normalizeEventType = exports.retryLabel = exports.stepLabelFor = exports.isAwaitingReview = exports.suggestionOf = exports.reviewOf = exports.reviewDetail = exports.runStatusDetail = exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = exports.usePipelineRunStatus = void 0;
-exports.synthesizeRunStarted = exports.RunEventSequencer = exports.pipelineAllSubscribeFrames = exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = exports.generatePipelineDraft = exports.normalizeCatalogEntry = exports.fetchPipelineCatalog = exports.usePipelineCatalog = exports.mergeRunEvent = exports.applyRunEvent = exports.runEventFromFrame = exports.statusPillFor = exports.relativeTime = exports.groupByWorkType = exports.groupCatalog = exports.sortSummaries = exports.compareSummaries = exports.summarizeAll = exports.summarize = void 0;
+exports.useSharedWebSocket = exports.useSharedSocketTransport = exports.defaultChannelService = exports.createSharedSocketTransport = exports.synthesizeRunStarted = exports.RunEventSequencer = exports.pipelineAllSubscribeFrames = exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = exports.generatePipelineDraft = exports.normalizeCatalogEntry = exports.fetchPipelineCatalog = exports.usePipelineCatalog = exports.mergeRunEvent = exports.applyRunEvent = exports.runEventFromFrame = exports.statusPillFor = exports.relativeTime = exports.groupByWorkType = exports.groupCatalog = exports.sortSummaries = exports.compareSummaries = exports.summarizeAll = exports.summarize = void 0;
 var usePipelineRunStatus_1 = require("./usePipelineRunStatus");
 Object.defineProperty(exports, "usePipelineRunStatus", { enumerable: true, get: function () { return usePipelineRunStatus_1.usePipelineRunStatus; } });
 Object.defineProperty(exports, "DEFAULT_STEP_LABELS", { enumerable: true, get: function () { return usePipelineRunStatus_1.DEFAULT_STEP_LABELS; } });
@@ -90,4 +90,14 @@ Object.defineProperty(exports, "pipelineAllSubscribeFrames", { enumerable: true,
 var runEventSequencer_1 = require("./runEventSequencer");
 Object.defineProperty(exports, "RunEventSequencer", { enumerable: true, get: function () { return runEventSequencer_1.RunEventSequencer; } });
 Object.defineProperty(exports, "synthesizeRunStarted", { enumerable: true, get: function () { return runEventSequencer_1.synthesizeRunStarted; } });
+// v0.144.0 — one host-owned socket shared by several consumers: fan-out of
+// inbound frames, refcounted channel subscriptions, re-subscription per
+// session epoch, and adapters for the pipeline hooks' `transport` and
+// ui-components' EventStreamProvider `channelTransport`.
+var sharedSocketTransport_1 = require("../sharedSocketTransport");
+Object.defineProperty(exports, "createSharedSocketTransport", { enumerable: true, get: function () { return sharedSocketTransport_1.createSharedSocketTransport; } });
+Object.defineProperty(exports, "defaultChannelService", { enumerable: true, get: function () { return sharedSocketTransport_1.defaultChannelService; } });
+var useSharedSocketTransport_1 = require("../useSharedSocketTransport");
+Object.defineProperty(exports, "useSharedSocketTransport", { enumerable: true, get: function () { return useSharedSocketTransport_1.useSharedSocketTransport; } });
+Object.defineProperty(exports, "useSharedWebSocket", { enumerable: true, get: function () { return useSharedSocketTransport_1.useSharedWebSocket; } });
 //# sourceMappingURL=index.js.map

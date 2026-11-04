@@ -72,6 +72,10 @@ export type { WorkType, PipelineWorkType, PipelineKind, PipelineDefinitionStatus
 export { usePipelineCatalog, fetchPipelineCatalog, normalizeCatalogEntry, generatePipelineDraft, newPipelineDraftRequestId, PIPELINE_ALL_CHANNEL, pipelineAllSubscribeFrames, } from './pipelines/usePipelineCatalog';
 export type { PipelineCatalogRequestError, PipelineCatalogResponse, GeneratePipelineMode, GeneratePipelineDraftInput, GeneratePipelineDraftResponse, UsePipelineCatalogOptions, UsePipelineCatalogResult, } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
+export { createSharedSocketTransport, defaultChannelService } from './sharedSocketTransport';
+export type { SharedSocketTransport, SharedSocketTransportOptions, SharedSocketSubscribeOptions, SharedSocketChannelService, SharedSocketFrame, SharedPipelineRunTransport, SharedChannelTransport, } from './sharedSocketTransport';
+export { useSharedSocketTransport, useSharedWebSocket } from './useSharedSocketTransport';
+export type { SharedSocketBinding, UseSharedSocketTransportOptions, UseSharedWebSocketResult, } from './useSharedSocketTransport';
 export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';
 export * from './documents';

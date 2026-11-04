@@ -124,6 +124,17 @@ export interface GatewaySocketProviderProps {
    * Ignored when `rest` is given — that replaces the shim outright.
    */
   httpBase?: string;
+  /**
+   * Forwarded to useWebSocket (v0.144.0). Re-send the subscribe frame of
+   * every channel joined through `subscribe()` after a reconnect. Default
+   * false: feature hooks re-subscribe themselves on each `sessionEpoch`.
+   */
+  autoResubscribe?: boolean;
+  /**
+   * Forwarded to useWebSocket (v0.144.0). Cap on reconnect attempts; on
+   * exhaustion the hook goes `disconnected` with a `RECONNECT_EXHAUSTED` error. Default unlimited.
+   */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +370,8 @@ export function GatewaySocketProvider({
   rest,
   webSocketImpl,
   httpBase,
+  autoResubscribe = false,
+  maxRetries,
 }: GatewaySocketProviderProps) {
   // Message-bus: child hooks register handlers; GatewaySocketProvider fans
   // each inbound frame out to all registered handlers in registration order.
@@ -376,7 +389,8 @@ export function GatewaySocketProvider({
     authToken: token,
     authProtocol,
     defaultChannel: channel,
-    autoResubscribe: false,
+    autoResubscribe,
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
     webSocketImpl,
     onMessage: (msg) => {
       for (const handler of handlersRef.current) {

@@ -66,6 +66,7 @@ exports.usePipelineRunStatus = usePipelineRunStatus;
 const runEventSequencer_1 = require("./runEventSequencer");
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("../GatewaySocketProvider");
+const work_1 = require("../documents/work");
 /** The narration people see while a step runs, keyed by step id. */
 exports.DEFAULT_STEP_LABELS = {
     // document-agent-edit / document-transform
@@ -840,8 +841,12 @@ function usePipelineRunStatus(runs, opts) {
         if (epoch === 0)
             return;
         const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
-        if (firehose)
-            send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
+        // Refcounted with usePipelineCatalog's firehose on the same send, and
+        // released on cleanup: an unpaired subscribe would leak a hold on a
+        // refcounting transport (createSharedSocketTransport) for every epoch.
+        const releaseFirehose = firehose
+            ? (0, work_1.acquireChannelSubscription)(send, 'pipeline:all', { service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' }, { service: 'pipeline', action: 'unsubscribe', channel: 'pipeline:all' }, epoch)
+            : undefined;
         for (const id of channels)
             send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
         const cardOf = (frameRunId) => {
@@ -885,6 +890,7 @@ function usePipelineRunStatus(runs, opts) {
             sequencer.flushAll();
             for (const id of channels)
                 send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
+            releaseFirehose?.();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, executorKey, send, onMessage, firehose, epoch]);

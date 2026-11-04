@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.144.0 — 2026-11-04
+
+One host-owned socket shared by several consumers, found adopting the pipeline hooks in Storymaker Studio, which hand-rolled all of this over its own `/events` socket.
+
+- **New `createSharedSocketTransport(options)`** (framework-free) and React bindings **`useSharedSocketTransport(socket, options?)`** and **`useSharedWebSocket(wsOptions, transportOptions?)`**, exported from `./client`, `./client/ws` and `./client/pipelines`. The transport fans every inbound frame (`deliver(frame)`) out to each `onMessage(handler)`; reference-counts channels (`subscribe(channel, { service? }) => release`: the first hold sends `{ service, action: 'subscribe', channel }`, the last release sends the unsubscribe, coalesced to the end of the tick so a release and re-hold sends nothing); and re-sends every held channel once per new `sessionEpoch` (`0` holds without sending). `pipeline:*` channels default to the `pipeline` service, others to `subscribe`. Adapters: `asPipelineRunTransport()` (the `{ send, onMessage }` that `usePipelineRunStatus` / `usePipelineCatalog` take; their subscribe/unsubscribe frames become holds) and `asChannelTransport()` (the `{ subscribe, unsubscribe }` of ui-components' `EventStreamChannelTransport`, stable identity). An adapter drops an unsubscribe for a channel it never held. Recipe: `docs/recipes/shared-socket.md`.
+- **`GatewaySocketProvider` accepts `autoResubscribe` and `maxRetries`** and forwards them to `useWebSocket`. Defaults unchanged (`false`, unlimited).
+- **Behaviour change: `usePipelineRunStatus({ subscribeFirehose: true })` releases `pipeline:all` on cleanup.** It never sent the unsubscribe before. The hold is refcounted with `usePipelineCatalog`'s on the same `send` (`acquireChannelSubscription`), so one unmounting does not cut the other's firehose.
+- **distributed-core pinned to v0.50.1** (`eea5c87`, was 0.48.0 `077d759`). `@connorhoehn/service-runtime` and `@connorhoehn/event-catalog` keep their own nested 0.48.0 pins.
+
 ## 0.143.0 — 2026-11-04
 
 Fixes found adopting `attachRealtime({ features: [pipeline()] })` as Storymaker Studio's `/events` socket. (0.142.0 is the ICE-server release below, published from another machine; this is the next version after it.)

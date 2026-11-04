@@ -416,6 +416,27 @@ export type {
   UsePipelineCatalogResult,
 } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
+
+// v0.144.0 — one host-owned socket shared by several consumers: fan-out of
+// inbound frames, refcounted channel subscriptions, re-subscription per
+// session epoch, and adapters for the pipeline hooks' `transport` and
+// ui-components' EventStreamProvider `channelTransport`.
+export { createSharedSocketTransport, defaultChannelService } from './sharedSocketTransport';
+export type {
+  SharedSocketTransport,
+  SharedSocketTransportOptions,
+  SharedSocketSubscribeOptions,
+  SharedSocketChannelService,
+  SharedSocketFrame,
+  SharedPipelineRunTransport,
+  SharedChannelTransport,
+} from './sharedSocketTransport';
+export { useSharedSocketTransport, useSharedWebSocket } from './useSharedSocketTransport';
+export type {
+  SharedSocketBinding,
+  UseSharedSocketTransportOptions,
+  UseSharedWebSocketResult,
+} from './useSharedSocketTransport';
 // v0.95.3 — one run-frame sequencer (realtime-examples NFR #184).
 export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';

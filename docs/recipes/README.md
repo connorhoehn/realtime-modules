@@ -19,6 +19,7 @@ matrix, all 78 pairs).
 | File uploads | [file-uploads](./file-uploads.md) | `fileUploads()` + REST routes you mount | `useFileUpload` |
 | Collab documents | [collab-docs](./collab-docs.md) | `collabDocs()` | `useCRDT` |
 | Pinned messages | [conversation](./conversation.md) | `chat()` + REST routes you mount | `usePins` |
+| One host socket, many consumers | [shared-socket](./shared-socket.md) | `pipeline()` / the `subscribe` service | `useSharedWebSocket`, `useSharedSocketTransport` |
 
 **Broadcasting:** [streaming](./streaming.md) covers the other shape — one
 publisher, many viewers — and the choice that decides whether it scales:

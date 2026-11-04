@@ -151,3 +151,24 @@ export type {
 // Activity pane, the run page and the chat run card.
 export { RunEventSequencer, synthesizeRunStarted } from './runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './runEventSequencer';
+
+// v0.144.0 — one host-owned socket shared by several consumers: fan-out of
+// inbound frames, refcounted channel subscriptions, re-subscription per
+// session epoch, and adapters for the pipeline hooks' `transport` and
+// ui-components' EventStreamProvider `channelTransport`.
+export { createSharedSocketTransport, defaultChannelService } from '../sharedSocketTransport';
+export type {
+  SharedSocketTransport,
+  SharedSocketTransportOptions,
+  SharedSocketSubscribeOptions,
+  SharedSocketChannelService,
+  SharedSocketFrame,
+  SharedPipelineRunTransport,
+  SharedChannelTransport,
+} from '../sharedSocketTransport';
+export { useSharedSocketTransport, useSharedWebSocket } from '../useSharedSocketTransport';
+export type {
+  SharedSocketBinding,
+  UseSharedSocketTransportOptions,
+  UseSharedWebSocketResult,
+} from '../useSharedSocketTransport';

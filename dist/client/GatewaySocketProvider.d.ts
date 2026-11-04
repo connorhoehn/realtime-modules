@@ -71,6 +71,17 @@ export interface GatewaySocketProviderProps {
      * Ignored when `rest` is given — that replaces the shim outright.
      */
     httpBase?: string;
+    /**
+     * Forwarded to useWebSocket (v0.144.0). Re-send the subscribe frame of
+     * every channel joined through `subscribe()` after a reconnect. Default
+     * false: feature hooks re-subscribe themselves on each `sessionEpoch`.
+     */
+    autoResubscribe?: boolean;
+    /**
+     * Forwarded to useWebSocket (v0.144.0). Cap on reconnect attempts; on
+     * exhaustion the hook goes `disconnected` with a `RECONNECT_EXHAUSTED` error. Default unlimited.
+     */
+    maxRetries?: number;
 }
 /**
  * Extended WS context — `UseWebSocketHookReturn` plus a post-init message
@@ -185,7 +196,7 @@ export declare const GatewayContext: import("react").Context<GatewayContextValue
  * Child components access the connection via useGateway() and the active
  * feature list via useFeatures().
  */
-export declare function GatewaySocketProvider({ url, children, features, token, authProtocol, channel, rest, webSocketImpl, httpBase, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
+export declare function GatewaySocketProvider({ url, children, features, token, authProtocol, channel, rest, webSocketImpl, httpBase, autoResubscribe, maxRetries, }: GatewaySocketProviderProps): import("react/jsx-runtime").JSX.Element;
 /**
  * useGateway — access the WS connection inside a GatewaySocketProvider.
  *

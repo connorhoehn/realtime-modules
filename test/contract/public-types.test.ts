@@ -80,6 +80,22 @@ const status: FileUploadStatus = 'completed';
 
 const announce: RoomAnnounceEvent = {} as RoomAnnounceEvent;
 
+// ./client/pipelines + ./client/ws — the shared socket transport (0.144.0).
+// Its adapters must satisfy the hook's transport and ui-components'
+// EventStreamChannelTransport structurally; the latter is restated here
+// because this package does not depend on ui-components.
+import type {
+  SharedSocketTransport,
+  SharedPipelineRunTransport,
+  SharedChannelTransport,
+  PipelineRunTransport,
+} from '../../src/client/pipelines';
+import type { SharedSocketTransport as WsSharedSocketTransport, SharedSocketBinding, UseWebSocketHookReturn } from '../../src/client/ws';
+interface UiEventStreamChannelTransport { subscribe(channel: string): void; unsubscribe(channel: string): void }
+const sharedAdapters = (t: SharedSocketTransport): [PipelineRunTransport, UiEventStreamChannelTransport, WsSharedSocketTransport] =>
+  [t.asPipelineRunTransport() satisfies SharedPipelineRunTransport, t.asChannelTransport() satisfies SharedChannelTransport, t];
+const bindsUseWebSocket = (ws: UseWebSocketHookReturn): SharedSocketBinding => ws;
+
 describe('public types are importable from published entry points', () => {
   it('holds the imports above (the assertions are the types)', () => {
     expect(persist.keyPrefix).toBe('app_');
@@ -94,5 +110,7 @@ describe('public types are importable from published entry points', () => {
     expect(AwarenessLedger).toBeDefined();
     expect(unsupported).toBeDefined();
     expect(announce).toBeDefined();
+    expect(typeof sharedAdapters).toBe('function');
+    expect(typeof bindsUseWebSocket).toBe('function');
   });
 });

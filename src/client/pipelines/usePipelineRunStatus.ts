@@ -41,6 +41,7 @@ import { RunEventSequencer } from './runEventSequencer';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
+import { acquireChannelSubscription } from '../documents/work';
 
 export type PipelineRunPhase = 'received' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'rejected';
 
@@ -1013,7 +1014,18 @@ export function usePipelineRunStatus(
     // Epoch 0: the socket has no session yet; a send now would be dropped.
     if (epoch === 0) return;
     const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
-    if (firehose) send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
+    // Refcounted with usePipelineCatalog's firehose on the same send, and
+    // released on cleanup: an unpaired subscribe would leak a hold on a
+    // refcounting transport (createSharedSocketTransport) for every epoch.
+    const releaseFirehose = firehose
+      ? acquireChannelSubscription(
+        send,
+        'pipeline:all',
+        { service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' },
+        { service: 'pipeline', action: 'unsubscribe', channel: 'pipeline:all' },
+        epoch,
+      )
+      : undefined;
     for (const id of channels) send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
     type RunFrame = GatewayMessage & { eventType?: string; payload?: Record<string, unknown>; emittedAt?: number };
     const cardOf = (frameRunId: unknown) => {
@@ -1051,6 +1063,7 @@ export function usePipelineRunStatus(
       unregister();
       sequencer.flushAll();
       for (const id of channels) send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
+      releaseFirehose?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, executorKey, send, onMessage, firehose, epoch]);

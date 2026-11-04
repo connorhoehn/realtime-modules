@@ -23,3 +23,24 @@ export type {
 
 export { GatewaySocketProvider, useGateway, useFeatures } from './GatewaySocketProvider';
 export type { FeatureName } from './GatewaySocketProvider';
+
+// v0.144.0 — one host-owned socket shared by several consumers: fan-out of
+// inbound frames, refcounted channel subscriptions, re-subscription per
+// session epoch, and adapters for the pipeline hooks' `transport` and
+// ui-components' EventStreamProvider `channelTransport`.
+export { createSharedSocketTransport, defaultChannelService } from './sharedSocketTransport';
+export type {
+  SharedSocketTransport,
+  SharedSocketTransportOptions,
+  SharedSocketSubscribeOptions,
+  SharedSocketChannelService,
+  SharedSocketFrame,
+  SharedPipelineRunTransport,
+  SharedChannelTransport,
+} from './sharedSocketTransport';
+export { useSharedSocketTransport, useSharedWebSocket } from './useSharedSocketTransport';
+export type {
+  SharedSocketBinding,
+  UseSharedSocketTransportOptions,
+  UseSharedWebSocketResult,
+} from './useSharedSocketTransport';
