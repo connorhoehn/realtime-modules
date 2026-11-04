@@ -789,7 +789,11 @@ function usePipelineRunStatus(runs, opts) {
     const gateway = (0, GatewaySocketProvider_1.useGatewayOptional)();
     const send = transport === null ? undefined : transport ? transport.send : gateway?.sendMessage;
     const onMessage = transport === null ? undefined : transport ? transport.onMessage : gateway?.onMessage;
+    // A reconnect is a new server session with no subscriptions; re-send them.
+    const epoch = opts.sessionEpoch ?? (transport === undefined ? gateway?.sessionEpoch : undefined);
     const [statuses, setStatuses] = (0, react_1.useState)({});
+    const statusesRef = (0, react_1.useRef)(statuses);
+    statusesRef.current = statuses;
     const fetched = (0, react_1.useRef)(new Set());
     const [tick, setTick] = (0, react_1.useState)(0);
     const key = runs.map((r) => r.runId).sort().join(',');
@@ -831,6 +835,9 @@ function usePipelineRunStatus(runs, opts) {
     // Live: one subscription per run in view, plus the firehose.
     (0, react_1.useEffect)(() => {
         if (runs.length === 0 || !send || !onMessage)
+            return;
+        // Epoch 0: the socket has no session yet; a send now would be dropped.
+        if (epoch === 0)
             return;
         const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
         if (firehose)
@@ -880,7 +887,31 @@ function usePipelineRunStatus(runs, opts) {
                 send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, executorKey, send, onMessage, firehose]);
+    }, [key, executorKey, send, onMessage, firehose, epoch]);
+    // A reconnect (or the first connect of a hook mounted before it) may have
+    // missed frames: re-read every unsettled run once per new epoch after the
+    // first one this hook saw.
+    const seenEpoch = (0, react_1.useRef)(undefined);
+    (0, react_1.useEffect)(() => {
+        if (epoch === undefined)
+            return;
+        if (seenEpoch.current === undefined) {
+            seenEpoch.current = epoch;
+            return;
+        }
+        if (epoch === seenEpoch.current)
+            return;
+        seenEpoch.current = epoch;
+        let stale = false;
+        for (const r of runsRef.current) {
+            if (TERMINAL.has(statusesRef.current[r.runId]?.phase) && !isAwaitingReview(statusesRef.current[r.runId]))
+                continue;
+            if (fetched.current.delete(r.runId))
+                stale = true;
+        }
+        if (stale)
+            setTick((t) => t + 1);
+    }, [epoch]);
     // Once (and on every tick): the durable answer, for anyone arriving late.
     (0, react_1.useEffect)(() => {
         if (!idToken)

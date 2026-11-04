@@ -37,7 +37,7 @@ export { AwarenessLedger } from './AwarenessLedger';
 // service, rather than rediscovering that useWebSocket's subscribe() has
 // nothing to talk to.
 export { SubscribeService, createSubscribeService } from './subscribeService';
-export type { SubscribeRouter } from './subscribeService';
+export type { SubscribeRouter, SubscribeDelegate, SubscribeServiceOptions } from './subscribeService';
 
 // Re-export store contracts + memory implementations so consumers only
 // need to import from `'@connorhoehn/realtime-modules/server'`.

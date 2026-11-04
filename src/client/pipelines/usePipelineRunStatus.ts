@@ -170,6 +170,17 @@ export interface UsePipelineRunStatusOptions {
    * `firehoses.all`, and it carries every run's events, not just these.
    */
   subscribeFirehose?: boolean;
+  /**
+   * The host socket's session epoch (`useWebSocket().sessionEpoch`), for a
+   * host-owned transport. Read from the gateway context when `transport` is
+   * omitted. Each new epoch re-sends the run subscriptions (a reconnect is a
+   * new server connection that has subscribed to nothing) and, after the
+   * first, re-reads the snapshot of every run not yet settled (frames sent
+   * while the socket was down are gone). `0` means "no session yet": nothing
+   * is subscribed until it becomes 1. Undefined keeps the old behaviour —
+   * subscribe once and leave the socket's lifecycle to its owner.
+   */
+  sessionEpoch?: number;
 }
 
 /** The narration people see while a step runs, keyed by step id. */
@@ -954,8 +965,12 @@ export function usePipelineRunStatus(
     transport === null ? undefined : transport ? transport.send : gateway?.sendMessage as PipelineRunTransport['send'] | undefined;
   const onMessage: PipelineRunTransport['onMessage'] | undefined =
     transport === null ? undefined : transport ? transport.onMessage : gateway?.onMessage as PipelineRunTransport['onMessage'] | undefined;
+  // A reconnect is a new server session with no subscriptions; re-send them.
+  const epoch = opts.sessionEpoch ?? (transport === undefined ? gateway?.sessionEpoch : undefined);
 
   const [statuses, setStatuses] = useState<Record<string, PipelineRunStatus>>({});
+  const statusesRef = useRef(statuses);
+  statusesRef.current = statuses;
   const fetched = useRef(new Set<string>());
   const [tick, setTick] = useState(0);
   const key = runs.map((r) => r.runId).sort().join(',');
@@ -995,6 +1010,8 @@ export function usePipelineRunStatus(
   // Live: one subscription per run in view, plus the firehose.
   useEffect(() => {
     if (runs.length === 0 || !send || !onMessage) return;
+    // Epoch 0: the socket has no session yet; a send now would be dropped.
+    if (epoch === 0) return;
     const channels = [...runs.map((r) => r.runId), ...Object.keys(executorsRef.current)];
     if (firehose) send({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' });
     for (const id of channels) send({ service: 'pipeline', action: 'subscribe', channel: `pipeline:run:${id}` });
@@ -1036,7 +1053,24 @@ export function usePipelineRunStatus(
       for (const id of channels) send({ service: 'pipeline', action: 'unsubscribe', channel: `pipeline:run:${id}` });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, executorKey, send, onMessage, firehose]);
+  }, [key, executorKey, send, onMessage, firehose, epoch]);
+
+  // A reconnect (or the first connect of a hook mounted before it) may have
+  // missed frames: re-read every unsettled run once per new epoch after the
+  // first one this hook saw.
+  const seenEpoch = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (epoch === undefined) return;
+    if (seenEpoch.current === undefined) { seenEpoch.current = epoch; return; }
+    if (epoch === seenEpoch.current) return;
+    seenEpoch.current = epoch;
+    let stale = false;
+    for (const r of runsRef.current) {
+      if (TERMINAL.has(statusesRef.current[r.runId]?.phase) && !isAwaitingReview(statusesRef.current[r.runId])) continue;
+      if (fetched.current.delete(r.runId)) stale = true;
+    }
+    if (stale) setTick((t) => t + 1);
+  }, [epoch]);
 
   // Once (and on every tick): the durable answer, for anyone arriving late.
   useEffect(() => {

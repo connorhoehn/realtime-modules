@@ -88,7 +88,7 @@ function createWsHandler(opts) {
     // Lazy-require ws so consumers without server-side code never load it.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { WebSocketServer } = require('ws');
-    const { server, services, auth, onConnect, beforeConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, independentServices: independentServiceNames = types_1.DEFAULT_INDEPENDENT_SERVICES, inboundRateLimit, } = opts;
+    const { server, services, auth, onConnect, beforeConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, rejectUnmatched = false, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, independentServices: independentServiceNames = types_1.DEFAULT_INDEPENDENT_SERVICES, inboundRateLimit, } = opts;
     const independentServices = new Set(independentServiceNames);
     const rateLimit = resolveRateLimit(inboundRateLimit);
     if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
@@ -130,7 +130,10 @@ function createWsHandler(opts) {
         if (path) {
             const reqPath = (req.url || '').split('?')[0];
             if (reqPath !== path && !reqPath.startsWith(path + '/')) {
-                // Not for us — let other listeners (or the default) handle.
+                // Not for us. By default let other listeners (or the default)
+                // handle it; `rejectUnmatched` refuses it so it cannot hang.
+                if (rejectUnmatched)
+                    denyUpgrade(socket, 404, 'Not Found');
                 return;
             }
         }
@@ -241,6 +244,16 @@ function createWsHandler(opts) {
                 return;
             }
         }
+        // Send session handshake — matches gateway frontend useWebSocket
+        // expectations (sessionToken/clientId fields). Before `onConnect`
+        // (0.143.0): anything that hook sends must reach the client after the
+        // handshake, not ahead of it.
+        (0, transport_1.wsSend)(ws, JSON.stringify({
+            type: 'session',
+            status: 'connected',
+            clientId,
+            timestamp: new Date().toISOString(),
+        }));
         // User connect hook last so it sees a fully-registered client.
         try {
             onConnect?.(clientId, ctx);
@@ -248,14 +261,6 @@ function createWsHandler(opts) {
         catch {
             // swallow
         }
-        // Send session handshake — matches gateway frontend useWebSocket
-        // expectations (sessionToken/clientId fields).
-        (0, transport_1.wsSend)(ws, JSON.stringify({
-            type: 'session',
-            status: 'connected',
-            clientId,
-            timestamp: new Date().toISOString(),
-        }));
         // Keepalive heartbeat — DC primitive handles pong tracking + zombie detection.
         if (pingIntervalMs > 0) {
             const cleanupHeartbeat = (0, transport_1.attachWsHeartbeat)(ws, pingIntervalMs);

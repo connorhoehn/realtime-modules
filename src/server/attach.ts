@@ -55,6 +55,8 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import type { ChatService } from '../chat/ChatService';
 import type { NotificationService } from '../notification/NotificationService';
 import type { CallService } from '../call/CallService';
+import type { PipelineWsRouter } from '../pipeline/PipelineWsRouter';
+import type { PipelineBusEnvelope } from '../pipeline/types';
 import { createSubscribeService } from './subscribeService';
 import { normalizeCallPayload } from './authority/engine';
 import {
@@ -621,6 +623,8 @@ export interface KnownRealtimeServices {
     chat?: ChatService;
     notification?: NotificationService;
     call?: CallService;
+    /** 0.143.0: the `pipeline()` feature's router — `emitEvent`, `publishRunEvent`, `getStats`. */
+    pipeline?: PipelineWsRouter;
 }
 export type RealtimeServices = KnownRealtimeServices & Record<string, WsService>;
 
@@ -664,6 +668,14 @@ export interface RealtimeHandle extends WsHandlerHandle {
     onStats(listener: (stats: RealtimeStats) => void, opts?: { intervalMs?: number }): () => void;
     /** 0.120 (lane R6): the verdict cache, when `authorityCache` is set — invalidate on membership events. */
     authorityCache?: AuthorityVerdictCache;
+    /**
+     * 0.143.0: emit a `pipeline:event` frame on `pipeline:run:<runId>`, and on
+     * `pipeline:all` when the `pipeline()` feature enables that firehose.
+     * Rejects when no `pipeline()` feature is attached. With a `channelFor`
+     * mapping, emit to the mapped router channel through
+     * `services.pipeline.emitEvent` instead.
+     */
+    publishPipelineEvent(runId: string, eventType: string, payload: unknown, envelope?: PipelineBusEnvelope): Promise<void>;
 }
 
 /**
@@ -736,7 +748,15 @@ export function attachRealtime(
             manifests.push(feature.manifest);
         }
         // Consumers may still supply their own multiplexer.
-        if (!services.subscribe) services.subscribe = createSubscribeService(router);
+        // `pipeline:*` channels named through the generic multiplexer go to
+        // the pipeline feature's gate (firehoses, `channelFor`) rather than
+        // straight to the router (0.143.0).
+        if (!services.subscribe) {
+            const pipelineService = services.pipeline;
+            services.subscribe = createSubscribeService(router, pipelineService
+                ? { delegates: [{ prefix: 'pipeline:', service: pipelineService }] }
+                : undefined);
+        }
         const consumerOnDisconnect = wsOpts.onDisconnect;
         const consumerBeforeConnect = wsOpts.beforeConnect;
         handle = createWsHandler({
@@ -807,8 +827,15 @@ export function attachRealtime(
         histogram?.disable();
         histogram = null;
     });
+    const publishPipelineEvent = async (runId: string, eventType: string, payload: unknown, envelope?: PipelineBusEnvelope): Promise<void> => {
+        const pipelineService = services.pipeline as Partial<PipelineWsRouter> | undefined;
+        if (!pipelineService || typeof pipelineService.publishRunEvent !== 'function') {
+            throw new Error('publishPipelineEvent: no pipeline() feature is attached');
+        }
+        await pipelineService.publishRunEvent(runId, eventType, payload, envelope);
+    };
     const dispose = lifecycle.disposer();
     const disposeAll = (): Promise<void> => { disposed = true; return dispose(); };
-    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats,
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats, publishPipelineEvent,
         ...(verdictCache ? { authorityCache: verdictCache } : {}) });
 }

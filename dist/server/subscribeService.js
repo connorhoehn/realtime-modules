@@ -30,8 +30,10 @@ exports.SubscribeService = void 0;
 exports.createSubscribeService = createSubscribeService;
 class SubscribeService {
     router;
-    constructor(router) {
+    delegates;
+    constructor(router, opts = {}) {
         this.router = router;
+        this.delegates = (opts.delegates ?? []).filter((d) => d && typeof d.prefix === 'string' && d.prefix.length > 0 && d.service);
     }
     async handleAction(clientId, action, data) {
         const channel = typeof data.channel === 'string' ? data.channel : '';
@@ -44,6 +46,13 @@ class SubscribeService {
                 timestamp: new Date().toISOString(),
             });
             return;
+        }
+        if (action === 'subscribe' || action === 'unsubscribe') {
+            const delegate = this.delegates.find((d) => channel.startsWith(d.prefix));
+            if (delegate) {
+                await delegate.service.handleAction(clientId, action, { ...data, channel });
+                return;
+            }
         }
         switch (action) {
             case 'subscribe': {
@@ -83,7 +92,7 @@ class SubscribeService {
 }
 exports.SubscribeService = SubscribeService;
 /** Build the service over a full RealtimeRouter. */
-function createSubscribeService(router) {
-    return new SubscribeService(router);
+function createSubscribeService(router, opts) {
+    return new SubscribeService(router, opts);
 }
 //# sourceMappingURL=subscribeService.js.map

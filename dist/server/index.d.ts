@@ -8,7 +8,7 @@ export { CRDTService, SnapshotManager, DocumentMetadataService, DocumentPresence
 export type { CRDTServiceOpts, CRDTDocumentAction, OrchestratorMessageRouter } from './CRDTService';
 export { AwarenessLedger } from './AwarenessLedger';
 export { SubscribeService, createSubscribeService } from './subscribeService';
-export type { SubscribeRouter } from './subscribeService';
+export type { SubscribeRouter, SubscribeDelegate, SubscribeServiceOptions } from './subscribeService';
 export type { HotCache, SnapshotStore, VersionMeta } from './stores/SnapshotStore';
 export type { DocumentMeta, MetadataStore } from './stores/MetadataStore';
 export type { MessageRouterContract } from './stores/MessageRouterContract';

@@ -435,6 +435,35 @@ export class PipelineWsRouter {
         this.logger.debug(`Client ${clientId} disconnected from pipeline service`);
     }
 
+    /**
+     * The `WsService` disconnect hook `createWsHandler` calls (0.143.0).
+     * Releases this client's tracked subscriptions; an alias of
+     * `handleDisconnect`, which nothing on the handler path called before.
+     */
+    onClientDisconnect(clientId: string): Promise<void> {
+        return this.handleDisconnect(clientId);
+    }
+
+    /**
+     * Emit on a run's own channel, `pipeline:run:<runId>`, and on
+     * `pipeline:all` when that firehose is enabled (0.143.0). Identity
+     * channels only: with `channelFor` mapping to tenant router channels,
+     * call `emitEvent` with the mapped channel instead.
+     */
+    async publishRunEvent(
+        runId: string,
+        eventType: string,
+        payload: unknown,
+        envelope?: PipelineBusEnvelope,
+    ): Promise<void> {
+        if (!runId) {
+            this.logger.warn('[pipeline] publishRunEvent called without a runId', { eventType });
+            return;
+        }
+        await this.emitEvent(`${RUN_CHANNEL_PREFIX}${runId}`, eventType, payload, envelope);
+        if (this.firehoses.all) await this.emitEvent(CHANNEL_ALL, eventType, payload, envelope);
+    }
+
     sendToClient(clientId: string, message: unknown): void {
         if (this.messageRouter) {
             this.messageRouter.sendToClient(clientId, message);

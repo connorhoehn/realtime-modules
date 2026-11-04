@@ -6,6 +6,8 @@ import { type ChannelAuthorize, type ChannelAuthorizeBatch, type ClientMessageFi
 import type { ChatService } from '../chat/ChatService';
 import type { NotificationService } from '../notification/NotificationService';
 import type { CallService } from '../call/CallService';
+import type { PipelineWsRouter } from '../pipeline/PipelineWsRouter';
+import type { PipelineBusEnvelope } from '../pipeline/types';
 import { type FeaturePrincipal, type PrincipalRevalidation } from './authority/principal';
 import { type AuthorityCacheOptions, type AuthorityCacheStats, type AuthorityVerdictCache } from './authority/verdictCache';
 /** Everything a feature's factory receives. */
@@ -239,6 +241,8 @@ export interface KnownRealtimeServices {
     chat?: ChatService;
     notification?: NotificationService;
     call?: CallService;
+    /** 0.143.0: the `pipeline()` feature's router — `emitEvent`, `publishRunEvent`, `getStats`. */
+    pipeline?: PipelineWsRouter;
 }
 export type RealtimeServices = KnownRealtimeServices & Record<string, WsService>;
 /**
@@ -284,6 +288,14 @@ export interface RealtimeHandle extends WsHandlerHandle {
     }): () => void;
     /** 0.120 (lane R6): the verdict cache, when `authorityCache` is set — invalidate on membership events. */
     authorityCache?: AuthorityVerdictCache;
+    /**
+     * 0.143.0: emit a `pipeline:event` frame on `pipeline:run:<runId>`, and on
+     * `pipeline:all` when the `pipeline()` feature enables that firehose.
+     * Rejects when no `pipeline()` feature is attached. With a `channelFor`
+     * mapping, emit to the mapped router channel through
+     * `services.pipeline.emitEvent` instead.
+     */
+    publishPipelineEvent(runId: string, eventType: string, payload: unknown, envelope?: PipelineBusEnvelope): Promise<void>;
 }
 /**
  * Attach realtime features to an EXISTING http(s).Server.

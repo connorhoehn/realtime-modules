@@ -107,6 +107,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         pingIntervalMs = DEFAULT_PING_INTERVAL_MS,
         generateClientId = defaultGenerateClientId,
         path,
+        rejectUnmatched = false,
         maxPayload = DEFAULT_WS_MAX_PAYLOAD,
         independentServices: independentServiceNames = DEFAULT_INDEPENDENT_SERVICES,
         inboundRateLimit,
@@ -154,7 +155,9 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         if (path) {
             const reqPath = (req.url || '').split('?')[0];
             if (reqPath !== path && !reqPath.startsWith(path + '/')) {
-                // Not for us — let other listeners (or the default) handle.
+                // Not for us. By default let other listeners (or the default)
+                // handle it; `rejectUnmatched` refuses it so it cannot hang.
+                if (rejectUnmatched) denyUpgrade(socket, 404, 'Not Found');
                 return;
             }
         }
@@ -242,21 +245,23 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
             if (disposing || ws.readyState !== 1) { await rollback(); return; }
         }
 
-        // User connect hook last so it sees a fully-registered client.
-        try {
-            onConnect?.(clientId, ctx);
-        } catch {
-            // swallow
-        }
-
         // Send session handshake — matches gateway frontend useWebSocket
-        // expectations (sessionToken/clientId fields).
+        // expectations (sessionToken/clientId fields). Before `onConnect`
+        // (0.143.0): anything that hook sends must reach the client after the
+        // handshake, not ahead of it.
         wsSend(ws, JSON.stringify({
             type: 'session',
             status: 'connected',
             clientId,
             timestamp: new Date().toISOString(),
         }));
+
+        // User connect hook last so it sees a fully-registered client.
+        try {
+            onConnect?.(clientId, ctx);
+        } catch {
+            // swallow
+        }
 
         // Keepalive heartbeat — DC primitive handles pong tracking + zombie detection.
         if (pingIntervalMs > 0) {

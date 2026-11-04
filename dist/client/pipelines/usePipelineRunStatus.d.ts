@@ -116,6 +116,17 @@ export interface UsePipelineRunStatusOptions {
      * `firehoses.all`, and it carries every run's events, not just these.
      */
     subscribeFirehose?: boolean;
+    /**
+     * The host socket's session epoch (`useWebSocket().sessionEpoch`), for a
+     * host-owned transport. Read from the gateway context when `transport` is
+     * omitted. Each new epoch re-sends the run subscriptions (a reconnect is a
+     * new server connection that has subscribed to nothing) and, after the
+     * first, re-reads the snapshot of every run not yet settled (frames sent
+     * while the socket was down are gone). `0` means "no session yet": nothing
+     * is subscribed until it becomes 1. Undefined keeps the old behaviour —
+     * subscribe once and leave the socket's lifecycle to its owner.
+     */
+    sessionEpoch?: number;
 }
 /** The narration people see while a step runs, keyed by step id. */
 export declare const DEFAULT_STEP_LABELS: Record<string, string>;

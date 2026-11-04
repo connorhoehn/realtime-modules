@@ -807,3 +807,67 @@ describe('noop — only a real skip', () => {
     expect(status?.noop).toBe(true);
   });
 });
+
+describe('usePipelineRunStatus — (re)connect', () => {
+  const subs = (send: jest.Mock) => send.mock.calls.filter(([f]) => (f as { action?: string }).action === 'subscribe').map(([f]) => (f as { channel: string }).channel);
+
+  it('a hook mounted before the socket connects subscribes once the session lands, and again after a reconnect', async () => {
+    const { transport, send, emit } = makeTransport();
+    fetchMock.mockResolvedValue(snapshotResponse({ status: 'running', steps: {} }));
+    const { result, rerender } = renderHook(
+      ({ epoch }: { epoch: number }) => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok', transport, sessionEpoch: epoch }),
+      { initialProps: { epoch: 0 } },
+    );
+    expect(subs(send)).toEqual([]);
+    await act(async () => { await Promise.resolve(); });
+    const readsBefore = fetchMock.mock.calls.length;
+
+    rerender({ epoch: 1 });
+    expect(subs(send)).toEqual(['pipeline:run:run-1']);
+    await act(async () => { await Promise.resolve(); });
+    // The first connect after mount re-reads too: frames before it were never seen.
+    expect(fetchMock.mock.calls.length).toBe(readsBefore + 1);
+    emit('pipeline.run.started', { runId: 'run-1' });
+    expect(result.current('run-1')?.phase).toBe('running');
+
+    rerender({ epoch: 1 });
+    expect(subs(send)).toHaveLength(1);
+
+    rerender({ epoch: 2 });
+    expect(subs(send)).toEqual(['pipeline:run:run-1', 'pipeline:run:run-1']);
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock.mock.calls.length).toBe(readsBefore + 2);
+  });
+
+  it('reads the epoch from the gateway context and does not re-read a settled run on reconnect', async () => {
+    const sendMessage = jest.fn();
+    const handlers = new Set<(msg: GatewayMessage) => void>();
+    const ctxFor = (sessionEpoch: number) => ({
+      connectionState: sessionEpoch > 0 ? 'connected' : 'connecting', sendMessage, sessionEpoch,
+      onMessage: (h: (msg: GatewayMessage) => void) => { handlers.add(h); return () => handlers.delete(h); },
+    }) as unknown as GatewayContextValue;
+    let ctx = ctxFor(0);
+    const wrapper = ({ children }: { children: React.ReactNode }) => <GatewayContext.Provider value={ctx}>{children}</GatewayContext.Provider>;
+    fetchMock.mockResolvedValue(snapshotResponse({ status: 'completed', steps: {} }));
+    const { result, rerender } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: 'tok' }), { wrapper });
+    expect(sendMessage).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current('run-1')?.phase).toBe('completed'));
+    const reads = fetchMock.mock.calls.length;
+
+    ctx = ctxFor(1);
+    rerender();
+    expect(subs(sendMessage)).toEqual(['pipeline:run:run-1']);
+    ctx = ctxFor(2);
+    rerender();
+    expect(subs(sendMessage)).toEqual(['pipeline:run:run-1', 'pipeline:run:run-1']);
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock.mock.calls.length).toBe(reads);
+  });
+
+  it('keeps subscribing once when no epoch is known (host socket without one)', () => {
+    const { transport, send } = makeTransport();
+    const { rerender } = renderHook(() => usePipelineRunStatus([RUN], { apiBaseUrl: API, idToken: null, transport }));
+    rerender();
+    expect(subs(send)).toEqual(['pipeline:run:run-1']);
+  });
+});

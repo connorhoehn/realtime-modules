@@ -109,6 +109,19 @@ export declare class PipelineWsRouter {
      * Cleanup on client disconnect — unsubscribes from all tracked channels.
      */
     handleDisconnect(clientId: string): Promise<void>;
+    /**
+     * The `WsService` disconnect hook `createWsHandler` calls (0.143.0).
+     * Releases this client's tracked subscriptions; an alias of
+     * `handleDisconnect`, which nothing on the handler path called before.
+     */
+    onClientDisconnect(clientId: string): Promise<void>;
+    /**
+     * Emit on a run's own channel, `pipeline:run:<runId>`, and on
+     * `pipeline:all` when that firehose is enabled (0.143.0). Identity
+     * channels only: with `channelFor` mapping to tenant router channels,
+     * call `emitEvent` with the mapped channel instead.
+     */
+    publishRunEvent(runId: string, eventType: string, payload: unknown, envelope?: PipelineBusEnvelope): Promise<void>;
     sendToClient(clientId: string, message: unknown): void;
     sendError(clientId: string, message: string, correlationId?: unknown): void;
     getStats(): {

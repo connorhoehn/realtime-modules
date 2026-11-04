@@ -51,7 +51,11 @@ export interface WsHandlerOptions {
     /** Mandatory registration before service hooks/session readiness.
      * A rejection closes the connection without admitting client actions. */
     beforeConnect?: (clientId: string, ctx: WsAuthContext) => void | Promise<void>;
-    /** Fired after a client is fully connected. */
+    /**
+     * Fired after a client is fully connected. Since 0.143.0 the `session`
+     * frame has already been sent when this runs, so frames it sends reach
+     * the client after the handshake (before: they arrived ahead of it).
+     */
     onConnect?: (clientId: string, ctx: WsAuthContext) => void;
     /** Fired after a client disconnects (for any reason). */
     onDisconnect?: (clientId: string) => void;
@@ -80,6 +84,16 @@ export interface WsHandlerOptions {
      * recipes use '/realtime'.
      */
     path?: string;
+    /**
+     * 0.143.0: with `path` set, answer an upgrade on any OTHER path with
+     * `404 Not Found` and destroy the socket, instead of returning and leaving
+     * it for another listener (with none, it hangs until the client gives
+     * up). Default false. Only for a server whose sole WebSocket endpoint is
+     * this one: a second upgrade listener (another `attachRealtime`, a dev
+     * server's HMR socket) would have its requests refused. Ignored without
+     * `path`, which already claims every upgrade.
+     */
+    rejectUnmatched?: boolean;
     /**
      * Largest inbound frame a client may send, in bytes. A bigger one closes
      * that socket (code 1009) before it is buffered, so one client cannot push

@@ -800,3 +800,41 @@ describe('createWsHandler — maxPayload', () => {
         expect(() => createWsHandler({ server, services: {}, maxPayload: 0 })).toThrow(/maxPayload/);
     });
 });
+
+describe('createWsHandler — rejectUnmatched and session order (0.143.0)', () => {
+    function upgradeStatus(p: string, timeoutMs = 1500): Promise<number | 'hung'> {
+        return new Promise((resolve) => {
+            const ws = new WebSocket(`ws://127.0.0.1:${port}${p}`);
+            openSockets.push(ws);
+            const t = setTimeout(() => { ws.terminate(); resolve('hung'); }, timeoutMs);
+            ws.on('unexpected-response', (_req: unknown, res: { statusCode?: number }) => { clearTimeout(t); resolve(res.statusCode ?? 0); ws.terminate(); });
+            ws.on('error', () => { clearTimeout(t); resolve(0); });
+            ws.on('open', () => { clearTimeout(t); resolve(101); });
+        });
+    }
+
+    it('answers an upgrade on another path with 404 when rejectUnmatched is set', async () => {
+        handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0, path: '/events', rejectUnmatched: true });
+        expect(await upgradeStatus('/elsewhere')).toBe(404);
+        expect(await upgradeStatus('/events')).toBe(101);
+        expect(await upgradeStatus('/events/nested')).toBe(101);
+    });
+
+    it('still leaves another path alone by default', async () => {
+        handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0, path: '/events' });
+        expect(await upgradeStatus('/elsewhere', 400)).toBe('hung');
+    });
+
+    it('sends the session frame before onConnect runs, so frames onConnect sends follow it', async () => {
+        handle = createWsHandler({
+            server: httpServer,
+            services: {},
+            pingIntervalMs: 0,
+            onConnect: (clientId) => { handle!.sendToClient(clientId, { type: 'welcome' }); },
+        });
+        const qc = connect();
+        await qc.open();
+        expect((await qc.nextMessage()).type).toBe('session');
+        expect((await qc.nextMessage()).type).toBe('welcome');
+    });
+});

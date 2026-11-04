@@ -242,3 +242,90 @@ describe('pipeline() — firehoses and channelFor', () => {
         expect(unsubs).toEqual(['t:a', 't:b']);
     });
 });
+
+describe('pipeline() — handle surface, disconnect and the generic multiplexer (0.143.0)', () => {
+    it('types services.pipeline and publishPipelineEvent emits on the run channel (and the firehose when enabled)', async () => {
+        const { handle, port, close } = await boot([pipeline({ firehoses: { all: true } })]);
+        const svc: PipelineWsRouter | undefined = handle.services.pipeline;
+        expect(svc).toBeInstanceOf(PipelineWsRouter);
+        const run = await connect(port, 'acme-a');
+        const all = await connect(port, 'acme-b');
+        run.send(JSON.stringify({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:run:r9' }));
+        all.send(JSON.stringify({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:all' }));
+        await nextFrame(run, (f) => f.type === 'pipeline' && f.action === 'subscribed');
+        await nextFrame(all, (f) => f.type === 'pipeline' && f.action === 'subscribed');
+
+        await handle.publishPipelineEvent('r9', 'pipeline.step.started', { runId: 'r9', stepId: 'a' }, { seq: 3 });
+        const onRun = await nextFrame(run, (f) => f.type === 'pipeline:event');
+        expect(onRun).toMatchObject({ channel: 'pipeline:run:r9', eventType: 'pipeline.step.started', seq: 3, payload: { runId: 'r9' } });
+        const onAll = await nextFrame(all, (f) => f.type === 'pipeline:event');
+        expect(onAll.channel).toBe('pipeline:all');
+        await settle();
+        expect(run.frames.filter((f) => f.type === 'pipeline:event')).toHaveLength(1);
+        run.close(); all.close();
+        await close();
+    });
+
+    it('publishPipelineEvent skips pipeline:all unless that firehose is enabled, and rejects without the feature', async () => {
+        const emitted: string[] = [];
+        const svc = new PipelineWsRouter({
+            messageRouter: { sendToClient: () => undefined, sendToChannel: (ch) => { emitted.push(ch); }, subscribeToChannel: () => true, unsubscribeFromChannel: () => undefined },
+            logger: LOGGER,
+        });
+        await svc.publishRunEvent('r1', 'pipeline.run.started', {});
+        expect(emitted).toEqual(['pipeline:run:r1']);
+
+        const { handle, close } = await boot([activity()]);
+        await expect(handle.publishPipelineEvent('r1', 'x', {})).rejects.toThrow(/no pipeline\(\) feature/);
+        await close();
+    });
+
+    it('releases the per-client tracker when the socket closes', async () => {
+        const { handle, port, close } = await boot([pipeline()]);
+        const svc = handle.services.pipeline!;
+        const a = await connect(port, 'acme-a');
+        a.send(JSON.stringify({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:run:r1' }));
+        a.send(JSON.stringify({ service: 'pipeline', action: 'subscribe', channel: 'pipeline:run:r2' }));
+        await nextFrame(a, (f) => f.type === 'pipeline' && f.action === 'subscribed' && f.channel === 'pipeline:run:r2');
+        expect(svc.getStats()).toEqual({ subscribedClients: 1, totalSubscriptions: 2 });
+        a.close();
+        for (let i = 0; i < 40 && svc.getStats().subscribedClients > 0; i++) await settle();
+        expect(svc.getStats()).toEqual({ subscribedClients: 0, totalSubscriptions: 0 });
+        expect((svc as unknown as { routedChannels: Map<string, unknown> }).routedChannels.size).toBe(0);
+        await close();
+    });
+
+    it('the generic subscribe service defers pipeline channels to the pipeline gate', async () => {
+        const { handle, port, close } = await boot([pipeline()]);
+        const a = await connect(port, 'acme-a');
+        a.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'pipeline:all' }));
+        const err = await nextFrame(a, (f) => f.type === 'error' && f.channel === 'pipeline:all');
+        expect(err.code).toBe('PIPELINE_CHANNEL_REFUSED');
+        await handle.services.pipeline!.emitEvent('pipeline:all', 'pipeline.run.started', { runId: 'r' });
+        await settle();
+        expect(a.frames.some((f) => f.type === 'pipeline:event')).toBe(false);
+        expect(a.frames.some((f) => f.type === 'subscribe' && f.action === 'subscribed')).toBe(false);
+
+        // A run channel through the multiplexer is admitted by the same gate and tracked by it.
+        a.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'pipeline:run:r1' }));
+        await nextFrame(a, (f) => f.type === 'pipeline' && f.action === 'subscribed' && f.channel === 'pipeline:run:r1');
+        expect(handle.services.pipeline!.getStats().totalSubscriptions).toBe(1);
+        await handle.publishPipelineEvent('r1', 'pipeline.run.started', { runId: 'r1' });
+        await nextFrame(a, (f) => f.type === 'pipeline:event' && f.channel === 'pipeline:run:r1');
+
+        // Other channels keep the multiplexer's own acks.
+        a.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'room:lobby' }));
+        await nextFrame(a, (f) => f.type === 'subscribe' && f.action === 'subscribed' && f.channel === 'room:lobby');
+        a.close();
+        await close();
+    });
+
+    it('without the pipeline feature the multiplexer is unchanged', async () => {
+        const { port, close } = await boot([activity()]);
+        const a = await connect(port, 'acme-a');
+        a.send(JSON.stringify({ service: 'subscribe', action: 'subscribe', channel: 'pipeline:run:r1' }));
+        await nextFrame(a, (f) => f.type === 'subscribe' && f.action === 'subscribed' && f.channel === 'pipeline:run:r1');
+        a.close();
+        await close();
+    });
+});

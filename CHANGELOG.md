@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.143.0 — 2026-11-04
+
+Fixes found adopting `attachRealtime({ features: [pipeline()] })` as Storymaker Studio's `/events` socket. (0.142.0 is the ICE-server release below, published from another machine; this is the next version after it.)
+
+- **`usePipelineRunStatus` re-subscribes after a (re)connect.** It reads `sessionEpoch` from the gateway context, or a new `sessionEpoch` option for a host-owned `transport`, as `usePipelineCatalog` does. Each new epoch re-sends the run subscriptions, and after the first epoch the hook saw it re-reads the snapshot of each unsettled run once. Epoch `0` (no session yet) subscribes nothing. Without an epoch it behaves as before.
+- **`handle.services.pipeline` is typed** (`KnownRealtimeServices.pipeline?: PipelineWsRouter`), so `emitEvent` needs no cast. New `handle.publishPipelineEvent(runId, eventType, payload, envelope?)` and `PipelineWsRouter.publishRunEvent(...)` emit on `pipeline:run:<runId>`, and on `pipeline:all` when `firehoses.all` is on. Without a `pipeline()` feature, `publishPipelineEvent` rejects. Identity channels only: with `channelFor`, emit the mapped channel through `emitEvent`.
+- **`PipelineWsRouter` releases its per-client tracker on disconnect.** It now has the `onClientDisconnect` hook that `createWsHandler` calls (an alias of `handleDisconnect`). Before this, every connection's tracked subscriptions stayed in memory forever.
+- **`createWsHandler` / `attachRealtime` option `rejectUnmatched`** (default false). With `path` set, an upgrade on any other path gets `404` and the socket is destroyed, instead of hanging when nothing else answers. Use it only when this is the server's sole WebSocket endpoint.
+- **Behaviour change: the `session` frame is sent before `onConnect` runs.** Frames that `onConnect` sends now reach the client after the handshake rather than ahead of it. Registration, service connect hooks and the order of client frames are unchanged.
+- **Behaviour change: the generic `subscribe` service defers `pipeline:` channels to the `pipeline()` feature** when that feature is attached. `{ service: 'subscribe', channel: 'pipeline:all' }` could previously open a firehose the feature refuses. It now meets the same gate (firehoses, `channelFor`, `authorize`) and gets the feature's ack (`{ type: 'pipeline', action: 'subscribed' }`) or `PIPELINE_CHANNEL_REFUSED`, not a `subscribe` ack. Other channels, and every channel when no `pipeline()` feature is attached, are unchanged. New `SubscribeServiceOptions.delegates` / `SubscribeDelegate` (the second argument to `createSubscribeService`).
+
 ## 0.142.0 — 2026-11-03
 
 - The video client authenticates its ICE-server fetch: `GET <base>/api/ice-servers` now carries `Authorization: Bearer <stage token>` (the same token sent on WHIP/WHEP) from `useLVSPublisher`, `useLVSSubscriber` and `useLVSHangout`, so the SFU can hand TURN credentials only to holders of a valid stage token. `useLVSSubscriber` resolves its token before the ICE fetch instead of after ICE gathering; it still resolves it once per start and sends the same token on WHEP.

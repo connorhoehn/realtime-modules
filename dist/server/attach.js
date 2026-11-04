@@ -483,8 +483,15 @@ function attachRealtime(server, opts) {
             manifests.push(feature.manifest);
         }
         // Consumers may still supply their own multiplexer.
-        if (!services.subscribe)
-            services.subscribe = (0, subscribeService_1.createSubscribeService)(router);
+        // `pipeline:*` channels named through the generic multiplexer go to
+        // the pipeline feature's gate (firehoses, `channelFor`) rather than
+        // straight to the router (0.143.0).
+        if (!services.subscribe) {
+            const pipelineService = services.pipeline;
+            services.subscribe = (0, subscribeService_1.createSubscribeService)(router, pipelineService
+                ? { delegates: [{ prefix: 'pipeline:', service: pipelineService }] }
+                : undefined);
+        }
         const consumerOnDisconnect = wsOpts.onDisconnect;
         const consumerBeforeConnect = wsOpts.beforeConnect;
         handle = (0, createWsHandler_1.createWsHandler)({
@@ -582,9 +589,16 @@ function attachRealtime(server, opts) {
         histogram?.disable();
         histogram = null;
     });
+    const publishPipelineEvent = async (runId, eventType, payload, envelope) => {
+        const pipelineService = services.pipeline;
+        if (!pipelineService || typeof pipelineService.publishRunEvent !== 'function') {
+            throw new Error('publishPipelineEvent: no pipeline() feature is attached');
+        }
+        await pipelineService.publishRunEvent(runId, eventType, payload, envelope);
+    };
     const dispose = lifecycle.disposer();
     const disposeAll = () => { disposed = true; return dispose(); };
-    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats,
+    return Object.assign(Object.create(null), handle, { router, services, manifests, dispose: disposeAll, stats, onStats, publishPipelineEvent,
         ...(verdictCache ? { authorityCache: verdictCache } : {}) });
 }
 //# sourceMappingURL=attach.js.map

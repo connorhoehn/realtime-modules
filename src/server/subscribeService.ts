@@ -34,8 +34,29 @@ export interface SubscribeRouter {
     sendToClient(clientId: string, message: unknown): void;
 }
 
+/**
+ * A feature that owns a channel namespace and its own subscribe gate
+ * (0.143.0). Subscribe / unsubscribe frames for a channel under `prefix`
+ * are handed to `service.handleAction` unchanged, so they meet the same
+ * checks — and get the same acks and refusals — as that feature's own wire
+ * service. `attachRealtime` delegates `pipeline:` to the `pipeline()`
+ * feature, so the generic multiplexer cannot open a firehose it refuses.
+ */
+export interface SubscribeDelegate {
+    prefix: string;
+    service: { handleAction(clientId: string, action: string, data: Record<string, unknown>): Promise<void> | void };
+}
+
+export interface SubscribeServiceOptions {
+    delegates?: readonly SubscribeDelegate[];
+}
+
 export class SubscribeService {
-    constructor(private readonly router: SubscribeRouter) {}
+    private readonly delegates: readonly SubscribeDelegate[];
+
+    constructor(private readonly router: SubscribeRouter, opts: SubscribeServiceOptions = {}) {
+        this.delegates = (opts.delegates ?? []).filter((d) => d && typeof d.prefix === 'string' && d.prefix.length > 0 && d.service);
+    }
 
     async handleAction(
         clientId: string,
@@ -52,6 +73,14 @@ export class SubscribeService {
                 timestamp: new Date().toISOString(),
             });
             return;
+        }
+
+        if (action === 'subscribe' || action === 'unsubscribe') {
+            const delegate = this.delegates.find((d) => channel.startsWith(d.prefix));
+            if (delegate) {
+                await delegate.service.handleAction(clientId, action, { ...data, channel });
+                return;
+            }
         }
 
         switch (action) {
@@ -91,6 +120,6 @@ export class SubscribeService {
 }
 
 /** Build the service over a full RealtimeRouter. */
-export function createSubscribeService(router: RealtimeRouter): SubscribeService {
-    return new SubscribeService(router as unknown as SubscribeRouter);
+export function createSubscribeService(router: RealtimeRouter, opts?: SubscribeServiceOptions): SubscribeService {
+    return new SubscribeService(router as unknown as SubscribeRouter, opts);
 }
