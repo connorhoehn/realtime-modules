@@ -48,6 +48,20 @@ export interface SharedChannelTransport {
     subscribe: (channel: string) => void;
     unsubscribe: (channel: string) => void;
 }
+/**
+ * Where a held channel stands with the server in the current session (0.145.0):
+ *
+ * - `'unheld'`: nobody holds it;
+ * - `'pending'`: held, the subscribe not sent yet or not answered — the
+ *   server's catalog treats silence as refusal, so this is not "probably fine";
+ * - `'subscribed'`: acknowledged (`{ action: 'subscribed', channel }` from the
+ *   `subscribe` service or the `pipeline()` feature);
+ * - `'refused'`: an `{ type: 'error', channel }` frame named it
+ *   (`PIPELINE_CHANNEL_REFUSED`, `AUTHZ_CHANNEL_DENIED`, …).
+ *
+ * A new session epoch puts every held channel back to `'pending'`.
+ */
+export type SharedChannelState = 'unheld' | 'pending' | 'subscribed' | 'refused';
 export interface SharedSocketTransport {
     /** Hand every inbound frame here — pass it as the socket's `onMessage`. Stable. */
     deliver: (frame: unknown) => void;
@@ -67,6 +81,10 @@ export interface SharedSocketTransport {
     readonly sessionEpoch: number | undefined;
     /** Held channels and their hold counts. */
     holds: () => Map<string, number>;
+    /** Where `channel` stands in this session: see `SharedChannelState`. Read from the acks and refusals passed to `deliver`. */
+    channelState: (channel: string) => SharedChannelState;
+    /** Called with `(channel, state)` whenever a channel's state changes. Returns the unregister. */
+    onChannelState: (handler: (channel: string, state: SharedChannelState) => void) => () => void;
     /** The `{ send, onMessage }` adapter for the pipeline hooks. One per transport. */
     asPipelineRunTransport: () => SharedPipelineRunTransport;
     /** The `{ subscribe, unsubscribe }` adapter for `EventStreamProvider`. One per transport. */

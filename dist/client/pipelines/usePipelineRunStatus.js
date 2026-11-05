@@ -67,6 +67,7 @@ const runEventSequencer_1 = require("./runEventSequencer");
 const react_1 = require("react");
 const GatewaySocketProvider_1 = require("../GatewaySocketProvider");
 const work_1 = require("../documents/work");
+const useDocumentHidden_1 = require("../useDocumentHidden");
 /** The narration people see while a step runs, keyed by step id. */
 exports.DEFAULT_STEP_LABELS = {
     // document-agent-edit / document-transform
@@ -766,18 +767,6 @@ function phaseFromEvent(type, p, prev, pipelineId, tables = {}) {
 // ---------------------------------------------------------------------------
 exports.DEFAULT_POLL_MS = 1500;
 exports.DEFAULT_LIVE_POLL_MS = 30_000;
-/** Whether the document is hidden, kept current. Always false outside a browser. */
-function useDocumentHidden() {
-    const [hidden, setHidden] = (0, react_1.useState)(() => typeof document !== 'undefined' && document.hidden === true);
-    (0, react_1.useEffect)(() => {
-        if (typeof document === 'undefined')
-            return undefined;
-        const update = () => setHidden(document.hidden === true);
-        document.addEventListener('visibilitychange', update);
-        return () => document.removeEventListener('visibilitychange', update);
-    }, []);
-    return hidden;
-}
 exports.DEFAULT_REVIEW_POLL_MS = 15_000;
 function usePipelineRunStatus(runs, opts) {
     const { apiBaseUrl, idToken, transport, stepLabels, pipelineStepLabels } = opts;
@@ -803,7 +792,7 @@ function usePipelineRunStatus(runs, opts) {
     const executorsRef = (0, react_1.useRef)(executors);
     executorsRef.current = executors;
     const executorKey = Object.keys(executors).sort().join(',');
-    const hidden = useDocumentHidden();
+    const hidden = (0, useDocumentHidden_1.useDocumentHidden)();
     const live = !!send && !!onMessage;
     // Label tables travel by ref so a caller passing a fresh literal each render
     // does not resubscribe the socket.

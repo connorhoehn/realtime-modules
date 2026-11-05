@@ -96,6 +96,46 @@ const sharedAdapters = (t: SharedSocketTransport): [PipelineRunTransport, UiEven
   [t.asPipelineRunTransport() satisfies SharedPipelineRunTransport, t.asChannelTransport() satisfies SharedChannelTransport, t];
 const bindsUseWebSocket = (ws: UseWebSocketHookReturn): SharedSocketBinding => ws;
 
+// ./client, ./client/ws, ./client/pipelines — live refresh (0.145.0). The
+// provider's value is a useLiveRefresh socket; the core's options take the
+// hook's numbers; a channel's state is one of four.
+import type {
+  LiveRefresh,
+  LiveRefreshOptions,
+  LiveRefreshTimers,
+  UseLiveRefreshOptions,
+  UseLiveRefreshResult,
+  LiveRefreshSocket,
+  SharedSocketContextValue,
+  SharedSocketProviderProps,
+  SharedChannelState,
+} from '../../src/client';
+import type { LiveRefreshSocket as WsLiveRefreshSocket, UseLiveRefreshResult as WsUseLiveRefreshResult } from '../../src/client/ws';
+import type { UseLiveRefreshOptions as PipelinesUseLiveRefreshOptions, SharedChannelState as PipelinesChannelState } from '../../src/client/pipelines';
+const contextIsSocket = (v: SharedSocketContextValue): [LiveRefreshSocket, WsLiveRefreshSocket] => [v, v];
+const studioOptions: UseLiveRefreshOptions<{ id: string }> & PipelinesUseLiveRefreshOptions<{ id: string }> = {
+  channel: 'studio:project:p1',
+  isHint: (f) => f.type === 'studio.work.changed',
+  coalesceMs: 100,
+  pollMs: 15_000,
+};
+const coreOptions: LiveRefreshOptions<{ id: string }> = {
+  read: async () => ({ id: 'p1' }),
+  coalesceMs: studioOptions.coalesceMs,
+  pollMs: studioOptions.pollMs,
+  livePollMs: 0,
+  maxBackoff: 5,
+  now: () => 0,
+  timers: { setTimeout: () => 0, clearTimeout: () => undefined } satisfies LiveRefreshTimers,
+};
+const channelStates: Array<SharedChannelState & PipelinesChannelState> = ['unheld', 'pending', 'subscribed', 'refused'];
+const resultShape = (r: UseLiveRefreshResult<number>): WsUseLiveRefreshResult<number> => r;
+const controlShape = (c: LiveRefresh): Array<keyof LiveRefresh> => Object.keys(c) as Array<keyof LiveRefresh>;
+const providerModes: SharedSocketProviderProps[] = [
+  { options: { url: 'ws://x' } },
+  { fromGateway: true },
+];
+
 describe('public types are importable from published entry points', () => {
   it('holds the imports above (the assertions are the types)', () => {
     expect(persist.keyPrefix).toBe('app_');
@@ -112,5 +152,12 @@ describe('public types are importable from published entry points', () => {
     expect(announce).toBeDefined();
     expect(typeof sharedAdapters).toBe('function');
     expect(typeof bindsUseWebSocket).toBe('function');
+    expect(typeof contextIsSocket).toBe('function');
+    expect(studioOptions.coalesceMs).toBe(100);
+    expect(coreOptions.livePollMs).toBe(0);
+    expect(channelStates).toHaveLength(4);
+    expect(typeof resultShape).toBe('function');
+    expect(typeof controlShape).toBe('function');
+    expect(providerModes).toHaveLength(2);
   });
 });

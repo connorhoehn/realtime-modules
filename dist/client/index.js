@@ -22,7 +22,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.usePresentationRevisions = exports.PAUSE_UNSUPPORTED_FALLBACK = exports.DEFAULT_AGENT_LOOP_POLL_MS = exports.isAgentLoopOver = exports.agentLoopProgress = exports.agentLoopPhase = exports.useAgentLoopRun = exports.useCursor = exports.useDictation = exports.CANVAS_BODY_KEY = exports.canvasToMarkdown = exports.canvasToDocModel = exports.useCanvasDocument = exports.useChannel = exports.useFeatureFlag = exports.useCapabilities = exports.useCapability = exports.useNotifications = exports.useVideoHangout = exports.useAttachmentSrc = exports.useFileUpload = exports.useActivity = exports.useReactions = exports.resetPresenceEntry = exports.presenceSetFrame = exports.presenceLeaveFrames = exports.joinedPresenceChannels = exports.joinPresenceChannel = exports.PRESENCE_LEFT_KEY = exports.usePresence = exports.useChatReadReceipts = exports.useChatMembers = exports.useChat = exports.usePins = exports.httpBaseFromSocketUrl = exports.createGatewayRest = exports.useFeatures = exports.useGatewayOptional = exports.useGateway = exports.GatewayContext = exports.GatewaySocketProvider = exports.useAgentStream = exports.useWebSocket = exports.useCanvasCapture = exports.SharedTextEditor = exports.useIdleDetector = exports.useAwarenessState = exports.useCRDT = exports.useYjsDoc = exports.GatewayProvider = void 0;
 exports.generatePipelineDraft = exports.normalizeCatalogEntry = exports.fetchPipelineCatalog = exports.usePipelineCatalog = exports.mergeRunEvent = exports.applyRunEvent = exports.runEventFromFrame = exports.statusPillFor = exports.relativeTime = exports.groupByWorkType = exports.groupCatalog = exports.sortSummaries = exports.compareSummaries = exports.summarizeAll = exports.summarize = exports.kindOf = exports.workTypeOf = exports.isTerminalRunStatus = exports.isActiveRunStatus = exports.isFailedRunStatus = exports.isPipelineKind = exports.isWorkType = exports.emptyRollup = exports.RUN_EVENT_STATUS = exports.RECENT_LIMIT = exports.ROLLUP_RECENT_LIMIT = exports.RUN_ITEM_STATUSES = exports.MAX_ROUTE_ENTRIES = exports.MAX_INSTRUCTION_CHARS = exports.ORIGIN_KINDS = exports.PIPELINE_KINDS = exports.KIND_LABEL = exports.KIND_WORK_TYPE = exports.KIND_MARK = exports.PIPELINE_KIND_ORDER = exports.WORK_TYPE_ORDER = exports.WORK_TYPE_LABEL = exports.DECK_REVISION_WRITTEN_EVENT = exports.deckRevisionWrittenOf = exports.DECK_REVISE_EVENT_PREFIX = exports.DEFAULT_DECK_REVISE_STALE_MS = exports.isDeckReviseSettled = exports.markStaleDeckRevises = exports.reduceDeckReviseFrame = exports.deckRevisePhaseLabel = exports.deckReviseChannel = exports.useDeckReviseStatus = exports.PRESENTATION_REVISION_PAGE_SIZE = exports.releasePresentationRevisions = exports.mergePresentationRevisions = void 0;
-exports.synthesizeRunStarted = exports.RunEventSequencer = exports.useSharedWebSocket = exports.useSharedSocketTransport = exports.defaultChannelService = exports.createSharedSocketTransport = exports.pipelineAllSubscribeFrames = exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = void 0;
+exports.synthesizeRunStarted = exports.RunEventSequencer = exports.isDocumentHidden = exports.useDocumentHidden = exports.useSharedSocket = exports.SharedSocketProvider = exports.useLiveRefresh = exports.MAX_LIVE_REFRESH_BACKOFF = exports.DEFAULT_LIVE_REFRESH_LIVE_POLL_MS = exports.DEFAULT_LIVE_REFRESH_POLL_MS = exports.liveRefreshDelay = exports.createLiveRefresh = exports.useSharedWebSocket = exports.useSharedSocketTransport = exports.defaultChannelService = exports.createSharedSocketTransport = exports.pipelineAllSubscribeFrames = exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = void 0;
 var GatewayProvider_1 = require("./GatewayProvider");
 Object.defineProperty(exports, "GatewayProvider", { enumerable: true, get: function () { return GatewayProvider_1.GatewayProvider; } });
 var useYjsDoc_1 = require("./useYjsDoc");
@@ -268,6 +268,24 @@ Object.defineProperty(exports, "defaultChannelService", { enumerable: true, get:
 var useSharedSocketTransport_1 = require("./useSharedSocketTransport");
 Object.defineProperty(exports, "useSharedSocketTransport", { enumerable: true, get: function () { return useSharedSocketTransport_1.useSharedSocketTransport; } });
 Object.defineProperty(exports, "useSharedWebSocket", { enumerable: true, get: function () { return useSharedSocketTransport_1.useSharedWebSocket; } });
+// v0.145.0 — live refresh: a frame is a hint that re-reads the record
+// (coalesced, one read in flight + one queued), polling when the socket is
+// down or the channel refused, paused while hidden. Plus the provider that
+// keeps the shared transport in context (non-null while disconnected).
+var liveRefresh_1 = require("./liveRefresh");
+Object.defineProperty(exports, "createLiveRefresh", { enumerable: true, get: function () { return liveRefresh_1.createLiveRefresh; } });
+Object.defineProperty(exports, "liveRefreshDelay", { enumerable: true, get: function () { return liveRefresh_1.liveRefreshDelay; } });
+Object.defineProperty(exports, "DEFAULT_LIVE_REFRESH_POLL_MS", { enumerable: true, get: function () { return liveRefresh_1.DEFAULT_LIVE_REFRESH_POLL_MS; } });
+Object.defineProperty(exports, "DEFAULT_LIVE_REFRESH_LIVE_POLL_MS", { enumerable: true, get: function () { return liveRefresh_1.DEFAULT_LIVE_REFRESH_LIVE_POLL_MS; } });
+Object.defineProperty(exports, "MAX_LIVE_REFRESH_BACKOFF", { enumerable: true, get: function () { return liveRefresh_1.MAX_LIVE_REFRESH_BACKOFF; } });
+var useLiveRefresh_1 = require("./useLiveRefresh");
+Object.defineProperty(exports, "useLiveRefresh", { enumerable: true, get: function () { return useLiveRefresh_1.useLiveRefresh; } });
+var SharedSocketProvider_1 = require("./SharedSocketProvider");
+Object.defineProperty(exports, "SharedSocketProvider", { enumerable: true, get: function () { return SharedSocketProvider_1.SharedSocketProvider; } });
+Object.defineProperty(exports, "useSharedSocket", { enumerable: true, get: function () { return SharedSocketProvider_1.useSharedSocket; } });
+var useDocumentHidden_1 = require("./useDocumentHidden");
+Object.defineProperty(exports, "useDocumentHidden", { enumerable: true, get: function () { return useDocumentHidden_1.useDocumentHidden; } });
+Object.defineProperty(exports, "isDocumentHidden", { enumerable: true, get: function () { return useDocumentHidden_1.isDocumentHidden; } });
 // v0.95.3 — one run-frame sequencer (realtime-examples NFR #184).
 var runEventSequencer_1 = require("./pipelines/runEventSequencer");
 Object.defineProperty(exports, "RunEventSequencer", { enumerable: true, get: function () { return runEventSequencer_1.RunEventSequencer; } });

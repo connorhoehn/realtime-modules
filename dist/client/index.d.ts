@@ -73,9 +73,16 @@ export { usePipelineCatalog, fetchPipelineCatalog, normalizeCatalogEntry, genera
 export type { PipelineCatalogRequestError, PipelineCatalogResponse, GeneratePipelineMode, GeneratePipelineDraftInput, GeneratePipelineDraftResponse, UsePipelineCatalogOptions, UsePipelineCatalogResult, } from './pipelines/usePipelineCatalog';
 export type { PipelineRunTransport } from './pipelines/usePipelineRunStatus';
 export { createSharedSocketTransport, defaultChannelService } from './sharedSocketTransport';
-export type { SharedSocketTransport, SharedSocketTransportOptions, SharedSocketSubscribeOptions, SharedSocketChannelService, SharedSocketFrame, SharedPipelineRunTransport, SharedChannelTransport, } from './sharedSocketTransport';
+export type { SharedSocketTransport, SharedSocketTransportOptions, SharedSocketSubscribeOptions, SharedSocketChannelService, SharedSocketFrame, SharedPipelineRunTransport, SharedChannelTransport, SharedChannelState, } from './sharedSocketTransport';
 export { useSharedSocketTransport, useSharedWebSocket } from './useSharedSocketTransport';
 export type { SharedSocketBinding, UseSharedSocketTransportOptions, UseSharedWebSocketResult, } from './useSharedSocketTransport';
+export { createLiveRefresh, liveRefreshDelay, DEFAULT_LIVE_REFRESH_POLL_MS, DEFAULT_LIVE_REFRESH_LIVE_POLL_MS, MAX_LIVE_REFRESH_BACKOFF, } from './liveRefresh';
+export type { LiveRefresh, LiveRefreshOptions, LiveRefreshTimers } from './liveRefresh';
+export { useLiveRefresh } from './useLiveRefresh';
+export type { UseLiveRefreshOptions, UseLiveRefreshResult, LiveRefreshSocket } from './useLiveRefresh';
+export { SharedSocketProvider, useSharedSocket } from './SharedSocketProvider';
+export type { SharedSocketProviderProps, SharedSocketContextValue, SharedSocketStatus } from './SharedSocketProvider';
+export { useDocumentHidden, isDocumentHidden } from './useDocumentHidden';
 export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';
 export * from './documents';

@@ -9,7 +9,7 @@
 // approve runs with the same code the hook uses.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.kindOf = exports.workTypeOf = exports.isTerminalRunStatus = exports.isActiveRunStatus = exports.isFailedRunStatus = exports.isPipelineKind = exports.isWorkType = exports.emptyRollup = exports.RUN_EVENT_STATUS = exports.RECENT_LIMIT = exports.ROLLUP_RECENT_LIMIT = exports.RUN_ITEM_STATUSES = exports.MAX_ROUTE_ENTRIES = exports.MAX_INSTRUCTION_CHARS = exports.ORIGIN_KINDS = exports.PIPELINE_KINDS = exports.KIND_LABEL = exports.KIND_WORK_TYPE = exports.KIND_MARK = exports.PIPELINE_KIND_ORDER = exports.WORK_TYPE_ORDER = exports.WORK_TYPE_LABEL = exports.reviewPipelineRun = exports.approvePipelineRun = exports.requestPipelineRun = exports.mergeDetails = exports.documentFromOutputs = exports.snippetFromOutline = exports.opsFromApplyOutput = exports.stepTimelineLabel = exports.snapshotNeedsStepOrder = exports.orderStepsByDefinition = exports.stepsFromSnapshot = exports.detailsFromSnapshot = exports.enrichTerminalStatus = exports.statusFromSnapshot = exports.statusFromEvent = exports.normalizeEventType = exports.retryLabel = exports.stepLabelFor = exports.isAwaitingReview = exports.suggestionOf = exports.reviewOf = exports.reviewDetail = exports.runStatusDetail = exports.DEFAULT_REVIEW_POLL_MS = exports.DEFAULT_POLL_MS = exports.DEFAULT_PIPELINE_STEP_LABELS = exports.DEFAULT_STEP_LABELS = exports.usePipelineRunStatus = void 0;
-exports.useSharedWebSocket = exports.useSharedSocketTransport = exports.defaultChannelService = exports.createSharedSocketTransport = exports.synthesizeRunStarted = exports.RunEventSequencer = exports.pipelineAllSubscribeFrames = exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = exports.generatePipelineDraft = exports.normalizeCatalogEntry = exports.fetchPipelineCatalog = exports.usePipelineCatalog = exports.mergeRunEvent = exports.applyRunEvent = exports.runEventFromFrame = exports.statusPillFor = exports.relativeTime = exports.groupByWorkType = exports.groupCatalog = exports.sortSummaries = exports.compareSummaries = exports.summarizeAll = exports.summarize = void 0;
+exports.isDocumentHidden = exports.useDocumentHidden = exports.useSharedSocket = exports.SharedSocketProvider = exports.useLiveRefresh = exports.MAX_LIVE_REFRESH_BACKOFF = exports.DEFAULT_LIVE_REFRESH_LIVE_POLL_MS = exports.DEFAULT_LIVE_REFRESH_POLL_MS = exports.liveRefreshDelay = exports.createLiveRefresh = exports.useSharedWebSocket = exports.useSharedSocketTransport = exports.defaultChannelService = exports.createSharedSocketTransport = exports.synthesizeRunStarted = exports.RunEventSequencer = exports.pipelineAllSubscribeFrames = exports.PIPELINE_ALL_CHANNEL = exports.newPipelineDraftRequestId = exports.generatePipelineDraft = exports.normalizeCatalogEntry = exports.fetchPipelineCatalog = exports.usePipelineCatalog = exports.mergeRunEvent = exports.applyRunEvent = exports.runEventFromFrame = exports.statusPillFor = exports.relativeTime = exports.groupByWorkType = exports.groupCatalog = exports.sortSummaries = exports.compareSummaries = exports.summarizeAll = exports.summarize = void 0;
 var usePipelineRunStatus_1 = require("./usePipelineRunStatus");
 Object.defineProperty(exports, "usePipelineRunStatus", { enumerable: true, get: function () { return usePipelineRunStatus_1.usePipelineRunStatus; } });
 Object.defineProperty(exports, "DEFAULT_STEP_LABELS", { enumerable: true, get: function () { return usePipelineRunStatus_1.DEFAULT_STEP_LABELS; } });
@@ -100,4 +100,22 @@ Object.defineProperty(exports, "defaultChannelService", { enumerable: true, get:
 var useSharedSocketTransport_1 = require("../useSharedSocketTransport");
 Object.defineProperty(exports, "useSharedSocketTransport", { enumerable: true, get: function () { return useSharedSocketTransport_1.useSharedSocketTransport; } });
 Object.defineProperty(exports, "useSharedWebSocket", { enumerable: true, get: function () { return useSharedSocketTransport_1.useSharedWebSocket; } });
+// v0.145.0 — live refresh: a frame is a hint that re-reads the record
+// (coalesced, one read in flight + one queued), polling when the socket is
+// down or the channel refused, paused while hidden. Plus the provider that
+// keeps the shared transport in context (non-null while disconnected).
+var liveRefresh_1 = require("../liveRefresh");
+Object.defineProperty(exports, "createLiveRefresh", { enumerable: true, get: function () { return liveRefresh_1.createLiveRefresh; } });
+Object.defineProperty(exports, "liveRefreshDelay", { enumerable: true, get: function () { return liveRefresh_1.liveRefreshDelay; } });
+Object.defineProperty(exports, "DEFAULT_LIVE_REFRESH_POLL_MS", { enumerable: true, get: function () { return liveRefresh_1.DEFAULT_LIVE_REFRESH_POLL_MS; } });
+Object.defineProperty(exports, "DEFAULT_LIVE_REFRESH_LIVE_POLL_MS", { enumerable: true, get: function () { return liveRefresh_1.DEFAULT_LIVE_REFRESH_LIVE_POLL_MS; } });
+Object.defineProperty(exports, "MAX_LIVE_REFRESH_BACKOFF", { enumerable: true, get: function () { return liveRefresh_1.MAX_LIVE_REFRESH_BACKOFF; } });
+var useLiveRefresh_1 = require("../useLiveRefresh");
+Object.defineProperty(exports, "useLiveRefresh", { enumerable: true, get: function () { return useLiveRefresh_1.useLiveRefresh; } });
+var SharedSocketProvider_1 = require("../SharedSocketProvider");
+Object.defineProperty(exports, "SharedSocketProvider", { enumerable: true, get: function () { return SharedSocketProvider_1.SharedSocketProvider; } });
+Object.defineProperty(exports, "useSharedSocket", { enumerable: true, get: function () { return SharedSocketProvider_1.useSharedSocket; } });
+var useDocumentHidden_1 = require("../useDocumentHidden");
+Object.defineProperty(exports, "useDocumentHidden", { enumerable: true, get: function () { return useDocumentHidden_1.useDocumentHidden; } });
+Object.defineProperty(exports, "isDocumentHidden", { enumerable: true, get: function () { return useDocumentHidden_1.isDocumentHidden; } });
 //# sourceMappingURL=index.js.map

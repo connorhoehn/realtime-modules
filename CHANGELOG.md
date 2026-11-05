@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.145.0 — 2026-11-04
+
+A reusable "live refresh": a frame is a hint that re-reads the record, and polling covers a socket that is down or a channel the server refused. Ported from the aws-agentcore portal's tested `flowRunFollower` / `pollSchedule`, for Storymaker Studio's five hand-rolled variants (shell re-read on `studio.work.changed`, the 15 s poll while disconnected, and the per-page 1–2 s polls).
+
+- **New `useLiveRefresh(read, opts?)`** → `{ data, error, loading, live, connectionState, channelState, refresh }`, and the framework-free **`createLiveRefresh({ read, isHint, coalesceMs, livePollMs, pollMs, maxBackoff, now, timers })`** → `{ hint, refresh, setLive, setHidden, dispose, … }`. Hints coalesce over `coalesceMs` with at most one read in flight and one queued; becoming live reads once (catch-up); `livePollMs` (default 30 000, 0 = off) while live and `pollMs` (default 5 000, 0 = off) while not; failed reads back off ×2 per failure up to `maxBackoff` (≤ 5, default 5); polling pauses while the document is hidden; dispose/unmount aborts the read in flight and clears every timer. `live` = socket connected AND the optional `channel`'s subscribe acknowledged in this session, so a refused channel (e.g. `studio:project:<id>`) or one never answered stays on polling, and a reconnect re-reads once the new session acks. The channel is held through the shared transport (refcounted). Also `liveRefreshDelay`, `DEFAULT_LIVE_REFRESH_POLL_MS`, `DEFAULT_LIVE_REFRESH_LIVE_POLL_MS`, `MAX_LIVE_REFRESH_BACKOFF`.
+- **New `SharedSocketProvider` / `useSharedSocket()`** → `{ transport, connectionState, live, sessionEpoch? } | null`. Modes: `options` (owns a `useSharedWebSocket`), `socket` + `transport` (host-owned), `fromGateway` (bridges the nearest `GatewaySocketProvider`). The transport is the same object while disconnected; consumers need not null it. Precedence: `useLiveRefresh` reads its `socket` option, else the nearest `SharedSocketProvider`, and never `GatewaySocketProvider` directly; the feature hooks keep reading `GatewaySocketProvider`. See `docs/recipes/shared-socket.md#live-refresh`.
+- **Shared transport tracks each held channel's answer:** `transport.channelState(channel)` (`'unheld' | 'pending' | 'subscribed' | 'refused'`) and `transport.onChannelState(fn)`, read from the acks (`action: 'subscribed'`) and subscribe refusals (`PIPELINE_CHANNEL_REFUSED`, `AUTHZ_CHANNEL_DENIED` with `kind: 'subscribe'`) passed to `deliver`. A new session epoch, or a re-sent subscribe, puts a channel back to `'pending'`. New type `SharedChannelState`.
+- **`useDocumentHidden()` / `isDocumentHidden()` exported** (was private to `usePipelineRunStatus`, which now uses the shared one).
+- All of it from `./client`, `./client/ws` and `./client/pipelines`.
+
 ## 0.144.0 — 2026-11-04
 
 One host-owned socket shared by several consumers, found adopting the pipeline hooks in Storymaker Studio, which hand-rolled all of this over its own `/events` socket.

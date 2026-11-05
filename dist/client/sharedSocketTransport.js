@@ -35,6 +35,21 @@ function defaultChannelService(channel) {
 // The session key when the host gives no epoch.
 const UNTRACKED = -1;
 const isObject = (v) => !!v && typeof v === 'object';
+/**
+ * An error frame refusing a subscribe: `PIPELINE_CHANNEL_REFUSED`, or the
+ * router's `AUTHZ_CHANNEL_DENIED` with `kind: 'subscribe'` (a refused publish
+ * on a channel leaves the subscription alone), or an error naming the channel
+ * with neither code nor kind.
+ */
+function isSubscribeRefusal(f) {
+    if (f.type !== 'error')
+        return false;
+    if (f.code === 'PIPELINE_CHANNEL_REFUSED')
+        return true;
+    if (f.code === 'AUTHZ_CHANNEL_DENIED')
+        return f.kind === undefined || f.kind === 'subscribe';
+    return f.code === undefined && f.kind === undefined;
+}
 /** One host socket, shared: fan-out, refcounted channels, re-subscription per session epoch. */
 function createSharedSocketTransport(options = {}) {
     let send = options.send;
@@ -46,6 +61,23 @@ function createSharedSocketTransport(options = {}) {
         console.error('[realtime-modules] shared socket handler threw', error);
     });
     const handlers = new Set();
+    const stateHandlers = new Set();
+    const notify = (channel, state) => {
+        for (const fn of [...stateHandlers]) {
+            try {
+                fn(channel, state);
+            }
+            catch (err) {
+                onHandlerError(err, { channel, state });
+            }
+        }
+    };
+    const setState = (channel, h, state) => {
+        if (h.state === state)
+            return;
+        h.state = state;
+        notify(channel, state);
+    };
     const held = new Map();
     const pending = new Set();
     let flushScheduled = false;
@@ -56,6 +88,8 @@ function createSharedSocketTransport(options = {}) {
         if (h.sentIn === sessionKey() || !canSubscribe())
             return;
         h.sentIn = sessionKey();
+        // A (re-)sent subscribe awaits a fresh answer.
+        setState(channel, h, 'pending');
         send(frame(h, 'subscribe', channel));
     };
     const flush = () => {
@@ -67,6 +101,7 @@ function createSharedSocketTransport(options = {}) {
             if (!h || h.count > 0)
                 continue;
             held.delete(channel);
+            notify(channel, 'unheld');
             // Only a channel this session subscribed needs leaving.
             if (h.sentIn === sessionKey() && canSubscribe())
                 send(frame(h, 'unsubscribe', channel));
@@ -75,8 +110,9 @@ function createSharedSocketTransport(options = {}) {
     const subscribe = (channel, opts) => {
         let h = held.get(channel);
         if (!h) {
-            h = { count: 0, service: opts?.service ?? defaultChannelService(channel), sentIn: null };
+            h = { count: 0, service: opts?.service ?? defaultChannelService(channel), sentIn: null, state: 'pending' };
             held.set(channel, h);
+            notify(channel, 'pending');
         }
         h.count += 1;
         pending.delete(channel);
@@ -116,16 +152,32 @@ function createSharedSocketTransport(options = {}) {
         }
         epoch = next.sessionEpoch;
         // A new connection: what the old one was subscribed to is gone with it.
-        for (const [channel, h] of held) {
+        for (const [channel, h] of [...held]) {
             h.sentIn = null;
             if (h.count === 0) {
                 held.delete(channel);
                 pending.delete(channel);
+                notify(channel, 'unheld');
+                continue;
             }
+            setState(channel, h, 'pending');
         }
         resubscribe();
     };
+    // Acks and refusals of held channels, whichever service sent them.
+    const track = (inbound) => {
+        if (!isObject(inbound) || typeof inbound.channel !== 'string')
+            return;
+        const h = held.get(inbound.channel);
+        if (!h || h.count === 0)
+            return;
+        if (inbound.action === 'subscribed' && inbound.type !== 'error')
+            setState(inbound.channel, h, 'subscribed');
+        else if (isSubscribeRefusal(inbound))
+            setState(inbound.channel, h, 'refused');
+    };
     const deliver = (inbound) => {
+        track(inbound);
         for (const fn of [...handlers]) {
             try {
                 fn(inbound);
@@ -172,6 +224,14 @@ function createSharedSocketTransport(options = {}) {
         flush,
         get sessionEpoch() { return epoch; },
         holds: () => new Map([...held].filter(([, h]) => h.count > 0).map(([c, h]) => [c, h.count])),
+        channelState(channel) {
+            const h = held.get(channel);
+            return h && h.count > 0 ? h.state : 'unheld';
+        },
+        onChannelState(fn) {
+            stateHandlers.add(fn);
+            return () => { stateHandlers.delete(fn); };
+        },
         asPipelineRunTransport() {
             if (pipelineAdapter)
                 return pipelineAdapter;

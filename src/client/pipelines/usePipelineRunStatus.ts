@@ -42,6 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGatewayOptional } from '../GatewaySocketProvider';
 import type { GatewayMessage } from '../types';
 import { acquireChannelSubscription } from '../documents/work';
+import { useDocumentHidden } from '../useDocumentHidden';
 
 export type PipelineRunPhase = 'received' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'rejected';
 
@@ -936,17 +937,6 @@ function phaseFromEvent(type: string | undefined, p: Record<string, unknown>, pr
 export const DEFAULT_POLL_MS = 1500;
 export const DEFAULT_LIVE_POLL_MS = 30_000;
 
-/** Whether the document is hidden, kept current. Always false outside a browser. */
-function useDocumentHidden(): boolean {
-  const [hidden, setHidden] = useState(() => typeof document !== 'undefined' && document.hidden === true);
-  useEffect(() => {
-    if (typeof document === 'undefined') return undefined;
-    const update = () => setHidden(document.hidden === true);
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
-  }, []);
-  return hidden;
-}
 export const DEFAULT_REVIEW_POLL_MS = 15_000;
 
 export function usePipelineRunStatus(

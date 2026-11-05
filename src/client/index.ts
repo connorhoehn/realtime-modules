@@ -430,6 +430,7 @@ export type {
   SharedSocketFrame,
   SharedPipelineRunTransport,
   SharedChannelTransport,
+  SharedChannelState,
 } from './sharedSocketTransport';
 export { useSharedSocketTransport, useSharedWebSocket } from './useSharedSocketTransport';
 export type {
@@ -437,6 +438,24 @@ export type {
   UseSharedSocketTransportOptions,
   UseSharedWebSocketResult,
 } from './useSharedSocketTransport';
+
+// v0.145.0 — live refresh: a frame is a hint that re-reads the record
+// (coalesced, one read in flight + one queued), polling when the socket is
+// down or the channel refused, paused while hidden. Plus the provider that
+// keeps the shared transport in context (non-null while disconnected).
+export {
+  createLiveRefresh,
+  liveRefreshDelay,
+  DEFAULT_LIVE_REFRESH_POLL_MS,
+  DEFAULT_LIVE_REFRESH_LIVE_POLL_MS,
+  MAX_LIVE_REFRESH_BACKOFF,
+} from './liveRefresh';
+export type { LiveRefresh, LiveRefreshOptions, LiveRefreshTimers } from './liveRefresh';
+export { useLiveRefresh } from './useLiveRefresh';
+export type { UseLiveRefreshOptions, UseLiveRefreshResult, LiveRefreshSocket } from './useLiveRefresh';
+export { SharedSocketProvider, useSharedSocket } from './SharedSocketProvider';
+export type { SharedSocketProviderProps, SharedSocketContextValue, SharedSocketStatus } from './SharedSocketProvider';
+export { useDocumentHidden, isDocumentHidden } from './useDocumentHidden';
 // v0.95.3 — one run-frame sequencer (realtime-examples NFR #184).
 export { RunEventSequencer, synthesizeRunStarted } from './pipelines/runEventSequencer';
 export type { SequencedFrame, RunSequenceGap, RunEventSequencerOptions } from './pipelines/runEventSequencer';
