@@ -1,24 +1,11 @@
 # Meeting rooms: breakout rooms, raised hands and the meeting toolbar
 
-Status: 2026-10-15, built in realtime-modules 0.121.0 and ui-components
-(the release that ships `MeetingToolbar` and `BreakoutRoomsPanel`). Not yet
-wired into any app. Reference: a Microsoft Teams meeting with the Rooms pane
-open (one organizer, fifteen people, seven self-select rooms).
+A Teams-style meeting layer for calls: an ordered raised-hand queue, breakout
+rooms an organizer can assign or let people choose, and a meeting toolbar in
+ui-components. The server half is `./meeting`, the React half is
+`./client/meeting`; the recipe is [../recipes/meetings.md](../recipes/meetings.md).
 
-## 1. Audit of the reference
-
-| Area | What Teams shows | What existed before this work | What this work adds |
-|---|---|---|---|
-| Title + status cluster | meeting title, shield (meeting options), red recording dot, elapsed `32:52` | `HangoutRoomHeader`, `RecordingChip`, `formatCallElapsed` | `MeetingStatusCluster` (recording + elapsed + optional lock slot) |
-| Toolbar | labelled icon buttons: Chat, People (count), Raise, React, View, Notes, Rooms (active underline), Apps, More; Camera and Mic as split buttons with a device chevron; Share; red Leave | `MediaControlsBar` / `CallControls`: round icon-only buttons, no labels, no counts, no split buttons, no active-pane state | `MeetingToolbar` + `MeetingToolbarButton` (icon over label, count badge, pressed and active-pane states, split chevron menu, priority overflow into More) |
-| Recording consent | "Recording and transcription. Started by X. By attending you agree…" dismissible card | `CallNoticePill` (one line), `CallStartedBanner` | `RecordingConsentNotice` |
-| Grid tiles | avatar or initials on a soft surface when camera is off, name chip with mute glyph, signal bars on self, accent ring on the active speaker | `ParticipantTile`, `HangoutGrid` (ring, chip, mute) | a raised-hand badge with queue position on the tile and in the roster |
-| Raise hand | toolbar toggle, hand badge on tile, ordered queue in People, organizer lowers all | `MediaControlsBar` story-only raise-hand extra; no state anywhere | `meeting` service hands (raise, lower, lower all, ordered queue) and `useMeeting().hands` |
-| React | reaction picker over the call | `ReactionPicker` + `reactions` service | nothing new; the toolbar's React button hosts the existing picker |
-| Rooms pane | "Breakout rooms" side pane: row per room with expand chevron (members), name, `Open` status, Join button | `CallSidePanel` (tabbed dock), hangout-rooms directory (persistent slug rooms, not breakouts) | `BreakoutRoomsPanel` (participant and organizer modes), `BreakoutRoomBanner` (in-room countdown, announcement, return) |
-| Breakout control (organizer, not in the picture) | create N rooms, assign automatically or manually or let people choose, open/close all, timer, announcement, recall everyone | none | `meeting` service breakout verbs + organizer section of the panel |
-
-## 2. Shape
+## 1. Shape
 
 Breakouts are not new media. A breakout room is an ordinary LVS hangout whose
 lobby name is derived from the main meeting's lobby:
@@ -76,7 +63,7 @@ a client's reducer only ever overwrites (the same rule as rooms' occupancy).
   (organizers: any open room; others: their assigned room, or any open room in
   self-select mode), so a guard can refuse a stale or forged lobby name.
 
-## 3. Packaging
+## 2. Packaging
 
 | Package | Surface | Files |
 |---|---|---|
@@ -85,16 +72,10 @@ a client's reducer only ever overwrites (the same rule as rooms' occupancy).
 | ui-components | `/video` | `MeetingToolbar`, `MeetingToolbarButton`, `MeetingStatusCluster`, `RecordingConsentNotice`, `RaisedHandBadge`, `BreakoutRoomsPanel`, `BreakoutRoomBanner`, `MeetingIcons`; `ParticipantTile` and `RosterPanel` gain an optional hand prop |
 | ui-components | `/integrations/realtime-modules` | `WrappedBreakoutRoomsPanel`, `useMeetingToolbarModel` binding `useMeeting` |
 
-Everything is additive: no existing prop, verb or export changes meaning.
+## 3. Durable state
 
-## 4. Not done here
-
-- No app wiring (aws-agentcore portal, realtime-examples). The next step is a
-  `meeting()` feature in the BFF's `attachRealtime`, a lobby guard that calls
-  `admitsBreakoutLobby`, and the toolbar on the huddle stage.
-- Durable state: done in 0.125.0. `RedisMeetingStateStore` (version
-  compare-and-set in Lua, publish on commit) for a cluster; the service
-  re-applies a mutation whose write lost, never deletes shared idle state, and
-  every replica following a meeting arms its timer (the compare-and-set lets
-  exactly one close commit). Cross-replica frame fan-out is the router's job.
-- event-catalog declarations for the `meeting` frames.
+`RedisMeetingStateStore` keeps meeting state in Redis for a cluster: writes
+are version compare-and-set in Lua and publish on commit. The service
+re-applies a mutation whose write lost, never deletes shared idle state, and
+every replica following a meeting arms its timer (the compare-and-set lets
+exactly one close commit). Cross-replica frame fan-out is the router's job.

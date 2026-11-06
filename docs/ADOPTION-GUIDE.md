@@ -3,12 +3,9 @@
 Operator-facing guide for installing the realtime-modules toolkit into
 a new app and wiring its subpath exports.
 
-**v0.17.0+:** this package is **full-stack** again. Server-side
-service classes (`CRDTService`, `ChatService`, `PresenceService`, etc.)
-are supported first-class surface — v0.6.0's "client-only" turn was
-never completed (the gateway kept consuming these subpaths throughout)
-and was reversed in v0.17.0. See the README's "What to use where"
-table for the layer map.
+This package is full-stack. Server-side service classes (`CRDTService`,
+`ChatService`, `PresenceService`, etc.) are a supported, first-class
+surface alongside the React client hooks.
 
 ---
 

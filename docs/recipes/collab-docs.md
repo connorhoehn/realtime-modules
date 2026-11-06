@@ -55,9 +55,7 @@ plus the editor adapter below, which binds the Y.Doc directly.
 ## 3 — UI (ui-components)
 
 Use **TiptapEditor via `@connorhoehn/realtime-modules/adapters/tiptap`** —
-it bootstraps the Y.Doc + provider stack internally. Per the frontend
-discipline: if a needed editor composite is missing, add it to
-ui-components first.
+it bootstraps the Y.Doc + provider stack internally.
 
 ## Graduate to production
 

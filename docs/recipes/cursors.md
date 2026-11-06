@@ -61,8 +61,7 @@ the provider from `@connorhoehn/realtime-modules/client`.
 
 ## 3 — UI (ui-components)
 
-Use **your canvas/editor overlay — cursors are app-geometry-specific**. Per the frontend discipline: never hand-roll the surface —
-if a composite is missing, add it to ui-components first.
+Use **your canvas/editor overlay — cursors are app-geometry-specific**.
 
 ## Graduate to production
 

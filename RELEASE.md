@@ -17,7 +17,7 @@ Manual release recipe. Keep it boring.
 3. **Test** — `NODE_OPTIONS='--max-old-space-size=2048' npx jest --no-coverage --maxWorkers=1`
 4. **Bump version** — edit `package.json` `version` field; move CHANGELOG `[Unreleased]` content under a new `## [x.y.z] — YYYY-MM-DD` section
 5. **Commit** — include the changed source/tests, `package.json`, `package-lock.json`, `CHANGELOG.md`, and rebuilt tracked `dist/` files in the release commit.
-6. **Tag + push (mandatory)** — `git tag -a vX.Y.Z -m "Release X.Y.Z" && git push origin main vX.Y.Z && git push slalom main vX.Y.Z`. Both remotes must carry the tag; verify `git show vX.Y.Z:package.json` has the same version. Untagged releases 0.100–0.115 had to be reconstructed from `git log -p -- package.json`.
+6. **Tag + push (mandatory)** — `git tag -a vX.Y.Z -m "Release X.Y.Z" && git push origin main vX.Y.Z && git push slalom main vX.Y.Z`. Both remotes must carry the tag; verify `git show vX.Y.Z:package.json` has the same version.
 7. **Export checks** — `npm run verify:exports && npm run check:contract && npm run verify:packed` (also run by `prepack`/`prepublishOnly`).
 
 ## `dist/` is tracked
@@ -28,12 +28,9 @@ consumers. Build before the release, inspect `git diff --stat`, and commit every
 changed generated file with the source. Verify an actual consumer install and
 its runtime exports after repinning. Never patch only `dist/`.
 
-## Historical lesson — v0.2.0 gotcha
+## Always build before tagging
 
-The `realtime-modules-v0.2.0` tag was cut **without** running
-`npm run build`. `dist/client/useAgentStream.{js,d.ts}` was missing
-from the tag. `file:` consumers (gateway) were saved by the `prepare`
-hook on install; OrgIQ adoption (commit `05f38c1` on aws-agentcore)
-had to manually rebuild before the install resolved. Don't skip the
-build step. The `prepublishOnly` script + this recipe exist to make
-that mistake harder.
+A tag cut without `npm run build` ships a stale or incomplete `dist/`, and
+consumers pinned to the tag install exactly that. The `prepublishOnly` script
+and the recipe above exist to make that mistake harder; do not skip the build
+step.

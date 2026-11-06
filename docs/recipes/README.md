@@ -76,3 +76,33 @@ payload, which is chat-shaped and absent from presence and reactions.
 `clientId` is `'server'` and `userId` is `undefined` for a server-originated
 publish (a system message); `userId` is also `undefined` for a connection
 with no authenticated user.
+
+## Composition, startup and disposal
+
+`attachRealtime` and `createRealtimeServer` check the whole feature graph
+before they create a service or install a listener. Dependencies may name a
+manifest or its wire alias. A missing dependency, a duplicate identity, an
+alias collision or a cycle throws synchronously. Independent features keep
+their input order; dependencies are constructed first and shut down last.
+`ctx.service(name)` resolves either name. Legacy wire names are unchanged
+(`pipeline-ws` maps to `pipeline`), and an unknown legacy feature name throws
+with a hint to use `attachRealtime` / `defineFeature`.
+
+A manifest may declare `adapterRequirements: [{ provider: 'chat-store',
+capabilities: ['conditional-write'] }]`. Pass matching `capabilityProviders` to
+either entry point; the check uses service-runtime's static evaluator. A
+declaration does not prove availability: the host still needs live readiness
+probes and must describe the adapters it actually injects.
+
+Factories are synchronous, so the host owns asynchronous readiness before it
+attaches. A factory registers resources it has partly acquired with
+`ctx.onCleanup?.(fn)` during `create()`; the hook is supplied by attachment,
+and a caller that invokes a factory directly owns its own cleanup. A returned
+service has its `shutdown()` or `stop()` called once, so do not also register
+that call. `dispose()` drains sockets, then reverses service and resource
+construction, then closes the router. Repeated calls return the same promise.
+Cleanup continues after an error and rejects with an `AggregateError` once
+every resource has been attempted. A startup failure still throws
+synchronously: the `RealtimeStartupError` keeps the original `cause` and
+exposes `cleanup`, a promise of cleanup failures (empty after a clean
+rollback). Await it before you retry the attachment.

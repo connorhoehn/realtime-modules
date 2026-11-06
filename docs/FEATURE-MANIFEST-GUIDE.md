@@ -551,6 +551,5 @@ are optional with the shown defaults unless marked required.
 
 - [docs/ADOPTION-GUIDE.md](./ADOPTION-GUIDE.md) — full installation walkthrough and subpath guide
 - [docs/USAGE-PATTERNS.md](./USAGE-PATTERNS.md) — common wiring patterns
-- [docs/USEWEBSOCKET-GAP-vs-GATEWAY.md](./USEWEBSOCKET-GAP-vs-GATEWAY.md) — `useWebSocket` vs gateway protocol gaps
 - `src/feature-manifest/types.ts` — `FeatureManifest` type definition
 - `src/server-ws/types.ts` — `WsService`, `WsHandlerOptions`, `WsHandlerHandle` types

@@ -1,564 +1,189 @@
 # @connorhoehn/realtime-modules
 
-Full-stack realtime collaboration library — the "webstack" layer apps
-build on. Server-side services (`ChatService`, `PresenceService`,
-`CRDTService`, `ReactionService`, `ActivityService`, …) plus React
-hooks for chat, presence, reactions, activity, file upload, video
-hangouts, and notifications; an AG-UI / SSE agent-streaming surface; a
-Tiptap collaborative editor adapter; and a typed REST proxy client for
-Lambda / server-to-server callers.
+Realtime building blocks for collaborative apps: a WebSocket gateway server with per-channel authorization, services for presence, chat, reactions, activity, notifications, file uploads, collaborative documents, calls and meeting rooms, and the React hooks and adapters that talk to them from the browser.
 
-**Status.** Powers `realtime-examples` (server + frontend), OrgIQ
-middleware/portal (aws-agentcore), and live-video-streaming's UI.
-Pre-1.0 (`0.x`) — subpath shapes may shift between minors; pin to an
-exact published version (GitHub Packages) or git SHA.
+Every feature works on its own or combined with the others, and each ships with in-memory stores so you can start without any infrastructure. On the server you attach features to an existing Node `http.Server` with `attachRealtime`; in the browser you mount one `GatewaySocketProvider` and use hooks such as `useChat` and `usePresence`.
 
-## Recipes
+## What's in the repo
 
-**[docs/recipes/](./docs/recipes/README.md)** — one page per capability:
-attach on the server (3 lines), one client hook, one ui-components surface,
-and the graduation path from in-memory defaults to production stores. The
-composition layer is `attachRealtime` + `defineFeature` from `./server`;
-features compose à la carte (every one works alone and in any pair —
-enforced by the attach test matrix).
+- `src/` - the TypeScript sources, one folder per feature plus `client/`, `server/`, `server-ws/` and `adapters/`.
+- `test/` - Jest tests, one folder per area.
+- `dist/` - the committed build output, so a git install needs no build step.
+- `docs/` - the adoption guide, usage patterns, per-feature recipes and design notes.
+- `demo/` - a runnable Vite and React app with its own realtime backend.
+- `scripts/` - export verification, a packed-install check and a smoke test of the built package.
+- `bench/` - an in-process load script for channel authorization.
 
-## What to use where
+## Getting started
 
-| You are building… | Use |
-|---|---|
-| A server that terminates WebSockets and runs realtime features | `./server-ws` (WS handler factory) + the service subpaths: `./chat`, `./presence`, `./activity`, `./cursor`, `./reactions`, `./social`, `./call`, `./ingest`, `./pipeline`, `./typed-documents`, `./server` (CRDT/doc stack), `./room`, `./notification`, `./fileupload` |
-| A React app on top of a gateway deployment | `./client` hooks (+ `@connorhoehn/ui-components` for the UI layer, which wraps these hooks) |
-| Video hangouts (WHIP/WHEP against an SFU) | `./client/video`, `./client/hangout-rooms` |
-| Agent / LLM streaming UX | `./agent-streaming` (server), `./agent-streaming/client` |
-| Lambda / server-to-server calls into a gateway | `./proxy-client` |
-| Durable persistence behind the services | Implement the store interfaces (`ChatStore`, `MetadataStore`, `SnapshotStore`, `HotCache`) in YOUR app — in-memory defaults ship here; DynamoDB/Redis adapters live with the app that owns those tables (see realtime-examples's `realtime-fanout/*/adapters`) |
+### Using the library
 
-Layering: `ui-components → realtime-modules → (service-runtime,
-event-catalog)`. Apps (realtime-examples, live-video-streaming,
-aws-agentcore) sit on top and contribute deployment glue + persistence
-adapters, not service logic.
-
-**History note (v0.6.0–v0.16.x).** v0.6.0 declared this package
-"client-only" and deleted the server-side sources, intending to move
-them in-tree to websocket-gateway. The move never completed: the
-compiled output stayed here, the gateway kept importing the subpaths,
-and for ten minor versions the server surface shipped WITHOUT source.
-v0.17.0 restored the sources from history (with the three fixes that
-had been patched into `dist/` directly: chat publisher authz, presence
-mode plumbing, presence color derivation) and made the build
-self-cleaning so `dist/` can never outlive `src/` again. The server
-modules are a supported, first-class surface.
-
----
-
-## Quick Start
-
-```tsx
-import {
-  GatewaySocketProvider,
-  useChat,
-  usePresence,
-  useCRDT,
-} from '@connorhoehn/realtime-modules/client';
-
-function MyApp() {
-  return (
-    <GatewaySocketProvider
-      url="wss://gateway.example.com/ws"
-      token={getAuthToken()}
-      features={['chat', 'presence', 'crdt']}
-    >
-      <ChatRoom channel="chat:general" />
-    </GatewaySocketProvider>
-  );
-}
-
-function ChatRoom({ channel }: { channel: string }) {
-  const { messages, sendMessage } = useChat(channel);
-  const { roster } = usePresence(channel);
-
-  return (
-    <>
-      <header>{roster.length} online</header>
-      <ul>{messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
-      <button onClick={() => sendMessage('hi')}>send</button>
-    </>
-  );
-}
-```
-
-The provider owns the single WebSocket connection. Child hooks read
-context via `useGateway()` and never re-establish their own socket.
-
-**Composite pattern — `useChannel` (v0.7.8):**
-
-```tsx
-import { useChannel } from '@connorhoehn/realtime-modules/client';
-
-function Room({ channel }: { channel: string }) {
-  // All four features enabled by default; each value is T | null.
-  const { chat, presence, reactions, activity } = useChannel(channel);
-
-  return (
-    <>
-      <header>{presence?.roster.length ?? 0} online</header>
-      <ul>{chat?.messages.map((m) => <li key={m.id}>{m.message}</li>)}</ul>
-      <button onClick={() => chat?.sendMessage('hi')}>send</button>
-      <button onClick={() => reactions?.react('\u{1F525}')}>fire</button>
-    </>
-  );
-}
-
-// Opt-out individual features:
-const { chat } = useChannel(channel, {
-  features: { presence: false, reactions: false, activity: false },
-});
-```
-
-Granular hooks (`useChat`, `usePresence`, etc.) are still valid for
-deeply-nested components that only need one feature.
-
----
-
-## Install
-
-The package is published to **GitHub Packages** under the
-`@connorhoehn` scope. Add the registry to your `.npmrc`:
+The package is published to GitHub Packages under the `@connorhoehn` scope. Point that scope at the registry in your `.npmrc`, then install:
 
 ```
 @connorhoehn:registry=https://npm.pkg.github.com
 ```
 
-then pin the current version:
+```bash
+npm install @connorhoehn/realtime-modules
+```
 
-```json
-{
-  "dependencies": {
-    "@connorhoehn/realtime-modules": "0.16.0"
-  }
+You can also install from git (`github:connorhoehn/realtime-modules#<tag>`). Pin an exact version or tag, because the API can change between minor releases. Every peer dependency (`react`, `express`, `ws`, `yjs`, `y-protocols`, the Tiptap packages, `pptxgenjs`, the DynamoDB client) is optional: install only what the subpaths you import need. Your `tsconfig.json` needs `skipLibCheck: true` and `moduleResolution` set to `bundler`, `node16` or `nodenext` so subpath imports resolve.
+
+On the server, attach features to your HTTP server. The token is checked in your `auth` function, and `authorize` decides who may read or write each channel:
+
+```ts
+import http from 'http';
+import { attachRealtime, chat, presence, bearerSubprotocolAuth } from '@connorhoehn/realtime-modules/server';
+
+const httpServer = http.createServer(app);
+attachRealtime(httpServer, {
+    features: [chat(), presence()],
+    path: '/realtime',
+    auth: bearerSubprotocolAuth({ verify: async (token) => ({ userId: await userIdFor(token) }) }),
+    authorize: ({ channel, ctx }) => !!ctx && channelAllowed(ctx.userId, channel),
+});
+httpServer.listen(3000);
+```
+
+In the browser, give the provider a URL and a token. The token travels in the `Sec-WebSocket-Protocol` header as `bearer-token-v1, <token>`, never in the URL, and the provider owns the one WebSocket that every hook below it shares:
+
+```tsx
+import { GatewaySocketProvider, useChat, usePresence } from '@connorhoehn/realtime-modules/client';
+
+function App() {
+    return (
+        <GatewaySocketProvider url="wss://example.com/realtime" token={token} features={['chat', 'presence']}>
+            <Room channel="chat:general" />
+        </GatewaySocketProvider>
+    );
+}
+
+function Room({ channel }: { channel: string }) {
+    const { messages, sendMessage } = useChat(channel);
+    const { roster } = usePresence(channel);
+    return <button onClick={() => sendMessage('hi')}>{roster.length} online, {messages.length} messages</button>;
 }
 ```
 
-Server-to-server / SHA-pinned consumers (e.g. the gateway) may also
-pin via a git SHA — `github:connorhoehn/realtime-modules#<sha>` — when
-they need a commit ahead of the latest published version.
+### Developing in this repo
 
-The repo ships a pre-built `dist/` so consumers do not need to run the
-TypeScript build themselves.
-
-For local development against a sibling checkout:
-
-```json
-{
-  "dependencies": {
-    "@connorhoehn/realtime-modules": "file:../realtime-modules"
-  }
-}
+```bash
+npm install            # install dependencies
+npm run build          # clean, compile with tsc, then verify the exports
+npm test               # run the Jest suite
+npm run typecheck      # type-check without emitting
+npm run lint           # type-check the lint configuration
+npm run demo           # start the demo app on http://localhost:5173
 ```
 
-Run `npm run build` inside the clone once after pulling to refresh
-`dist/`; `file:` consumers pick up changes on the next `npm install`.
-
-Peer-deps (`react`, `express`, `ws`, `yjs`, `y-protocols`, `@tiptap/*`)
-are all **optional** — install only what the subpaths you import
-require.
-
-### TypeScript requirements
-
-```json
-{
-  "compilerOptions": {
-    "skipLibCheck": true,
-    "moduleResolution": "bundler"
-  }
-}
-```
-
-- **`skipLibCheck: true`** — required to suppress transitive type
-  conflicts from `yjs` and `lru-cache` under TypeScript 5.x/6.x.
-- **`moduleResolution: "bundler"` (or `"node16"`/`"nodenext"`)** —
-  required for subpath imports like `./client/ws` to resolve. Classic
-  `"node"` mode does not support package `exports` subpath maps.
-
----
+`npm run verify:exports`, `npm run check:contract`, `npm run verify:packed` and `npm run smoke:features` run the export, contract, packed-install and built-package checks on their own. `RELEASE.md` describes how a release is cut.
 
 ## Subpaths
 
-Every subpath in `package.json` `exports` appears here — `verify-exports`
-fails the build if one does not, because a published surface nobody can find
-is the same as an unpublished one.
+Every key in the package `exports` map is one entry point. Import from the narrowest one you need. The bare package import is a deprecated barrel that pulls in both React and server code.
 
-**Browser**
-
-| Subpath | Purpose | Use when |
-|---|---|---|
-| `.` | Root re-export of `./client` + `./agent-streaming` + `./server-ws` | Single-import ergonomics over tree-shaking |
-| `./client` | React hooks + `GatewaySocketProvider` | Browser apps with full feature set |
-| `./client/ws` | Yjs-free `useWebSocket`-only surface | Browser apps without CRDT |
-| `./client/video` | Camera/mic capture + publishing primitives | Surfaces that publish video |
-| `./client/media-effects` | Blur, virtual backgrounds, face sprites — lazy MediaPipe engine | Camera surfaces wanting effects |
-| `./client/voice` | Ambient push-to-talk capture + `ContextFrame` (where an utterance attaches) | Dictation / spoken remarks outside a call |
-| `./hangout-rooms` | Framework-free room types, saved-layout validator/limits and REST client. Hosts own audit metadata, access checks and atomic version writes. |
-| `./client/hangout-rooms` | Hangout room hooks + the REST functions behind them | Multi-room video apps |
-| `./client/meeting` | `useMeeting` — raised hands and breakout rooms for a live call; `activeLobby` says which LVS lobby to be in | Teams-style meetings: Raise, Rooms pane, breakout timer |
-| `./client/pipelines` | `usePipelineRunStatus` — live run status merged from `pipeline:event` frames and a REST snapshot; `usePipelineCatalog` — the pipelines directory (work-type/kind enum, last-run rollups kept current from `pipeline:all`, `statusPillFor`, `generatePipelineDraft`); pure helpers for SSR/scripts | Rendering a pipeline-run card or the pipelines page |
-| `./client/documents` | `useDocumentWork` — one document's work fields (status, points, owner, priority, outcome, criteria, links) with optimistic PATCH and 409 rollback; `useWorkList` — the Work column grouped by work status ("Not planned" for none) with the header rollup and live run status; `useRunDraft` — save / dispatch / stop a run draft with a stable request id; `useRunEstimate` — cost and duration range, `null` = "No prior runs"; pure REST helpers for scripts. Live from the gateway's id-only `doc-work:*` signals (re-read the one record; no polling) | The Documents four-pane Work / detail / Run draft view |
-| `./agent-streaming/client` | `useAgentStream` React hook — no Yjs dependency | Browser apps consuming agent streams |
-| `./adapters/tiptap` | `TiptapEditor` + `EditorToolbar` bound to Yjs | Collaborative rich-text editors |
-| `./adapters/excalidraw` | Excalidraw ⇄ Yjs binding, typed structurally (no Excalidraw dependency) | Collaborative diagramming |
-
-**Server**
-
-| Subpath | Purpose | Use when |
-|---|---|---|
-| `./server-ws` | Generic WS handler factory (`createWsHandler`) | Service-side WS routing / test fixtures |
-| `./server` | CRDT/document stack — `CRDTService`, snapshots, awareness, `attachRealtime` | Hosting collaborative documents |
-| `./server/stores/dynamo` | `DynamoChatStore` — durable chat over DynamoDB (messages, conversations index, membership, read receipts); optional peer `@aws-sdk/client-dynamodb` | Production chat: `chat({ chatStore })` or `chat(store.chatOptions())` |
-| `./deck` | Deck engine — `DeckSpec` contract + `validateDeckSpec`, `deckConstraints`, themes, `renderDeckPreview`/`renderAllSlideSvgs`, `renderPptx` (.pptx); optional peer `pptxgenjs` | Server-side generated presentations |
-| `./testing` | Test doubles: `createRowsChatBackend` (rows-backed chat/receipt stores), `FakeClusterRedis` (in-memory Redis for `RedisRealtimeRouter` with stall injection and connection loss), `TestIdentityDirectory` (epoch-scoped identity clones) | Tests of a host built on `attachRealtime`; never production |
-| `./agent-streaming` | AG-UI v0.1.x SSE emitter (`agentStreamMiddleware`) | Backends streaming AI responses |
-| `./proxy-client` | `GatewayProxyClient` — typed REST shim with optional HMAC signing | Server-to-server / Lambda |
-| `./work-graph` | Dependency-free work-event, sharing, viewer, cursor, reference, and collaboration contracts | Producers, API hosts, gateways, and clients composing the Active now work graph |
-| `./work-graph/server` | Shared signed work-graph snapshot/replay cursor issuer and verifier; `WorkGraphStreamService` (the `workGraph()` stream feature: host `channelFor` + `WorkGraphSource`, per-subscriber deltas) | Platform API and gateway server runtimes |
-
-**Feature services** — each pairs with the hook named in [Hook reference](#hook-reference); wire them into `createWsHandler`'s `services` map.
-
-| Subpath | Purpose | Client half |
-|---|---|---|
-| `./chat` | `ChatService` — history, membership, read receipts, pins | `useChat` |
-| `./presence` | `PresenceService` — roster + status | `usePresence` |
-| `./reactions` | `ReactionService` — ephemeral and durable reactions | `useReactions` |
-| `./activity` | `ActivityService` — app-wide event log; live events fan out globally, history is per-channel | `useActivity` |
-| `./cursor` | `CursorService` — in-memory cursor fan-out with a TTL sweep | `useCursor` |
-| `./notification` | `NotificationService` — user-scoped inbox, optional Redis store | `useNotifications` |
-| `./fileupload` | `FileUploadService` + `FileBlobStore` (local-fs default) | `useFileUpload` |
-| `./call` | `CallService` — invites, call state stores, lobby channel | none yet — frames via `useGateway()` |
-| `./room` | `RoomService` — room lifecycle + state store | `./client/hangout-rooms` |
-| `./meeting` | `MeetingService` + `meeting()` feature — raised hands, breakout rooms (assign, self-select, open/close, timer, broadcast), `admitsBreakoutLobby` for lobby guards | `./client/meeting` |
-| `./pipeline` | `PipelineWsRouter` — pipeline subscription fan-out + frame projection | `./client/pipelines` |
-| `./social` | `SocialService` — social-event fan-out | none yet — frames via `useGateway()` |
-| `./ingest` | `IngestService` — ingest subscription fan-out | none yet — frames via `useGateway()` |
-| `./typed-documents` | `DocumentEventsService` — comments / reviews / items / workflows | none yet — frames via `useGateway()` |
-
-The root entry (`@connorhoehn/realtime-modules`) re-exports `./client`,
-`./agent-streaming`, and `./server-ws` for ergonomic single-import
-access. Prefer explicit subpath imports for tree-shaking.
-
----
+| Subpath | What it gives you |
+|---|---|
+| `.` | Deprecated barrel of `./client`, `./agent-streaming` and `./server-ws`; prefer a subpath |
+| `./client` | `GatewaySocketProvider` and the React hooks for chat, presence, reactions, activity, cursors, uploads, notifications and documents |
+| `./client/ws` | The WebSocket hook, shared-socket transport and live-refresh helpers, without Yjs |
+| `./client/video` | Camera and microphone capture, LVS hangouts (`useLVSHangout`, `useLVSContext`) and the conversation call hooks |
+| `./client/voice` | Push-to-talk voice capture (`useVoiceCapture`) |
+| `./client/media-effects` | Background blur, virtual backgrounds and face sprites (`useMediaEffects`) |
+| `./client/hangout-rooms` | Multi-room hangout hooks and the REST calls behind them |
+| `./client/meeting` | `useMeeting`: raised hands and breakout rooms for a live call |
+| `./client/pipelines` | Pipeline run status and the pipelines catalog |
+| `./client/documents` | Work fields, work lists and run drafts for a document |
+| `./adapters/tiptap` | `TiptapEditor` and its toolbar, bound to Yjs |
+| `./adapters/excalidraw` | Excalidraw to Yjs binding for collaborative diagrams |
+| `./agent-streaming` | Server-side AG-UI event stream over SSE for AI agent responses |
+| `./agent-streaming/client` | `useAgentStream`, the browser side of that stream |
+| `./proxy-client` | `GatewayProxyClient`, a typed REST client with optional HMAC signing |
+| `./server-ws` | `createWsHandler`, the generic WebSocket handler factory |
+| `./server` | `attachRealtime`, the feature factories, channel authorization and the document stack |
+| `./server/stores/dynamo` | DynamoDB-backed chat storage |
+| `./chat` | `ChatService`: history, membership, read receipts and pins |
+| `./presence` | `PresenceService`: roster and status |
+| `./activity` | `ActivityService`: an app-wide event log |
+| `./cursor` | `CursorService`: live cursor fan-out |
+| `./reactions` | `ReactionService`: ephemeral and durable reactions |
+| `./notification` | `NotificationService`: a per-user inbox with replay |
+| `./fileupload` | `FileUploadService` and blob storage |
+| `./call` | `CallService`: invites, call state and lobbies |
+| `./room` | `RoomService`: hangout room lifecycle and state |
+| `./hangout-rooms` | Framework-free room types, layout validation and REST client |
+| `./meeting` | `MeetingService`: raised hands and breakout rooms |
+| `./pipeline` | Pipeline subscription fan-out |
+| `./social` | Social event fan-out |
+| `./ingest` | Ingest subscription fan-out |
+| `./typed-documents` | Comments, reviews, items and workflow events for documents |
+| `./work-graph` | Work-graph event, sharing and cursor contracts |
+| `./work-graph/server` | Work-graph snapshot and replay cursor issuing and verification |
+| `./deck` | Slide-deck model, validation, SVG preview and `.pptx` rendering |
+| `./testing` | Test doubles for hosts built on `attachRealtime`; never for production |
 
 ## Hook reference
 
-Every hook exported from `./client` has a row here — `verify-exports` fails
-the build if one does not. Channel-scoped hooks subscribe and unsubscribe
-automatically when the `channel` argument changes.
+The hooks exported from `./client`. Hooks that take a channel subscribe and unsubscribe on their own when it changes. The type declarations carry the full signatures.
 
-"Channel-scoped" here means what the hook RECEIVES is scoped to the channel,
-not merely that it subscribes with one. `useActivity` is the exception worth
-knowing about, and its row says so.
-
-**Connection**
-
-| Hook | Returns | Channel-scoped? |
-|---|---|---|
-| `useGateway()` | `{ send, onMessage, onConnect, onDisconnect, state, … }` | No (provider context) |
-| `useGatewayOptional()` | The same context value, or `null` outside a provider — the non-throwing read a provider-optional hook needs | No (provider context) |
-| `useFeatures()` | `FeatureName[]` declared by the nearest provider; `[]` outside one | No (provider context) |
-| `useWebSocket(opts)` | `{ send, subscribe, unsubscribe, publish }` plus the state of `UseWebSocketReturn` — `connectionState`, `clientId`, `sessionToken`, `switchChannel`, … `subscribe`/`unsubscribe` address the generic multiplexer, which `attachRealtime` always registers. Takes `opts.webSocketImpl` to supply the constructor (Node, React Native, tests) | No |
-| `useSharedSocketTransport(socket, opts?)` | A stable `SharedSocketTransport` bound to a host-owned socket (`send`, `sessionEpoch`, `connectionState`): `deliver(frame)` / `onMessage(fn)` fan-out, refcounted `subscribe(channel, { service? }) => release`, every held channel re-sent once per new epoch, `asPipelineRunTransport()` / `asChannelTransport()` adapters. `createSharedSocketTransport(opts)` is the framework-free core. See [shared socket](./docs/recipes/shared-socket.md) (also under `./client/ws`, `./client/pipelines`) | Any channel, refcounted |
-| `useSharedWebSocket(opts, transportOpts?)` | `{ socket, transport }` — `useWebSocket(opts)` whose inbound frames fan out through `useSharedSocketTransport`; `opts.onMessage` still runs first (also under `./client/ws`, `./client/pipelines`) | Any channel, refcounted |
-| `useLiveRefresh(read, opts?)` | `{ data, error, loading, live, connectionState, channelState, refresh }` — reads a record with `read(signal)`, re-reads it when a frame `isHint(frame)` says it moved (coalesced over `coalesceMs`, one read in flight + one queued), and polls every `pollMs` while not live / `livePollMs` while live (0 = off), backing off failures up to 5×, paused while the document is hidden. `live` = socket connected AND `channel`'s subscribe acknowledged this session; a refused or unanswered channel polls; becoming live (incl. after a reconnect) reads once. Socket: `opts.socket`, else the nearest `SharedSocketProvider` — never `GatewaySocketProvider` directly (bridge it with `<SharedSocketProvider fromGateway>`). `createLiveRefresh(opts)` is the framework-free core. See [shared socket](./docs/recipes/shared-socket.md#live-refresh) (also under `./client/ws`, `./client/pipelines`) | Optional `channel`, refcounted |
-| `useSharedSocket()` | `{ transport, connectionState, live, sessionEpoch? } \| null` from the nearest `SharedSocketProvider` (`options` = owns a `useSharedWebSocket`; `socket` + `transport` = host-owned; `fromGateway` = bridges `GatewaySocketProvider`). `transport` stays the same object while disconnected; `live` = `connectionState === 'connected'` (also under `./client/ws`, `./client/pipelines`) | — |
-| `useDocumentHidden()` | `boolean` — `document.hidden`, kept current on `visibilitychange`; false outside a browser. `isDocumentHidden()` reads it once (also under `./client/ws`, `./client/pipelines`) | — |
-| `usePipelineRunStatus(runs, opts)` | `(runId) => PipelineRunStatus \| undefined` — phase, step label, detail, suggestion/review, expandable `details`; `pipeline:event` frames merged with the run snapshot (also under `./client/pipelines`) | Per run (`pipeline:run:<id>` + `pipeline:all`) |
-| `usePipelineCatalog(opts)` | `{ entries, summaries, groups(by), loading, error, refresh }` — `GET /api/pipelines/defs?include=rollup`, rollups kept current from `pipeline:all` run frames, one refresh per reconnect; `statusPillFor` / `groupByWorkType` / `generatePipelineDraft` beside it (also under `./client/pipelines`) | `pipeline:all` |
-| `useDocumentWork(documentId, opts)` | `{ work, tracked, update(edit), pending, conflict, clearConflict, loading, error, refresh }` — `GET/PATCH /api/documents/:id/work`, edits applied optimistically and rolled back on failure; re-reads on `doc:work_updated` and once per reconnect (also under `./client/documents`) | `doc-work:<documentId>` |
-| `useWorkList(scope, opts)` | `{ rows, rollup, groups(opts), loading, error, refresh }` — `GET /api/document-work?scope=`, a scope signal moves the row and re-reads that one record; `activeRun` follows `pipeline:all` (also under `./client/documents`) | `doc-work-scope:<scope>` + `pipeline:all` |
-| `useRunDraft(documentId, opts)` | `{ draft, phase, draftId, save, dispatch, stop, busy, conflict, loading, error, refresh }` — the draft id is the request id, minted once per draft; concurrent dispatches share one request (also under `./client/documents`) | `doc-work:<documentId>` |
-| `useRunEstimate(pipelineId, model, opts)` | `{ estimate, noPriorRuns, loading, error, refresh }` — `GET /api/pipelines/:id/estimate?model=`, cached per page until a run of that pipeline completes (also under `./client/documents`) | `pipeline:all` |
-
-**Channel features**
-
-| Hook | Returns | Channel-scoped? |
-|---|---|---|
-| `useChannel(channel, opts?)` | `{ channel, chat, presence, reactions, activity }` — composite (v0.7.8) | Yes |
-| `useChat(channel, opts?)` | `{ messages, sendMessage, loadHistory, typingUsers, setTyping, editMessage, deleteMessage }` | Yes |
-| `useChatMembers(channel, opts?)` | `{ members, open, loading, addMembers, removeMember, refresh, isMember, removed }` | Yes |
-| `useChatReadReceipts(channel, opts?)` | `{ receipts, enabled, reason, limit, loading, markRead, readersOf, readCountOf, refresh }` | Yes |
-| `usePins(channel, opts?)` | `{ pins, pinnedIds, pin, unpin, refresh, isLoading, error }` | Yes |
-| `usePresence(channel)` | `{ roster, setStatus, updateMetadata }` | Yes |
-| `useReactions(channel, opts?)` | `{ reactions, react, reactionsFor, unreact, toggle }` | Yes |
-| `useActivity(channel)` | `{ events, loadHistory, publish }` — `publish(eventType, detail?)` records one; the server stamps identity. **Live events are global, not per-channel** — the server broadcasts every one to a single `activity:broadcast` channel every client is auto-subscribed to, and no frame carries a channel to filter on. `channel` scopes `loadHistory` only | History only |
-| `useCursor(channel, opts?)` | `{ cursors, move, refresh }` — live cursors, client-throttled | Yes |
-| `useFileUpload(channel)` | `{ uploads, transfers, upload, cancel, cancelTransfer, removeCompleted }` | Yes |
-| `useAttachmentSrc(opts?)` | `{ srcFor }` — bearer-authenticated download URL to a renderable object URL | No (per-attachment) |
-| `useVideoHangout(channel)` | `{ session, participants, joinToken, start, join, leave, end, toggleVideo, toggleAudio }`. Addresses `service: 'videohangout'` — a live-video-streaming deployment, **not** this package's `calls()` | Yes |
-
-**Documents (CRDT)**
-
-| Hook | Returns | Channel-scoped? |
-|---|---|---|
-| `useCRDT(opts)` | `{ content, applyLocalEdit, hasConflict, dismissConflict }` — single Y.Text. Takes `{ sendMessage, onMessage, currentChannel, connectionState }`, **not** a channel string | Via `opts.currentChannel` |
-| `useYjsDoc(opts)` | `{ ydoc, provider, synced, docVersion }` — the Y.Doc + provider bootstrap. Takes `{ documentId, ws, onMessage }`; all three required | Via `opts.documentId` |
-| `useAwarenessState(provider, initial)` | `{ updateSection, updateMode, updateIdle, updateCursorInfo }`. `initial` is required and wants every field including `currentSectionId` | No (provider-scoped) |
-| `useCanvasDocument(opts)` | `{ isCanvas, schemaVersion, body, exportMarkdown, materialize, importMarkdown }` | No (doc-scoped) |
-
-**Cross-channel / app-level**
-
-| Hook | Returns | Channel-scoped? |
-|---|---|---|
-| `useAgentLoopRun(runId, { apiBaseUrl, idToken, transport?, pollMs? })` | `{ loop, phase, steps, currentStep, stepsDone, stepsTotal, percent?, startedAt, canStop, stopping, stop, canPause: false, pauseUnsupportedReason, loading, notFound, error, refresh }` — platform-api `/api/agent-loops/:runId`, re-read on the run's `pipeline:event` frames. No pause: the platform answers 501 | Via the run (`pipeline:run:<executorRunId>`) |
-| `useDeckReviseStatus(documentId, { transport? })` | `{ active, recent, latest, generatingSlideIds, isGenerating, get }` — in-flight `POST /api/deck/revise` edits on one presentation, from `pipeline.deck.revise.*` frames | Via the document (`pipeline:run:deck-revise:<documentId>`) |
-| `usePresentationRevisions({ apiBaseUrl, documentId, idToken, focusRevisionId? })` | `{ title, revisions, total, olderCount, loadingOlder, loadOlder, state, error, reload }` — a deck's revisions a page at a time (REST, bearer), one cache per deck shared by every view; a revision written while open is prepended | Via the document (`pipeline:run:deck-revise:<documentId>`, for the prepend) |
-| `useNotifications(opts?)` | `{ notifications, unreadCount, markAsRead, markAllRead, remove, clearAll }`. Read-state persists to `opts.storage` (default `localStorage`; `null` for memory only) | No (user-scoped) |
-| `useCapability(name, channel?)` | `{ capability, enabled, isLoading, error }` | No (CRD-scoped) |
-| `useCapabilities(names, channel?)` | `{ capabilities, enabled, isLoading, error }` — the set form; React forbids the singular hook in a loop | No (CRD-scoped) |
-| `useFeatureFlag(name, defaultValue?)` | `{ enabled, isLoading, variant?, metadata? }` | No (flag-scoped) |
-| `useAgentStream(opts)` | `{ messages, streamingText, activeToolCalls, sessionId, isStreaming, error, steps, reasoning, sendMessage, reset, loadHistory }` | Per-stream |
-
-**Media / local device**
-
-| Hook | Returns | Channel-scoped? |
-|---|---|---|
-| `useDictation(opts?)` | `{ supported, state, micActive, permission, pendingContext, lastTranscript, error, start, stop, cancel }` | No (local) |
-| `useCanvasCapture(opts?)` | `{ track, stream, capturing, error }` — a canvas the page owns as a `MediaStreamTrack` | No (local) |
-| `useIdleDetector(opts?)` | `{ isIdle }` | No (local) |
-
-### Hooks in the media subpaths
-
-These are not exported from `./client` — they live behind their own subpaths
-so an app that never publishes video never resolves MediaPipe or the LVS
-transport. They speak to a live-video-streaming deployment, not to
-`attachRealtime`.
-
-`./client/video` — see [the streaming recipe](./docs/recipes/streaming.md):
-
-| Hook | Returns |
+| Hook | What it does |
 |---|---|
-| `useLVSContext()` | `LVSConfig` — the `{ baseUrl, getAuthToken, log }` the provider holds, for a caller that needs it directly |
-| `useLVSPublisher(opts)` | the WHIP publish loop — `phase`, ICE and retry owned by the hook, capture owned by you |
-| `useLVSSubscriber(opts)` | the WHEP side of the same |
-| `useLVSHangout(opts)` / `useLVSHangoutShared()` | `{ participants, isJoined, isScreenSharing, isCameraEnabled, connectionState, error, videoUnavailable, toggleMute, toggleCamera, enableCamera, disableCamera, setCameraEnabled, startScreenShare, stopScreenShare, leave }`. The `Shared` form reads one hangout from context instead of opening its own |
-| `useLVSViewerCount(opts)` | `{ viewerCount, error }` — polled |
-| `useLVSRecordings(opts)` | `{ recordings, isLoading, error, refetch }` |
-| `useLVSHlsPlayer(opts)` | `{ playlistUrl, tokenExpiresInSec, ready }` — the near-realtime lane |
-| `useLiveCaptions(opts)` | `CaptionLine[]` |
-| `useMediaDevices(opts?)` | `{ microphones, cameras, speakers, permission: { microphone, camera }, speakerSelectionSupported, loading, refresh, requestPermission }` — device lists and browser permission for call surfaces |
-| `useAudioVideoSettings(opts?)` | `{ settings, update, constraints, previewStream, previewError, micLevel, testMic, testSound, testMicState }` — per-browser mic/speaker/camera settings under `call-device-preferences` |
-| `useDocumentCall(opts)` | `{ call, phase, joined, isHost, elapsedMs, error, ended, participants, inCallCount, inCallUserIds, activeSpeakerId, self, start, join, leave, endForEveryone, invite, ringAgain, setDocuments, setTitle, present, following, follow, toggleMic, toggleCamera, startScreenShare, stopScreenShare, lvs, inviteLink, refresh, muteParticipant, removeParticipant, transferHost, setMutedForMe, moderation }` — a call that belongs to a document review; see [the calls recipe](./docs/recipes/calls.md#document-calls) |
-| `useIncomingDocumentCalls(opts)` | `{ current, queue, queueLength, accept, decline, dismiss }` — rings for `kind:'document-review'` invites |
+| `useGateway()` | The shared socket context: send, onMessage and connection state |
+| `useGatewayOptional()` | The same context, or null outside a provider |
+| `useFeatures()` | The features the nearest provider declared |
+| `useWebSocket(opts)` | The low-level reconnecting WebSocket hook |
+| `useSharedSocket()` | The socket and transport from the nearest `SharedSocketProvider` |
+| `useSharedSocketTransport(socket)` | Refcounted channel subscriptions over a socket the host owns |
+| `useSharedWebSocket(opts)` | `useWebSocket` whose frames fan out through a shared transport |
+| `useLiveRefresh(read, opts)` | Re-reads a record when a frame says it moved, and polls when not live |
+| `useDocumentHidden()` | Whether the browser tab is hidden |
+| `useChannel(channel)` | Chat, presence, reactions and activity for one channel together |
+| `useChat(channel)` | Messages, send, edit, delete, history and typing |
+| `useChatMembers(channel)` | Members of a conversation and add or remove actions |
+| `useChatReadReceipts(channel)` | Who has read what |
+| `usePins(channel)` | Pinned messages |
+| `usePresence(channel)` | The roster and your own status |
+| `useReactions(channel)` | Send, toggle and read reactions |
+| `useActivity(channel)` | The live activity feed and per-channel history |
+| `useCursor(channel)` | Live cursors, throttled on the client |
+| `useFileUpload(channel)` | Uploads with progress and cancel |
+| `useAttachmentSrc()` | Turns an authenticated download URL into a renderable one |
+| `useVideoHangout(channel)` | Start, join and leave a hangout on a live-video-streaming deployment |
+| `useNotifications()` | A per-user inbox with unread counts and read state |
+| `useCapability(name)` | Whether one deployment capability is on |
+| `useCapabilities(names)` | The same for a set of capabilities |
+| `useFeatureFlag(name)` | A feature flag and its variant |
+| `useCRDT(opts)` | A single shared text value with conflict handling |
+| `useYjsDoc(opts)` | A Yjs document bound to the gateway |
+| `useAwarenessState(provider, initial)` | Per-user awareness fields for a document |
+| `useCanvasDocument(opts)` | Canvas documents with Markdown import and export |
+| `useIdleDetector()` | Whether the user is idle |
+| `useDictation()` | Speech dictation from the microphone |
+| `useCanvasCapture()` | A canvas as a media stream track |
+| `usePipelineRunStatus(runs, opts)` | Live status for pipeline runs |
+| `usePipelineCatalog(opts)` | The pipelines directory with run rollups |
+| `useAgentLoopRun(runId, opts)` | One agent loop run and its steps |
+| `useDeckReviseStatus(documentId)` | In-flight revisions of a presentation |
+| `usePresentationRevisions(opts)` | A presentation's revision history |
+| `useAgentStream(opts)` | Messages, tool calls and text from an agent stream |
 
-`./client/voice` and `./client/media-effects`:
+## Related repositories
 
-| Hook | Returns |
-|---|---|
-| `useVoiceCapture(opts)` | `{ supported, state, micActive, liveText, lastTranscript, pendingContext, error, captureId, channel, start, stop, cancel }` — ambient push-to-talk. `useDictation` in `./client` is the request/response sibling |
-| `useMediaEffects(opts?)` | a `MediaEffectsController`: `{ filterId, backgroundMode, backgroundImageUrl, faceSpriteId, active, outputTrack, previewTrack, filters, backgrounds, faceSprites, draft, isDirty, setFilter, setBackgroundMode, setBackgroundImageUrl, setFaceSpriteId, beginPreview, applyPreview, cancelPreview, warmup, attach, processStream, detach }`. The MediaPipe engine is lazy — nothing loads until an effect is switched on |
+- Depends on [`connorhoehn/service-runtime`](https://github.com/connorhoehn/service-runtime) and [`connorhoehnslalom/event-catalog`](https://github.com/connorhoehnslalom/event-catalog).
+- Used by [`connorhoehnslalom/ui-components`](https://github.com/connorhoehnslalom/ui-components), [`connorhoehnslalom/aws-agentcore`](https://github.com/connorhoehnslalom/aws-agentcore), [`connorhoehn/realtime-examples`](https://github.com/connorhoehn/realtime-examples), [`connorhoehn/platform-api`](https://github.com/connorhoehn/platform-api) and [`connorhoehn/live-video-streaming`](https://github.com/connorhoehn/live-video-streaming).
 
----
+## Documentation
 
-## Transport tiers
+- [Adoption guide](./docs/ADOPTION-GUIDE.md): installing and wiring the subpaths into a new app.
+- [Usage patterns](./docs/USAGE-PATTERNS.md): common wiring patterns for client and server.
+- [Feature manifest guide](./docs/FEATURE-MANIFEST-GUIDE.md): the contract between a feature and its host, and each feature's settings.
+- [Recipes](./docs/recipes/README.md): one page per capability: [chat](./docs/recipes/chat.md), [presence](./docs/recipes/presence.md), [cursors](./docs/recipes/cursors.md), [reactions](./docs/recipes/reactions.md), [activity](./docs/recipes/activity.md), [rooms](./docs/recipes/rooms.md), [calls](./docs/recipes/calls.md), [meetings](./docs/recipes/meetings.md), [notifications](./docs/recipes/notifications.md), [file uploads](./docs/recipes/file-uploads.md), [collaborative documents](./docs/recipes/collab-docs.md), [conversations](./docs/recipes/conversation.md), [streaming](./docs/recipes/streaming.md), [shared socket](./docs/recipes/shared-socket.md), [channel authorization](./docs/recipes/channel-authorization.md) and [Redis router](./docs/recipes/redis-router.md).
+- [Meeting rooms design](./docs/design/meeting-rooms.md): the wire contract and authority model for raised hands and breakout rooms.
+- [Direct recipient filtering](./docs/integrations/current-direct-recipients.md): filtering user-addressed frames and notification replay.
+- [Call media effects](./docs/call-media-effects.md) and [chat pins store](./docs/chat-pins-store.md).
+- [Demo](./demo/README.md), [release procedure](./RELEASE.md) and [changelog](./CHANGELOG.md).
 
-**Persistent-WS lane** (`./client`, `./client/ws`, `./server-ws`,
-`./adapters/tiptap`): assumes a long-lived WebSocket to a
-`realtime-examples` deployment.
+## License
 
-### Connection semantics (v0.15.0 — session-gated connect)
-
-The gateway silently drops inbound frames that arrive before its
-per-connection session bootstrap completes; it signals readiness with a
-`{ type: 'session', status: 'connected', clientId, sessionToken, … }`
-frame. Therefore `useWebSocket` — and everything built on it
-(`GatewaySocketProvider`, all feature hooks, the Yjs `GatewayProvider`
-path) —:
-
-- keeps `connectionState === 'connecting'` after socket open and flips
-  to `'connected'` only when the session frame arrives (EKS finding #9
-  — subscribing at `onopen` lost 100% of subscribe frames under real
-  network latency; loopback never reproduces it);
-- queues `send()` calls made while the socket is open but the session
-  is not yet established (bounded at 100 frames, drop-oldest with a
-  `console.warn`) and flushes them in order on session arrival;
-- applies the same gating on every reconnect — auto-resubscribe and
-  connected-gated feature effects wait for the NEW session frame;
-- falls back for plain (non-gateway) WS servers that never send a
-  session frame: if none arrives within `sessionTimeoutMs` (default
-  3000, option on `useWebSocket`) of open, the hook warns, transitions
-  to `'connected'` anyway, and flushes the queue — preserving the
-  legacy open-means-connected behavior. (`./server-ws`'s
-  `createWsHandler` sends the handshake, so the fallback only fires
-  against third-party servers.)
-
-**Lambda lane** (`./agent-streaming`, `./agent-streaming/client`,
-`./proxy-client`): HTTP / SSE only. `./agent-streaming` works in AWS
-Lambda via [aws-lambda-web-adapter] with a Function URL and
-`AWS_LWA_INVOKE_MODE=response_stream`. **Do not use API Gateway** —
-it buffers responses and breaks SSE streaming.
-
-Lambda apps that need persistent-WS features (chat history, presence,
-channel publish) consume them via `GatewayProxyClient` over plain REST.
-
-[aws-lambda-web-adapter]: https://github.com/awslabs/aws-lambda-web-adapter
-
----
-
-## proxy-client — automatic HMAC signing (v0.7.1+)
-
-The gateway's REST routes require a valid `X-Service-Auth` header.
-Provide `serviceAuthSecret` + `serviceAuthClientId` and the client
-signs every request automatically:
-
-```ts
-import { GatewayProxyClient } from '@connorhoehn/realtime-modules/proxy-client';
-
-const client = new GatewayProxyClient({
-  gatewayUrl: process.env.GATEWAY_URL!,
-  serviceAuthSecret: process.env.SERVICE_AUTH_SECRET,
-  serviceAuthClientId: 'my-lambda-app',
-});
-
-// X-Service-Auth header computed automatically on every call.
-await client.publishToChannel('chat:general', { type: 'message', text: 'hello' });
-const { users }    = await client.getPresence('chat:general');
-const { messages } = await client.getChatHistory('chat:general', { limit: 50 });
-```
-
-The wire format (`v1.<id>.<ts>.<mac>`) is identical to
-`@connorhoehn/service-runtime`'s `signEnvelope`. The algorithm is
-inlined using Node's built-in `crypto` — no extra runtime dep.
-
----
-
-## Live demo
-
-A runnable showcase covering all six feature hooks is in `demo/`:
-
-```bash
-cd demo && npm install && npm run dev   # → http://localhost:5173
-```
-
-Set `VITE_GATEWAY_URL=ws://localhost:4000` (and optionally
-`VITE_AUTH_TOKEN`) in `demo/.env.local`. See
-[`demo/README.md`](./demo/README.md) for full instructions.
-
-| Hook | What the demo shows |
-|---|---|
-| `useChat` | Message list, compose form, load-history |
-| `usePresence` | Roster, status dropdown, metadata editor |
-| `useReactions` | Emoji palette with aggregated counts, live stream |
-| `useCursor` | Live cursor overlay — position, initials and colour per peer |
-| `useActivity` | Typed event feed, load-history |
-| `useFileUpload` | Drag-and-drop, XHR progress bars, AV scan states |
-| `useVideoHangout` | Start/join/leave, participant list, video/audio toggle, join-token display |
-
----
-
-## Maturity
-
-| Subpath / hook | Status |
-|---|---|
-| `./client` — `GatewaySocketProvider`, `useGateway`, `useWebSocket` | Stable (in use by gateway + OrgIQ) |
-| `useChat`, `usePresence`, `useReactions`, `useActivity` | Stable (v0.7.0) |
-| `useFileUpload` | Stable (v0.16.0 — gateway `FileUploadService` shipped; needs `FILEUPLOAD_TABLE` + `FILEUPLOAD_PUBLIC_BASE` env) |
-| `useVideoHangout` | Beta (v0.7.2 — LVS signaling integration deferred) |
-| `useNotifications` | Stable (v0.16.0 — gateway `NotificationService` shipped, DDB-backed; uses the gateway's DDB table prefix, no dedicated env) |
-| `useCapability` | Stable (v0.16.0 — gateway `CapabilityService` + `GET /api/capabilities` shipped; CRD-scoped, no env) |
-| `useFeatureFlag` | Stable (v0.16.0 — gateway feature-flag store + `GET /api/feature-flags/:name` shipped; seed via `FEATURE_FLAGS_JSON` env) |
-| `useCRDT`, `useYjsDoc`, `useAwarenessState`, `useIdleDetector` | Stable |
-| `useAgentStream` | Stable (v0.2.0) |
-| `./proxy-client` | Stable (v0.2.0, HMAC signing v0.7.1) |
-| `./agent-streaming` | Stable (v0.1.0) |
-| `./agent-streaming/client` | Stable (v0.2.1) |
-| `./adapters/tiptap` | Stable |
-| `./client/ws` | Stable (v0.4.3) |
-| `./server-ws` | Stable |
-
----
-
-## FeatureManifest
-
-`FeatureManifest` (declared in `src/feature-manifest/types.ts`) is the
-shared contract between features and the host. Feature manifests now
-live alongside the in-tree implementations in `websocket-gateway`;
-this package re-exports the type so app code and host code share a
-single declaration.
-
----
-
-## Versioning + stability
-
-`0.x` is unstable. Pin to an exact published version (e.g. `0.16.0`)
-or a git SHA. Subpath shapes and hook signatures can change in any
-minor release. `1.0` will mean stable client subpath exports and
-stable AG-UI mapping.
-
----
-
-## Migration from v0.5.x
-
-If you depended on a server-side subpath in v0.5.x or earlier, the
-service class you imported now lives in `realtime-examples/src/`. The
-canonical fix is to **delete the import and consume the feature
-through gateway** — either over WS (using the client hooks) or over
-HTTP (using `./proxy-client`).
-
-| Removed (v0.6.0) | Replacement |
-| --- | --- |
-| `import { ChatService } from '@connorhoehn/realtime-modules/chat'` | `useChat(channel)` over WS, or `proxy.getChatHistory()` over HTTP |
-| `import { PresenceService } from '@connorhoehn/realtime-modules/presence'` | `usePresence(channel)` over WS, or `proxy.getPresence()` over HTTP |
-| `import { ReactionService } from '@connorhoehn/realtime-modules/reactions'` | `useReactions(channel)` over WS |
-| `import { ActivityService } from '@connorhoehn/realtime-modules/activity'` | `useActivity(channel)` over WS, or `proxy.getActivityHistory()` over HTTP |
-| `import { CRDTService } from '@connorhoehn/realtime-modules/server'` | `useCRDT(opts)` / `useYjsDoc(opts)` over WS |
-| `import { CursorService } from '@connorhoehn/realtime-modules/cursor'` | `useCursor(channel)` over WS (or `useAwarenessState` when a Y.Doc is already mounted) |
-| `import { CallService } from '@connorhoehn/realtime-modules/call'` | no hook yet; read `{type:'call'}` frames via `useGateway()`. `useVideoHangout` talks to a live-video-streaming deployment, not to this |
-| `import { PipelineWsRouter } from '@connorhoehn/realtime-modules/pipeline'` | `usePipelineRunStatus()` from `./client/pipelines` |
-| `import { ... } from '@connorhoehn/realtime-modules/{ingest,social,typed-documents}'` | no hook yet; read the frames via `useGateway()` |
-
----
-
-## Links
-
-- [docs/ADOPTION-GUIDE.md](./docs/ADOPTION-GUIDE.md) — full adoption walkthrough.
-- [docs/USAGE-PATTERNS.md](./docs/USAGE-PATTERNS.md) — common wiring patterns.
-- [docs/USEWEBSOCKET-GAP-vs-GATEWAY.md](./docs/USEWEBSOCKET-GAP-vs-GATEWAY.md) — `useWebSocket` vs gateway protocol gaps.
-- [CHANGELOG.md](./CHANGELOG.md).
-- [LICENSE](./LICENSE) — MIT.
-
-## Realtime composition and saved layouts (0.139)
-
-`attachRealtime` and `createRealtimeServer` preflight the complete manifest graph
-before creating services or installing a listener. Dependencies may name a
-manifest or its wire alias. Missing dependencies, duplicate identities, alias
-collisions and cycles fail synchronously. Independent features retain input
-priority; dependencies construct first and shut down last. `ctx.service(name)`
-resolves either name. Legacy wire names stay unchanged; `pipeline-ws` explicitly
-maps to `pipeline`. Unknown legacy features now throw with an `attachRealtime` /
-`defineFeature` migration hint instead of silently disappearing.
-
-A manifest may declare `adapterRequirements: [{ provider: 'chat-store',
-capabilities: ['conditional-write'] }]`. Supply matching `capabilityProviders`
-to either entry point. This uses service-runtime's static evaluator; declarations
-do not prove availability. Hosts still need live readiness probes and must
-accurately describe their actual injected adapters. The runtime dependency is
-pinned to service-runtime 0.5.1, rather than relying on its former optional peer.
-
-Attached factories register partially acquired resources with `ctx.onCleanup?.(fn)` during
-`create()`. This hook is supplied by attachment; callers invoking factories directly
-remain responsible for their resources. Returned services automatically receive `shutdown()` or `stop()`
-once; do not also register the same service's shutdown. Disposal drains sockets,
-then reverses service/resource construction, then closes the router. Repeated
-`dispose()` calls return the same promise. Cleanup continues after errors and
-rejects with `AggregateError` after all resources have been attempted. Startup
-still throws synchronously: a `RealtimeStartupError` retains the original `cause`
-and exposes `cleanup`, a promise of cleanup failures (empty on successful
-rollback). Await it before retrying attachment. Factories must be synchronous;
-the host owns asynchronous dependency readiness before attaching.
-
-Import `HangoutPlan`, `HangoutPlanInput`, `parseHangoutPlanInput` and
-`HANGOUT_PLAN_LIMITS` from `@connorhoehn/realtime-modules/hangout-rooms`. This
-entry point and its REST client need no React, Node builtin or server SDK.
-The validator normalizes names and strips untrusted metadata. Hosts stamp
-`updatedBy`/`updatedAt`, increment the validated version, and atomically compare
-`expectedVersion` at storage. A plan supports 50 rooms and 500 unique assignments;
-assignments do not grant private-room access or represent live/IVS participants.
-The older `client/hangout-rooms` type imports remain compatible. `updateRoom`
-now unwraps platform-api's `{ room }` response like `createRoom` and `getRoom`.
+MIT. See [LICENSE](./LICENSE).

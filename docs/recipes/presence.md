@@ -55,8 +55,7 @@ the provider from `@connorhoehn/realtime-modules/client`.
 
 ## 3 — UI (ui-components)
 
-Use **PresenceAvatars fed from the hook**. Per the frontend discipline: never hand-roll the surface —
-if a composite is missing, add it to ui-components first.
+Use **PresenceAvatars fed from the hook**.
 
 ## Graduate to production
 

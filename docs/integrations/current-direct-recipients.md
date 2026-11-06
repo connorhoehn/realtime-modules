@@ -1,4 +1,4 @@
-# Current direct recipients — 0.101.0
+# Direct recipient filtering
 
 Channel admission does not cover user-addressed call frames or notification
 replay. `attachRealtime({ filterClientMessage })` supplies a last-mile filter

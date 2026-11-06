@@ -70,8 +70,7 @@ the provider from `@connorhoehn/realtime-modules/client`.
 
 ## 3 — UI (ui-components)
 
-Use **WrappedHangoutRoomsList / HangoutRoomsSection**. Per the frontend discipline: never hand-roll the surface —
-if a composite is missing, add it to ui-components first.
+Use **WrappedHangoutRoomsList / HangoutRoomsSection**.
 
 ## Graduate to production
 
@@ -84,3 +83,14 @@ rooms({ stateStore: new RedisRoomStateStore(redis) })  // multi-replica occupanc
 Multi-node? Swap the transport, not the features: pass a Redis-backed
 `RealtimeRouter` via `attachRealtime(server, { router })` — the
 websocket-gateway MessageRouter is the reference implementation.
+
+## Saved room layouts
+
+`HangoutPlan`, `HangoutPlanInput`, `parseHangoutPlanInput` and
+`HANGOUT_PLAN_LIMITS` come from `@connorhoehn/realtime-modules/hangout-rooms`.
+That entry point and its REST client need no React, Node builtin or server SDK.
+The validator normalizes names and strips untrusted metadata. The host stamps
+`updatedBy` and `updatedAt`, increments the validated version, and compares
+`expectedVersion` atomically at storage. A plan holds up to 50 rooms and 500
+unique assignments; an assignment does not grant access to a private room and
+does not describe who is live in it.

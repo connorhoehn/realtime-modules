@@ -132,3 +132,27 @@ that leads nowhere.
 - **hls.js is an optional peer dependency**, dynamic-imported and skipped
   entirely on Safari, which plays HLS natively. Install it in the consumer app
   or non-Safari browsers report that playback is unsupported.
+
+## Hooks in `./client/video`
+
+These hooks live behind their own subpath so an app that never publishes video
+never resolves the LVS transport. They talk to a live-video-streaming
+deployment, not to `attachRealtime`.
+
+| Hook | Returns |
+|---|---|
+| `useLVSContext()` | `LVSConfig` — the `{ baseUrl, getAuthToken, log }` the provider holds, for a caller that needs it directly |
+| `useLVSPublisher(opts)` | the WHIP publish loop — `phase`, ICE and retry owned by the hook, capture owned by you |
+| `useLVSSubscriber(opts)` | the WHEP side of the same |
+| `useLVSHangout(opts)` / `useLVSHangoutShared()` | `{ participants, isJoined, isScreenSharing, isCameraEnabled, connectionState, error, videoUnavailable, toggleMute, toggleCamera, enableCamera, disableCamera, setCameraEnabled, startScreenShare, stopScreenShare, leave }`. The `Shared` form reads one hangout from context instead of opening its own |
+| `useLVSViewerCount(opts)` | `{ viewerCount, error }` — polled |
+| `useLVSRecordings(opts)` | `{ recordings, isLoading, error, refetch }` |
+| `useLVSHlsPlayer(opts)` | `{ playlistUrl, tokenExpiresInSec, ready }` — near-realtime HLS playback |
+| `useLiveCaptions(opts)` | `CaptionLine[]` |
+| `useMediaDevices(opts?)` | `{ microphones, cameras, speakers, permission: { microphone, camera }, speakerSelectionSupported, loading, refresh, requestPermission }` — device lists and browser permission for call surfaces |
+| `useAudioVideoSettings(opts?)` | `{ settings, update, constraints, previewStream, previewError, micLevel, testMic, testSound, testMicState }` — per-browser mic/speaker/camera settings under `call-device-preferences` |
+| `useDocumentCall(opts)` | `{ call, phase, joined, isHost, elapsedMs, error, ended, participants, inCallCount, inCallUserIds, activeSpeakerId, self, start, join, leave, endForEveryone, invite, ringAgain, setDocuments, setTitle, present, following, follow, toggleMic, toggleCamera, startScreenShare, stopScreenShare, lvs, inviteLink, refresh, muteParticipant, removeParticipant, transferHost, setMutedForMe, moderation }` — a call that belongs to a document review; see [the calls recipe](./calls.md#document-calls) |
+| `useIncomingDocumentCalls(opts)` | `{ current, queue, queueLength, accept, decline, dismiss }` — rings for `kind:'document-review'` invites |
+| `useConversationCall(opts)` | One conversation's call: ring, accept, decline, leave and rejoin over the gateway's `call` frames, the video session and the media session. See [conversation](./conversation.md) |
+| `useIncomingConversationCalls(opts)` | Every ring addressed to the signed-in user, for an app-wide toast or a row badge |
+| `useDevicePreferences(storage?)` | `[prefs, set]` - the microphone, camera and speaker this browser remembers, stored under `call-device-preferences` |

@@ -30,8 +30,7 @@ From `src/client/index.ts`:
   is session-gated: it stays `'connecting'` until the gateway's
   `{ type: 'session' }` frame arrives (not just socket open), queues
   pre-session sends, and falls back after `sessionTimeoutMs` (default
-  3000) for plain servers that never send the handshake. See README
-  "Connection semantics".
+  3000) for plain servers that never send the handshake.
 - `GatewayProvider` — Y.js `Observable` bridging the gateway's
   `crdt:update` / `crdt:snapshot` / `crdt:awareness` protocol.
 - `useYjsDoc(opts)` — lifecycle hook: `Y.Doc` + `GatewayProvider` +

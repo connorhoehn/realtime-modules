@@ -218,9 +218,7 @@ the provider from `@connorhoehn/realtime-modules/client`.
 ## 3 — UI (ui-components)
 
 Use **ConversationCallDock** (in `ChatPanel dock={…}`) for the conversation
-call, and **WrappedHangoutLayout, HangoutRoomRow** for rooms. Per the frontend
-discipline: never hand-roll the surface — if a composite is missing, add it to
-ui-components first.
+call, and **WrappedHangoutLayout, HangoutRoomRow** for rooms.
 
 ## Graduate to production
 
@@ -236,7 +234,7 @@ websocket-gateway MessageRouter is the reference implementation.
 
 ## Document calls
 
-A call that belongs to a document review (2026-09-24): a title, a list of
+A call that belongs to a document review: a title, a list of
 review documents, a presenter others can follow, and per-person ring state.
 Server side, pass a meta store to the call service:
 

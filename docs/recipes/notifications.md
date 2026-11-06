@@ -5,7 +5,7 @@
 User-addressed toasts/badges delivered to every live tab; replay on reconnect when a store is wired.
 
 For current recipient access and filtered replay across tenants, see
-[current direct recipients](../integrations/current-direct-recipients.md).
+[direct recipient filtering](../integrations/current-direct-recipients.md).
 Use `filterClientMessage` on the local attachment and `authorize` on the
 notification feature; producer-time authorization alone does not protect
 later replay.
@@ -90,8 +90,7 @@ the provider from `@connorhoehn/realtime-modules/client`.
 
 ## 3 — UI (ui-components)
 
-Use **NotificationCenter**. Per the frontend discipline: never hand-roll the surface —
-if a composite is missing, add it to ui-components first.
+Use **NotificationCenter**.
 
 ## Graduate to production
 
