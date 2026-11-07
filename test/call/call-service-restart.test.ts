@@ -2,6 +2,9 @@ import { CallService } from '../../src/call/CallService';
 import { InMemoryCallStateStore, RedisCallStateStore, type CallStateStore } from '../../src/call/CallStateStore';
 import { FakeRedis } from './helpers/fakeRedis';
 
+/** Stable auth contexts per connection (CallService fences on object identity). */
+const ctxCache: Record<string, { userContext: { userId: string; displayName?: string } }> = {};
+
 const quiet = { debug() {}, info() {}, warn() {}, error() {} } as any;
 const LOBBY = 'acme:dm:alice:bob';
 const CALL = 'call-before-restart';
@@ -14,6 +17,9 @@ function router(users: Record<string, string>) {
     broadcastToAll() {},
     getClientsByUserId(ids: string[], excluded?: string) { return Object.entries(users).filter(([cid, uid]) => cid !== excluded && ids.includes(uid)).map(([clientId, userId]) => ({ clientId, userId })); },
     getUserIdForClient(clientId: string) { return users[clientId] ?? null; },
+    // 0.146.0: an invite's callerName comes from the auth context, not the frame.
+    // One context object per connection: CallService fences on its identity.
+    getClientData(clientId: string) { return users[clientId] ? (ctxCache[clientId] ??= { userContext: { userId: users[clientId], displayName: users[clientId] === 'alice' ? 'Alice Original' : undefined } }) : null; },
     isClientLive(clientId: string) { return clientId in users; },
   };
 }

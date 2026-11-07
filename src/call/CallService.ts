@@ -59,6 +59,7 @@ import {
     type ParticipantStateBroadcast,
 } from './types';
 import { callLobbyChannel, dmLobbyMembers, lobbyConversationKind } from './lobbyChannel';
+import { resolveAuthSender } from '../server-ws/senderIdentity';
 
 // Tracing is an injected seam (CallServiceOptions.withSpan) rather than a
 // require('distributed-core') — this library does not depend on
@@ -1657,6 +1658,10 @@ export class CallService {
         ) {
             payload = { ...(nested as CallInvite), ...payload };
         }
+        // 0.146.0: who rings or joins is the socket's user. The frame's
+        // callerId / callerName are replaced from the auth context (the
+        // chat sender rule), so an invitee never sees a name the caller typed.
+        if (action === 'invite' || action === 'join') payload = await this.stampCaller(clientId, payload);
         const callId = payload.callId;
         const lobbyName = payload.lobbyName;
 
@@ -3475,6 +3480,32 @@ export class CallService {
             } catch { /* no identity */ }
         }
         return '';
+    }
+
+    /** Longest caller name an invite or join carries (0.146.0). */
+    static readonly MAX_CALLER_NAME = 80;
+
+    /**
+     * 0.146.0: `callerId` and `callerName` on an invite or join, from the
+     * connection's auth context (`userId`, `displayName` ?? `name`), never the
+     * frame. With no display name in the context the frame's name is dropped.
+     * A connection with no authenticated user keeps the frame's values (the
+     * anonymous-demo path; `calls({ verifyCaller })` refuses its invites), with
+     * the name clamped.
+     */
+    private async stampCaller(clientId: string, payload: CallInvite): Promise<CallInvite> {
+        const max = CallService.MAX_CALLER_NAME;
+        const sender = resolveAuthSender(this.messageRouter, clientId, payload);
+        const userId = sender?.userId || await this.resolveActorUserId(clientId);
+        const out: CallInvite = { ...payload };
+        if (!userId) {
+            if (typeof out.callerName === 'string') out.callerName = out.callerName.slice(0, max);
+            return out;
+        }
+        out.callerId = userId;
+        if (sender?.displayName) out.callerName = sender.displayName.slice(0, max);
+        else delete out.callerName;
+        return out;
     }
 
     /**

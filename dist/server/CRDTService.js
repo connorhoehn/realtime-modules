@@ -108,6 +108,12 @@ class CRDTService {
         this.logger = logger;
         this.metricsCollector = metricsCollector || null;
         this._authz = typeof authz === 'function' ? authz : (() => true);
+        // The router's channel check is the second gate on every action. A
+        // router without one is trusted to enforce at its own level; say so
+        // once, so a host that meant to have a tenant rule notices.
+        if (typeof messageRouter?.checkChannel !== 'function') {
+            this.logger?.warn?.('[crdt] the router has no checkChannel: document actions rely on the authz hook alone and the router is trusted to enforce channel access itself');
+        }
         this._onDocumentCreated = onDocumentCreated ?? null;
         // ---------------------------------------------------------------
         // Core state — stays in orchestrator (handlers need direct access)

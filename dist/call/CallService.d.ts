@@ -460,6 +460,17 @@ export declare class CallService {
      *  socket could name itself the host. The parameters after `clientId` are
      *  kept for call-site compatibility and ignored. */
     private resolveActorUserId;
+    /** Longest caller name an invite or join carries (0.146.0). */
+    static readonly MAX_CALLER_NAME = 80;
+    /**
+     * 0.146.0: `callerId` and `callerName` on an invite or join, from the
+     * connection's auth context (`userId`, `displayName` ?? `name`), never the
+     * frame. With no display name in the context the frame's name is dropped.
+     * A connection with no authenticated user keeps the frame's values (the
+     * anonymous-demo path; `calls({ verifyCaller })` refuses its invites), with
+     * the name clamped.
+     */
+    private stampCaller;
     /**
      * 0.146.0: may this connection look at or enter `lobby`? Anyone for a
      * lobby that is not a DM; for a DM (`…:dm:a:b`, `…:dmg:<hash>`) only an

@@ -44,6 +44,32 @@ describe('host moderation', () => {
     await c.dispose();
   });
 
+  // 0.146.0: host powers come from the socket's authenticated user. They used
+  // to fall back to `payload.userId`, so a socket with no identity naming the
+  // host could end the call for everyone.
+  it('host powers ignore payload.userId from a non-host socket', async () => {
+    const { c, meta } = await call();
+    // x-ghost has no identity on either node; b-frank is a seated non-host.
+    for (const [node, cid] of [['A', 'x-ghost'], ['B', 'b-frank']] as const) {
+      const svc = node === 'A' ? c.A.svc : c.B.svc;
+      for (const action of ['mute-participant', 'remove-participant', 'transfer-host'] as const) {
+        await svc.handleCallEvent(cid, action, { callId: 'd1', userId: 'u-host', callerId: 'u-host' } as any);
+        await svc.handleCallEvent(cid, action, { callId: 'd1', userId: 'u-alice', callerId: 'u-host' } as any);
+      }
+      await svc.handleCallEvent(cid, 'ended', { callId: 'd1', userId: 'u-host', callerId: 'u-host', forEveryone: true } as any);
+    }
+    await flush();
+    // (x-ghost is unknown to the test router, so its refusals are not recorded; the effects below are what matter.)
+    expect(errors(c, 'b-frank').length).toBeGreaterThanOrEqual(7);
+    for (const cid of ['b-alice', 'b-alice-2', 'a-host']) {
+      for (const verb of ['mute-participant', 'remove-participant', 'ended']) expect(c.frames(cid, verb)).toHaveLength(0);
+    }
+    const after = await meta.get('d1');
+    expect(after?.hostUserId).toBe('u-host');
+    expect(after?.invites['u-alice']?.state).toBe('accepted');
+    await c.dispose();
+  });
+
   it('mute reaches every tab of the target on the other node, and nobody else', async () => {
     const { c } = await call();
     await c.A.svc.handleCallEvent('a-host', 'mute-participant', { callId: 'd1', userId: 'u-alice' });

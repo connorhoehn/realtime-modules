@@ -13,6 +13,9 @@ import { CallService } from '../../src/call/CallService';
 import { InMemoryCallStateStore } from '../../src/call/CallStateStore';
 import type { CallMessageRouter } from '../../src/call/types';
 
+/** Stable auth contexts per connection (CallService fences on object identity). */
+const ctxCache: Record<string, { userContext: { userId: string; displayName?: string } }> = {};
+
 class NoopLogger {
   debug() {/* noop */}
   info() {/* noop */}
@@ -40,6 +43,12 @@ function makeRouter(userByClient: Record<string, string>) {
     },
     getUserIdForClient(clientId: string) {
       return userByClient[clientId] ?? null;
+    },
+      // 0.146.0: an invite's callerName comes from the auth context, not the frame.
+    // One context object per connection: CallService fences on its identity.
+    getClientData(clientId: string) {
+      const userId = userByClient[clientId];
+      return userId ? (ctxCache[clientId] ??= { userContext: { userId, displayName: userId === 'u-alice' ? 'Alice' : undefined } }) : null;
     },
   } as any;
   return router;

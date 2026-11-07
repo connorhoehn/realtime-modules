@@ -10,6 +10,9 @@ import { CallService } from '../../src/call/CallService';
 import { InMemoryCallStateStore } from '../../src/call/CallStateStore';
 import type { CallMessageRouter } from '../../src/call/types';
 
+/** Stable auth contexts per connection (CallService fences on object identity). */
+const ctxCache: Record<string, { userContext: { userId: string; displayName?: string } }> = {};
+
 class NoopLogger {
   debug() {/* noop */} info() {/* noop */} error() {/* noop */}
   warn = jest.fn();
@@ -27,6 +30,12 @@ function makeRouter() {
         .map(([cid, uid]) => ({ clientId: cid, userId: uid }));
     },
     getUserIdForClient(clientId: string) { return (users as any)[clientId] ?? null; },
+    // 0.146.0: an invite's callerName comes from the auth context, not the frame.
+    // One context object per connection: CallService fences on its identity.
+    getClientData(clientId: string) {
+      const userId = (users as any)[clientId];
+      return userId ? (ctxCache[clientId] ??= { userContext: { userId, displayName: userId === 'u-alice' ? 'Alice Chen' : undefined } }) : null;
+    },
   } as unknown as CallMessageRouter & { sent: any[] };
 }
 function makeService(config: Record<string, unknown>) {

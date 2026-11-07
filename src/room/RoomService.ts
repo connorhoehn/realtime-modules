@@ -141,6 +141,11 @@ export class RoomService {
         this.crossNodePubSub = opts.crossNodePubSub ?? null;
         this.nodeId = opts.nodeId ?? null;
         this.metricsHooks = opts.metrics ?? {};
+        // 0.146.0: every room action asks the router's checkChannel. A router
+        // without one is trusted to enforce itself; say so once.
+        if (typeof this.messageRouter.checkChannel !== 'function') {
+            this.logger.warn('[RoomService] the router has no checkChannel: room actions and the index are not scoped by channel; the router is trusted to enforce access itself');
+        }
 
         const config: RoomConfig = opts.config ?? {};
         this.occupancyDebounceMs = config.occupancyDebounceMs ?? DEFAULT_DEBOUNCE_MS;
