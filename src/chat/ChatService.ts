@@ -53,6 +53,7 @@ import {
     type ChatReadReceiptStore,
 } from './ChatReadReceiptStore';
 import { isDmChatChannel, dmChannelMembers } from './dmChannels';
+import { defaultAttachmentUrlFor, normalizeChatAttachments } from './attachments';
 import {
     historyFloorFor,
     memberView,
@@ -117,6 +118,12 @@ const ErrorCodes = {
      * delivered message that silently vanished.
      */
     CHAT_STORE_FAILED: 'store-failed',
+    /**
+     * Send/edit (0.146.0): `metadata.attachments` is not a list of issued
+     * upload ids — most often an attachment carrying a URL the server did not
+     * issue. Nothing is stored or broadcast.
+     */
+    CHAT_BAD_ATTACHMENT: 'CHAT_BAD_ATTACHMENT',
 } as const;
 
 function createErrorResponse(
@@ -305,6 +312,17 @@ export interface ChatServiceOpts {
      * server fills gaps). `message.userId` is always the server's.
      */
     trustFrameSender?: boolean;
+
+    /**
+     * 0.146.0: the download URL for an attachment id. The server writes
+     * `metadata.attachments[].url` from the id with this; a frame's own URL is
+     * accepted only when it equals this (or the bare `/api/uploads/<id>`), and
+     * anything else refuses the send with `CHAT_BAD_ATTACHMENT`. Default:
+     * FileUploadService's URL (`${FILEUPLOAD_PUBLIC_BASE}/api/uploads/<id>`);
+     * `attachRealtime`'s `chat()` uses the attached `fileUploads()` service's
+     * `uploadUrlFor` when there is one.
+     */
+    attachmentUrlFor?: (id: string) => string;
 
     /**
      * Fire-and-forget observer invoked AFTER a successful send on a dm
@@ -500,6 +518,7 @@ export class ChatService {
     identityResolver: ChatIdentityResolver | null;
     resolveSender: ResolveSender | null;
     readonly trustFrameSender: boolean;
+    readonly attachmentUrlFor: (id: string) => string;
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
@@ -551,6 +570,7 @@ export class ChatService {
         this.identityResolver = opts.identityResolver ?? null;
         this.resolveSender = opts.resolveSender ?? null;
         this.trustFrameSender = opts.trustFrameSender === true;
+        this.attachmentUrlFor = opts.attachmentUrlFor ?? defaultAttachmentUrlFor;
         // DM enforcement defaults ON exactly when an identity source exists;
         // consumers can force it either way explicitly.
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
@@ -920,6 +940,12 @@ export class ChatService {
             return;
         }
 
+        // Attachments are ids; the URL is the server's (0.146.0). Checked
+        // before the size budget so a refused URL is never silently shed.
+        const attachmentsChecked = this._checkAttachments(clientId, channel, metadata);
+        if (!attachmentsChecked) return;
+        metadata = attachmentsChecked;
+
         metadata = validateMetadata(metadata, this.logger, this.maxMetadataKeys, this.maxMetadataSize);
 
         // Resolve identity ONCE — feeds both the dm-membership gate and
@@ -1148,6 +1174,11 @@ export class ChatService {
             return;
         }
         let patchMeta = metadata && typeof metadata === 'object' ? { ...(metadata as Record<string, unknown>) } : null;
+        if (patchMeta) {
+            const checked = this._checkAttachments(clientId, channel, patchMeta);
+            if (!checked) return;
+            patchMeta = checked;
+        }
         if (patchMeta && !this.trustFrameSender) {
             // An edit may change what was said, never who said it: the
             // stored sender fields stay, the frame's copies are dropped.
@@ -2298,6 +2329,22 @@ export class ChatService {
      * pass. FAIL-CLOSED: on an enforced channel, a sender with no
      * resolvable userId is rejected.
      */
+    /**
+     * `metadata.attachments` as issued upload ids with server-written URLs
+     * (see ./attachments.ts). Returns the metadata to use, or null after
+     * telling the client why the frame was refused.
+     */
+    _checkAttachments(clientId: string, channel: string, metadata: any): any | null {
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
+        if (!Object.prototype.hasOwnProperty.call(metadata, 'attachments')) return metadata;
+        const checked = normalizeChatAttachments(metadata.attachments, this.attachmentUrlFor);
+        if (!checked.ok) {
+            this.sendError(clientId, checked.reason, ErrorCodes.CHAT_BAD_ATTACHMENT, channel);
+            return null;
+        }
+        return { ...metadata, attachments: checked.attachments };
+    }
+
     _checkDmMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): boolean {
         if (!this.enforceDmMembership) return true;
         if (!isDmChatChannel(channel)) return true;

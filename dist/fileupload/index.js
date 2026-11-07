@@ -9,11 +9,15 @@
 // keeps its DynamoDB repository, which satisfies it structurally); channel
 // authz is an injected hook. The gateway keeps its HTTP upload-routes.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_MAX_BYTES = exports.DEFAULT_BLOB_DIR = exports.sanitizeUploadId = exports.resolveBlobDir = exports.resolveMaxBytes = exports.FileBlobStore = exports.InMemoryFileUploadMetadataStore = exports.FileUploadService = void 0;
+exports.DEFAULT_MAX_BYTES = exports.DEFAULT_BLOB_DIR = exports.sanitizeUploadId = exports.resolveBlobDir = exports.resolveMaxBytes = exports.FileBlobStore = exports.defaultUploadBase = exports.normalizeUploadBase = exports.uploadUrlFor = exports.InMemoryFileUploadMetadataStore = exports.FileUploadService = void 0;
 var FileUploadService_1 = require("./FileUploadService");
 Object.defineProperty(exports, "FileUploadService", { enumerable: true, get: function () { return FileUploadService_1.FileUploadService; } });
 var FileUploadService_2 = require("./FileUploadService");
 Object.defineProperty(exports, "InMemoryFileUploadMetadataStore", { enumerable: true, get: function () { return FileUploadService_2.InMemoryFileUploadMetadataStore; } });
+var uploadUrl_1 = require("./uploadUrl");
+Object.defineProperty(exports, "uploadUrlFor", { enumerable: true, get: function () { return uploadUrl_1.uploadUrlFor; } });
+Object.defineProperty(exports, "normalizeUploadBase", { enumerable: true, get: function () { return uploadUrl_1.normalizeUploadBase; } });
+Object.defineProperty(exports, "defaultUploadBase", { enumerable: true, get: function () { return uploadUrl_1.defaultUploadBase; } });
 var FileBlobStore_1 = require("./FileBlobStore");
 Object.defineProperty(exports, "FileBlobStore", { enumerable: true, get: function () { return FileBlobStore_1.FileBlobStore; } });
 Object.defineProperty(exports, "resolveMaxBytes", { enumerable: true, get: function () { return FileBlobStore_1.resolveMaxBytes; } });

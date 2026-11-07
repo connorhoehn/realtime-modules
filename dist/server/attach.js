@@ -81,9 +81,18 @@ function chat(opts = {}) {
         manifest: require('../chat/manifest').ChatManifest,
         create: ({ router, logger, service }) => {
             const { ChatService } = require('../chat/ChatService');
-            const { store, chatStore, identityResolver, unread, ...rest } = opts;
+            const { store, chatStore, identityResolver, unread, attachmentUrlFor, ...rest } = opts;
+            const { defaultAttachmentUrlFor } = require('../chat/attachments');
             return new ChatService({
                 ...rest,
+                // 0.146.0: attachment URLs are written from the id. With a
+                // fileUploads() feature attached, its own uploadUrlFor (and so
+                // its publicBaseUrl) decides; looked up per send so feature
+                // order does not matter.
+                attachmentUrlFor: attachmentUrlFor ?? ((id) => {
+                    const uploads = service?.('fileupload');
+                    return typeof uploads?.uploadUrlFor === 'function' ? uploads.uploadUrlFor(id) : defaultAttachmentUrlFor(id);
+                }),
                 // 0.118: `unread.notify` defaults to the attached notifications() service.
                 ...(unread ? { unread: { ...unread, notify: unread.notify ?? (() => service?.('notification')) } } : {}),
                 messageRouter: router,

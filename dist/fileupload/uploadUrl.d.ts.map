@@ -1,0 +1,1 @@
+{"version":3,"file":"uploadUrl.d.ts","sourceRoot":"","sources":["../../src/fileupload/uploadUrl.ts"],"names":[],"mappings":"AAQA,8EAA8E;AAC9E,wBAAgB,mBAAmB,CAAC,IAAI,EAAE,MAAM,GAAG,IAAI,GAAG,SAAS,GAAG,MAAM,CAE3E;AAED,yEAAyE;AACzE,wBAAgB,iBAAiB,IAAI,MAAM,CAE1C;AAED,2FAA2F;AAC3F,wBAAgB,YAAY,CAAC,IAAI,EAAE,MAAM,EAAE,QAAQ,EAAE,MAAM,GAAG,MAAM,CAEnE"}

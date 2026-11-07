@@ -40,6 +40,7 @@ exports.FileUploadService = exports.InMemoryFileUploadMetadataStore = void 0;
 const crypto_1 = require("crypto");
 const FileBlobStore_1 = require("./FileBlobStore");
 const FileBlobStore_2 = require("./FileBlobStore");
+const uploadUrl_1 = require("./uploadUrl");
 // Wire error code kept as a local constant — the value is part of the WS
 // protocol, not of any one app's error-code table.
 const AUTHZ_CHANNEL_DENIED = 'AUTHZ_CHANNEL_DENIED';
@@ -117,13 +118,13 @@ class FileUploadService {
         this.blobStore = opts.blobStore ?? new FileBlobStore_1.FileBlobStore();
         this.metadataRepo = opts.metadataRepo ?? new InMemoryFileUploadMetadataStore();
         this.authz = opts.authz ?? (() => true);
-        this.publicBaseUrl = (opts.publicBaseUrl ?? process.env.FILEUPLOAD_PUBLIC_BASE ?? '').replace(/\/+$/, '');
+        this.publicBaseUrl = opts.publicBaseUrl !== undefined ? (0, uploadUrl_1.normalizeUploadBase)(opts.publicBaseUrl) : (0, uploadUrl_1.defaultUploadBase)();
         this.maxBytes = opts.maxBytes ?? (0, FileBlobStore_1.resolveMaxBytes)();
         this.mintUploadId = opts.mintUploadId ?? (() => (0, crypto_1.randomUUID)());
     }
     /** Build the HTTP url (PUT for upload, GET for download — same path). */
     uploadUrlFor(uploadId) {
-        return `${this.publicBaseUrl}/api/uploads/${encodeURIComponent(uploadId)}`;
+        return (0, uploadUrl_1.uploadUrlFor)(this.publicBaseUrl, uploadId);
     }
     uploaderFor(clientId) {
         const uid = this.messageRouter.getUserIdForClient?.(clientId);

@@ -63,3 +63,7 @@ export type { ChatPluginInput, ParsedChatPluginMessage, ChatPluginFrameMessage }
 
 export default ChatService;
 export type { ChatUnreadOpts, ChatUnreadInbox, ChatUnreadItem, ChatUnreadContent } from './unread';
+
+// 0.146.0: attachments are issued upload ids; the server writes the URL.
+export { normalizeChatAttachments, defaultAttachmentUrlFor, MAX_CHAT_ATTACHMENTS } from './attachments';
+export type { ChatAttachmentRecord, AttachmentCheck } from './attachments';

@@ -17,4 +17,6 @@ export { parseChatPluginMessage } from './pluginMessage';
 export type { ChatPluginInput, ParsedChatPluginMessage, ChatPluginFrameMessage } from './pluginMessage';
 export default ChatService;
 export type { ChatUnreadOpts, ChatUnreadInbox, ChatUnreadItem, ChatUnreadContent } from './unread';
+export { normalizeChatAttachments, defaultAttachmentUrlFor, MAX_CHAT_ATTACHMENTS } from './attachments';
+export type { ChatAttachmentRecord, AttachmentCheck } from './attachments';
 //# sourceMappingURL=index.d.ts.map

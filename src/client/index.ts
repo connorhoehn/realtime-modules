@@ -148,7 +148,7 @@ export type {
 
 // useAttachmentSrc: authenticated download URL -> renderable object URL. The
 // download route needs a bearer header and an <img> cannot send one.
-export { useAttachmentSrc } from './useAttachmentSrc';
+export { useAttachmentSrc, mayCarryAttachmentToken } from './useAttachmentSrc';
 export type { UseAttachmentSrcOptions, UseAttachmentSrcResult } from './useAttachmentSrc';
 
 export { useVideoHangout } from './useVideoHangout';

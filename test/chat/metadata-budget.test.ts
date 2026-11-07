@@ -54,7 +54,6 @@ const attachment = (n: number) => ({
     name: `screenshot-${n}.png`,
     size: 482_113,
     contentType: 'image/png',
-    url: `http://localhost:3000/files/download/transfer-${n}`,
     width: 1024,
     height: 768,
     preview: preview(),

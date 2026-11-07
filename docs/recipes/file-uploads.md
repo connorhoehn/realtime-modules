@@ -46,6 +46,14 @@ Bytes ride a plain HTTP PUT to a presigned URL, not the socket. Rendering an
 attachment needs `useAttachmentSrc` — the download route wants a bearer header
 and an `<img>` cannot send one.
 
+Since 0.146.0 a chat message names its attachments by the id the upload was
+issued (`fileupload:complete`'s `transferId`); the server writes each
+`metadata.attachments[].url` from that id, and a send whose attachment carries
+any other URL is refused with `CHAT_BAD_ATTACHMENT`. `useAttachmentSrc` sends
+the bearer header only to a bare `/api/uploads/<id>` path or to that path on
+the page's origin; a gateway on another origin must be listed in
+`trustedOrigins`, or its images are fetched without the token (and 401).
+
 Point the client at the same origin and the `path` set above —
 `ws://localhost:3000/realtime`. There is no default path: leave `path` off and
 the upgrade listener takes every WebSocket upgrade on that server, including

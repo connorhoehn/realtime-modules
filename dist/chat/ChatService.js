@@ -50,6 +50,7 @@ const SubscriptionTracker_1 = require("./SubscriptionTracker");
 const ChatStore_1 = require("./ChatStore");
 const ChatReadReceiptStore_1 = require("./ChatReadReceiptStore");
 const dmChannels_1 = require("./dmChannels");
+const attachments_1 = require("./attachments");
 const ChatMembershipStore_1 = require("./ChatMembershipStore");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
 const unread_1 = require("./unread");
@@ -101,6 +102,12 @@ const ErrorCodes = {
      * delivered message that silently vanished.
      */
     CHAT_STORE_FAILED: 'store-failed',
+    /**
+     * Send/edit (0.146.0): `metadata.attachments` is not a list of issued
+     * upload ids — most often an attachment carrying a URL the server did not
+     * issue. Nothing is stored or broadcast.
+     */
+    CHAT_BAD_ATTACHMENT: 'CHAT_BAD_ATTACHMENT',
 };
 function createErrorResponse(code, message, context = {}) {
     return { error: { code, message, ...context } };
@@ -196,6 +203,7 @@ class ChatService {
     identityResolver;
     resolveSender;
     trustFrameSender;
+    attachmentUrlFor;
     membershipStore;
     readReceiptStore;
     enforceDmMembership;
@@ -242,6 +250,7 @@ class ChatService {
         this.identityResolver = opts.identityResolver ?? null;
         this.resolveSender = opts.resolveSender ?? null;
         this.trustFrameSender = opts.trustFrameSender === true;
+        this.attachmentUrlFor = opts.attachmentUrlFor ?? attachments_1.defaultAttachmentUrlFor;
         // DM enforcement defaults ON exactly when an identity source exists;
         // consumers can force it either way explicitly.
         this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
@@ -574,6 +583,12 @@ class ChatService {
             this.sendError(clientId, `Message must be a string between 1 and ${this.maxMessageLength} characters`);
             return;
         }
+        // Attachments are ids; the URL is the server's (0.146.0). Checked
+        // before the size budget so a refused URL is never silently shed.
+        const attachmentsChecked = this._checkAttachments(clientId, channel, metadata);
+        if (!attachmentsChecked)
+            return;
+        metadata = attachmentsChecked;
         metadata = validateMetadata(metadata, this.logger, this.maxMetadataKeys, this.maxMetadataSize);
         // Resolve identity ONCE — feeds both the dm-membership gate and
         // the userId stamp below.
@@ -796,6 +811,12 @@ class ChatService {
             return;
         }
         let patchMeta = metadata && typeof metadata === 'object' ? { ...metadata } : null;
+        if (patchMeta) {
+            const checked = this._checkAttachments(clientId, channel, patchMeta);
+            if (!checked)
+                return;
+            patchMeta = checked;
+        }
         if (patchMeta && !this.trustFrameSender) {
             // An edit may change what was said, never who said it: the
             // stored sender fields stay, the frame's copies are dropped.
@@ -1972,6 +1993,23 @@ class ChatService {
      * pass. FAIL-CLOSED: on an enforced channel, a sender with no
      * resolvable userId is rejected.
      */
+    /**
+     * `metadata.attachments` as issued upload ids with server-written URLs
+     * (see ./attachments.ts). Returns the metadata to use, or null after
+     * telling the client why the frame was refused.
+     */
+    _checkAttachments(clientId, channel, metadata) {
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+            return metadata;
+        if (!Object.prototype.hasOwnProperty.call(metadata, 'attachments'))
+            return metadata;
+        const checked = (0, attachments_1.normalizeChatAttachments)(metadata.attachments, this.attachmentUrlFor);
+        if (!checked.ok) {
+            this.sendError(clientId, checked.reason, ErrorCodes.CHAT_BAD_ATTACHMENT, channel);
+            return null;
+        }
+        return { ...metadata, attachments: checked.attachments };
+    }
     _checkDmMembership(clientId, channel, identity) {
         if (!this.enforceDmMembership)
             return true;

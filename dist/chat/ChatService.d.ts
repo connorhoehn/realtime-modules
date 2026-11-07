@@ -156,6 +156,16 @@ export interface ChatServiceOpts {
      */
     trustFrameSender?: boolean;
     /**
+     * 0.146.0: the download URL for an attachment id. The server writes
+     * `metadata.attachments[].url` from the id with this; a frame's own URL is
+     * accepted only when it equals this (or the bare `/api/uploads/<id>`), and
+     * anything else refuses the send with `CHAT_BAD_ATTACHMENT`. Default:
+     * FileUploadService's URL (`${FILEUPLOAD_PUBLIC_BASE}/api/uploads/<id>`);
+     * `attachRealtime`'s `chat()` uses the attached `fileUploads()` service's
+     * `uploadUrlFor` when there is one.
+     */
+    attachmentUrlFor?: (id: string) => string;
+    /**
      * Fire-and-forget observer invoked AFTER a successful send on a dm
      * chat channel (both `chat:dm:` and `chat:dmg:` forms). Exceptions
      * are swallowed (logged) — it can never fail or block the send path.
@@ -286,6 +296,7 @@ export declare class ChatService {
     identityResolver: ChatIdentityResolver | null;
     resolveSender: ResolveSender | null;
     readonly trustFrameSender: boolean;
+    readonly attachmentUrlFor: (id: string) => string;
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
@@ -654,6 +665,12 @@ export declare class ChatService {
      * pass. FAIL-CLOSED: on an enforced channel, a sender with no
      * resolvable userId is rejected.
      */
+    /**
+     * `metadata.attachments` as issued upload ids with server-written URLs
+     * (see ./attachments.ts). Returns the metadata to use, or null after
+     * telling the client why the frame was refused.
+     */
+    _checkAttachments(clientId: string, channel: string, metadata: any): any | null;
     _checkDmMembership(clientId: string, channel: string, identity: ChatSenderIdentity | null): boolean;
     generateMessageId(): string;
     sendToClient(clientId: string, message: any): void;

@@ -21,6 +21,7 @@ export type {
     FileUploadStatus,
 } from './FileUploadService';
 export { InMemoryFileUploadMetadataStore } from './FileUploadService';
+export { uploadUrlFor, normalizeUploadBase, defaultUploadBase } from './uploadUrl';
 export {
     FileBlobStore,
     resolveMaxBytes,

@@ -38,6 +38,7 @@
 import { randomUUID } from 'crypto';
 import { FileBlobStore, resolveMaxBytes } from './FileBlobStore';
 import { sanitizeUploadId } from './FileBlobStore';
+import { defaultUploadBase, normalizeUploadBase, uploadUrlFor } from './uploadUrl';
 
 // Wire error code kept as a local constant — the value is part of the WS
 // protocol, not of any one app's error-code table.
@@ -245,14 +246,14 @@ export class FileUploadService {
         this.blobStore = opts.blobStore ?? new FileBlobStore();
         this.metadataRepo = opts.metadataRepo ?? new InMemoryFileUploadMetadataStore();
         this.authz = opts.authz ?? (() => true);
-        this.publicBaseUrl = (opts.publicBaseUrl ?? process.env.FILEUPLOAD_PUBLIC_BASE ?? '').replace(/\/+$/, '');
+        this.publicBaseUrl = opts.publicBaseUrl !== undefined ? normalizeUploadBase(opts.publicBaseUrl) : defaultUploadBase();
         this.maxBytes = opts.maxBytes ?? resolveMaxBytes();
         this.mintUploadId = opts.mintUploadId ?? (() => randomUUID());
     }
 
     /** Build the HTTP url (PUT for upload, GET for download — same path). */
     uploadUrlFor(uploadId: string): string {
-        return `${this.publicBaseUrl}/api/uploads/${encodeURIComponent(uploadId)}`;
+        return uploadUrlFor(this.publicBaseUrl, uploadId);
     }
 
     private uploaderFor(clientId: string): string {

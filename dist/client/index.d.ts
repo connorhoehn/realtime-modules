@@ -38,7 +38,7 @@ export { useActivity } from './useActivity';
 export type { UseActivityReturn } from './useActivity';
 export { useFileUpload } from './useFileUpload';
 export type { ChannelTransfer, CompletedTransfer, FileUploadState, UseFileUploadOptions, UseFileUploadResult, } from './useFileUpload';
-export { useAttachmentSrc } from './useAttachmentSrc';
+export { useAttachmentSrc, mayCarryAttachmentToken } from './useAttachmentSrc';
 export type { UseAttachmentSrcOptions, UseAttachmentSrcResult } from './useAttachmentSrc';
 export { useVideoHangout } from './useVideoHangout';
 export type { HangoutParticipant, HangoutSession, UseVideoHangoutResult } from './useVideoHangout';
