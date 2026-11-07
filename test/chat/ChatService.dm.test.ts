@@ -376,3 +376,44 @@ describe('ChatService onDmMessage seam', () => {
         expect(sentAcks).toHaveLength(1);
     });
 });
+
+// ---------------------------------------------------------------------------
+// 0.146.1 — the gate resolves the sender WITH the frame
+// ---------------------------------------------------------------------------
+
+describe('ChatService enforceDmMembership with a per-frame resolveSender', () => {
+    function personaService() {
+        const { router, sentToClient } = makeRouter();
+        const data = { userContext: { userId: 'owner-1' } };
+        router.getClientData = () => data;
+        // A persona host: the acting identity is named by the frame, the
+        // connection's own user is only the owner of the clones.
+        const svc = makeService(router, {
+            resolveSender: (ctx: any, frame: any) =>
+                ({ userId: typeof frame?.as === 'string' ? frame.as : ctx.userId }),
+        });
+        return { svc, sentToClient };
+    }
+
+    it('admits the persona on join', async () => {
+        const { svc, sentToClient } = personaService();
+        await svc.handleJoinChannel('c1', { channel: DM_HANK_ALICE, as: 'dev-hank' } as any);
+        expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(0);
+        expect(joinedAcks(sentToClient)).toHaveLength(1);
+    });
+
+    it('admits the persona on history', async () => {
+        const { svc, sentToClient } = personaService();
+        await svc.handleGetHistory('c1', { channel: DM_HANK_ALICE, as: 'dev-alice' } as any);
+        expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(0);
+        expect(sentToClient.some((f) => f.message?.action === 'history')).toBe(true);
+    });
+
+    it('still refuses a frame whose persona is not a member, and the error names the channel', async () => {
+        const { svc, sentToClient } = personaService();
+        await svc.handleGetHistory('c1', { channel: DM_HANK_ALICE, as: 'dev-carol' } as any);
+        const errs = errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN');
+        expect(errs).toHaveLength(1);
+        expect(errs[0].message.channel).toBe(DM_HANK_ALICE);
+    });
+});

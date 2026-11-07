@@ -25,6 +25,9 @@ function useLVSViewerCount({ channelArn, intervalMs = 15_000, baseUrl: baseUrlOp
     const [error, setError] = (0, react_1.useState)(null);
     const tokenRef = (0, react_1.useRef)(playbackToken);
     tokenRef.current = playbackToken;
+    const getAuthTokenRef = (0, react_1.useRef)(ctx?.getAuthToken);
+    getAuthTokenRef.current = ctx?.getAuthToken;
+    const warnedRef = (0, react_1.useRef)(false);
     (0, react_1.useEffect)(() => {
         // A channel that changed must not keep showing the previous one's audience.
         setViewerCount(null);
@@ -35,9 +38,21 @@ function useLVSViewerCount({ channelArn, intervalMs = 15_000, baseUrl: baseUrlOp
         const url = `${baseUrl.replace(/\/$/, '')}/api/channels/${encodeURIComponent(channelArn)}/viewers`;
         const poll = async () => {
             try {
-                const res = await fetch(url, {
-                    headers: tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : undefined,
-                });
+                let token = tokenRef.current || '';
+                if (!token && getAuthTokenRef.current)
+                    token = (await getAuthTokenRef.current()) || '';
+                if (cancelled)
+                    return;
+                if (!token) {
+                    // LVS refuses unauthenticated channel reads; do not send one.
+                    if (!warnedRef.current) {
+                        warnedRef.current = true;
+                        console.warn('[lvs] useLVSViewerCount: no channel token (pass playbackToken or a getAuthToken on <LVSProvider>); viewer count request skipped.');
+                    }
+                    setViewerCount(null);
+                    return;
+                }
+                const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
                 if (cancelled)
                     return;
                 if (!res.ok) {

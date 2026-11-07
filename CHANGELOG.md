@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.146.1 — 2026-11-07
+
+- **`useLVSViewerCount` authenticates its channel read.** LVS now requires a credential for `GET /api/channels/:arn/viewers`; the hook sends `playbackToken` (or the `LVSProvider` `getAuthToken()` result) as `Authorization: Bearer`, never in the query string. With no token it makes no request and logs one console warning, leaving the count `null`.
+- **Chat's DM membership gate resolves the sender with the frame.** Join, history (including the history sent on join and the final delivery recheck), members, read and receipts now pass the frame to `resolveSender`, as send, edit and status already did. Before, a host whose `resolveSender` picks a per-frame persona (aws-agentcore's identity clones) had its own DM refused on join and history, which forced `enforceDmMembership: false`; that host can turn enforcement back on. The `CHAT_DM_FORBIDDEN` error frame now carries the `channel` name.
+
 ## 0.146.0 — 2026-11-07
 
 Security fixes from the November 2026 review (aws-agentcore `docs/next-steps.md`, section 8, packages 7 and 8, and the `SharedTextEditor` line of package 11). Almost every item changes a default from open to closed, so hosts pinning this library (aws-agentcore, realtime-examples) must read the **Adopting** list before bumping.

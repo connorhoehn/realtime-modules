@@ -24,7 +24,12 @@ export interface UseLVSViewerCountOptions {
   intervalMs?: number;
   /** Override base URL (else pulled from LVSProvider). */
   baseUrl?: string;
-  /** Playback JWT for private channels. */
+  /**
+   * Channel credential (participant / publisher / playback token). LVS
+   * requires one for channel reads; it is sent as `Authorization: Bearer`,
+   * never in the query string. Falls back to the LVSProvider's
+   * `getAuthToken()`. With neither, no request is made.
+   */
   playbackToken?: string | null;
 }
 
@@ -54,6 +59,9 @@ export function useLVSViewerCount({
   const [error, setError] = useState<Error | null>(null);
   const tokenRef = useRef(playbackToken);
   tokenRef.current = playbackToken;
+  const getAuthTokenRef = useRef(ctx?.getAuthToken);
+  getAuthTokenRef.current = ctx?.getAuthToken;
+  const warnedRef = useRef(false);
 
   useEffect(() => {
     // A channel that changed must not keep showing the previous one's audience.
@@ -67,9 +75,21 @@ export function useLVSViewerCount({
 
     const poll = async () => {
       try {
-        const res = await fetch(url, {
-          headers: tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : undefined,
-        });
+        let token = tokenRef.current || '';
+        if (!token && getAuthTokenRef.current) token = (await getAuthTokenRef.current()) || '';
+        if (cancelled) return;
+        if (!token) {
+          // LVS refuses unauthenticated channel reads; do not send one.
+          if (!warnedRef.current) {
+            warnedRef.current = true;
+            console.warn(
+              '[lvs] useLVSViewerCount: no channel token (pass playbackToken or a getAuthToken on <LVSProvider>); viewer count request skipped.',
+            );
+          }
+          setViewerCount(null);
+          return;
+        }
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (cancelled) return;
         if (!res.ok) {
           // 503 means LVS has no viewer tracker configured. That is "unknown",

@@ -702,9 +702,10 @@ export class ChatService {
 
     async handleJoinChannel(
         clientId: string,
-        { channel, metadata: _metadata = {} }: { channel: string; metadata?: any },
+        frame: { channel: string; metadata?: any },
         scope?: AuthorityScope,
     ): Promise<void> {
+        const { channel, metadata: _metadata = {} } = frame;
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
             this.sendError(clientId, 'Channel name is required');
@@ -727,7 +728,7 @@ export class ChatService {
             // DM membership gate (v0.23.0) — fail-closed on member-addressed
             // dm channels. Runs before the router subscribe so a forbidden
             // client never acquires a distributed subscription.
-            const joinIdentity = this._resolveIdentity(clientId);
+            const joinIdentity = this._resolveIdentity(clientId, frame);
             if (!this._checkDmMembership(clientId, channel, joinIdentity)) {
                 return;
             }
@@ -767,7 +768,7 @@ export class ChatService {
                 }
             }
 
-            if (!(await this.mayDeliverRead(clientId, channel, context, scope))) return;
+            if (!(await this.mayDeliverRead(clientId, channel, context, scope, frame))) return;
             this.sendToClient(clientId, {
                 type: 'chat',
                 action: 'joined',
@@ -775,7 +776,7 @@ export class ChatService {
                 timestamp: new Date().toISOString(),
             });
 
-            await this.sendChannelHistory(clientId, channel, joinIdentity?.userId, scope);
+            await this.sendChannelHistory(clientId, channel, joinIdentity?.userId, scope, frame);
 
             this.logger.info(`Client ${clientId} joined chat channel: ${channel}`);
         } catch (error) {
@@ -1282,15 +1283,16 @@ export class ChatService {
 
     async handleGetHistory(
         clientId: string,
-        { channel, limit }: { channel: string; limit?: number }
+        frame: { channel: string; limit?: number }
     ): Promise<void> {
+        const { channel, limit } = frame;
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel) {
             this.sendError(clientId, 'Channel name is required');
             return;
         }
 
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         if (!this._checkDmMembership(clientId, channel, identity)) {
             return;
         }
@@ -1300,7 +1302,7 @@ export class ChatService {
 
         try {
             const fetched = await this.getChannelHistoryFor(identity?.userId, channel, limit ?? this.defaultHistoryLimit);
-            const history = await this.historyForDelivery(clientId, channel, fetched, context, identity?.userId);
+            const history = await this.historyForDelivery(clientId, channel, fetched, context, identity?.userId, undefined, frame);
             if (history === null) return;
             this.sendToClient(clientId, {
                 type: 'chat',
@@ -1375,11 +1377,11 @@ export class ChatService {
         return merged.slice(-effectiveLimit);
     }
 
-    async sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope): Promise<void> {
+    async sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope, frame?: unknown): Promise<void> {
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
-        const originalUserId = userId ?? this._resolveIdentity(clientId)?.userId;
+        const originalUserId = userId ?? this._resolveIdentity(clientId, frame)?.userId;
         const fetched = await this.getChannelHistoryFor(originalUserId, channel, this.joinHistoryLimit, scope);
-        const history = await this.historyForDelivery(clientId, channel, fetched, context, originalUserId, scope);
+        const history = await this.historyForDelivery(clientId, channel, fetched, context, originalUserId, scope, frame);
         if (history === null) return;
         if (history.length > 0) {
             this.sendToClient(clientId, {
@@ -1393,10 +1395,10 @@ export class ChatService {
     }
 
     /** Refilter an already fetched tail when a leave/rejoin tightened its floor. */
-    private async historyForDelivery(clientId: string, channel: string, history: ChatMessage[], context: unknown, userId?: string, scope?: AuthorityScope): Promise<ChatMessage[] | null> {
-        if (!(await this.mayDeliverRead(clientId, channel, context, scope))) return null;
+    private async historyForDelivery(clientId: string, channel: string, history: ChatMessage[], context: unknown, userId?: string, scope?: AuthorityScope, frame?: unknown): Promise<ChatMessage[] | null> {
+        if (!(await this.mayDeliverRead(clientId, channel, context, scope, frame))) return null;
         const sameIdentity = () => (!this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context)
-            && this._resolveIdentity(clientId)?.userId === userId;
+            && this._resolveIdentity(clientId, frame)?.userId === userId;
         if (!sameIdentity()) return null;
         if (!this.membershipStore || isDmChatChannel(channel)) return history;
         let rows: ChatMember[];
@@ -1415,10 +1417,10 @@ export class ChatService {
     }
 
     /** Sensitive direct replies must not use a decision from before a store read. */
-    private async mayDeliverRead(clientId: string, channel: string, context: unknown, scope?: AuthorityScope): Promise<boolean> {
+    private async mayDeliverRead(clientId: string, channel: string, context: unknown, scope?: AuthorityScope, frame?: unknown): Promise<boolean> {
         const sameContext = () => !this.messageRouter.getClientData || this.messageRouter.getClientData(clientId)?.userContext === context;
         if (!sameContext()) return false;
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, frame);
         const allowed = this.authz(clientId, channel, this)
             && this._checkDmMembership(clientId, channel, identity)
             && await this._checkMembership(clientId, channel, identity, scope)
@@ -1552,14 +1554,15 @@ export class ChatService {
     }
 
     /** `{action:'members', channel}` → who is in it, to the sender. */
-    async handleMembers(clientId: string, { channel }: { channel: string }): Promise<void> {
+    async handleMembers(clientId: string, frame: { channel: string }): Promise<void> {
+        const { channel } = frame;
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
         const { open, members } = await this.describeMembers(channel);
-        if (!(await this.mayDeliverRead(clientId, channel, context))) return;
+        if (!(await this.mayDeliverRead(clientId, channel, context, undefined, frame))) return;
         this.sendToClient(clientId, {
             type: 'chat',
             action: 'members',
@@ -1946,13 +1949,14 @@ export class ChatService {
      */
     async handleReadReceipt(
         clientId: string,
-        { channel, messageId, at }: { channel: string; messageId?: unknown; at?: unknown },
+        requestFrame: { channel: string; messageId?: unknown; at?: unknown },
     ): Promise<void> {
+        const { channel, messageId, at } = requestFrame;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, requestFrame);
         if (!this._checkDmMembership(clientId, channel, identity)) return;
         if (!(await this._checkMembership(clientId, channel, identity))) return;
 
@@ -2053,17 +2057,18 @@ export class ChatService {
      * with a reason is what lets a client stop sending `read` and say why
      * instead of showing an empty list that looks like "nobody has read it".
      */
-    async handleReceipts(clientId: string, { channel }: { channel: string }): Promise<void> {
+    async handleReceipts(clientId: string, requestFrame: { channel: string }): Promise<void> {
+        const { channel } = requestFrame;
         const context = this.messageRouter.getClientData?.(clientId)?.userContext;
         if (!channel || typeof channel !== 'string') {
             this.sendError(clientId, 'Channel is required', ErrorCodes.CHAT_BAD_REQUEST, channel);
             return;
         }
-        const identity = this._resolveIdentity(clientId);
+        const identity = this._resolveIdentity(clientId, requestFrame);
         if (!this._checkDmMembership(clientId, channel, identity)) return;
         if (!(await this._checkMembership(clientId, channel, identity))) return;
         const frame = await this._receiptsFrame(channel);
-        if (await this.mayDeliverRead(clientId, channel, context)) this.sendToClient(clientId, frame);
+        if (await this.mayDeliverRead(clientId, channel, context, undefined, requestFrame)) this.sendToClient(clientId, frame);
     }
 
     /** The full-state receipts frame — the reply to `receipts` and the broadcast after a roster change. */
@@ -2378,7 +2383,8 @@ export class ChatService {
             this.sendError(
                 clientId,
                 'You are not a member of this direct-message channel',
-                ErrorCodes.CHAT_DM_FORBIDDEN
+                ErrorCodes.CHAT_DM_FORBIDDEN,
+                channel
             );
             return false;
         }

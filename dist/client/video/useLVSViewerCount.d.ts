@@ -5,7 +5,12 @@ export interface UseLVSViewerCountOptions {
     intervalMs?: number;
     /** Override base URL (else pulled from LVSProvider). */
     baseUrl?: string;
-    /** Playback JWT for private channels. */
+    /**
+     * Channel credential (participant / publisher / playback token). LVS
+     * requires one for channel reads; it is sent as `Authorization: Bearer`,
+     * never in the query string. Falls back to the LVSProvider's
+     * `getAuthToken()`. With neither, no request is made.
+     */
     playbackToken?: string | null;
 }
 export interface UseLVSViewerCountResult {

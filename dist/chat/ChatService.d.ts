@@ -343,7 +343,7 @@ export declare class ChatService {
     private readonly _cleanupSweep;
     constructor(opts: ChatServiceOpts);
     handleAction(clientId: string, action: string, data: any): Promise<void>;
-    handleJoinChannel(clientId: string, { channel, metadata: _metadata }: {
+    handleJoinChannel(clientId: string, frame: {
         channel: string;
         metadata?: any;
     }, scope?: AuthorityScope): Promise<void>;
@@ -444,7 +444,7 @@ export declare class ChatService {
     _noteMessageChanged(channel: string, kind: 'edited' | 'deleted', message: ChatMessage): void;
     /** A chat frame to every subscriber of `channel`, the sender included, the way `broadcastMessage` sends. */
     _broadcastFrame(channel: string, frame: Record<string, unknown>, publisherClientId?: string): Promise<void>;
-    handleGetHistory(clientId: string, { channel, limit }: {
+    handleGetHistory(clientId: string, frame: {
         channel: string;
         limit?: number;
     }): Promise<void>;
@@ -462,7 +462,7 @@ export declare class ChatService {
     }): Promise<ChatMessage>;
     addToChannelHistory(channel: string, messageData: ChatMessage): void;
     getChannelHistory(channel: string, limit?: number): Promise<ChatMessage[]>;
-    sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope): Promise<void>;
+    sendChannelHistory(clientId: string, channel: string, userId?: string, scope?: AuthorityScope, frame?: unknown): Promise<void>;
     /** Refilter an already fetched tail when a leave/rejoin tightened its floor. */
     private historyForDelivery;
     /** Sensitive direct replies must not use a decision from before a store read. */
@@ -498,7 +498,7 @@ export declare class ChatService {
     getChannelHistoryFor(userId: string | undefined, channel: string, limit?: number, scope?: AuthorityScope): Promise<ChatMessage[]>;
     private filterMemberHistory;
     /** `{action:'members', channel}` → who is in it, to the sender. */
-    handleMembers(clientId: string, { channel }: {
+    handleMembers(clientId: string, frame: {
         channel: string;
     }): Promise<void>;
     /**
@@ -592,7 +592,7 @@ export declare class ChatService {
      * the transcript may send its first `read` before the transcript's join
      * ack has come back.
      */
-    handleReadReceipt(clientId: string, { channel, messageId, at }: {
+    handleReadReceipt(clientId: string, requestFrame: {
         channel: string;
         messageId?: unknown;
         at?: unknown;
@@ -603,7 +603,7 @@ export declare class ChatService {
      * with a reason is what lets a client stop sending `read` and say why
      * instead of showing an empty list that looks like "nobody has read it".
      */
-    handleReceipts(clientId: string, { channel }: {
+    handleReceipts(clientId: string, requestFrame: {
         channel: string;
     }): Promise<void>;
     /** The full-state receipts frame — the reply to `receipts` and the broadcast after a roster change. */
