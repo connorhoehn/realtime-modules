@@ -4,57 +4,47 @@ exports.SharedTextEditor = SharedTextEditor;
 const jsx_runtime_1 = require("react/jsx-runtime");
 // realtime-modules/src/client/SharedTextEditor.tsx
 //
-// Lifted verbatim from frontend/src/components/SharedTextEditor.tsx.
-// WYSIWYG rich text editor bound to useCRDT content and applyLocalEdit
-// (contentEditable surface — no Tiptap dependency).
+// Lifted from frontend/src/components/SharedTextEditor.tsx. A plain-text
+// editing surface bound to useCRDT content and applyLocalEdit
+// (contentEditable — no Tiptap dependency).
+//
+// TEXT, NOT HTML (0.146.0)
+// ------------------------
+// The content is written by every collaborator on the document. This editor
+// used to assign it to `innerHTML`, so anyone who could write to a document
+// could run script in the page of everyone who opened it (an
+// `<img onerror>` was enough). Sanitising HTML safely needs a real sanitiser
+// (DOMPurify), which this package does not depend on, so the surface is plain
+// text instead: remote content is set as `textContent`, local edits are sent
+// as the surface's text, and the HTML formatting toolbar is gone. A document
+// that holds HTML from an older version shows its markup as literal text.
+// For rich text use the Tiptap adapter (`adapters/tiptap`).
 const react_1 = require("react");
-const TOOLBAR = [
-    { cmd: 'bold', label: 'B', title: 'Bold' },
-    { cmd: 'italic', label: 'I', title: 'Italic' },
-    { cmd: 'underline', label: 'U', title: 'Underline' },
-    { cmd: 'strikeThrough', label: 'S', title: 'Strikethrough' },
-    { cmd: 'insertOrderedList', label: '1.', title: 'Ordered list' },
-    { cmd: 'insertUnorderedList', label: '•', title: 'Bullet list' },
-    { cmd: 'justifyLeft', label: '≡L', title: 'Align left' },
-    { cmd: 'justifyCenter', label: '≡C', title: 'Align center' },
-    { cmd: 'justifyRight', label: '≡R', title: 'Align right' },
-];
-const btnStyle = {
-    padding: '3px 8px',
-    fontSize: '0.75rem',
-    fontFamily: 'inherit',
-    fontWeight: 600,
-    border: '1px solid #d1d5db',
-    borderRadius: 4,
-    background: '#f9fafb',
-    color: '#374151',
-    cursor: 'pointer',
-    lineHeight: '1.5',
-};
+/** The editable surface's text, with line breaks where the browser renders them. */
+function surfaceText(el) {
+    const inner = el.innerText;
+    return typeof inner === 'string' ? inner : (el.textContent ?? '');
+}
 function SharedTextEditor({ content, applyLocalEdit, disabled = false, hasConflict = false, onDismissConflict }) {
     const editorRef = (0, react_1.useRef)(null);
     const internalChange = (0, react_1.useRef)(false);
-    // Sync remote CRDT changes into the editor without clobbering cursor position
+    // Sync remote CRDT changes into the editor without clobbering cursor
+    // position. As text: the content is never parsed as HTML.
     (0, react_1.useEffect)(() => {
         if (!editorRef.current || internalChange.current)
             return;
-        if (editorRef.current.innerHTML !== content) {
-            editorRef.current.innerHTML = content;
+        if (surfaceText(editorRef.current) !== content) {
+            editorRef.current.textContent = content;
         }
     }, [content]);
-    const exec = (cmd) => {
-        document.execCommand(cmd, false);
-        editorRef.current?.focus();
-        flush();
-    };
     const flush = () => {
         if (!editorRef.current)
             return;
         internalChange.current = true;
-        applyLocalEdit(editorRef.current.innerHTML);
+        applyLocalEdit(surfaceText(editorRef.current));
         setTimeout(() => { internalChange.current = false; }, 0);
     };
-    return ((0, jsx_runtime_1.jsxs)("div", { children: [(0, jsx_runtime_1.jsxs)("div", { style: { display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.5rem', alignItems: 'center' }, children: [TOOLBAR.map(({ cmd, label, title }) => ((0, jsx_runtime_1.jsx)("button", { onMouseDown: (e) => { e.preventDefault(); exec(cmd); }, disabled: disabled, title: title, style: btnStyle, children: label }, cmd))), (0, jsx_runtime_1.jsx)("div", { style: { width: 1, alignSelf: 'stretch', background: '#e2e8f0', margin: '0 4px' } }), (0, jsx_runtime_1.jsxs)("select", { onChange: (e) => { document.execCommand('formatBlock', false, e.target.value); flush(); }, disabled: disabled, style: { fontSize: '0.75rem', border: '1px solid #d1d5db', borderRadius: 4, padding: '3px 6px', background: '#f9fafb', color: '#374151' }, children: [(0, jsx_runtime_1.jsx)("option", { value: "p", children: "Paragraph" }), (0, jsx_runtime_1.jsx)("option", { value: "h1", children: "H1" }), (0, jsx_runtime_1.jsx)("option", { value: "h2", children: "H2" }), (0, jsx_runtime_1.jsx)("option", { value: "h3", children: "H3" }), (0, jsx_runtime_1.jsx)("option", { value: "pre", children: "Code" })] })] }), hasConflict && ((0, jsx_runtime_1.jsxs)("div", { style: {
+    return ((0, jsx_runtime_1.jsxs)("div", { children: [hasConflict && ((0, jsx_runtime_1.jsxs)("div", { style: {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
@@ -73,7 +63,9 @@ function SharedTextEditor({ content, applyLocalEdit, disabled = false, hasConfli
                             color: '#92400e',
                             padding: '0 0 0 12px',
                             lineHeight: 1,
-                        }, children: "x" })] })), (0, jsx_runtime_1.jsx)("div", { ref: editorRef, contentEditable: !disabled, suppressContentEditableWarning: true, onInput: flush, style: {
+                        }, children: "x" })] })), (0, jsx_runtime_1.jsx)("div", { ref: editorRef, 
+                // Pasted HTML lands as text too, where the browser supports it.
+                contentEditable: disabled ? false : 'plaintext-only', suppressContentEditableWarning: true, onInput: flush, style: {
                     minHeight: 180,
                     border: '1px solid #d1d5db',
                     borderRadius: 4,
@@ -81,6 +73,7 @@ function SharedTextEditor({ content, applyLocalEdit, disabled = false, hasConfli
                     fontSize: '0.9rem',
                     fontFamily: 'inherit',
                     lineHeight: 1.6,
+                    whiteSpace: 'pre-wrap',
                     outline: 'none',
                     overflowY: 'auto',
                     // Tokens, not literals: this contenteditable was the last light

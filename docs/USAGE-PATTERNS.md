@@ -40,8 +40,9 @@ From `src/client/index.ts`:
   awareness writes.
 - `useIdleDetector({ timeoutMs })`.
 - `useAgentStream(opts)` — fetch + parse an AG-UI SSE stream.
-- `SharedTextEditor` — `contentEditable` rich-text surface, no editor
-  dependency.
+- `SharedTextEditor` — `contentEditable` plain-text surface, no editor
+  dependency. Since 0.146.0 it renders shared content as text, never HTML
+  (collaborators write it); use the Tiptap adapter for rich text.
 - Channel feature hooks: `useChat`, `usePresence`, `useReactions`,
   `useActivity`, `useFileUpload`, `useVideoHangout`.
 - `useNotifications()` — user-scoped notification inbox.
