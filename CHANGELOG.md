@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.146.2 — 2026-11-07
+
+- **distributed-core 0.51.1.** Pin moves from eea5c874 (0.50.1) to 682b71a9 (0.51.1: signed cluster messages, secure-by-default clusters, webhook address pinning). No source change; typecheck and the full suite pass unchanged. Hosts running a secured cluster must run 0.51.1 on every node.
+
 ## 0.146.1 — 2026-11-07
 
 - **`useLVSViewerCount` authenticates its channel read.** LVS now requires a credential for `GET /api/channels/:arn/viewers`; the hook sends `playbackToken` (or the `LVSProvider` `getAuthToken()` result) as `Authorization: Bearer`, never in the query string. With no token it makes no request and logs one console warning, leaving the count `null`.
