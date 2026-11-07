@@ -54,6 +54,7 @@ class DocumentMetadataService {
     metadataStore;
     logger;
     messageRouter;
+    activityChannelFor;
     // Extra wire-only fields the orchestrator persists outside the
     // MetadataStore contract (icon, createdBy, createdByName, type). The
     // store contract only covers documentId/title/status/description/
@@ -62,10 +63,11 @@ class DocumentMetadataService {
     // service preserves the gateway's observable surface without
     // widening the store contract.
     _wireSidecar = new Map();
-    constructor({ metadataStore, logger, messageRouter }) {
+    constructor({ metadataStore, logger, messageRouter, activityChannelFor }) {
         this.metadataStore = metadataStore;
         this.logger = logger;
         this.messageRouter = messageRouter || null;
+        this.activityChannelFor = activityChannelFor ?? null;
     }
     // ------------------------------------------------------------------
     // Public API — called by the orchestrator
@@ -127,9 +129,16 @@ class DocumentMetadataService {
             createdAt: nowIso,
         });
         // wave20-e — publish via the canonical MessageRouter path.
-        if (this.messageRouter) {
+        let activityChannel = null;
+        try {
+            activityChannel = this.activityChannelFor?.({ documentId, title: document.title, createdBy: document.createdBy }) ?? null;
+        }
+        catch (err) {
+            this.logger.error('activityChannelFor threw; not publishing doc.created:', err?.message ?? err);
+        }
+        if (this.messageRouter && activityChannel) {
             try {
-                await this.messageRouter.sendToChannel('activity:broadcast', {
+                await this.messageRouter.sendToChannel(activityChannel, {
                     type: 'activity:event',
                     payload: {
                         eventType: 'doc.created',

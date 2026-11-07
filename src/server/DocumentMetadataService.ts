@@ -41,6 +41,12 @@ interface DocumentMetadataServiceOpts {
      * publish is a no-op.
      */
     messageRouter?: MessageRouterContract | null;
+    /**
+     * 0.146.0: the channel the doc.created activity goes to, or null for
+     * none (the default). It used to be `activity:broadcast`, which every
+     * tenant's subscribers share.
+     */
+    activityChannelFor?: ((doc: { documentId: string; title: string; createdBy: string }) => string | null) | null;
 }
 
 // The wire shape the orchestrator broadcasts on the WebSocket. Preserved
@@ -65,6 +71,7 @@ class DocumentMetadataService {
     metadataStore: MetadataStore;
     logger: any;
     messageRouter: MessageRouterContract | null;
+    activityChannelFor: ((doc: { documentId: string; title: string; createdBy: string }) => string | null) | null;
 
     // Extra wire-only fields the orchestrator persists outside the
     // MetadataStore contract (icon, createdBy, createdByName, type). The
@@ -75,10 +82,11 @@ class DocumentMetadataService {
     // widening the store contract.
     private _wireSidecar: Map<string, Partial<DocumentWire>> = new Map();
 
-    constructor({ metadataStore, logger, messageRouter }: DocumentMetadataServiceOpts) {
+    constructor({ metadataStore, logger, messageRouter, activityChannelFor }: DocumentMetadataServiceOpts) {
         this.metadataStore = metadataStore;
         this.logger = logger;
         this.messageRouter = messageRouter || null;
+        this.activityChannelFor = activityChannelFor ?? null;
     }
 
     // ------------------------------------------------------------------
@@ -146,9 +154,15 @@ class DocumentMetadataService {
         });
 
         // wave20-e — publish via the canonical MessageRouter path.
-        if (this.messageRouter) {
+        let activityChannel: string | null = null;
+        try {
+            activityChannel = this.activityChannelFor?.({ documentId, title: document.title, createdBy: document.createdBy }) ?? null;
+        } catch (err: any) {
+            this.logger.error('activityChannelFor threw; not publishing doc.created:', err?.message ?? err);
+        }
+        if (this.messageRouter && activityChannel) {
             try {
-                await this.messageRouter.sendToChannel('activity:broadcast', {
+                await this.messageRouter.sendToChannel(activityChannel, {
                     type: 'activity:event',
                     payload: {
                         eventType: 'doc.created',

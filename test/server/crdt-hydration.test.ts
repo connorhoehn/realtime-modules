@@ -12,7 +12,8 @@ function fixture() {
     };
     const cache = { get: jest.fn(), setEx: jest.fn(), del: jest.fn() };
     const service = new CRDTService({ messageRouter: router, snapshotStore: store, hotCache: cache,
-        metadataStore: new MemoryMetadataStore(), logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() } });
+        metadataStore: new MemoryMetadataStore(), logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        authz: () => true });
     return { service, store, router, cache };
 }
 function bytes(text: string) {

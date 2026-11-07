@@ -207,6 +207,7 @@ class ChatService {
     membershipStore;
     readReceiptStore;
     enforceDmMembership;
+    resolveDmGroupMembers;
     onDmMessage;
     onChannelMessage;
     onMessageChanged;
@@ -251,9 +252,9 @@ class ChatService {
         this.resolveSender = opts.resolveSender ?? null;
         this.trustFrameSender = opts.trustFrameSender === true;
         this.attachmentUrlFor = opts.attachmentUrlFor ?? attachments_1.defaultAttachmentUrlFor;
-        // DM enforcement defaults ON exactly when an identity source exists;
-        // consumers can force it either way explicitly.
-        this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
+        // DM enforcement is ON unless switched off explicitly (0.146.0).
+        this.enforceDmMembership = opts.enforceDmMembership ?? true;
+        this.resolveDmGroupMembers = opts.resolveDmGroupMembers ?? null;
         this.onDmMessage = opts.onDmMessage ?? null;
         this.onChannelMessage = opts.onChannelMessage ?? null;
         this.onMessageChanged = opts.onMessageChanged ?? null;
@@ -2015,11 +2016,22 @@ class ChatService {
             return true;
         if (!(0, dmChannels_1.isDmChatChannel)(channel))
             return true;
-        const members = (0, dmChannels_1.dmChannelMembers)(channel);
-        if (!members)
-            return true; // chat:dmg: / malformed — membership not derivable here
+        // Hashed groups name no members: the host's index must, or nobody is
+        // let in (0.146.0 — they used to be open to anyone). A malformed
+        // member-addressed name is refused the same way.
+        let members = (0, dmChannels_1.dmChannelMembers)(channel);
+        if (!members && (0, dmChannels_1.dmChannelKind)(channel) === 'dmg' && this.resolveDmGroupMembers) {
+            try {
+                const resolved = this.resolveDmGroupMembers(channel);
+                members = Array.isArray(resolved) ? resolved.filter((u) => typeof u === 'string' && u.length > 0) : null;
+            }
+            catch (err) {
+                this.logger.error(`resolveDmGroupMembers threw for ${channel}; refusing`, err);
+                members = null;
+            }
+        }
         const userId = identity?.userId;
-        if (!userId || !members.includes(userId)) {
+        if (!members || !userId || !members.includes(userId)) {
             this.sendError(clientId, 'You are not a member of this direct-message channel', ErrorCodes.CHAT_DM_FORBIDDEN);
             return false;
         }

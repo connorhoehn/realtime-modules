@@ -97,10 +97,10 @@ export interface WsHandlerOptions {
     /**
      * Largest inbound frame a client may send, in bytes. A bigger one closes
      * that socket (code 1009) before it is buffered, so one client cannot push
-     * the process toward OOM. Default {@link DEFAULT_WS_MAX_PAYLOAD} (16 MiB);
-     * `ws` itself would allow 100 MiB. Call signalling, chat and presence
-     * frames are a few KB — a gateway that carries no CRDT / canvas / file
-     * frames can set this far lower (e.g. 256 KiB).
+     * the process toward OOM. Default {@link DEFAULT_WS_MAX_PAYLOAD} (1 MiB
+     * since 0.146.0; 16 MiB before); `ws` itself would allow 100 MiB. Call
+     * signalling, chat and presence frames are a few KB. A host that sends
+     * large CRDT snapshots or canvas seeds over the socket raises it.
      */
     maxPayload?: number;
     /**
@@ -115,16 +115,35 @@ export interface WsHandlerOptions {
      */
     independentServices?: readonly string[];
     /**
-     * 0.119 (lane R6), opt-in: a per-connection inbound frame budget. A token
-     * bucket refilled at `framesPerSecond` (default 50) holding at most
-     * `burst` frames (default twice the rate). A frame that arrives with the
-     * bucket empty is dropped before it is parsed or queued, and the client
-     * gets ONE `{ type: 'error', code: 'RATE_LIMITED', dropped, retryAfterMs }`
-     * frame per `windowMs` (default 1000) however many were dropped in it.
-     * The socket stays open. `true` takes every default. Unset/false: no
-     * budget (the old behaviour). Counts appear in `stats().inbound`.
+     * A per-connection inbound frame budget (0.119, lane R6; ON by default
+     * since 0.146.0). A token bucket refilled at `framesPerSecond` (default
+     * 50) holding at most `burst` frames (default twice the rate). A frame
+     * that arrives with the bucket empty is dropped before it is parsed or
+     * queued, and the client gets ONE `{ type: 'error', code: 'RATE_LIMITED',
+     * dropped, retryAfterMs }` frame per `windowMs` (default 1000) however
+     * many were dropped in it. The socket stays open. Unset or `true` takes
+     * every default; `false` switches the budget off. Counts appear in
+     * `stats().inbound`.
      */
     inboundRateLimit?: boolean | InboundRateLimitOptions;
+    /**
+     * 0.146.0: the most inbound frames one connection may have accepted and
+     * not yet finished. Past it the client is sent `{ type: 'error', code:
+     * 'QUEUE_FULL' }` and the socket is closed with 1008, so a client that
+     * outpaces its handlers cannot grow the process's memory without bound.
+     * Default {@link DEFAULT_WS_MAX_QUEUE_DEPTH} (256). `Infinity` disables.
+     */
+    maxQueueDepth?: number;
+    /**
+     * 0.146.0: close a connection when its token expires. The handler reads
+     * `exp` (seconds since the epoch, the JWT claim) from the context `auth`
+     * returned; at `exp` plus this grace it sends `{ type: 'error', code:
+     * 'TOKEN_EXPIRED' }` and closes the socket with 4001, and an upgrade whose
+     * token is already past it is refused with 401. The client reconnects with
+     * a fresh token. A context with no numeric `exp` is never timed out.
+     * Default {@link DEFAULT_TOKEN_EXPIRY_GRACE_MS} (1000 ms) for clock skew.
+     */
+    tokenExpiryGraceMs?: number;
 }
 /** {@link WsHandlerOptions.inboundRateLimit}. */
 export interface InboundRateLimitOptions {
@@ -173,8 +192,12 @@ export interface WsHandlerStats {
 }
 /** Default {@link WsHandlerOptions.independentServices}. */
 export declare const DEFAULT_INDEPENDENT_SERVICES: readonly string[];
-/** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 16 MiB. */
+/** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 1 MiB (16 MiB before 0.146.0). */
 export declare const DEFAULT_WS_MAX_PAYLOAD: number;
+/** Default {@link WsHandlerOptions.maxQueueDepth} (0.146.0). */
+export declare const DEFAULT_WS_MAX_QUEUE_DEPTH = 256;
+/** Default {@link WsHandlerOptions.tokenExpiryGraceMs} (0.146.0). */
+export declare const DEFAULT_TOKEN_EXPIRY_GRACE_MS = 1000;
 export interface WsHandlerHandle {
     /** The underlying `ws.Server` instance. */
     wss: any;

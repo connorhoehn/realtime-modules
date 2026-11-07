@@ -22,6 +22,12 @@ import { attachRealtime, calls, type RealtimeHandle } from '../../src/server';
 import { InMemoryCallStateStore, RedisCallStateStore, type CallStateStore } from '../../src/call/CallStateStore';
 import { FakeRedis } from '../call/helpers/fakeRedis';
 
+/** 0.146.0: a DM lobby's `status` answers only its members, so the observer is one. */
+const observerFor = (lobbyName: string): string => {
+    const m = /(?:^|:)dm:([^:]+):/.exec(lobbyName);
+    return m ? m[1] : `u-watch-${Math.random().toString(36).slice(2, 8)}`;
+};
+
 const GRACE_MS = 300;
 const REDIS_URL = process.env.CALL_TEST_REDIS_URL ?? 'redis://127.0.0.1:16379';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -119,7 +125,7 @@ describe.each(storeCases)('calls() over sockets — no ghost participant after b
         await sleep(80); // the server's close handler + fire-and-forget store writes
     };
     const status = async (lobbyName: string) => {
-        const c = await connect(`u-watch-${rand()}`);
+        const c = await connect(observerFor(lobbyName));
         send(c, { action: 'status', lobbyName });
         const f = await waitFrame(c, (x) => x.type === 'call' && x.action === 'active-call' && x.data?.lobbyName === lobbyName);
         c.ws.close();

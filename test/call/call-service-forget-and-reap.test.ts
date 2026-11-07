@@ -54,7 +54,9 @@ function makeRouter(
   return router;
 }
 
-const users = { 'c-alice': 'u-alice', 'c-bob': 'u-bob', 'c-zed': 'u-zed' };
+// c-alice-2: alice's fresh tab after a refresh. Since 0.146.0 only a DM's
+// members may ask its `status`, so the asker is a member, not c-zed.
+const users = { 'c-alice': 'u-alice', 'c-alice-2': 'u-alice', 'c-bob': 'u-bob', 'c-zed': 'u-zed' };
 
 async function establishedCall(
   router: ReturnType<typeof makeRouter>,
@@ -117,6 +119,18 @@ describe('CallService — forget verb (durable resume dismissal)', () => {
 });
 
 describe('CallService — status query reaps provably-dead calls', () => {
+  test('0.146.0: a non-member asking a DM lobby\'s status is refused and told nothing', async () => {
+    const store = new InMemoryCallStateStore();
+    const router = makeRouter(users);
+    const svc = await establishedCall(router, store);
+    await svc.handleAction('c-zed', 'status', { lobbyName: 'dm:u-alice:u-bob' });
+    const replies = router.sent.filter((s) => s.clientId === 'c-zed');
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.message.type).toBe('error');
+    expect(JSON.stringify(replies[0]!.message)).not.toContain('c-alice');
+    await svc.dispose();
+  });
+
   test('all participants dead-local → active:false AND lobby/user indexes cleared', async () => {
     const store = new InMemoryCallStateStore();
     // Every client is provably dead (crashed tabs).
@@ -127,9 +141,9 @@ describe('CallService — status query reaps provably-dead calls', () => {
     expect(await store.getCallIdsByLobby('dm:u-alice:u-bob')).toContain('call-1');
     expect(await store.getCallIdsByUser('u-alice')).toContain('call-1');
 
-    await svc.handleAction('c-zed', 'status', { lobbyName: 'dm:u-alice:u-bob' });
+    await svc.handleAction('c-alice-2', 'status', { lobbyName: 'dm:u-alice:u-bob' });
 
-    const reply = router.sent.find((s) => s.clientId === 'c-zed');
+    const reply = router.sent.find((s) => s.clientId === 'c-alice-2');
     expect(reply!.message.action).toBe('active-call');
     expect(reply!.message.data.active).toBe(false);
 
@@ -146,9 +160,9 @@ describe('CallService — status query reaps provably-dead calls', () => {
     const router = makeRouter(users, () => null);
     const svc = await establishedCall(router, store);
 
-    await svc.handleAction('c-zed', 'status', { lobbyName: 'dm:u-alice:u-bob' });
+    await svc.handleAction('c-alice-2', 'status', { lobbyName: 'dm:u-alice:u-bob' });
 
-    const reply = router.sent.find((s) => s.clientId === 'c-zed');
+    const reply = router.sent.find((s) => s.clientId === 'c-alice-2');
     expect(reply!.message.data.active).toBe(true);
     expect(await store.getCallIdsByLobby('dm:u-alice:u-bob')).toContain('call-1');
     expect(await store.getCallIdsByUser('u-bob')).toContain('call-1');
@@ -171,9 +185,9 @@ describe('CallService — status query reaps provably-dead calls', () => {
       stateStore: store,
     });
 
-    await svc.handleAction('c-zed', 'status', { lobbyName: 'dm:u-alice:u-bob' });
+    await svc.handleAction('c-alice-2', 'status', { lobbyName: 'dm:u-alice:u-bob' });
 
-    const reply = router.sent.find((s) => s.clientId === 'c-zed');
+    const reply = router.sent.find((s) => s.clientId === 'c-alice-2');
     expect(reply!.message.data.active).toBe(false);
     expect(await store.getCallIdsByLobby('dm:u-alice:u-bob')).toEqual([]);
     expect(await store.getCallIdsByUser('u-alice')).toEqual([]);

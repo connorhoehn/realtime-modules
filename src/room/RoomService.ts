@@ -47,6 +47,12 @@ import {
     type RoomMetricsHooks,
 } from './types';
 import type { RoomStateStore, RoomMemberSnapshot } from './RoomStateStore';
+import { routerPermits } from '../server-ws/channelAccess';
+
+/** The router channel a room's actions are judged on (0.146.0). */
+export function roomChannel(slug: string): string {
+    return `room:${slug}`;
+}
 // Metrics are an injected seam (RoomServiceOptions.metrics) — this library
 // has no observability layer of its own; hooks default to no-ops.
 
@@ -192,6 +198,15 @@ export class RoomService {
             }
             const typedAction = action as RoomAction;
             const payload: RoomActionPayload = data ?? {};
+            // 0.146.0: every action on a room is judged on `room:<slug>` by
+            // the router first — watching it is a read, joining, leaving and
+            // announcing are writes. A refusal reaches the client from the
+            // router (AUTHZ_CHANNEL_DENIED) and nothing else happens.
+            const actionSlug = typeof payload.slug === 'string' ? payload.slug : '';
+            if (actionSlug && typedAction !== 'unsubscribe') {
+                const kind = typedAction === 'subscribe' ? 'subscribe' : 'publish';
+                if (!await this.permits(kind, clientId, actionSlug)) return;
+            }
             switch (typedAction) {
                 case 'subscribe-index':
                     await this.handleSubscribeIndex(clientId);
@@ -231,22 +246,25 @@ export class RoomService {
                         this.sendError(clientId, 'slug is required on join');
                         return;
                     }
+                    // 0.146.0: who joined is the socket's authenticated user.
+                    // The frame's userId / displayName used to win, so any
+                    // socket could seat anyone in any room.
                     const clientData = this.messageRouter.getClientData?.(clientId) as
                         | { userContext?: { userId?: string; displayName?: string } }
                         | null;
                     const userCtx = clientData?.userContext;
+                    const userId = typeof userCtx?.userId === 'string' && userCtx.userId ? userCtx.userId : '';
+                    if (!userId) {
+                        this.sendError(clientId, 'join needs an authenticated user');
+                        return;
+                    }
                     const participantId =
-                        typeof payload.participantId === 'string'
-                            ? payload.participantId
+                        typeof payload.participantId === 'string' && payload.participantId
+                            ? payload.participantId.slice(0, 200)
                             : clientId;
-                    const userId =
-                        typeof payload.userId === 'string'
-                            ? payload.userId
-                            : (userCtx?.userId ?? clientId);
-                    const displayName =
-                        typeof payload.displayName === 'string'
-                            ? payload.displayName
-                            : (userCtx?.displayName ?? userId);
+                    const displayName = typeof userCtx?.displayName === 'string' && userCtx.displayName
+                        ? userCtx.displayName
+                        : userId;
                     await this.handleMemberJoined(
                         slug,
                         userId,
@@ -262,13 +280,13 @@ export class RoomService {
                         this.sendError(clientId, 'slug is required on leave');
                         return;
                     }
+                    // Only this socket's own seat is removed; the user named
+                    // in fan-out is the recorded one, never the frame's.
+                    const seat = this.activeRooms.get(slug)?.get(clientId);
                     const clientData2 = this.messageRouter.getClientData?.(clientId) as
                         | { userContext?: { userId?: string } }
                         | null;
-                    const userId =
-                        typeof payload.userId === 'string'
-                            ? payload.userId
-                            : (clientData2?.userContext?.userId ?? clientId);
+                    const userId = seat?.userId || clientData2?.userContext?.userId || '';
                     await this.handleMemberLeft(slug, userId, clientId, 'explicit');
                     return;
                 }
@@ -309,11 +327,26 @@ export class RoomService {
         }
     }
 
+    /** The router's verdict on `room:<slug>` for this client (see RoomMessageRouter.checkChannel). */
+    private permits(kind: 'subscribe' | 'publish', clientId: string, slug: string, silent = false): Promise<boolean> {
+        return routerPermits(this.messageRouter as any, kind, clientId, roomChannel(slug), {
+            service: 'room', clientChannel: roomChannel(slug), silent,
+        });
+    }
+
+    /** The deltas this client may see: rooms whose channel it may read (0.146.0). */
+    private async visibleDeltas(clientId: string, deltas: RoomOccupancyDelta[]): Promise<RoomOccupancyDelta[]> {
+        const out: RoomOccupancyDelta[] = [];
+        for (const d of deltas) if (await this.permits('subscribe', clientId, d.slug, true)) out.push(d);
+        return out;
+    }
+
     private async handleSubscribeIndex(clientId: string): Promise<void> {
         this.indexSubscribers.add(clientId);
         // Initial snapshot. Prefer state-store (cluster-wide); fall back
-        // to local Maps when no store wired.
-        const snapshot = await this.collectFullSnapshot();
+        // to local Maps when no store wired. 0.146.0: narrowed to the rooms
+        // this client may read — the index used to list every tenant's.
+        const snapshot = await this.visibleDeltas(clientId, await this.collectFullSnapshot());
         const envelope: RoomServerEvent = {
             type: 'room',
             action: 'occupancy-delta',
@@ -614,6 +647,7 @@ export class RoomService {
         } as RoomServerEvent;
         for (const cid of this.indexSubscribers) {
             if (excludeClientId && cid === excludeClientId) continue;
+            if (!await this.permits('subscribe', cid, slug, true)) continue;
             try {
                 await Promise.resolve(this.messageRouter.sendToClient(cid, envelope));
             } catch (e: any) {
@@ -696,8 +730,10 @@ export class RoomService {
     ): Promise<void> {
         const subs = this.roomSubscribers.get(slug);
         if (!subs || subs.size === 0) return;
-        for (const cid of subs) {
+        for (const cid of Array.from(subs)) {
             if (excludeClientId && cid === excludeClientId) continue;
+            // Watching was admitted at subscribe; admission is not a lasting grant.
+            if (!await this.permits('subscribe', cid, slug, true)) continue;
             try {
                 await Promise.resolve(this.messageRouter.sendToClient(cid, envelope));
             } catch (e: any) {
@@ -757,13 +793,16 @@ export class RoomService {
             deltas.push(delta);
         }
         if (deltas.length === 0) return;
-        const envelope: RoomServerEvent = {
-            type: 'room',
-            action: 'occupancy-delta',
-            data: { deltas },
-            timestamp: new Date().toISOString(),
-        };
-        for (const cid of this.indexSubscribers) {
+        const timestamp = new Date().toISOString();
+        for (const cid of Array.from(this.indexSubscribers)) {
+            const visible = await this.visibleDeltas(cid, deltas);
+            if (visible.length === 0) continue;
+            const envelope: RoomServerEvent = {
+                type: 'room',
+                action: 'occupancy-delta',
+                data: { deltas: visible },
+                timestamp,
+            };
             try {
                 await Promise.resolve(this.messageRouter.sendToClient(cid, envelope));
             } catch (e: any) {

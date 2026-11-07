@@ -44,7 +44,8 @@ const ALL_FEATURES: Array<[string, () => RealtimeFeature]> = [
     ['room', () => rooms()],
     ['notification', () => notifications()],
     ['fileupload', () => fileUploads()],
-    ['crdt', () => collabDocs()],   // wire key 'crdt'; manifest identity 'document-sharing'
+    // 0.146.0: collabDocs needs an authz hook (or the explicit insecure flag) to start.
+    ['crdt', () => collabDocs({ insecureAllowAll: true })],   // wire key 'crdt'; manifest identity 'document-sharing'
 ];
 
 function listen(server: http.Server): Promise<number> {
@@ -202,7 +203,7 @@ describe('attachRealtime — every service a client addresses resolves', () => {
         ['cursor', () => cursor()],
         ['fileupload', () => fileUploads()],
         ['notification', () => notifications()],
-        ['crdt', () => collabDocs()],
+        ['crdt', () => collabDocs({ insecureAllowAll: true })],
         ['pipeline', () => pipeline()],
         // Not a feature — attachRealtime registers it itself.
         ['subscribe', () => chat()],
@@ -617,7 +618,7 @@ describe('attachRealtime — end-to-end behaviour on the local router', () => {
     });
 
     it('collab-docs: join a doc channel, receive sync frames, shutdown flushes on dispose', async () => {
-        const { server, port, handle } = await boot([collabDocs()]);
+        const { server, port, handle } = await boot([collabDocs({ authz: () => true })]);
         const ws = await connect(port);
         const sync = nextFrame(ws, (f) => f.type === 'crdt');
         ws.send(JSON.stringify({ service: 'crdt', action: 'subscribe', channel: 'doc:matrix-test' }));

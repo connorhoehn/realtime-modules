@@ -54,11 +54,34 @@ export interface CRDTServiceOpts {
     logger: any;
     metricsCollector?: any;
     /**
-     * Optional authz hook. Returns true if the client is permitted to access
-     * the channel; false (after sending its own error message) otherwise.
-     * Defaults to permissive.
+     * Document authz hook: true if the client may perform `action` on the
+     * document channel (`doc:<id>`; '' for a `create` with no channel).
+     * REQUIRED since 0.146.0 — the service refuses to start without it
+     * (before, it defaulted to allowing everything). Pass
+     * `insecureAllowAll: true` instead for a single-user demo.
+     *
+     * The router's channel check runs too (the host's `attachRealtime({
+     * authorize })`): `subscribe` for reads, `publish` for writes. Both must
+     * pass.
      */
     authz?: (clientId: string, channel: string, service: CRDTService, action: CRDTDocumentAction) => boolean | Promise<boolean>;
+    /**
+     * 0.146.0: start without an `authz` hook, allowing every document action
+     * the router's channel check allows. For local demos only; never in a
+     * deployment with more than one user.
+     */
+    insecureAllowAll?: boolean;
+    /**
+     * 0.146.0: where `createDocument` publishes the `doc.created` activity
+     * event, or null for nowhere (the default). Before 0.146.0 it went to
+     * `activity:broadcast`, so every subscriber of that channel learned every
+     * tenant's new document titles.
+     */
+    activityChannelFor?: (doc: {
+        documentId: string;
+        title: string;
+        createdBy: string;
+    }) => string | null;
     /**
      * A document was created inside a conversation.
      *
@@ -109,7 +132,19 @@ declare class CRDTService {
      * promises are .catch-ed, and neither reaches the creation path.
      */
     _announceDocument(doc: any): void;
+    /**
+     * The document hook, then the router's channel check (0.146.0): a read
+     * asks `subscribe`, every other action `publish`. A throwing hook refuses.
+     * `report` false asks silently (filters, recipient checks).
+     */
     private authorize;
+    /**
+     * Announce a document lifecycle event to the connections that may read
+     * that document (0.146.0) — never to every socket. A router that cannot
+     * scope a broadcast gets nothing sent (fail closed).
+     */
+    private _broadcastDocumentEvent;
+    private _warnedUnscoped;
     /** Single-owner idempotent seed. Caller supplies a schema-validated binary Yjs document, never Markdown reconstruction. */
     seedDocument(clientId: string, input: {
         channel: string;

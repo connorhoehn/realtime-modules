@@ -25,6 +25,7 @@
 // clients composing channel names) can share it.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DM_CHANNEL_NAME_MAX_LENGTH = exports.DM_GROUP_CHANNEL_PREFIX = exports.DM_CHANNEL_PREFIX = void 0;
+exports.dmChannelKind = dmChannelKind;
 exports.isDmChatChannel = isDmChatChannel;
 exports.dmChatChannelFor = dmChatChannelFor;
 exports.dmChannelMembers = dmChannelMembers;
@@ -42,14 +43,38 @@ exports.DM_CHANNEL_NAME_MAX_LENGTH = 100;
 /** Hex chars of the sha1 kept in the hashed group-channel name. */
 const DM_GROUP_HASH_LENGTH = 24;
 /**
- * True for BOTH dm channel forms — member-addressed (`chat:dm:...`) and
- * hashed group (`chat:dmg:...`). Note the prefixes are disjoint:
- * `chat:dmg:x` does not start with `chat:dm:` (the 8th char is `g`, not
- * `:`), so the two startsWith checks never shadow each other.
+ * The first `dm` / `dmg` segment of a channel name that is not its last
+ * segment, and everything after it. 0.146.0: a DM is recognised by that
+ * segment wherever it sits — `chat:dm:a:b`, a tenant-prefixed
+ * `chat:acme:dm:a:b` or `acme:dm:a:b`, `chat:dmg:<hash>`,
+ * `chat:acme:dmg:<hash>` — the same rule `lobbyConversationKind` applies to
+ * call lobbies. Before, only the bare `chat:dm:` / `chat:dmg:` prefixes were
+ * DMs, so a tenant-prefixed DM was an open channel anyone could join.
+ */
+function dmSegment(channel) {
+    if (typeof channel !== 'string' || channel.length === 0)
+        return null;
+    const segments = channel.split(':');
+    for (let i = 0; i < segments.length - 1; i++) {
+        const seg = segments[i];
+        if (seg === 'dm' || seg === 'dmg')
+            return { kind: seg, rest: segments.slice(i + 1) };
+    }
+    return null;
+}
+/**
+ * Which DM form a channel is: `'dm'` (members in the name), `'dmg'` (hashed
+ * group; members not derivable), or null for a channel that is not a DM.
+ */
+function dmChannelKind(channel) {
+    return dmSegment(channel)?.kind ?? null;
+}
+/**
+ * True for BOTH dm channel forms — member-addressed (`…:dm:a:b`) and hashed
+ * group (`…:dmg:<hash>`), with or without a tenant prefix (0.146.0).
  */
 function isDmChatChannel(channel) {
-    return (typeof channel === 'string' &&
-        (channel.startsWith(exports.DM_CHANNEL_PREFIX) || channel.startsWith(exports.DM_GROUP_CHANNEL_PREFIX)));
+    return dmSegment(channel) !== null;
 }
 /**
  * Canonical dm chat channel for a participant set.
@@ -86,7 +111,8 @@ function dmChatChannelFor(userIds) {
     return exports.DM_GROUP_CHANNEL_PREFIX + hash;
 }
 /**
- * Parse the member userIds out of a member-addressed dm channel name.
+ * Parse the member userIds out of a member-addressed dm channel name (any
+ * tenant prefix before the `dm` segment is skipped, 0.146.0).
  * Returns the ids in their canonical (sorted) on-wire order.
  *
  * Returns null when membership is NOT derivable from the name:
@@ -95,14 +121,11 @@ function dmChatChannelFor(userIds) {
  *   - malformed member-addressed names (empty id segments).
  */
 function dmChannelMembers(channel) {
-    if (typeof channel !== 'string' || !channel.startsWith(exports.DM_CHANNEL_PREFIX)) {
+    const found = dmSegment(channel);
+    if (!found || found.kind !== 'dm')
         return null;
-    }
-    const rest = channel.slice(exports.DM_CHANNEL_PREFIX.length);
-    if (rest.length === 0)
-        return null;
-    const members = rest.split(':');
-    if (members.some((m) => m.length === 0))
+    const members = found.rest;
+    if (members.length === 0 || members.some((m) => m.length === 0))
         return null;
     return members;
 }

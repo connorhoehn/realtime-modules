@@ -52,7 +52,7 @@ import {
     type ChatReadReceipt,
     type ChatReadReceiptStore,
 } from './ChatReadReceiptStore';
-import { isDmChatChannel, dmChannelMembers } from './dmChannels';
+import { isDmChatChannel, dmChannelMembers, dmChannelKind } from './dmChannels';
 import { defaultAttachmentUrlFor, normalizeChatAttachments } from './attachments';
 import {
     historyFloorFor,
@@ -280,19 +280,28 @@ export interface ChatServiceOpts {
     identityResolver?: (clientId: string) => { userId?: string; displayName?: string; avatarUrl?: string } | null | undefined;
 
     /**
-     * Enforce membership on member-addressed dm channels
-     * (`chat:dm:<sorted userIds>` — see src/chat/dmChannels.ts). On `join`
-     * and `send` to a dm channel whose members are parseable from the
-     * name, the sender's resolved userId must be in the member list;
-     * otherwise the request is rejected with a CHAT_DM_FORBIDDEN error
-     * frame. FAIL-CLOSED: no resolvable identity (no resolver, resolver
-     * returned null/no userId, resolver threw) ⇒ reject. Hashed group
-     * channels (`chat:dmg:`) are not parseable and are NOT enforced here
-     * (gate those via `authz`). Non-dm channels are never affected.
+     * Enforce membership on dm channels — any channel with a `dm` or `dmg`
+     * segment (`chat:dm:a:b`, `chat:acme:dm:a:b`, `chat:dmg:<hash>`; see
+     * src/chat/dmChannels.ts). Every action on one (join, send, history,
+     * edit, …) requires the sender's resolved userId to be a member;
+     * otherwise it is rejected with a CHAT_DM_FORBIDDEN error frame.
+     * FAIL-CLOSED: no resolvable identity ⇒ reject; a hashed `dmg` channel
+     * whose members `resolveDmGroupMembers` does not return ⇒ reject; a
+     * malformed dm name ⇒ reject. Non-dm channels are never affected.
      *
-     * Default: true when `identityResolver` is provided, else false.
+     * Default true since 0.146.0 (before: true only with an
+     * `identityResolver`, and only for `chat:dm:` names). Pass false only
+     * when an `authz` hook already gates dm channels.
      */
     enforceDmMembership?: boolean;
+
+    /**
+     * 0.146.0: the members of a hashed group dm channel (`…:dmg:<hash>`),
+     * whose name cannot reveal them — from the host's conversations index.
+     * Without it, or when it returns null, every action on a `dmg` channel is
+     * refused.
+     */
+    resolveDmGroupMembers?: (channel: string) => string[] | null | undefined;
 
     /**
      * Map the connection's auth context (the gateway `auth` result, read
@@ -522,6 +531,7 @@ export class ChatService {
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
+    readonly resolveDmGroupMembers: ((channel: string) => string[] | null | undefined) | null;
     onDmMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
     onChannelMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
     onMessageChanged: ((info: { channel: string; kind: 'edited' | 'deleted'; message: ChatMessage }) => void) | null;
@@ -571,9 +581,9 @@ export class ChatService {
         this.resolveSender = opts.resolveSender ?? null;
         this.trustFrameSender = opts.trustFrameSender === true;
         this.attachmentUrlFor = opts.attachmentUrlFor ?? defaultAttachmentUrlFor;
-        // DM enforcement defaults ON exactly when an identity source exists;
-        // consumers can force it either way explicitly.
-        this.enforceDmMembership = opts.enforceDmMembership ?? this.identityResolver != null;
+        // DM enforcement is ON unless switched off explicitly (0.146.0).
+        this.enforceDmMembership = opts.enforceDmMembership ?? true;
+        this.resolveDmGroupMembers = opts.resolveDmGroupMembers ?? null;
         this.onDmMessage = opts.onDmMessage ?? null;
         this.onChannelMessage = opts.onChannelMessage ?? null;
         this.onMessageChanged = opts.onMessageChanged ?? null;
@@ -2349,11 +2359,22 @@ export class ChatService {
         if (!this.enforceDmMembership) return true;
         if (!isDmChatChannel(channel)) return true;
 
-        const members = dmChannelMembers(channel);
-        if (!members) return true; // chat:dmg: / malformed — membership not derivable here
+        // Hashed groups name no members: the host's index must, or nobody is
+        // let in (0.146.0 — they used to be open to anyone). A malformed
+        // member-addressed name is refused the same way.
+        let members = dmChannelMembers(channel);
+        if (!members && dmChannelKind(channel) === 'dmg' && this.resolveDmGroupMembers) {
+            try {
+                const resolved = this.resolveDmGroupMembers(channel);
+                members = Array.isArray(resolved) ? resolved.filter((u) => typeof u === 'string' && u.length > 0) : null;
+            } catch (err) {
+                this.logger.error(`resolveDmGroupMembers threw for ${channel}; refusing`, err);
+                members = null;
+            }
+        }
 
         const userId = identity?.userId;
-        if (!userId || !members.includes(userId)) {
+        if (!members || !userId || !members.includes(userId)) {
             this.sendError(
                 clientId,
                 'You are not a member of this direct-message channel',

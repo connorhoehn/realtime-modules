@@ -63,6 +63,7 @@ const AwarenessLedger_1 = __importDefault(require("./AwarenessLedger"));
 const DocumentPresenceService_1 = __importDefault(require("./DocumentPresenceService"));
 const IdleEvictionManager_1 = __importDefault(require("./IdleEvictionManager"));
 const config = __importStar(require("./config"));
+const channelAccess_1 = require("../server-ws/channelAccess");
 // ---- Inlined error-code helpers (gateway/utils replacement) ---------------
 const ErrorCodes = {
     SERVICE_INTERNAL_ERROR: 'SERVICE_INTERNAL_ERROR',
@@ -71,6 +72,10 @@ const ErrorCodes = {
 function createErrorResponse(code, message, context = {}) {
     return { error: { code, message, ...context } };
 }
+/** Actions that act on `documentId` (and require it). */
+const DOCUMENT_ID_ACTIONS = new Set(['deleteDocument', 'updateDocumentMeta', 'deduplicateSections']);
+/** Actions that act on `channel` (a `documentId` alone names `doc:<id>`). */
+const CHANNEL_ACTIONS = new Set(['listSnapshots', 'getSnapshotAtVersion', 'restoreSnapshot', 'clearDocument', 'saveVersion']);
 class CRDTService {
     messageRouter;
     logger;
@@ -93,11 +98,16 @@ class CRDTService {
     seedOperations = new Map();
     _onDocumentCreated;
     constructor(opts) {
-        const { messageRouter, snapshotStore, metadataStore, hotCache, logger, metricsCollector, authz, onDocumentCreated, } = opts;
+        const { messageRouter, snapshotStore, metadataStore, hotCache, logger, metricsCollector, authz, onDocumentCreated, insecureAllowAll, activityChannelFor, } = opts;
+        // 0.146.0: fail closed. A document service with no authz hook let any
+        // connection read and write any document.
+        if (typeof authz !== 'function' && insecureAllowAll !== true) {
+            throw new Error('CRDTService: an authz hook is required (or insecureAllowAll: true for a single-user demo)');
+        }
         this.messageRouter = messageRouter;
         this.logger = logger;
         this.metricsCollector = metricsCollector || null;
-        this._authz = authz || (() => true);
+        this._authz = typeof authz === 'function' ? authz : (() => true);
         this._onDocumentCreated = onDocumentCreated ?? null;
         // ---------------------------------------------------------------
         // Core state — stays in orchestrator (handlers need direct access)
@@ -131,6 +141,7 @@ class CRDTService {
             metadataStore,
             logger: this.logger,
             messageRouter: this.messageRouter,
+            activityChannelFor: activityChannelFor ?? null,
         });
         this.snapshotManager = new SnapshotManager_1.default({
             snapshotStore,
@@ -141,6 +152,9 @@ class CRDTService {
         this.awarenessCoalescer = new AwarenessCoalescer_1.default(this.messageRouter, this.logger);
         this.awarenessLedger = new AwarenessLedger_1.default();
         this.presenceService = new DocumentPresenceService_1.default(this.messageRouter, this.logger);
+        // Each recipient of a `documents:presence` push sees only documents it
+        // may read (0.146.0); before, every connection saw every document.
+        this.presenceService.setReadableFilter((clientId, channel) => this.authorize(clientId, channel, 'read', false));
         this.evictionManager = new IdleEvictionManager_1.default(this.logger, config);
         // Eviction callback: when the eviction timer fires, flush snapshot + destroy Y.Doc
         this._evictionCallback = async (channel) => {
@@ -286,12 +300,50 @@ class CRDTService {
             this.logger.error(`onDocumentCreated hook threw for ${doc?.id}:`, err);
         }
     }
+    /**
+     * The document hook, then the router's channel check (0.146.0): a read
+     * asks `subscribe`, every other action `publish`. A throwing hook refuses.
+     * `report` false asks silently (filters, recipient checks).
+     */
     async authorize(clientId, channel, action, report = true) {
-        const allowed = await this._authz(clientId, channel, this, action);
-        if (!allowed && report)
-            this.sendError(clientId, 'Document operation denied');
-        return allowed === true;
+        let allowed = false;
+        try {
+            allowed = (await this._authz(clientId, channel, this, action)) === true;
+        }
+        catch (err) {
+            this.logger.warn?.(`[crdt] authz threw for ${action} ${channel}; refusing`, err);
+        }
+        if (!allowed) {
+            if (report)
+                this.sendError(clientId, 'Document operation denied');
+            return false;
+        }
+        if (!channel)
+            return true;
+        const kind = action === 'read' ? 'subscribe' : 'publish';
+        return (0, channelAccess_1.routerPermits)(this.messageRouter, kind, clientId, channel, { service: 'crdt', silent: !report });
     }
+    /**
+     * Announce a document lifecycle event to the connections that may read
+     * that document (0.146.0) — never to every socket. A router that cannot
+     * scope a broadcast gets nothing sent (fail closed).
+     */
+    async _broadcastDocumentEvent(documentId, frame) {
+        const router = this.messageRouter;
+        if (!router?.supportsScopedBroadcast || typeof router.broadcastToAll !== 'function') {
+            if (!this._warnedUnscoped) {
+                this._warnedUnscoped = true;
+                this.logger.warn?.('[crdt] router cannot scope a broadcast; document lifecycle frames are not sent');
+            }
+            return;
+        }
+        const channel = `doc:${documentId}`;
+        await router.broadcastToAll(frame, undefined, {
+            readersOf: channel,
+            perRecipient: async (clientId) => (await this.authorize(clientId, channel, 'read', false)) ? frame : null,
+        });
+    }
+    _warnedUnscoped = false;
     /** Single-owner idempotent seed. Caller supplies a schema-validated binary Yjs document, never Markdown reconstruction. */
     async seedDocument(clientId, input) {
         const { channel, snapshot, sourceRevision } = input;
@@ -371,9 +423,32 @@ class CRDTService {
                 clearDocument: 'restore', saveVersion: 'save', createDocument: 'create',
                 deleteDocument: 'delete', updateDocumentMeta: 'metadata', deduplicateSections: 'update', seedDocument: 'seed',
             };
-            const policyAction = actionPolicy[action];
-            if (policyAction && !await this.authorize(clientId, data.documentId ? `doc:${data.documentId}` : (data.channel || ''), policyAction))
+            // 0.146.0: an action is authorised against the document it acts
+            // on. A frame naming one document in `documentId` and another in
+            // `channel` used to be judged on the first and run on the second.
+            const documentId = typeof data?.documentId === 'string' && data.documentId ? data.documentId : null;
+            const frameChannel = typeof data?.channel === 'string' && data.channel ? data.channel : null;
+            if (documentId && frameChannel && frameChannel !== `doc:${documentId}`) {
+                this.sendError(clientId, 'documentId and channel name different documents');
                 return;
+            }
+            const policyAction = actionPolicy[action];
+            if (policyAction) {
+                const target = documentId ? `doc:${documentId}` : (frameChannel ?? '');
+                if (DOCUMENT_ID_ACTIONS.has(action) && !documentId) {
+                    this.sendError(clientId, 'documentId is required');
+                    return;
+                }
+                if (CHANNEL_ACTIONS.has(action) && !target) {
+                    this.sendError(clientId, 'Channel name is required');
+                    return;
+                }
+                if (!await this.authorize(clientId, target, policyAction))
+                    return;
+                // Act on exactly the channel that was authorised.
+                if (CHANNEL_ACTIONS.has(action))
+                    data = { ...data, channel: target };
+            }
             switch (action) {
                 case 'seedDocument': {
                     const result = await this.seedDocument(clientId, data);
@@ -460,6 +535,10 @@ class CRDTService {
                     return;
                 }
                 case 'createDocument': {
+                    // Filing it in a conversation writes to that conversation.
+                    const bindTo = typeof data.meta?.channel === 'string' && data.meta.channel ? data.meta.channel : null;
+                    if (bindTo && !await (0, channelAccess_1.routerPermits)(this.messageRouter, 'publish', clientId, bindTo, { service: 'crdt' }))
+                        return;
                     const clientData = this.messageRouter.getClientData ? this.messageRouter.getClientData(clientId) : null;
                     const userContext = clientData?.userContext || {};
                     const doc = await this.metadataService.handleCreateDocument({
@@ -467,7 +546,7 @@ class CRDTService {
                         createdBy: userContext.userId || clientId,
                         createdByName: userContext.displayName || userContext.email || null,
                     });
-                    await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentCreated', document: doc });
+                    await this._broadcastDocumentEvent(doc.id, { type: 'crdt', action: 'documentCreated', document: doc });
                     // Announce it in the conversation it was created in, if
                     // any. After the broadcast: the document exists and every
                     // client already knows, so a slow or failing announcement
@@ -494,12 +573,12 @@ class CRDTService {
                         this.pendingRemoteUpdates.delete(channel);
                         this.snapshotManager.cancelDebouncedSnapshot(channel);
                     }
-                    await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentDeleted', documentId: docId });
+                    await this._broadcastDocumentEvent(docId, { type: 'crdt', action: 'documentDeleted', documentId: docId });
                     return;
                 }
                 case 'updateDocumentMeta': {
                     const updated = await this.metadataService.handleUpdateDocumentMeta(data.documentId, data.meta);
-                    await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentMetaUpdated', documentId: data.documentId, meta: updated });
+                    await this._broadcastDocumentEvent(data.documentId, { type: 'crdt', action: 'documentMetaUpdated', documentId: data.documentId, meta: updated });
                     return;
                 }
                 case 'deduplicateSections': {
@@ -639,7 +718,7 @@ class CRDTService {
                 this.snapshotManager.cancelDebouncedSnapshot(channel);
                 state.ydoc.destroy();
             }
-            await this.messageRouter.broadcastToAll({ type: 'crdt', action: 'documentCreated', document: doc });
+            await this._broadcastDocumentEvent(doc.id, { type: 'crdt', action: 'documentCreated', document: doc });
             this.sendToClient(clientId, { type: 'crdt', action: 'documentCopied', requestId, sourceId, document: doc });
         }
         catch (error) {

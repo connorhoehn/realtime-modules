@@ -216,10 +216,15 @@ class CallService {
      *  the time `onClientDisconnect` runs, so the departure would be
      *  anonymous (`user-status {userId: null}`, no name in `status`). */
     participantUserIds = new Map();
-    /** See CallConfig.allowUntargetedInvites. */
-    allowUntargetedInvites = true;
-    /** See CallConfig.refuseEmptyTargets. */
-    refuseEmptyTargets = false;
+    /** 0.146.0: connections present in each `room:` lobby that has no
+     *  registered call (walk-ins), lobby → clientId → userId. */
+    roomLobbyPresence = new Map();
+    /** See CallConfig.allowUntargetedInvites (default false since 0.146.0). */
+    allowUntargetedInvites = false;
+    /** See CallConfig.refuseEmptyTargets (default !allowUntargetedInvites since 0.146.0). */
+    refuseEmptyTargets = true;
+    /** See CallConfig.resolveDmGroupMembers. */
+    resolveDmGroupMembers = null;
     onSweepSkipped = null;
     _withSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
@@ -274,10 +279,9 @@ class CallService {
         this.callEndedHook = config.onCallEnded ?? null;
         this.callStartedHook = config.onCallStarted ?? null;
         this.callMissedHook = config.onCallMissed ?? null;
-        if (config.allowUntargetedInvites === false)
-            this.allowUntargetedInvites = false;
-        if (config.refuseEmptyTargets === true)
-            this.refuseEmptyTargets = true;
+        this.allowUntargetedInvites = config.allowUntargetedInvites === true;
+        this.refuseEmptyTargets = config.refuseEmptyTargets ?? !this.allowUntargetedInvites;
+        this.resolveDmGroupMembers = config.resolveDmGroupMembers ?? null;
         this.inviteSweepTimer = setInterval(() => {
             // PR-W2.4 — leader gate.  When ownership is enabled and a
             // peer node owns the `__leader:call-sweep` sentinel, that
@@ -1156,6 +1160,12 @@ class CallService {
             this.sendError(clientId, 'lobbyName is required on status');
             return;
         }
+        // A DM's calls are its members' business (0.146.0): `status` used to
+        // hand any connection the participants of any lobby.
+        if (!await this.mayUseDmLobby(clientId, lobbyName)) {
+            this.sendError(clientId, 'Not a member of this conversation', { code: 'not-a-member', action: 'status', lobbyName });
+            return;
+        }
         await this.sendToClients([clientId], {
             type: 'call',
             action: 'active-call',
@@ -1419,9 +1429,10 @@ class CallService {
             return;
         }
         const channel = (0, lobbyChannel_1.callLobbyChannel)(lobbyName);
-        let allowed = true;
+        let allowed = await this.mayUseDmLobby(clientId, lobbyName);
         try {
-            if (this.messageRouter.subscribeToChannel) {
+            if (!allowed) { /* not a member of the DM: refused below */ }
+            else if (this.messageRouter.subscribeToChannel) {
                 allowed = (await this.messageRouter.subscribeToChannel(clientId, channel)) !== false;
             }
             else if (this.messageRouter.checkChannel) {
@@ -1666,6 +1677,34 @@ class CallService {
                 docRecipients = (await this.docCallMemberClientIds(callId)).filter((c) => c !== clientId);
             }
         }
+        // 0.146.0: a signal on a call (every verb but invite) goes only to the
+        // call's members, and only a member may send one. Before, a signal
+        // with no targets went to every socket in every tenant, and anyone
+        // could send one into any call. Document calls keep their own
+        // bookkeeping above.
+        let signalMembers = null;
+        if (action !== 'invite' && !docMeta && !docRecipients) {
+            signalMembers = await this.callMembers(callId);
+            const senderUserId = await this.resolveActorUserId(clientId);
+            if (!signalMembers && typeof lobbyName === 'string' && (0, lobbyChannel_1.lobbyConversationKind)(lobbyName) === 'room') {
+                signalMembers = this.roomLobbySignal(lobbyName, clientId, senderUserId, action, payload);
+            }
+            let isMember = !!signalMembers && (signalMembers.clientIds.has(clientId)
+                || (!!senderUserId && signalMembers.userIds.has(senderUserId)));
+            // `accepted` on a call nobody was rung for (a page huddle found
+            // through `status`) is how a newcomer joins it, as `join` is. Open
+            // to anyone the lobby admits — DM lobbies only to their members.
+            if (!isMember && action === 'accepted' && signalMembers && callId
+                && this.isOpenHuddle(callId, signalMembers)
+                && typeof lobbyName === 'string' && lobbyName && await this.mayUseDmLobby(clientId, lobbyName)) {
+                isMember = true;
+            }
+            if (!isMember) {
+                this.logger.warn(`[CallService] refused ${action} from ${clientId}: not in call ${callId ?? '-'}`);
+                this.sendError(clientId, 'Not in this call', { code: 'not-in-call', action, callId, lobbyName });
+                return;
+            }
+        }
         // A dropped socket coming back. useConversationCall re-announces on
         // every reconnect (`status`, then `participant-state`), never
         // `accepted` again, so without this the fresh socket was never on the
@@ -1694,7 +1733,8 @@ class CallService {
             const slug = lobbyName.slice('room:'.length);
             if (slug) {
                 const state = (0, types_1.isParticipantStateBroadcast)(payload) ? payload : {};
-                const userId = typeof state.callerId === 'string' ? state.callerId : '';
+                // 0.146.0: who joined the room is the socket's user, never the frame's.
+                const userId = await this.resolveActorUserId(clientId);
                 const participantId = typeof state.participantId === 'string' ? state.participantId : '';
                 const displayName = typeof state.displayName === 'string'
                     ? state.displayName
@@ -2221,8 +2261,10 @@ class CallService {
             return;
         }
         const fanoutTargets = docInvite ? docInvite.ringTargets : targetUserIds;
-        if (fanoutTargets.length > 0) {
-            const recipients = await this.findClientsForUsers(fanoutTargets, /* excludeClientId */ clientId);
+        if (signalMembers || fanoutTargets.length > 0) {
+            const recipients = signalMembers
+                ? await this.memberRecipients(signalMembers, targetUserIds, clientId)
+                : await this.findClientsForUsers(fanoutTargets, /* excludeClientId */ clientId);
             const planned = recipients.length;
             // Promise.allSettled — never short-circuit on a single send failure.
             // sendToClient itself returns false on a closed socket and may throw
@@ -2511,6 +2553,10 @@ class CallService {
             this.sendError(clientId, 'join needs an authenticated user', { code: 'unauthenticated', action: 'join', callId: askedCallId, lobbyName });
             return;
         }
+        if (!await this.mayUseDmLobby(clientId, lobbyName)) {
+            this.sendError(clientId, 'Not a member of this conversation', { code: 'not-a-member', action: 'join', callId: askedCallId, lobbyName });
+            return;
+        }
         // One huddle per lobby: a client whose status query predates the first
         // join minted its own call id. Seat it in the lobby's live page huddle
         // instead of registering a second call, and tell it the real id.
@@ -2740,6 +2786,79 @@ class CallService {
      * so this helper is async too. Cross-node routing happens transparently
      * inside `messageRouter.sendToClient(clientId, ...)`.
      */
+    /** A call that rang nobody: every user it knows is its caller or someone seated. */
+    isOpenHuddle(callId, members) {
+        const local = this.activeCalls.get(callId);
+        const rung = [
+            ...(local?.originalTargetUserIds ?? []),
+            ...(local?.targetUserIds ?? []),
+            ...(local?.rungUserIds ?? []),
+        ];
+        if (rung.length > 0)
+            return false;
+        // Without a local view, the shared store's targets are in `userIds`
+        // alongside the caller; a call whose only known user is its caller,
+        // or whose users are all seated, rang nobody.
+        const seated = new Set();
+        for (const cid of members.clientIds) {
+            const u = this.participantUserIds.get(cid);
+            if (u)
+                seated.add(u);
+        }
+        if (local?.callerId)
+            seated.add(local.callerId);
+        for (const u of local?.seatedUserIds ?? [])
+            seated.add(u);
+        if (!local)
+            return members.userIds.size <= 1;
+        return [...members.userIds].every((u) => seated.has(u));
+    }
+    /**
+     * 0.146.0: a room walk-in call has no invite to register it — people in
+     * a `room:` lobby announce themselves with `participant-state`. That
+     * announcement enters the room (the lobby itself was already judged by
+     * `authorize` / `calls({ lobbyGuard })`); a leaving verb leaves it. The
+     * room's present connections are who its signals reach, and only they
+     * may send one. Returns the members as they were before a departure, or
+     * null when the sender is not present.
+     */
+    roomLobbySignal(lobby, clientId, userId, action, payload) {
+        const status = payload.status;
+        const leaving = action === 'ended' || action === 'cancelled' || action === 'declined'
+            || ((action === 'user-status' || action === 'participant-state') && status === 'left');
+        let present = this.roomLobbyPresence.get(lobby);
+        if (!present?.has(clientId)) {
+            if (action !== 'participant-state' || leaving)
+                return null;
+            if (!present) {
+                present = new Map();
+                this.roomLobbyPresence.set(lobby, present);
+            }
+            present.set(clientId, userId);
+        }
+        const members = { clientIds: new Set(present.keys()), userIds: new Set([...present.values()].filter(Boolean)) };
+        if (leaving) {
+            present.delete(clientId);
+            if (present.size === 0)
+                this.roomLobbyPresence.delete(lobby);
+        }
+        return members;
+    }
+    /**
+     * 0.146.0: the connections a signal on a call reaches — the members'
+     * sockets (named `targets` narrowed to members, else all of them), never
+     * the sender's own.
+     */
+    async memberRecipients(members, targets, excludeClientId) {
+        const users = targets.length > 0 ? targets.filter((u) => members.userIds.has(u)) : Array.from(members.userIds);
+        const out = new Set(users.length > 0 ? await this.findClientsForUsers(users, excludeClientId) : []);
+        if (targets.length === 0) {
+            for (const cid of members.clientIds)
+                if (cid !== excludeClientId)
+                    out.add(cid);
+        }
+        return Array.from(out);
+    }
     async findClientsForUsers(userIds, excludeClientId) {
         if (!this.messageRouter || typeof this.messageRouter.getClientsByUserId !== 'function') {
             return [];
@@ -2799,6 +2918,10 @@ class CallService {
      */
     async handleDisconnect(clientId) {
         this.dropLobbyWatcher(clientId);
+        for (const [lobby, present] of this.roomLobbyPresence) {
+            if (present.delete(clientId) && present.size === 0)
+                this.roomLobbyPresence.delete(lobby);
+        }
         if (this.messageRouter.isReady?.() === false) {
             // Retirement after transport/lease loss cannot end a shared call
             // or revoke the user's durable seat/history. A new owner proves
@@ -3382,22 +3505,80 @@ class CallService {
     // -----------------------------------------------------------------
     // Document calls (2026-09-24)
     // -----------------------------------------------------------------
-    /** The authenticated user behind a client, falling back to what the
-     *  payload claims (SKIP_AUTH dev setups have no router identity). */
-    async resolveActorUserId(clientId, payload, allowCallerId) {
+    /** The authenticated user behind a client, or '' when the connection has
+     *  none. 0.146.0: never what the payload claims — a document call's host
+     *  powers used to fall back to `payload.userId`, so an unauthenticated
+     *  socket could name itself the host. The parameters after `clientId` are
+     *  kept for call-site compatibility and ignored. */
+    async resolveActorUserId(clientId, _payload, _allowCallerId) {
         if (typeof this.messageRouter.getUserIdForClient === 'function') {
             try {
                 const uid = await Promise.resolve(this.messageRouter.getUserIdForClient(clientId));
                 if (uid)
                     return uid;
             }
-            catch { /* fall through */ }
+            catch { /* no identity */ }
         }
-        if (typeof payload.userId === 'string' && payload.userId)
-            return payload.userId;
-        if (allowCallerId && typeof payload.callerId === 'string')
-            return payload.callerId;
         return '';
+    }
+    /**
+     * 0.146.0: may this connection look at or enter `lobby`? Anyone for a
+     * lobby that is not a DM; for a DM (`…:dm:a:b`, `…:dmg:<hash>`) only an
+     * authenticated member. A hashed group whose members the host cannot
+     * resolve (`resolveDmGroupMembers`) is closed to everyone.
+     */
+    async mayUseDmLobby(clientId, lobby) {
+        if ((0, lobbyChannel_1.lobbyConversationKind)(lobby) !== 'dm')
+            return true;
+        const userId = await this.resolveActorUserId(clientId);
+        if (!userId)
+            return false;
+        const resolveGroup = this.resolveDmGroupMembers;
+        const members = (0, lobbyChannel_1.dmLobbyMembers)(lobby, resolveGroup ? { resolveGroup } : {});
+        return !!members && members.includes(userId);
+    }
+    /**
+     * 0.146.0: who a call's signals may reach, and so who may send them: the
+     * connections seated in it and the users it involves (caller, everyone
+     * invited or rung, everyone seated). Null for a call this node and the
+     * shared store do not know.
+     */
+    async callMembers(callId) {
+        if (!callId)
+            return null;
+        const local = this.activeCalls.get(callId);
+        let view = null;
+        if (this.stateStore) {
+            try {
+                view = await this.stateStore.getCall(callId);
+            }
+            catch { /* local view stands */ }
+        }
+        if (!local && !view)
+            return null;
+        const clientIds = new Set();
+        const userIds = new Set();
+        const addUser = (u) => { if (typeof u === 'string' && u)
+            userIds.add(u); };
+        for (const cid of local?.participantClientIds ?? [])
+            clientIds.add(cid);
+        for (const cid of view?.participantClientIds ?? [])
+            clientIds.add(cid);
+        addUser(local?.callerId);
+        addUser(view?.callerId);
+        for (const u of local?.originalTargetUserIds ?? [])
+            addUser(u);
+        for (const u of local?.targetUserIds ?? [])
+            addUser(u);
+        for (const u of local?.rungUserIds ?? [])
+            addUser(u);
+        for (const u of local?.seatedUserIds ?? [])
+            addUser(u);
+        for (const u of view?.targetUserIds ?? [])
+            addUser(u);
+        for (const cid of clientIds)
+            addUser(this.participantUserIds.get(cid));
+        return { clientIds, userIds };
     }
     async getDocumentMeta(callId) {
         if (!this.metaStore || !callId)

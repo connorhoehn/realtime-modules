@@ -6,6 +6,8 @@ const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest
 
 function setup(opts: { authz?: (clientId: string, channel: string, svc: any, action: string) => boolean; userContext?: any } = {}) {
     const router: any = {
+        // 0.146.0: document lifecycle frames go only through a router that scopes broadcasts.
+        supportsScopedBroadcast: true,
         sendToChannel: jest.fn(), broadcastToAll: jest.fn(), onRemoteChannelMessage: jest.fn(),
         subscribeToChannel: jest.fn(), unsubscribeFromChannel: jest.fn(), sendToClient: jest.fn(),
         getClientData: () => ({ userContext: 'userContext' in opts ? opts.userContext : { userId: 'copier', displayName: 'Copier' } }),
@@ -44,7 +46,8 @@ describe('copyDocument', () => {
             const doc = reply.document;
             expect(doc.id).not.toBe(src.id);
             expect(doc).toMatchObject({ title: 'Release plan (copy)', type: 'page', icon: 'P', description: 'the plan', createdBy: 'copier', createdByName: 'Copier' });
-            expect(router.broadcastToAll).toHaveBeenCalledWith({ type: 'crdt', action: 'documentCreated', document: doc });
+            expect(router.broadcastToAll).toHaveBeenCalledWith({ type: 'crdt', action: 'documentCreated', document: doc }, undefined,
+                expect.objectContaining({ readersOf: `doc:${doc.id}` }));
             // The new channel was claimed for the write and released afterwards.
             expect(router.subscribeToChannel).toHaveBeenCalledWith('conn', `doc:${doc.id}`);
             expect(router.unsubscribeFromChannel).toHaveBeenCalledWith('conn', `doc:${doc.id}`);

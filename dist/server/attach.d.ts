@@ -164,11 +164,22 @@ export declare function fileUploads(opts?: {
     maxBytes?: number;
     authz?: import('../fileupload/FileUploadService').FileUploadServiceOptions['authz'];
 }): RealtimeFeature;
+/**
+ * Collaborative documents (the `crdt` wire service). 0.146.0: `authz` is
+ * required — attaching without it throws at startup — unless
+ * `insecureAllowAll` says this is a single-user demo. Every action also asks
+ * the router's channel check (`authorize`): `subscribe` for reads, `publish`
+ * for writes.
+ */
 export declare function collabDocs(opts?: {
     snapshotStore?: import('./stores/SnapshotStore').SnapshotStore;
     metadataStore?: import('./stores/MetadataStore').MetadataStore;
     hotCache?: import('./stores/SnapshotStore').HotCache | null;
     authz?: import('./CRDTService').CRDTServiceOpts['authz'];
+    /** 0.146.0: start with no `authz` (single-user demos only). */
+    insecureAllowAll?: boolean;
+    /** 0.146.0: where `doc.created` activity goes; default nowhere. */
+    activityChannelFor?: import('./CRDTService').CRDTServiceOpts['activityChannelFor'];
 }): RealtimeFeature;
 export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services' | 'server'> {
     /** The capabilities to attach. Built-ins and defineFeature() results mix freely. */
@@ -231,6 +242,12 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      * hooks with `withAuthorityCache` yourself).
      */
     authorityCache?: AuthorityCacheOptions;
+    /**
+     * 0.146.0: the most channels one socket may hold on the local router; a
+     * subscribe past it is refused with `CHANNEL_LIMIT`. Default
+     * `DEFAULT_MAX_CHANNELS_PER_SOCKET` (256). Ignored with a custom `router`.
+     */
+    maxChannelsPerSocket?: number;
 }
 /**
  * 0.119: the services the built-in features register, typed by name. Present

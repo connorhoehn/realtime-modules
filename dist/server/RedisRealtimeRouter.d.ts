@@ -225,7 +225,11 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
         scope?: AuthorityScope;
     }): Promise<void>;
     private sendToChannelScoped;
-    broadcastToAll(message: unknown, excludeClientId?: string): Promise<void>;
+    readonly supportsScopedBroadcast = true;
+    /** 0.146.0: `readersOf` travels to peers, which apply their own `authorize`;
+     *  `perRecipient` runs here only, so with it and no `readersOf` nothing is
+     *  sent to peers (it cannot be judged there). */
+    broadcastToAll(message: unknown, excludeClientId?: string, opts?: import('./router').ScopedBroadcastOptions): Promise<void>;
     private receive;
     private deliver;
     /** P6, origin side: the operation number a peer frame carries, opted in. */

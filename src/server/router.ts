@@ -19,7 +19,7 @@
 
 import type { WsHandlerHandle, WsAuthContext } from '../server-ws/types';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
-import { scopeFor, sharePublishProof, publishProofStartedAt, type AuthorityScope } from '../server-ws/authorityScope';
+import { createAuthorityScope, scopeFor, sharePublishProof, publishProofStartedAt, type AuthorityScope } from '../server-ws/authorityScope';
 
 /**
  * Logger contract shared by the router and every feature. All four methods
@@ -247,13 +247,40 @@ export interface RealtimeRouter {
     isClientLive?(clientId: string): boolean | null;
     /** Optional authoritative cluster liveness for call recovery/sweeps. */
     isClientAlive?(clientId: string): boolean | Promise<boolean>;
-    /** Broadcast to every connected client (call's no-target fallback). */
-    broadcastToAll?(message: unknown, excludeClientId?: string): Promise<void> | void;
+    /**
+     * Broadcast to every connected client (call's no-target fallback). With
+     * `opts` (0.146.0, routers that set `supportsScopedBroadcast`): see
+     * {@link ScopedBroadcastOptions}.
+     */
+    broadcastToAll?(message: unknown, excludeClientId?: string, opts?: ScopedBroadcastOptions): Promise<void> | void;
+    /**
+     * 0.146.0: true when `broadcastToAll` honours {@link ScopedBroadcastOptions}.
+     * Services that announce per-tenant data (document lifecycle, document
+     * presence) send nothing through a router without it.
+     */
+    readonly supportsScopedBroadcast?: boolean;
     /** Remove a client from all channels (disconnect path). */
     removeClient?(clientId: string): void;
     /** Transport hints some services read. */
     readonly redisAvailable?: boolean;
     readonly nodeId?: string;
+}
+
+/**
+ * 0.146.0: narrowing a `broadcastToAll` to the clients allowed to see it.
+ *
+ * - `readersOf`: deliver only to clients whose `subscribe` check of this
+ *   channel passes (the host's `authorize`, silently — no refusal frame),
+ *   without subscribing them. A cluster router carries it to its peers.
+ * - `perRecipient`: called for each local recipient that passed `readersOf`;
+ *   return the frame to send that client (the same or a narrowed one), or
+ *   null/undefined to skip it. A throw or rejection skips it. It cannot cross
+ *   processes: a cluster router with `perRecipient` and no `readersOf`
+ *   delivers locally only.
+ */
+export interface ScopedBroadcastOptions {
+    readersOf?: string;
+    perRecipient?: (clientId: string, message: unknown) => unknown | Promise<unknown>;
 }
 
 /** Shared by the local and cluster routers: users with a readable subscription to `channel`. */
@@ -311,6 +338,9 @@ function liveScope(scope: AuthorityScope | null | undefined): { scope: Authority
  * is attached lazily (it is created after the services that hold the
  * router), so pre-connection sends are no-ops by design.
  */
+/** Default {@link LocalRealtimeRouter} `maxChannelsPerClient` / attach `maxChannelsPerSocket` (0.146.0). */
+export const DEFAULT_MAX_CHANNELS_PER_SOCKET = 256;
+
 export class LocalRealtimeRouter implements RealtimeRouter {
     /** channel → Set<clientId> */
     private readonly channelMembers = new Map<string, Set<string>>();
@@ -328,6 +358,8 @@ export class LocalRealtimeRouter implements RealtimeRouter {
     private readonly pendingSubscriptions = new Map<string, Map<string, Set<{ cancelled: boolean }>>>();
     /** 0.109 publish proofs (see authorityScope.ts P1-P5); 0 = off. */
     readonly publishProofMaxAgeMs: number;
+    /** 0.146.0: most channels one connection may hold. */
+    readonly maxChannelsPerClient: number;
 
     readonly redisAvailable = false;
     readonly nodeId = 'local';
@@ -347,7 +379,17 @@ export class LocalRealtimeRouter implements RealtimeRouter {
          * check asks `authorize`.
          */
         publishProofMaxAgeMs?: number;
+        /**
+         * 0.146.0: the most channels one connection may hold at once (held
+         * plus admissions in flight). A subscribe past it is refused (false)
+         * and the client is sent `{ type: 'error', code: 'CHANNEL_LIMIT' }`.
+         * Default {@link DEFAULT_MAX_CHANNELS_PER_SOCKET}; `Infinity` disables.
+         */
+        maxChannelsPerClient?: number;
     } = {}) {
+        const maxChannels = opts.maxChannelsPerClient ?? DEFAULT_MAX_CHANNELS_PER_SOCKET;
+        if (!(maxChannels >= 1)) throw new Error('maxChannelsPerClient must be at least 1');
+        this.maxChannelsPerClient = maxChannels;
         const maxAge = opts.publishProofMaxAgeMs ?? 0;
         if (!Number.isFinite(maxAge) || maxAge < 0) throw new Error('publishProofMaxAgeMs must be a non-negative number');
         this.publishProofMaxAgeMs = maxAge;
@@ -434,10 +476,31 @@ export class LocalRealtimeRouter implements RealtimeRouter {
         return this.sendToClient(clientId, message);
     }
 
-    async broadcastToAll(message: unknown, excludeClientId?: string): Promise<void> {
+    readonly supportsScopedBroadcast = true;
+
+    async broadcastToAll(message: unknown, excludeClientId?: string, opts: ScopedBroadcastOptions = {}): Promise<void> {
         if (!this.handleRef) return;
-        await Promise.all(this.handleRef.listClients().filter(clientId => clientId !== excludeClientId)
-            .map(clientId => this.sendToClient(clientId, message)));
+        const { readersOf, perRecipient } = opts;
+        const scope = readersOf ? createAuthorityScope('fanout') : null;
+        try {
+            await Promise.all(this.handleRef.listClients().filter(clientId => clientId !== excludeClientId)
+                .map(async clientId => {
+                    if (!readersOf && !perRecipient) return this.sendToClient(clientId, message);
+                    const context = this.ctxOf(clientId);
+                    if (!context) return false;
+                    try {
+                        if (readersOf && !(await this.allows('subscribe', clientId, readersOf, scope ?? undefined))) return false;
+                        const frame = perRecipient ? await perRecipient(clientId, message) : message;
+                        if (frame == null || this.ctxOf(clientId) !== context) return false;
+                        return this.sendFiltered(clientId, frame, () => this.ctxOf(clientId) === context);
+                    } catch (err) {
+                        this.logger.warn('[realtime] scoped broadcast recipient check failed; skipping', err);
+                        return false;
+                    }
+                }));
+        } finally {
+            scope?.close();
+        }
     }
 
     async sendToChannel(
@@ -616,6 +679,19 @@ export class LocalRealtimeRouter implements RealtimeRouter {
 
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean> {
         // M3: on false, services suppress the local subscription and the ack.
+        if (!this.hasRoomForChannel(clientId, channel)) {
+            this.logger.info(`[realtime] ${clientId} is at its channel limit (${this.maxChannelsPerClient}); refusing ${channel}`);
+            if (!opts?.silent) {
+                const message = `This connection already holds ${this.maxChannelsPerClient} channels`;
+                const timestamp = new Date().toISOString();
+                this.sendToClient(clientId, {
+                    type: 'error', ...(opts?.service ? { service: opts.service } : {}),
+                    code: 'CHANNEL_LIMIT', channel: opts?.clientChannel ?? channel, message,
+                    error: { code: 'CHANNEL_LIMIT', message, timestamp }, timestamp,
+                });
+            }
+            return false;
+        }
         const context = this.ctxOf(clientId);
         const decision = this.checkChannel('subscribe', clientId, channel, opts);
         if (typeof decision === 'boolean') return decision && this.addSubscription(clientId, channel, opts?.scope);
@@ -628,6 +704,17 @@ export class LocalRealtimeRouter implements RealtimeRouter {
             if (!requests.size) channels.delete(channel);
             if (!channels.size) this.pendingSubscriptions.delete(clientId);
         });
+    }
+
+    /** Whether `clientId` may take one more channel (a channel it already holds or is admitting is free). */
+    private hasRoomForChannel(clientId: string, channel: string): boolean {
+        if (!Number.isFinite(this.maxChannelsPerClient)) return true;
+        const held = this.clientChannels.get(clientId);
+        const pending = this.pendingSubscriptions.get(clientId);
+        if (held?.has(channel) || pending?.has(channel)) return true;
+        let count = held?.size ?? 0;
+        for (const ch of pending?.keys() ?? []) if (!held?.has(ch)) count++;
+        return count < this.maxChannelsPerClient;
     }
 
     async isClientSubscribed(clientId: string, channel: string, opts: { scope?: AuthorityScope } = {}): Promise<boolean> {

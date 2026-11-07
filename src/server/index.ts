@@ -106,6 +106,7 @@ export type {
 export {
     LocalRealtimeRouter,
     PLUGIN_SCOPE_RETAIN_MAX_MS,
+    DEFAULT_MAX_CHANNELS_PER_SOCKET,
     liveUsersOnChannel,
 } from './router';
 export { RedisRealtimeRouter } from './RedisRealtimeRouter';
@@ -122,6 +123,7 @@ export type {
     RealtimeRouter,
     RouterLogger,
     ChannelAuthorize,
+    ScopedBroadcastOptions,
     ChannelAuthorizeBatch,
     ClientMessageFilter,
     FeaturePlugin as RealtimeFeaturePlugin,

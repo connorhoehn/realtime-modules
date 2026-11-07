@@ -114,6 +114,8 @@ type Wire = { v: 1; id: string; source: Source; kind: 'direct' | 'receipt' | 'ch
     clientId?: string; generation?: string; delivered?: boolean; channel?: string;
     eventTopic?: string;
     excludeClientId?: string | null; publisher?: { clientId: string; generation: string; proofAt?: number }; message?: unknown;
+    /** 0.146.0: a scoped broadcast's `readersOf` channel. */
+    readersOf?: string;
     /** P6: the origin operation this frame belongs to (its scope id). */
     op?: number };
 const NOOP_LOGGER: RouterLogger = { debug() {}, info() {}, warn() {}, error() {} };
@@ -513,9 +515,16 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             channel, message, excludeClientId, ...(publisherId ? { publisher: { clientId: publisherId, generation: registration!.generation,
                 ...(proofAt !== null ? { proofAt } : {}) } } : {}), ...(op !== undefined ? { op } : {}) });
     }
-    async broadcastToAll(message: unknown, excludeClientId?: string): Promise<void> {
-        await this.local.broadcastToAll(message, excludeClientId);
-        await this.publish(`${this.prefix}broadcast`, { v: 1, id: randomUUID(), source: this.source(), kind: 'broadcast', message, excludeClientId });
+    readonly supportsScopedBroadcast = true;
+
+    /** 0.146.0: `readersOf` travels to peers, which apply their own `authorize`;
+     *  `perRecipient` runs here only, so with it and no `readersOf` nothing is
+     *  sent to peers (it cannot be judged there). */
+    async broadcastToAll(message: unknown, excludeClientId?: string, opts: import('./router').ScopedBroadcastOptions = {}): Promise<void> {
+        await this.local.broadcastToAll(message, excludeClientId, opts);
+        if (opts.perRecipient && !opts.readersOf) return;
+        await this.publish(`${this.prefix}broadcast`, { v: 1, id: randomUUID(), source: this.source(), kind: 'broadcast', message, excludeClientId,
+            ...(opts.readersOf ? { readersOf: opts.readersOf } : {}) });
     }
     private async receive(payload: string): Promise<void> {
         if (!this.live() || Buffer.byteLength(payload) > this.maxBytes) return;
@@ -595,7 +604,11 @@ export class RedisRealtimeRouter implements RealtimeRouter {
             } finally {
                 if (shared) shared.release(); else scope.close();
             }
-        } else await this.local.broadcastToAll(frame.message, frame.excludeClientId ?? undefined);
+        } else {
+            if (frame.readersOf !== undefined && (typeof frame.readersOf !== 'string' || !frame.readersOf)) return false;
+            await this.local.broadcastToAll(frame.message, frame.excludeClientId ?? undefined,
+                frame.readersOf ? { readersOf: frame.readersOf } : {});
+        }
         return true;
     }
     /** P6, origin side: the operation number a peer frame carries, opted in. */

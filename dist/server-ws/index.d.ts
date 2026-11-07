@@ -1,5 +1,5 @@
 export { createWsHandler } from './createWsHandler';
-export { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES } from './types';
+export { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES, DEFAULT_WS_MAX_QUEUE_DEPTH, DEFAULT_TOKEN_EXPIRY_GRACE_MS } from './types';
 export type { WsService, WsAuthFn, WsAuthContext, WsHandlerOptions, WsHandlerHandle, WsHttpServer, InboundRateLimitOptions, WsHandlerStats, } from './types';
 export type { AuthSender, ResolveSender } from './senderIdentity';
 export { splitServiceChannel, baseChannel, SERVICE_CHANNEL_PREFIXES } from './channelAccess';

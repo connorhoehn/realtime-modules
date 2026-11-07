@@ -125,19 +125,27 @@ export interface ChatServiceOpts {
         avatarUrl?: string;
     } | null | undefined;
     /**
-     * Enforce membership on member-addressed dm channels
-     * (`chat:dm:<sorted userIds>` — see src/chat/dmChannels.ts). On `join`
-     * and `send` to a dm channel whose members are parseable from the
-     * name, the sender's resolved userId must be in the member list;
-     * otherwise the request is rejected with a CHAT_DM_FORBIDDEN error
-     * frame. FAIL-CLOSED: no resolvable identity (no resolver, resolver
-     * returned null/no userId, resolver threw) ⇒ reject. Hashed group
-     * channels (`chat:dmg:`) are not parseable and are NOT enforced here
-     * (gate those via `authz`). Non-dm channels are never affected.
+     * Enforce membership on dm channels — any channel with a `dm` or `dmg`
+     * segment (`chat:dm:a:b`, `chat:acme:dm:a:b`, `chat:dmg:<hash>`; see
+     * src/chat/dmChannels.ts). Every action on one (join, send, history,
+     * edit, …) requires the sender's resolved userId to be a member;
+     * otherwise it is rejected with a CHAT_DM_FORBIDDEN error frame.
+     * FAIL-CLOSED: no resolvable identity ⇒ reject; a hashed `dmg` channel
+     * whose members `resolveDmGroupMembers` does not return ⇒ reject; a
+     * malformed dm name ⇒ reject. Non-dm channels are never affected.
      *
-     * Default: true when `identityResolver` is provided, else false.
+     * Default true since 0.146.0 (before: true only with an
+     * `identityResolver`, and only for `chat:dm:` names). Pass false only
+     * when an `authz` hook already gates dm channels.
      */
     enforceDmMembership?: boolean;
+    /**
+     * 0.146.0: the members of a hashed group dm channel (`…:dmg:<hash>`),
+     * whose name cannot reveal them — from the host's conversations index.
+     * Without it, or when it returns null, every action on a `dmg` channel is
+     * refused.
+     */
+    resolveDmGroupMembers?: (channel: string) => string[] | null | undefined;
     /**
      * Map the connection's auth context (the gateway `auth` result, read
      * through `messageRouter.getClientData(clientId).userContext`) to the
@@ -300,6 +308,7 @@ export declare class ChatService {
     membershipStore: ChatMembershipStore | null;
     readReceiptStore: ChatReadReceiptStore | null;
     readonly enforceDmMembership: boolean;
+    readonly resolveDmGroupMembers: ((channel: string) => string[] | null | undefined) | null;
     onDmMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
     onChannelMessage: ((info: ChatMessageHookInfo) => void | Promise<void>) | null;
     onMessageChanged: ((info: {

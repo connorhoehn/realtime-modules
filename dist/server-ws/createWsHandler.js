@@ -27,6 +27,7 @@
 // install `ws` themselves (peerDep style).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_INBOUND_FRAMES_PER_SECOND = void 0;
+exports.tokenExpiryMs = tokenExpiryMs;
 exports.createWsHandler = createWsHandler;
 const transport_1 = require("distributed-core/transport");
 const types_1 = require("./types");
@@ -55,9 +56,10 @@ const FRAME_DRAIN_TIMEOUT_MS = 5_000;
 /** {@link InboundRateLimitOptions} defaults (lane R6). */
 exports.DEFAULT_INBOUND_FRAMES_PER_SECOND = 50;
 function resolveRateLimit(option) {
-    if (!option)
+    // 0.146.0: on unless switched off explicitly.
+    if (option === false)
         return null;
-    const o = option === true ? {} : option;
+    const o = option === true || option === undefined ? {} : option;
     const rate = o.framesPerSecond ?? exports.DEFAULT_INBOUND_FRAMES_PER_SECOND;
     const burst = o.burst ?? rate * 2;
     const windowMs = o.windowMs ?? 1000;
@@ -69,6 +71,17 @@ function resolveRateLimit(option) {
         throw new Error(`createWsHandler: inboundRateLimit.windowMs must be positive (got ${windowMs})`);
     return { rate, burst, windowMs, onLimited: o.onLimited };
 }
+/**
+ * The token expiry the host's `auth` reported, in ms since the epoch, or null.
+ * Reads `exp` the way a JWT carries it (seconds); a non-finite or
+ * non-positive value means "no expiry known".
+ */
+function tokenExpiryMs(ctx) {
+    const exp = ctx?.exp;
+    return typeof exp === 'number' && Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+}
+/** setTimeout cannot wait longer than this; longer waits re-arm. */
+const MAX_TIMER_MS = 2_147_483_647;
 /** A lazily-required event-loop delay histogram; null where perf_hooks lacks it. */
 function eventLoopMonitor() {
     try {
@@ -88,9 +101,17 @@ function createWsHandler(opts) {
     // Lazy-require ws so consumers without server-side code never load it.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { WebSocketServer } = require('ws');
-    const { server, services, auth, onConnect, beforeConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, rejectUnmatched = false, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, independentServices: independentServiceNames = types_1.DEFAULT_INDEPENDENT_SERVICES, inboundRateLimit, } = opts;
+    const { server, services, auth, onConnect, beforeConnect, onDisconnect, pingIntervalMs = DEFAULT_PING_INTERVAL_MS, generateClientId = defaultGenerateClientId, path, rejectUnmatched = false, maxPayload = types_1.DEFAULT_WS_MAX_PAYLOAD, independentServices: independentServiceNames = types_1.DEFAULT_INDEPENDENT_SERVICES, inboundRateLimit, maxQueueDepth = types_1.DEFAULT_WS_MAX_QUEUE_DEPTH, tokenExpiryGraceMs = types_1.DEFAULT_TOKEN_EXPIRY_GRACE_MS, } = opts;
     const independentServices = new Set(independentServiceNames);
     const rateLimit = resolveRateLimit(inboundRateLimit);
+    if (!(maxQueueDepth >= 1)) {
+        throw new Error(`createWsHandler: maxQueueDepth must be at least 1 (got ${maxQueueDepth})`);
+    }
+    if (!(Number.isFinite(tokenExpiryGraceMs) && tokenExpiryGraceMs >= 0)) {
+        throw new Error(`createWsHandler: tokenExpiryGraceMs must be a non-negative number (got ${tokenExpiryGraceMs})`);
+    }
+    /** Whether a token with this expiry is past it (and its grace) now. */
+    const expired = (expiresAt) => expiresAt !== null && Date.now() >= expiresAt + tokenExpiryGraceMs;
     if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
         throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
     }
@@ -156,6 +177,11 @@ function createWsHandler(opts) {
         authenticating.delete(socket);
         if (disposing || socket.destroyed) {
             denyUpgrade(socket, 503, 'Service Unavailable');
+            return;
+        }
+        // A token that is already past its expiry never gets a socket.
+        if (expired(tokenExpiryMs(ctx))) {
+            denyUpgrade(socket, 401, 'Unauthorized');
             return;
         }
         try {
@@ -262,9 +288,48 @@ function createWsHandler(opts) {
             // swallow
         }
         // Keepalive heartbeat — DC primitive handles pong tracking + zombie detection.
-        if (pingIntervalMs > 0) {
-            const cleanupHeartbeat = (0, transport_1.attachWsHeartbeat)(ws, pingIntervalMs);
-            cleanupFns.set(clientId, cleanupHeartbeat);
+        let cleanupHeartbeat = null;
+        if (pingIntervalMs > 0)
+            cleanupHeartbeat = (0, transport_1.attachWsHeartbeat)(ws, pingIntervalMs);
+        // 0.146.0: the token's expiry is enforced for the life of the socket,
+        // not only at the upgrade. Before, a connection opened a minute before
+        // its token expired stayed authorised until it happened to close.
+        const expiresAt = tokenExpiryMs(ctx);
+        let expiryTimer = null;
+        const armExpiry = () => {
+            if (expiresAt === null)
+                return;
+            const wait = expiresAt + tokenExpiryGraceMs - Date.now();
+            if (wait > 0) {
+                expiryTimer = setTimeout(armExpiry, Math.min(wait, MAX_TIMER_MS));
+                if (typeof expiryTimer === 'object' && typeof expiryTimer.unref === 'function')
+                    expiryTimer.unref();
+                return;
+            }
+            expiryTimer = null;
+            if (ws.readyState !== 1)
+                return;
+            (0, transport_1.wsSend)(ws, JSON.stringify({
+                type: 'error',
+                code: 'TOKEN_EXPIRED',
+                message: 'The connection token expired; reconnect with a fresh one',
+                timestamp: new Date().toISOString(),
+            }));
+            try {
+                ws.close(4001, 'Token expired');
+            }
+            catch { /* already closing */ }
+        };
+        armExpiry();
+        if (cleanupHeartbeat || expiresAt !== null) {
+            const heartbeat = cleanupHeartbeat;
+            cleanupFns.set(clientId, () => {
+                heartbeat?.();
+                if (expiryTimer) {
+                    clearTimeout(expiryTimer);
+                    expiryTimer = null;
+                }
+            });
         }
         // Frames from ONE connection are handled in the order they arrived.
         //
@@ -381,9 +446,30 @@ function createWsHandler(opts) {
             else
                 queueDepths.delete(clientId);
         };
+        let overflowed = false;
         const enqueueFrame = (raw) => {
+            if (overflowed)
+                return;
             if (!admitFrame())
                 return;
+            // 0.146.0: a connection may not queue without bound behind slow
+            // handlers. Past the cap it is told why and closed; dropping a
+            // frame mid-sequence would leave its state silently out of step.
+            if ((queueDepths.get(clientId) ?? 0) >= maxQueueDepth) {
+                overflowed = true;
+                counters.dropped++;
+                (0, transport_1.wsSend)(ws, JSON.stringify({
+                    type: 'error',
+                    code: 'QUEUE_FULL',
+                    message: `More than ${maxQueueDepth} frames are waiting on this connection; closing it`,
+                    timestamp: new Date().toISOString(),
+                }));
+                try {
+                    ws.close(1008, 'Inbound queue full');
+                }
+                catch { /* already closing */ }
+                return;
+            }
             counters.accepted++;
             counters.queued++;
             if (counters.queued > counters.peak)

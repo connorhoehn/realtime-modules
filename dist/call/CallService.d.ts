@@ -109,10 +109,15 @@ export declare class CallService {
      *  the time `onClientDisconnect` runs, so the departure would be
      *  anonymous (`user-status {userId: null}`, no name in `status`). */
     private participantUserIds;
-    /** See CallConfig.allowUntargetedInvites. */
+    /** 0.146.0: connections present in each `room:` lobby that has no
+     *  registered call (walk-ins), lobby → clientId → userId. */
+    private roomLobbyPresence;
+    /** See CallConfig.allowUntargetedInvites (default false since 0.146.0). */
     private allowUntargetedInvites;
-    /** See CallConfig.refuseEmptyTargets. */
+    /** See CallConfig.refuseEmptyTargets (default !allowUntargetedInvites since 0.146.0). */
     private refuseEmptyTargets;
+    /** See CallConfig.resolveDmGroupMembers. */
+    private resolveDmGroupMembers;
     private onSweepSkipped;
     private readonly _withSpan;
     /** Document calls (2026-09-24) — see CallServiceOptions.metaStore. */
@@ -363,6 +368,24 @@ export declare class CallService {
      * so this helper is async too. Cross-node routing happens transparently
      * inside `messageRouter.sendToClient(clientId, ...)`.
      */
+    /** A call that rang nobody: every user it knows is its caller or someone seated. */
+    private isOpenHuddle;
+    /**
+     * 0.146.0: a room walk-in call has no invite to register it — people in
+     * a `room:` lobby announce themselves with `participant-state`. That
+     * announcement enters the room (the lobby itself was already judged by
+     * `authorize` / `calls({ lobbyGuard })`); a leaving verb leaves it. The
+     * room's present connections are who its signals reach, and only they
+     * may send one. Returns the members as they were before a departure, or
+     * null when the sender is not present.
+     */
+    private roomLobbySignal;
+    /**
+     * 0.146.0: the connections a signal on a call reaches — the members'
+     * sockets (named `targets` narrowed to members, else all of them), never
+     * the sender's own.
+     */
+    private memberRecipients;
     findClientsForUsers(userIds: string[], excludeClientId: string): Promise<string[]>;
     /**
      * Fire the optional recordCallAction hook. Wrapped in try/catch so a
@@ -431,9 +454,26 @@ export declare class CallService {
      * `user-status: left`; a call with nobody left ends.
      */
     private pruneDeadClients;
-    /** The authenticated user behind a client, falling back to what the
-     *  payload claims (SKIP_AUTH dev setups have no router identity). */
+    /** The authenticated user behind a client, or '' when the connection has
+     *  none. 0.146.0: never what the payload claims — a document call's host
+     *  powers used to fall back to `payload.userId`, so an unauthenticated
+     *  socket could name itself the host. The parameters after `clientId` are
+     *  kept for call-site compatibility and ignored. */
     private resolveActorUserId;
+    /**
+     * 0.146.0: may this connection look at or enter `lobby`? Anyone for a
+     * lobby that is not a DM; for a DM (`…:dm:a:b`, `…:dmg:<hash>`) only an
+     * authenticated member. A hashed group whose members the host cannot
+     * resolve (`resolveDmGroupMembers`) is closed to everyone.
+     */
+    private mayUseDmLobby;
+    /**
+     * 0.146.0: who a call's signals may reach, and so who may send them: the
+     * connections seated in it and the users it involves (caller, everyone
+     * invited or rung, everyone seated). Null for a call this node and the
+     * shared store do not know.
+     */
+    private callMembers;
     private getDocumentMeta;
     /** Participant = the host, anyone whose invite is `accepted`, or a
      *  connection the call has seen. */

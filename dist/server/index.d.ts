@@ -22,12 +22,12 @@ export type { RealtimeCleanup, RealtimeCleanupFailure } from './compositionLifec
 export { createRealtimeServer, inMemoryAdapters, type AdapterMap, type AdapterConfig, type PerFeatureAdapters, type FeaturePlugin, type RealtimeServerOptions, } from './factory';
 export { attachRealtime, defineFeature, chat, presence, cursor, reactions, activity, social, calls, ingest, pipeline, workGraph, typedDocuments, rooms, notifications, fileUploads, collabDocs, } from './attach';
 export type { AttachRealtimeOptions, FeatureContext, RealtimeFeature, RealtimeHandle, RealtimeServices, KnownRealtimeServices, RealtimeStats, } from './attach';
-export { LocalRealtimeRouter, PLUGIN_SCOPE_RETAIN_MAX_MS, liveUsersOnChannel, } from './router';
+export { LocalRealtimeRouter, PLUGIN_SCOPE_RETAIN_MAX_MS, DEFAULT_MAX_CHANNELS_PER_SOCKET, liveUsersOnChannel, } from './router';
 export { RedisRealtimeRouter } from './RedisRealtimeRouter';
 export type { RealtimeClusterRedis, RedisRealtimeRouterOptions, RealtimePeerEvents, RealtimeLeaseGroup, RealtimeMembershipInvalidation } from './RedisRealtimeRouter';
 export { FencedLease, LeaseGroup, ReadinessGate, RedisPeerRegistry, BoundedRedis, createBoundedRedis, LeaseHeldError, LeaseFencedError, RedisDeadlineError } from 'distributed-core/cluster/leases';
 export type { FencedOwner, FenceEvent, FenceReason, LeaseRedis, LeaseGroupOptions, ReadinessOwner, ReadinessSnapshot, ReadinessProbe, PeerSurvey, RedisPeerRegistryOptions, BoundedRedisOptions } from 'distributed-core/cluster/leases';
-export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ChannelAuthorizeBatch, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
+export type { RealtimeRouter, RouterLogger, ChannelAuthorize, ScopedBroadcastOptions, ChannelAuthorizeBatch, ClientMessageFilter, FeaturePlugin as RealtimeFeaturePlugin, } from './router';
 import type { WsAuthContext as _WsAuthContext, WsAuthFn as _WsAuthFn } from '../server-ws/types';
 import type { AuthSender as _AuthSender, ResolveSender as _ResolveSender } from '../server-ws/senderIdentity';
 import type { ServiceChannelPrefix as _ServiceChannelPrefix, ChannelAccessKind as _ChannelAccessKind } from '../server-ws/channelAccess';

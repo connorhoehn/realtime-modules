@@ -281,27 +281,29 @@ function rig(opts: { batch?: boolean; cache?: boolean } = {}) {
 const send = (c: Conn, f: Record<string, unknown>) => c.ws.send(JSON.stringify(f));
 const got = (c: Conn, text: string) => c.frames.some(f => f.type === 'chat' && f.action === 'message' && f.message?.message === text);
 
+// Chat channels below are `grp:` names: since 0.146.0 any `dm` segment makes a
+// channel a DM whose members are in its name.
 describe('attachRealtime({ authorityCache }) — revocation takes effect immediately', () => {
     let r: ReturnType<typeof rig>;
     let a: Conn, b: Conn;
     beforeEach(async () => {
         r = rig();
         await r.start();
-        r.members.set('dm:ab', new Set(['ua', 'ub']));
+        r.members.set('grp:ab', new Set(['ua', 'ub']));
         a = await r.connect('ua'); b = await r.connect('ub');
-        send(a, { service: 'chat', action: 'join', channel: 'dm:ab' });
-        send(b, { service: 'chat', action: 'join', channel: 'dm:ab' });
+        send(a, { service: 'chat', action: 'join', channel: 'grp:ab' });
+        send(b, { service: 'chat', action: 'join', channel: 'grp:ab' });
         await eventually(() => [a, b].every(c => c.frames.some(f => f.type === 'chat' && f.action === 'joined')));
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'warm-1' });
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'warm-1' });
         await eventually(() => got(b, 'warm-1'));
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'warm-2' });
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'warm-2' });
         await eventually(() => got(b, 'warm-2'));
     });
     afterEach(async () => { await r.stop(); });
 
     it('serves repeat sends from the cache (fewer host calls per send)', async () => {
         const before = r.counters.authorize;
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'hot' });
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'hot' });
         await eventually(() => got(b, 'hot'));
         expect(r.counters.authorize - before).toBe(0);
         const s = r.handle.stats();
@@ -311,40 +313,40 @@ describe('attachRealtime({ authorityCache }) — revocation takes effect immedia
     });
 
     it('a membership event (invalidateChannel) refuses the removed member on the next send', async () => {
-        r.members.get('dm:ab')!.delete('ub');
-        r.handle.authorityCache!.invalidateChannel('dm:ab');
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'after-removal' });
+        r.members.get('grp:ab')!.delete('ub');
+        r.handle.authorityCache!.invalidateChannel('grp:ab');
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'after-removal' });
         await eventually(() => got(a, 'after-removal'));
         await delay(50);
         expect(got(b, 'after-removal')).toBe(false);
     });
 
     it('a membership change WITHOUT an event is still served from the cache (why events are mandatory)', async () => {
-        r.members.get('dm:ab')!.delete('ub');
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'no-event' });
+        r.members.get('grp:ab')!.delete('ub');
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'no-event' });
         await eventually(() => got(b, 'no-event'));
     });
 
     it('an epoch bump refuses on the next check, with no invalidation call', async () => {
-        r.members.get('dm:ab')!.delete('ub');
+        r.members.get('grp:ab')!.delete('ub');
         r.epochs.set('ub', 2);
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'after-epoch' });
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'after-epoch' });
         await eventually(() => got(a, 'after-epoch'));
         await delay(50);
         expect(got(b, 'after-epoch')).toBe(false);
     });
 
     it('a sender whose epoch moved is refused at once', async () => {
-        r.members.get('dm:ab')!.delete('ua');
+        r.members.get('grp:ab')!.delete('ua');
         r.epochs.set('ua', 7);
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'sender-epoch' });
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'sender-epoch' });
         await eventually(() => a.frames.some(f => f.code === 'AUTHZ_CHANNEL_DENIED'));
         expect(got(b, 'sender-epoch')).toBe(false);
     });
 
     it('a principal revalidation failure refuses at once and drops the connection\'s verdicts', async () => {
         r.revoked.add('ub');
-        send(a, { service: 'chat', action: 'send', channel: 'dm:ab', message: 'after-revoke' });
+        send(a, { service: 'chat', action: 'send', channel: 'grp:ab', message: 'after-revoke' });
         await eventually(() => got(a, 'after-revoke'));
         await delay(50);
         expect(got(b, 'after-revoke')).toBe(false);
@@ -364,13 +366,13 @@ describe('attachRealtime({ authorizeBatch }) — one host call per fan-out', () 
             const r = rig({ batch, cache: false });
             await r.start();
             try {
-                r.members.set('dm:g', new Set(['u0', 'u1', 'u2', 'u3']));
+                r.members.set('grp:g', new Set(['u0', 'u1', 'u2', 'u3']));
                 const cs = await Promise.all(['u0', 'u1', 'u2', 'u3'].map(u => r.connect(u)));
-                for (const c of cs) send(c, { service: 'chat', action: 'join', channel: 'dm:g' });
+                for (const c of cs) send(c, { service: 'chat', action: 'join', channel: 'grp:g' });
                 await eventually(() => cs.every(c => c.frames.some(f => f.type === 'chat' && f.action === 'joined')));
                 const before = { ...r.counters, batchSizes: [...r.counters.batchSizes] };
-                r.members.get('dm:g')!.delete('u3');
-                send(cs[0], { service: 'chat', action: 'send', channel: 'dm:g', message: 'g1' });
+                r.members.get('grp:g')!.delete('u3');
+                send(cs[0], { service: 'chat', action: 'send', channel: 'grp:g', message: 'g1' });
                 await eventually(() => got(cs[1], 'g1') && got(cs[2], 'g1') && got(cs[0], 'g1'));
                 await delay(50);
                 expect(got(cs[3], 'g1')).toBe(false);

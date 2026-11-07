@@ -1,5 +1,7 @@
 import { type RoomActionPayload, type RoomLogger, type RoomMessageRouter, type RoomServiceOptions } from './types';
 import type { RoomMemberSnapshot } from './RoomStateStore';
+/** The router channel a room's actions are judged on (0.146.0). */
+export declare function roomChannel(slug: string): string;
 export declare class RoomService {
     messageRouter: RoomMessageRouter;
     logger: RoomLogger;
@@ -43,6 +45,10 @@ export declare class RoomService {
     /** Server invokes shutdown on every service; alias to dispose. */
     shutdown(): Promise<void>;
     handleAction(clientId: string, action: string, data: RoomActionPayload | null | undefined): Promise<void>;
+    /** The router's verdict on `room:<slug>` for this client (see RoomMessageRouter.checkChannel). */
+    private permits;
+    /** The deltas this client may see: rooms whose channel it may read (0.146.0). */
+    private visibleDeltas;
     private handleSubscribeIndex;
     private handleUnsubscribeIndex;
     private handleSubscribe;

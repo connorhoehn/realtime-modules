@@ -15,11 +15,25 @@ import { attachRealtime, collabDocs } from '@connorhoehn/realtime-modules/server
 
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
-    features: [collabDocs()],
+    features: [collabDocs({
+        // Required since 0.146.0: may this connection do `action` on this
+        // document (`doc:<id>`; '' for a create)? Without it attach throws.
+        authz: async (clientId, channel, service, action) => canUseDocument(clientId, channel, action),
+    })],
     auth: async (req) => ({ userId: await verifyToken(req) }),   // presence names/colors
+    // Asked too, for every document action: `subscribe` for reads, `publish` for writes.
+    authorize: ({ channel, ctx }) => sameTenant(channel, ctx),
 });
 httpServer.listen(3000);
 ```
+
+`collabDocs({ insecureAllowAll: true })` starts without `authz` — single-user
+demos only. A frame whose `documentId` and `channel` name different documents
+is refused. `documentCreated` / `documentDeleted` / `documentMetaUpdated` and
+the `documents:presence` push reach only connections that may read the
+document (through a router with `supportsScopedBroadcast`, which both built-in
+routers have; a custom router without it gets none of them). The `doc.created`
+activity event goes nowhere unless `activityChannelFor` names a channel.
 
 `realtime.dispose()` shuts the document stack down cleanly (snapshot flush
 included) before detaching the WS listener.

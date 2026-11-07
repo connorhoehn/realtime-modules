@@ -26,6 +26,12 @@ import { CallService } from '../../src/call/CallService';
 import { InMemoryCallStateStore, RedisCallStateStore, type CallStateStore } from '../../src/call/CallStateStore';
 import { FakeRedis } from '../call/helpers/fakeRedis';
 
+/** 0.146.0: a DM lobby's `status` answers only its members, so the observer is one. */
+const observerFor = (lobbyName: string): string => {
+    const m = /(?:^|:)dm:([^:]+):/.exec(lobbyName);
+    return m ? m[1] : `u-watch-${Math.random().toString(36).slice(2, 8)}`;
+};
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const rand = () => Math.random().toString(36).slice(2, 8);
 
@@ -165,7 +171,7 @@ describe.each(cases)('DM calls with multi-socket users ($name)', ({ h, s }) => {
         return { a, b, lobbyName: `acme:dm:${a}:${b}`, callId: `c-${rand()}` };
     };
     const status = async (lobbyName: string) => {
-        const w = await hx.connect(`u-watch-${rand()}`);
+        const w = await hx.connect(observerFor(lobbyName));
         w.send({ action: 'status', lobbyName });
         await hx.settle();
         const f = w.frames.find((x) => x.action === 'active-call' && x.data?.lobbyName === lobbyName);

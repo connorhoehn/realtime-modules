@@ -35,6 +35,16 @@ interface DocumentMetadataServiceOpts {
      * publish is a no-op.
      */
     messageRouter?: MessageRouterContract | null;
+    /**
+     * 0.146.0: the channel the doc.created activity goes to, or null for
+     * none (the default). It used to be `activity:broadcast`, which every
+     * tenant's subscribers share.
+     */
+    activityChannelFor?: ((doc: {
+        documentId: string;
+        title: string;
+        createdBy: string;
+    }) => string | null) | null;
 }
 interface DocumentWire {
     id: string;
@@ -55,8 +65,13 @@ declare class DocumentMetadataService {
     metadataStore: MetadataStore;
     logger: any;
     messageRouter: MessageRouterContract | null;
+    activityChannelFor: ((doc: {
+        documentId: string;
+        title: string;
+        createdBy: string;
+    }) => string | null) | null;
     private _wireSidecar;
-    constructor({ metadataStore, logger, messageRouter }: DocumentMetadataServiceOpts);
+    constructor({ metadataStore, logger, messageRouter, activityChannelFor }: DocumentMetadataServiceOpts);
     /**
      * No-op in the lifted module. Table provisioning is the
      * MetadataStore adapter's responsibility (the DDB adapter can run

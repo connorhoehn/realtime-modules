@@ -794,9 +794,9 @@ describe('createWsHandler — maxPayload', () => {
         ws.close();
     });
 
-    it('defaults to 16 MiB and rejects a nonsense limit', () => {
+    it('defaults to 1 MiB (0.146.0) and rejects a nonsense limit', () => {
         handle = createWsHandler({ server, services: {}, pingIntervalMs: 0 });
-        expect(handle.wss.options.maxPayload).toBe(16 * 1024 * 1024);
+        expect(handle.wss.options.maxPayload).toBe(1024 * 1024);
         expect(() => createWsHandler({ server, services: {}, maxPayload: 0 })).toThrow(/maxPayload/);
     });
 });

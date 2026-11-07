@@ -72,8 +72,9 @@ describe('CallService — rejoin on participant-state (default 30 s grace, fake 
         await jest.advanceTimersByTimeAsync(31_000);
         expect(endedTo(router.sent, 'c-alice')).toHaveLength(0);
 
-        await svc.handleCallEvent('c-eve', 'status', { lobbyName: LOBBY });
-        const reply = router.sent.find((s) => s.clientId === 'c-eve' && s.message.action === 'active-call')!.message.data;
+        // A member asks: since 0.146.0 a DM lobby's status is its members' only.
+        await svc.handleCallEvent('c-alice', 'status', { lobbyName: LOBBY });
+        const reply = router.sent.find((s) => s.clientId === 'c-alice' && s.message.action === 'active-call')!.message.data;
         expect(reply).toMatchObject({ active: true, callId: 'call-1', participantCount: 2 });
         expect([...reply.participantUserIds].sort()).toEqual(['u-alice', 'u-bob']);
         await svc.dispose();

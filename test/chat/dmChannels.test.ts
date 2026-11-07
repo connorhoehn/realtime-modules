@@ -78,8 +78,19 @@ describe('isDmChatChannel', () => {
         expect(isDmChatChannel('chat:dm:a:b')).toBe(true);
         expect(isDmChatChannel('chat:dmg:0123456789abcdef01234567')).toBe(true);
         expect(isDmChatChannel('chat:general')).toBe(false);
-        expect(isDmChatChannel('dm:a:b')).toBe(false);
         expect(isDmChatChannel('chat:dmz:a')).toBe(false);
+        expect(isDmChatChannel('chat:general:dm')).toBe(false); // `dm` as the last segment is a name
+    });
+
+    // 0.146.0: a dm is a `dm` / `dmg` segment wherever it sits.
+    it('matches tenant-prefixed and unprefixed dm names', () => {
+        expect(isDmChatChannel('dm:a:b')).toBe(true);
+        expect(isDmChatChannel('chat:acme:dm:a:b')).toBe(true);
+        expect(isDmChatChannel('acme:dm:a:b')).toBe(true);
+        expect(isDmChatChannel('chat:acme:dmg:0123456789abcdef01234567')).toBe(true);
+        expect(dmChannelMembers('chat:acme:dm:a:b')).toEqual(['a', 'b']);
+        expect(dmChannelMembers('chat:acme:dmg:0123')).toBeNull();
+        expect(dmChannelMembers('chat:acme:dm:a::b')).toBeNull();
     });
 });
 

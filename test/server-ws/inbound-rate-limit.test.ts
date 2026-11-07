@@ -86,8 +86,9 @@ describe('createWsHandler({ inboundRateLimit })', () => {
         } finally { await r.stop(); }
     });
 
-    it('true takes the defaults (50/s, burst 100); unset never drops', async () => {
-        for (const option of [true, undefined]) {
+    // 0.146.0: unset is the same as true (on by default); only false never drops.
+    it('true and unset take the defaults (50/s, burst 100); false never drops', async () => {
+        for (const option of [true, undefined, false]) {
             let handled = 0;
             const r = await rig({ inboundRateLimit: option }, { handleAction: () => { handled++; } });
             try {
@@ -95,7 +96,7 @@ describe('createWsHandler({ inboundRateLimit })', () => {
                 for (let n = 0; n < 150; n++) c.ws.send(JSON.stringify({ service: 'echo', action: 'x' }));
                 await eventually(() => r.handle.stats!().inbound.accepted + r.handle.stats!().inbound.dropped === 150);
                 await eventually(() => r.handle.stats!().queueDepth === 0);
-                if (option) {
+                if (option !== false) {
                     expect(handled).toBeGreaterThanOrEqual(100);
                     expect(handled).toBeLessThan(150);
                 } else {

@@ -387,8 +387,9 @@ export interface CallConfig {
      * `{ type: 'error', service: 'call', code: 'untargeted-invite', action,
      * callId, lobbyName, message }` and nothing is registered or sent.
      * Room walk-ins (`room:` / `<tenant>:room:` lobbies) and document-call
-     * invites are never refused. Default here: true (the legacy behaviour);
-     * `calls()` under attachRealtime defaults it to false.
+     * invites are never refused by this flag (see `refuseEmptyTargets`).
+     * Default false since 0.146.0, here and under `calls()` (it was true here
+     * before).
      */
     allowUntargetedInvites?: boolean;
     /**
@@ -397,11 +398,17 @@ export interface CallConfig {
      * which `allowUntargetedInvites: false` still let through and which then
      * rang every connected client. Document-call invites (which never
      * broadcast) are not affected. Refused with the same
-     * `code: 'untargeted-invite'` error frame. Default here: false (legacy);
-     * `calls()` under attachRealtime defaults it to true unless
-     * `allowUntargetedInvites` is true.
+     * `code: 'untargeted-invite'` error frame. Default (0.146.0, here as under
+     * `calls()`): true unless `allowUntargetedInvites` is true.
      */
     refuseEmptyTargets?: boolean;
+    /**
+     * 0.146.0: the members of a hashed group DM lobby (`…:dmg:<hash>`), whose
+     * name cannot reveal them. Used by `status`, `join` and `watch` on DM
+     * lobbies, which only members may use: without it (or when it answers
+     * null) a `dmg` lobby is refused to everyone.
+     */
+    resolveDmGroupMembers?: (lobby: string) => string[] | null | undefined;
     /**
      * Optional persistence hook for the call→session binding. Called on
      * `invite` (with caller's data) and `accepted` (with accepter's

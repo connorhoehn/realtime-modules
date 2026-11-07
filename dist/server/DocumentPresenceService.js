@@ -42,6 +42,16 @@ class DocumentPresenceService {
         this.documentPresenceMap = new Map();
         this.clientDocChannels = new Map();
     }
+    /** 0.146.0: may this connection see presence on this document channel? */
+    readableFilter = null;
+    /**
+     * 0.146.0: each `documents:presence` push is narrowed per recipient to the
+     * documents it may read. Without a filter nothing is pushed (fail closed):
+     * a push used to list every document and its editors to every socket.
+     */
+    setReadableFilter(filter) {
+        this.readableFilter = filter;
+    }
     /**
      * Number of doc: channels currently tracking presence. Surfaced via
      * `crdtService.getStats().trackedPresenceChannels`. Was missing pre-fix:
@@ -307,10 +317,23 @@ class DocumentPresenceService {
             documents,
             timestamp: new Date().toISOString(),
         };
-        // Broadcast to all connected clients across all nodes
-        if (this.messageRouter) {
-            this.messageRouter.broadcastToAll(message);
-        }
+        // Each local connection gets the documents it may read (0.146.0).
+        // Local only: the filter cannot run on a peer, and this map only
+        // holds this node's connections anyway.
+        const router = this.messageRouter;
+        const filter = this.readableFilter;
+        if (!router || !filter || !router.supportsScopedBroadcast)
+            return;
+        void Promise.resolve(router.broadcastToAll(message, undefined, {
+            perRecipient: async (clientId) => {
+                const visible = [];
+                for (const entry of documents) {
+                    if (await filter(clientId, entry.documentId))
+                        visible.push(entry);
+                }
+                return { ...message, documents: visible };
+            },
+        })).catch((err) => this.logger.error?.('documents:presence push failed', err));
     }
 }
 module.exports = DocumentPresenceService;

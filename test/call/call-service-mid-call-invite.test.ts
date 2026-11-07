@@ -122,7 +122,9 @@ describe('CallService — mid-call invite', () => {
 
   it('treats a re-fired broadcast invite as a duplicate', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    // Untargeted invites are refused by default since 0.146.0; this exercises
+    // the broadcast path a host opts back into.
+    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, config: { allowUntargetedInvites: true } });
 
     await svc.handleCallEvent('c-alice', 'invite', {
       callId: 'call-3', lobbyName: 'global-hangout', callerId: 'u-alice',

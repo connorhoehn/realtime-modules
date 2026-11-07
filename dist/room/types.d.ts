@@ -136,6 +136,18 @@ export interface RoomMessageRouter {
             displayName?: string;
         };
     } | null;
+    /**
+     * 0.146.0: the host's channel check (attachRealtime's `authorize`), asked
+     * for `room:<slug>` before every action — `subscribe` to watch a room or
+     * see it in the index, `publish` to join, leave or announce it — and
+     * again per recipient before any room frame is delivered. A router
+     * without it is trusted to enforce at its own level.
+     */
+    checkChannel?: (kind: 'subscribe' | 'publish', clientId: string, channel: string, opts?: {
+        service?: string;
+        clientChannel?: string;
+        silent?: boolean;
+    }) => boolean | Promise<boolean>;
 }
 /**
  * Narrow contract for the cross-node pub/sub coupling. Lets RoomService

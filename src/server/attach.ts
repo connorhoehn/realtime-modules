@@ -534,11 +534,22 @@ export function fileUploads(opts: {
     });
 }
 
+/**
+ * Collaborative documents (the `crdt` wire service). 0.146.0: `authz` is
+ * required — attaching without it throws at startup — unless
+ * `insecureAllowAll` says this is a single-user demo. Every action also asks
+ * the router's channel check (`authorize`): `subscribe` for reads, `publish`
+ * for writes.
+ */
 export function collabDocs(opts: {
     snapshotStore?: import('./stores/SnapshotStore').SnapshotStore;
     metadataStore?: import('./stores/MetadataStore').MetadataStore;
     hotCache?: import('./stores/SnapshotStore').HotCache | null;
     authz?: import('./CRDTService').CRDTServiceOpts['authz'];
+    /** 0.146.0: start with no `authz` (single-user demos only). */
+    insecureAllowAll?: boolean;
+    /** 0.146.0: where `doc.created` activity goes; default nowhere. */
+    activityChannelFor?: import('./CRDTService').CRDTServiceOpts['activityChannelFor'];
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('./manifest').crdtManifest,
@@ -553,6 +564,8 @@ export function collabDocs(opts: {
                 metadataStore: opts.metadataStore ?? new MemoryMetadataStore(),
                 hotCache: opts.hotCache === undefined ? new MemoryHotCache() : opts.hotCache,
                 authz: opts.authz,
+                insecureAllowAll: opts.insecureAllowAll,
+                activityChannelFor: opts.activityChannelFor,
             });
         },
     });
@@ -621,6 +634,12 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
      * hooks with `withAuthorityCache` yourself).
      */
     authorityCache?: AuthorityCacheOptions;
+    /**
+     * 0.146.0: the most channels one socket may hold on the local router; a
+     * subscribe past it is refused with `CHANNEL_LIMIT`. Default
+     * `DEFAULT_MAX_CHANNELS_PER_SOCKET` (256). Ignored with a custom `router`.
+     */
+    maxChannelsPerSocket?: number;
 }
 
 /**
@@ -699,7 +718,7 @@ export function attachRealtime(
     opts: AttachRealtimeOptions,
 ): RealtimeHandle {
     const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal,
-        authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
+        authorizeBatch, authorityCache: cacheOpts, maxChannelsPerSocket, ...wsOpts } = opts;
     const plan = planRealtimeComposition(features, capabilityProviders);
     for (const feature of plan.features) {
         if (typeof feature.create !== 'function') throw new Error(`Realtime composition: '${feature.manifest.name}' requires a create factory`);
@@ -717,7 +736,8 @@ export function attachRealtime(
         : inner;
     const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({
         plugins, authorize: hooks.authorize, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
-        filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs });
+        filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs,
+        ...(maxChannelsPerSocket !== undefined ? { maxChannelsPerClient: maxChannelsPerSocket } : {}) });
     if (principal) wsOpts.auth = revalidatingAuth(wsOpts.auth, principal);
     const featurePrincipal: FeaturePrincipal | undefined = principal ? {
         recheckAfterIo: principal.recheckAfterIo !== false,

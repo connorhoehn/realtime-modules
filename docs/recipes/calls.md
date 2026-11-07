@@ -23,8 +23,9 @@ const realtime = attachRealtime(httpServer, {
         // Optional, multi-node only: relay socket departures between nodes.
         // crossNodePubSub: { publish, subscribe },
     })],
-    // Optional: largest inbound frame in bytes (default 16 MiB; a bigger one
-    // closes that socket with 1009). Calls/chat/presence frames are a few KB.
+    // Optional: largest inbound frame in bytes (default 1 MiB since 0.146.0;
+    // a bigger one closes that socket with 1009). Calls/chat/presence frames
+    // are a few KB.
     // maxPayload: 256 * 1024,
     // Rings route by the userId this returns (`getClientsByUserId`).
     auth: async (req) => {
@@ -54,10 +55,26 @@ or sent:
   "message": "invite needs targetUserIds: …" }
 ```
 
-Room walk-ins (`room:design`, `acme:room:design`) and document-call invites are
-never refused. Set it to `true` only on a single-tenant host that wants the
-broadcast ring. (A `CallService` built directly keeps the legacy default,
-`true`; pass `config.allowUntargetedInvites: false` there.)
+Set it to `true` only on a single-tenant host that wants the broadcast ring.
+Since 0.146.0 a `CallService` built directly has the same default, and
+`refuseEmptyTargets` defaults to `!allowUntargetedInvites` there too, so an
+untargeted room walk-in invite is refused unless the host opts back in. Room
+walk-ins announce themselves with `participant-state` on the `room:` lobby
+instead, and document-call invites are never refused.
+
+Since 0.146.0 every other call verb (`accepted`, `declined`, `cancelled`,
+`ended`, `participant-state`, `user-status`) reaches only the call's members —
+the connections seated in it and the users it rang or seated — and only a
+member may send one; anyone else gets `{ code: 'not-in-call' }`. A
+`targetUserIds` list narrows delivery to those members. Before, a signal with
+no targets went to every socket on the server. `accepted` on a call that rang
+nobody (a page huddle found through `status`) still joins it.
+
+`status`, `join` and `watch` on a DM lobby (`…:dm:a:b`, `…:dmg:<hash>`) answer
+its members only (`code: 'not-a-member'` otherwise); a hashed group needs
+`config.resolveDmGroupMembers` or nobody can use it. A document call's host
+powers come from the socket's authenticated user, never from a `userId` in the
+frame.
 
 `status` answers `{ lobbyName, active: false }` once a call is over, and while
 it is live, only people whose socket is still connected count as participants.

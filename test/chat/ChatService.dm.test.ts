@@ -236,12 +236,14 @@ describe('ChatService enforceDmMembership', () => {
         expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(1);
     });
 
-    it('default is OFF without a resolver (dm channels behave like any channel)', async () => {
+    // 0.146.0: on by default, resolver or not; with no identity a dm is refused.
+    it('default is ON without a resolver, and fails closed with no identity', async () => {
         const { router, sentToClient } = makeRouter();
         const svc = makeService(router); // no resolver, no explicit flag
-        expect(svc.enforceDmMembership).toBe(false);
+        expect(svc.enforceDmMembership).toBe(true);
         await svc.handleJoinChannel('conn-x', { channel: DM_HANK_ALICE });
-        expect(joinedAcks(sentToClient)).toHaveLength(1);
+        expect(joinedAcks(sentToClient)).toHaveLength(0);
+        expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(1);
     });
 
     it('defaults ON when a resolver is provided; explicit false wins', async () => {
@@ -265,12 +267,32 @@ describe('ChatService enforceDmMembership', () => {
         expect(sendToChannelCalls).toHaveLength(1);
     });
 
-    it('hashed chat:dmg: channels are not enforced here (membership not parseable)', async () => {
+    // 0.146.0: a hashed group fails closed unless the host resolves its members.
+    it('hashed chat:dmg: channels are refused without resolveDmGroupMembers', async () => {
         const { router, sentToClient } = makeRouter();
         const svc = makeService(router, { identityResolver: () => ({ userId: 'dev-carol' }) });
         await svc.handleJoinChannel('conn-carol', { channel: 'chat:dmg:0123456789abcdef01234567' });
-        expect(joinedAcks(sentToClient)).toHaveLength(1);
-        expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(0);
+        expect(joinedAcks(sentToClient)).toHaveLength(0);
+        expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(1);
+    });
+
+    it('hashed chat:dmg: channels admit exactly the members resolveDmGroupMembers returns', async () => {
+        const dmg = 'chat:dmg:0123456789abcdef01234567';
+        const resolveDmGroupMembers = (ch: string) => (ch === dmg ? ['dev-hank', 'dev-alice', 'dev-bob'] : null);
+        const { router: r1, sentToClient: s1 } = makeRouter();
+        await makeService(r1, { identityResolver: resolver, resolveDmGroupMembers }).handleJoinChannel('conn-hank', { channel: dmg });
+        expect(joinedAcks(s1)).toHaveLength(1);
+        const { router: r2, sentToClient: s2 } = makeRouter();
+        await makeService(r2, { identityResolver: () => ({ userId: 'dev-carol' }), resolveDmGroupMembers }).handleJoinChannel('conn-carol', { channel: dmg });
+        expect(errorFrames(s2, 'CHAT_DM_FORBIDDEN')).toHaveLength(1);
+    });
+
+    it('tenant-prefixed dm channels are enforced too', async () => {
+        const { router, sentToClient } = makeRouter();
+        const svc = makeService(router, { identityResolver: () => ({ userId: 'dev-carol' }) });
+        await svc.handleJoinChannel('conn-carol', { channel: 'chat:acme:dm:dev-alice:dev-hank' });
+        expect(joinedAcks(sentToClient)).toHaveLength(0);
+        expect(errorFrames(sentToClient, 'CHAT_DM_FORBIDDEN')).toHaveLength(1);
     });
 });
 
@@ -326,6 +348,7 @@ describe('ChatService onDmMessage seam', () => {
         const { router } = makeRouter();
         const svc = makeService(router, {
             identityResolver: resolver,
+            resolveDmGroupMembers: () => ['dev-hank', 'dev-alice', 'dev-bob'],
             onDmMessage: (info: any) => calls.push(info),
         });
         await svc.handleJoinChannel('conn-hank', { channel: dmg });

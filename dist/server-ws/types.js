@@ -11,9 +11,13 @@
 // minimal `WsHttpServer` shape that real `http.Server` + `https.Server`
 // instances satisfy.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_WS_MAX_PAYLOAD = exports.DEFAULT_INDEPENDENT_SERVICES = void 0;
+exports.DEFAULT_TOKEN_EXPIRY_GRACE_MS = exports.DEFAULT_WS_MAX_QUEUE_DEPTH = exports.DEFAULT_WS_MAX_PAYLOAD = exports.DEFAULT_INDEPENDENT_SERVICES = void 0;
 /** Default {@link WsHandlerOptions.independentServices}. */
 exports.DEFAULT_INDEPENDENT_SERVICES = ['presence'];
-/** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 16 MiB. */
-exports.DEFAULT_WS_MAX_PAYLOAD = 16 * 1024 * 1024;
+/** Default `maxPayload` for `createWsHandler` / `attachRealtime`: 1 MiB (16 MiB before 0.146.0). */
+exports.DEFAULT_WS_MAX_PAYLOAD = 1024 * 1024;
+/** Default {@link WsHandlerOptions.maxQueueDepth} (0.146.0). */
+exports.DEFAULT_WS_MAX_QUEUE_DEPTH = 256;
+/** Default {@link WsHandlerOptions.tokenExpiryGraceMs} (0.146.0). */
+exports.DEFAULT_TOKEN_EXPIRY_GRACE_MS = 1000;
 //# sourceMappingURL=types.js.map

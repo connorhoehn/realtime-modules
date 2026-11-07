@@ -13,11 +13,21 @@ import { attachRealtime, rooms } from '@connorhoehn/realtime-modules/server';
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [rooms()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    auth: async (req) => ({ userId: await verifyToken(req) }),   // required to join a room
+    // Judges `room:<slug>` for every room action and every room frame.
+    authorize: ({ channel, ctx }) => sameTenant(channel, ctx),
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);
 ```
+
+Since 0.146.0 every room action asks the router about `room:<slug>` first —
+`subscribe` to watch a room, `publish` to join, leave or announce it — and each
+member, occupancy and lifecycle frame is re-checked per recipient, so the
+`rooms:index` stream lists only rooms a connection may read (per tenant, given
+a tenant `authorize`). A `join` records the socket's authenticated `userId` and
+`displayName`; the frame's are ignored, and a socket with no `userId` cannot
+join.
 
 Add more capabilities by adding entries to `features` — nothing else changes.
 

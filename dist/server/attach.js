@@ -391,6 +391,13 @@ function fileUploads(opts = {}) {
         },
     });
 }
+/**
+ * Collaborative documents (the `crdt` wire service). 0.146.0: `authz` is
+ * required — attaching without it throws at startup — unless
+ * `insecureAllowAll` says this is a single-user demo. Every action also asks
+ * the router's channel check (`authorize`): `subscribe` for reads, `publish`
+ * for writes.
+ */
 function collabDocs(opts = {}) {
     return defineFeature({
         manifest: require('./manifest').crdtManifest,
@@ -405,6 +412,8 @@ function collabDocs(opts = {}) {
                 metadataStore: opts.metadataStore ?? new MemoryMetadataStore(),
                 hotCache: opts.hotCache === undefined ? new MemoryHotCache() : opts.hotCache,
                 authz: opts.authz,
+                insecureAllowAll: opts.insecureAllowAll,
+                activityChannelFor: opts.activityChannelFor,
             });
         },
     });
@@ -417,7 +426,7 @@ function collabDocs(opts = {}) {
  * All HTTP routes, middleware and listeners you already have are untouched.
  */
 function attachRealtime(server, opts) {
-    const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, authorizeBatch, authorityCache: cacheOpts, ...wsOpts } = opts;
+    const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, authorizeBatch, authorityCache: cacheOpts, maxChannelsPerSocket, ...wsOpts } = opts;
     const plan = (0, composition_1.planRealtimeComposition)(features, capabilityProviders);
     for (const feature of plan.features) {
         if (typeof feature.create !== 'function')
@@ -436,7 +445,8 @@ function attachRealtime(server, opts) {
         : inner;
     const router = customRouter ?? new router_1.LocalRealtimeRouter({
         plugins, authorize: hooks.authorize, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
-        filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs
+        filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs,
+        ...(maxChannelsPerSocket !== undefined ? { maxChannelsPerClient: maxChannelsPerSocket } : {})
     });
     if (principal)
         wsOpts.auth = (0, principal_1.revalidatingAuth)(wsOpts.auth, principal);

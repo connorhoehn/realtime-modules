@@ -31,6 +31,14 @@ declare class DocumentPresenceService {
      * @param logger
      */
     constructor(messageRouter: MessageRouterContract, logger: any);
+    /** 0.146.0: may this connection see presence on this document channel? */
+    private readableFilter;
+    /**
+     * 0.146.0: each `documents:presence` push is narrowed per recipient to the
+     * documents it may read. Without a filter nothing is pushed (fail closed):
+     * a push used to list every document and its editors to every socket.
+     */
+    setReadableFilter(filter: (clientId: string, channel: string) => Promise<boolean> | boolean): void;
     /**
      * Number of doc: channels currently tracking presence. Surfaced via
      * `crdtService.getStats().trackedPresenceChannels`. Was missing pre-fix:

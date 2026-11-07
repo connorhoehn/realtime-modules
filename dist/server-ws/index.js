@@ -7,12 +7,14 @@
 // ./client useWebSocket hook. Lazy-loads `ws` so consumers without
 // server-side code never pay the import cost.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.createWsHandler = void 0;
+exports.PUBLISH_PROOF_SKEW_MS = exports.revokePublishProofs = exports.publishProofKey = exports.createAuthorityScope = exports.SERVICE_CHANNEL_PREFIXES = exports.baseChannel = exports.splitServiceChannel = exports.DEFAULT_TOKEN_EXPIRY_GRACE_MS = exports.DEFAULT_WS_MAX_QUEUE_DEPTH = exports.DEFAULT_INDEPENDENT_SERVICES = exports.DEFAULT_WS_MAX_PAYLOAD = exports.createWsHandler = void 0;
 var createWsHandler_1 = require("./createWsHandler");
 Object.defineProperty(exports, "createWsHandler", { enumerable: true, get: function () { return createWsHandler_1.createWsHandler; } });
 var types_1 = require("./types");
 Object.defineProperty(exports, "DEFAULT_WS_MAX_PAYLOAD", { enumerable: true, get: function () { return types_1.DEFAULT_WS_MAX_PAYLOAD; } });
 Object.defineProperty(exports, "DEFAULT_INDEPENDENT_SERVICES", { enumerable: true, get: function () { return types_1.DEFAULT_INDEPENDENT_SERVICES; } });
+Object.defineProperty(exports, "DEFAULT_WS_MAX_QUEUE_DEPTH", { enumerable: true, get: function () { return types_1.DEFAULT_WS_MAX_QUEUE_DEPTH; } });
+Object.defineProperty(exports, "DEFAULT_TOKEN_EXPIRY_GRACE_MS", { enumerable: true, get: function () { return types_1.DEFAULT_TOKEN_EXPIRY_GRACE_MS; } });
 var channelAccess_1 = require("./channelAccess");
 Object.defineProperty(exports, "splitServiceChannel", { enumerable: true, get: function () { return channelAccess_1.splitServiceChannel; } });
 Object.defineProperty(exports, "baseChannel", { enumerable: true, get: function () { return channelAccess_1.baseChannel; } });
