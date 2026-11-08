@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.146.3 — 2026-11-07
+
+- **distributed-core 0.51.2.** Pin moves from 682b71a9 to the full-sha 5ff83f5c. 0.51.1 shipped a stale dist/ (0.50.1 code); 0.51.2 carries the real 0.51.x behaviour. dist/ rebuilt, byte-identical.
+
 ## 0.146.2 — 2026-11-07
 
 - **distributed-core 0.51.1.** Pin moves from eea5c874 (0.50.1) to 682b71a9 (0.51.1: signed cluster messages, secure-by-default clusters, webhook address pinning). No source change; typecheck and the full suite pass unchanged. Hosts running a secured cluster must run 0.51.1 on every node.

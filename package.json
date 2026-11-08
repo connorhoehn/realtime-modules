@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.146.2",
+  "version": "0.146.3",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -296,7 +296,7 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",
-    "distributed-core": "github:connorhoehn/distributed-core#682b71a904b334a4fdd17fd4d40390d67934def0",
+    "distributed-core": "github:connorhoehn/distributed-core#5ff83f5c77a9dd4da0d55437b128a847e1c77a79",
     "lib0": "^0.2.117",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0",
