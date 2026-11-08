@@ -172,8 +172,8 @@ The hooks exported from `./client`. Hooks that take a channel subscribe and unsu
 
 ## Related repositories
 
-- Depends on [`connorhoehn/service-runtime`](https://github.com/connorhoehn/service-runtime) and [`connorhoehnslalom/event-catalog`](https://github.com/connorhoehnslalom/event-catalog).
-- Used by [`connorhoehnslalom/ui-components`](https://github.com/connorhoehnslalom/ui-components), [`connorhoehnslalom/aws-agentcore`](https://github.com/connorhoehnslalom/aws-agentcore), [`connorhoehn/realtime-examples`](https://github.com/connorhoehn/realtime-examples), [`connorhoehn/platform-api`](https://github.com/connorhoehn/platform-api) and [`connorhoehn/live-video-streaming`](https://github.com/connorhoehn/live-video-streaming).
+- Depends on [`connorhoehn/service-runtime`](https://github.com/connorhoehn/service-runtime) and [`connorhoehn/event-catalog`](https://github.com/connorhoehn/event-catalog).
+- Used by [`connorhoehn/ui-components`](https://github.com/connorhoehn/ui-components), [`connorhoehn/aws-agentcore`](https://github.com/connorhoehn/aws-agentcore), [`connorhoehn/realtime-examples`](https://github.com/connorhoehn/realtime-examples), [`connorhoehn/platform-api`](https://github.com/connorhoehn/platform-api) and [`connorhoehn/live-video-streaming`](https://github.com/connorhoehn/live-video-streaming).
 
 ## Documentation
 
