@@ -3,7 +3,7 @@
  * @connorhoehn/realtime-modules/agent-streaming — barrel export.
  *
  * Server-side emitter for AG-UI v0.1.x. Pairs with
- * `@connorhoehnslalom/ui-components/agents` on the client.
+ * `@connorhoehn/ui-components/agents` on the client.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentStreamingManifest = exports.agentStreamingManifest = exports.agentStreamMiddleware = exports.createAgentStream = exports.validateJsonPatch = exports.AgentStreamImpl = void 0;

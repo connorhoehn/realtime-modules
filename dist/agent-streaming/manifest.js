@@ -33,7 +33,7 @@ exports.agentStreamingManifest = {
     dependencies: [],
     install: {
         backendRoutes: '@connorhoehn/realtime-modules/agent-streaming (agentStreamMiddleware)',
-        frontendImport: '@connorhoehnslalom/ui-components/agents',
+        frontendImport: '@connorhoehn/ui-components/agents',
     },
 };
 //# sourceMappingURL=manifest.js.map

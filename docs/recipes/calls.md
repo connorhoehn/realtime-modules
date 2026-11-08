@@ -142,7 +142,7 @@ import {
   dmLobbyName,
 } from '@connorhoehn/realtime-modules/client/video';
 import { useGateway } from '@connorhoehn/realtime-modules/client';
-import { ConversationCallDock } from '@connorhoehnslalom/ui-components/integrations/realtime-modules';
+import { ConversationCallDock } from '@connorhoehn/ui-components/integrations/realtime-modules';
 
 // One per conversation surface. Mount it where the call should live: unmounting hangs up.
 function DmThread({ me, other, org }: { me: User; other: User; org: string }) {

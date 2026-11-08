@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Packed-consumer check: `npm pack` the package, install the tarball into a
 // scratch project under a DIFFERENT dependency key (`rtm`, the way
-// aws-agentcore installs it as `@connorhoehnslalom/realtime-modules`), and
+// aws-agentcore installs it as `@connorhoehn/realtime-modules`), and
 // resolve and load every `exports` subpath from there. Catches what
 // verify-exports cannot: files missing from the tarball (`files` allowlist),
 // an export that only resolves in the source tree, and code that imports

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.146.5 — 2026-11-08
+
+- The agent-streaming manifest and docs name the renamed `@connorhoehn/ui-components` (was `@connorhoehnslalom/ui-components`). No code change.
+
 ## 0.146.4 — 2026-11-07
 
 - **`GatewayProxyClient` signs request-bound envelopes.** It now uses service-runtime 0.7.3's `createServiceRequestHeaders` (audience `realtime-gateway`), so the MAC covers method, path and body. The gateway refuses body-only envelopes since realtime-examples 0.2.8, so every earlier client got 401. The hand-rolled signer is removed; the constructor options are unchanged. service-runtime pin moves to 6fb67add.
