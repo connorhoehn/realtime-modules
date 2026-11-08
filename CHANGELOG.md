@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.146.6 — 2026-11-08
+
+- event-catalog pin moves from 0.8.7 to 0.10.7 (a045aca3), whose client signs audience-bound service auth. No code change.
+
 ## 0.146.5 — 2026-11-08
 
 - The agent-streaming manifest and docs name the renamed `@connorhoehn/ui-components` (was `@connorhoehnslalom/ui-components`). No code change.
