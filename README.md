@@ -77,6 +77,8 @@ npm run lint           # type-check the lint configuration
 npm run demo           # start the demo app on http://localhost:5173
 ```
 
+CI: `.github/workflows/ci.yml` runs typecheck and tests on push; it has not run yet (no GitHub access from the machine that wrote it).
+
 `npm run verify:exports`, `npm run check:contract`, `npm run verify:packed` and `npm run smoke:features` run the export, contract, packed-install and built-package checks on their own. `RELEASE.md` describes how a release is cut.
 
 ## Subpaths
