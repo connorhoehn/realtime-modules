@@ -6,6 +6,10 @@
 // Until now the library shipped only the client half, so a host had to fake
 // `openWebSocket` and push content-free hints. This service is the stream:
 //
+//   - SUBJECT SCOPES (0.147): a subscription may name a subject
+//     (`{ subject: 'show:<id>' }`) instead of a person-day. `channelFor` gets
+//     `{ personId: subject, subject, day: '', timezone: '' }`; there is no
+//     day window. `createSnapshotDiffSource` is the generic source for it.
 //   - Channels are TENANT-MAPPABLE and DEFAULT-DENY. Each subscription's
 //     `{ personId, day, timezone }` is mapped by the host's `channelFor` to a
 //     router channel (`acme:work-graph:p-001:2026-10-06`). No `channelFor`, or
@@ -36,7 +40,8 @@
 // Frames on the wire (`service: 'work-graph'`):
 //
 //   client → { service, action: 'subscribe', subscriptionGeneration,
-//              scope: { personId, day, timezone }, cursor?, awaitAccess?: 1,
+//              scope: { personId, day, timezone } | { subject } (0.147),
+//              cursor?, awaitAccess?: 1,
 //              activity?, viewPatch?: 1, baseViewHash? }
 //   client → { service, action: 'unsubscribe', subscriptionGeneration }
 //   server → { type: 'work-graph', action: 'subscribed' | 'awaiting', subscriptionGeneration }
@@ -61,15 +66,20 @@ import {
     type ChannelAccessOpts,
     type ChannelAccessRouter,
 } from '../server-ws/channelAccess';
-import { WORK_GRAPH_LIMITS } from './contracts';
+import { WORK_GRAPH_LIMITS, WORK_GRAPH_NO_DAY, workGraphSubjectScope } from './contracts';
 
 export const WORK_GRAPH_SERVICE = 'work-graph';
 
-/** The person-day a subscription reads. The viewer is the socket's identity. */
+/**
+ * The person-day a subscription reads, or (0.147) the subject: `subject` set,
+ * repeated in `personId`, `day` and `timezone` `''` (no day window; see
+ * `WorkGraphQueryScope`). The viewer is the socket's identity.
+ */
 export interface WorkGraphStreamScope {
     personId: string;
     day: string;
     timezone: string;
+    subject?: string;
 }
 
 /** Forwarded verbatim from the subscribe frame (schemaVersion 2 readers). */
@@ -205,7 +215,14 @@ function boundedString(value: unknown, max: number): value is string {
 
 function parseScope(value: unknown): WorkGraphStreamScope | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const { personId, day, timezone } = value as Record<string, unknown>;
+    const { personId, day, timezone, subject } = value as Record<string, unknown>;
+    if (subject !== undefined) {
+        // A subject scope: no day window, the subject repeated in personId.
+        // `day`/`timezone` may be omitted on the wire; they are '' either way.
+        if (!boundedString(subject, WORK_GRAPH_LIMITS.idLength) || (personId !== undefined && personId !== subject)) return null;
+        if ((day !== undefined && day !== WORK_GRAPH_NO_DAY) || (timezone !== undefined && timezone !== WORK_GRAPH_NO_DAY)) return null;
+        return workGraphSubjectScope(subject);
+    }
     if (!boundedString(personId, WORK_GRAPH_LIMITS.idLength)) return null;
     if (typeof day !== 'string' || !DAY.test(day)) return null;
     if (!boundedString(timezone, WORK_GRAPH_LIMITS.timezoneLength)) return null;

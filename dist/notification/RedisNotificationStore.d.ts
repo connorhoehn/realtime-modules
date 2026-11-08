@@ -1,4 +1,5 @@
 import type { NotificationRecord, NotificationLogger } from './types';
+import type { NotificationStore } from './NotificationStore';
 /**
  * Minimal node-redis (v4, camelCase) surface this store needs. Declared
  * structurally so tests can pass a fake. The production `redisPublisher`
@@ -28,7 +29,7 @@ interface RedisNotificationStoreOpts {
     listKeyPrefix?: string;
     readKeyPrefix?: string;
 }
-export declare class RedisNotificationStore {
+export declare class RedisNotificationStore implements NotificationStore {
     private readonly redis;
     private readonly logger;
     private readonly maxPerUser;

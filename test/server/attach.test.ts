@@ -379,6 +379,31 @@ describe('attachRealtime — notifications are pushed through handle.services', 
         await teardown(server, handle);
     });
 
+    it('0.147: an in-memory store replays on connect and resolve drops the item from the live tab', async () => {
+        const { InMemoryNotificationStore } = await import('../../src/notification');
+        const store = new InMemoryNotificationStore();
+        const { server, port, handle } = await boot([notifications({ store, replayOnConnect: true })], {
+            auth: async () => ({ userId: 'u-eve', displayName: 'Eve' }),
+        });
+        const svc = handle.services.notification!;
+        await svc.notifyUser('u-eve', { id: 'need:a', type: 'approval-requested', title: 'Approve A' });
+
+        // Listen before 'open': the replay can share the handshake's TCP chunk.
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/realtime`);
+        const replayed = nextFrame(ws, (f) => f.type === 'notification:bulk-update');
+        await new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); });
+        const replay = await replayed;
+        expect(replay.payload.notifications.map((n: any) => n.id)).toEqual(['need:a']);
+
+        const resolved = nextFrame(ws, (f) => f.type === 'notification:resolved');
+        expect(await svc.resolve('u-eve', 'need:a')).toEqual({ removed: true, delivered: 1 });
+        expect((await resolved).payload).toEqual({ id: 'need:a' });
+        expect(await store.list('u-eve')).toEqual([]);
+
+        ws.close();
+        await teardown(server, handle);
+    });
+
     it('does not deliver to a different user', async () => {
         const { server, port, handle } = await boot([notifications()], {
             auth: async () => ({ userId: 'u-eve', displayName: 'Eve' }),

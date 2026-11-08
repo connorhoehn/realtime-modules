@@ -22,6 +22,9 @@
 //   { type:'notification:read',        service:'notification', payload:{ id } }
 //   { type:'notification:bulk-update', service:'notification',
 //     payload:{ notifications:[...] } }
+//   { type:'notification:resolved',    service:'notification', payload:{ id } }
+//     (0.147: the thing the notification asked for was answered; the hook
+//     drops it from the inbox)
 //
 // INBOUND ACTIONS (this service registers under {service:'notification'}):
 //   { service:'notification', action:'markRead',    id }   → persist + echo
@@ -172,6 +175,57 @@ class NotificationService {
             if (typeof id === 'string' && id)
                 await this.handleMarkRead(userId, { id });
         }
+    }
+    /**
+     * Resolve (0.147): the thing notification `key` asked of `userId` was
+     * answered — a need was met, an approval given — so it leaves every open
+     * inbox, not just the tab that acted. The record is removed from the store
+     * (a store without `remove` marks it read, so it is not replayed), then a
+     * `notification:resolved` frame goes to every live tab of the user; the
+     * client hook drops the item. Idempotent: an unknown or already-resolved
+     * key still sends the frame (a tab may hold it from before a restart) and
+     * reports `removed: false`. Never throws for delivery failures.
+     */
+    async resolve(userId, key) {
+        if (!userId || typeof userId !== 'string')
+            throw new Error('resolve: userId is required');
+        if (!key || typeof key !== 'string')
+            throw new Error('resolve: key is required');
+        let removed = false;
+        try {
+            if (typeof this.store.remove === 'function')
+                removed = (await this.store.remove(userId, key)) === true;
+            else
+                await this.store.markRead(userId, key);
+        }
+        catch (err) {
+            this.logger.warn('[notification] resolve: store update failed', {
+                userId,
+                id: key,
+                errorMessage: err?.message ?? String(err),
+            });
+        }
+        const frame = {
+            type: 'notification:resolved',
+            service: 'notification',
+            payload: { id: key },
+        };
+        const delivered = await this.deliverToUser(userId, frame);
+        this.logger.debug?.('[notification] resolved', { userId, id: key, removed, delivered });
+        return { removed, delivered };
+    }
+    /** Resolve several keys for one user (see `resolve`). */
+    async resolveMany(userId, keys) {
+        let removed = 0, delivered = 0;
+        for (const key of new Set(keys)) {
+            if (typeof key !== 'string' || !key)
+                continue;
+            const r = await this.resolve(userId, key);
+            if (r.removed)
+                removed++;
+            delivered += r.delivered;
+        }
+        return { removed, delivered };
     }
     /** The user's stored notifications, oldest first, read state reconciled (0.115: for host-side reads such as an unread index). */
     async listForUser(userId) {

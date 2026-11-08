@@ -95,10 +95,18 @@ export interface NotificationBulkUpdateFrame {
     payload: { notifications: NotificationRecord[] };
 }
 
+/** 0.147: the notification was answered; every tab drops it (`NotificationService.resolve`). */
+export interface NotificationResolvedFrame {
+    type: 'notification:resolved';
+    service: 'notification';
+    payload: { id: string };
+}
+
 export type NotificationFrame =
     | NotificationNewFrame
     | NotificationReadFrame
-    | NotificationBulkUpdateFrame;
+    | NotificationBulkUpdateFrame
+    | NotificationResolvedFrame;
 
 // ---------------------------------------------------------------------------
 // Collaborator contracts (structural — keeps the service decoupled from the

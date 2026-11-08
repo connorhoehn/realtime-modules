@@ -50,9 +50,10 @@ export interface WorkEventBucketInput {
 /**
  * Buckets observation instants across the query's real local day. Bounds come
  * from the IANA calendar day, so a DST transition shortens or lengthens the
- * day instead of silently dropping or duplicating an hour.
+ * day instead of silently dropping or duplicating an hour. A subject query
+ * (0.147) has no day: pass its window and the buckets are bounded by it.
  */
-export declare function bucketWorkEvents(query: Pick<WorkGraphQueryV2, 'day' | 'timezone'>, observations: readonly WorkEventBucketInput[], options?: {
+export declare function bucketWorkEvents(query: Pick<WorkGraphQueryV2, 'day' | 'timezone'> & Partial<Pick<WorkGraphQueryV2, 'subject' | 'windowStart' | 'windowEnd'>>, observations: readonly WorkEventBucketInput[], options?: {
     bucketMs?: number;
     observedAt?: string;
 }): Array<{

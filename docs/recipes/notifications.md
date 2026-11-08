@@ -51,6 +51,19 @@ await notifier.notifyUser('u-carol', {
 store (below) and they get it on reconnect; without one, the notification is
 gone.
 
+### Resolving one (0.147)
+
+When a notification asks for something — an approval, a need — and it is
+answered, take it out of every open inbox, not just the tab that acted:
+
+```ts
+await notifier.resolve('u-carol', 'need:approve-mina');   // the id it was sent with
+// → { removed, delivered }   removed from the store; `notification:resolved` to every tab
+```
+
+Send needs with a stable `id` (the need's key) so the producer can resolve
+them later; re-sending the same id replaces the entry in the hook's list.
+
 ## 2 — Client (React hook)
 
 ```tsx
@@ -99,6 +112,18 @@ Zero-config uses in-memory state (single process, non-durable). To graduate:
 ```ts
 notifications({ redisClient })  // node-redis v4 client → persistence + replay across tabs/sessions
 ```
+
+A local, single-process app with no Redis can still replay on connect:
+
+```ts
+import { InMemoryNotificationStore } from '@connorhoehn/realtime-modules/notification';
+notifications({ store: new InMemoryNotificationStore(), replayOnConnect: true })
+```
+
+`store` takes any `NotificationStore` (`append`, `list`, `listUnread`,
+`markRead`, `markAllRead`, optional `remove`). `RedisNotificationStore` has no
+`remove`, so `resolve` marks the record read there: it is not replayed, but it
+still appears in `getHistory` as read.
 
 Multi-node? Swap the transport, not the features: pass a Redis-backed
 `RealtimeRouter` via `attachRealtime(server, { router })` — the

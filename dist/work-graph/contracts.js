@@ -8,7 +8,9 @@
  * helpers; this package never infers access from presence or source metadata.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WORK_GRAPH_LIMITS = exports.WORK_GRAPH_SCHEMA_VERSION = void 0;
+exports.WORK_GRAPH_NO_DAY = exports.WORK_GRAPH_LIMITS = exports.WORK_GRAPH_SCHEMA_VERSION = void 0;
+exports.workGraphSubjectScope = workGraphSubjectScope;
+exports.isWorkGraphSubjectScope = isWorkGraphSubjectScope;
 exports.WORK_GRAPH_SCHEMA_VERSION = 1;
 exports.WORK_GRAPH_LIMITS = {
     idLength: 128,
@@ -35,4 +37,15 @@ exports.WORK_GRAPH_LIMITS = {
     maximumHistorySharingMs: 7 * 24 * 60 * 60 * 1_000,
     maximumCollaborationRequestMs: 24 * 60 * 60 * 1_000,
 };
+/** `day` and `timezone` of a subject scope: it has no day window. */
+exports.WORK_GRAPH_NO_DAY = '';
+/** The person-day fields of a subject scope: `{ personId: subject, subject, day: '', timezone: '' }`. */
+function workGraphSubjectScope(subject) {
+    return { personId: subject, subject, day: exports.WORK_GRAPH_NO_DAY, timezone: exports.WORK_GRAPH_NO_DAY };
+}
+/** True when `scope` names a subject (and is shaped as one: no day window, `personId === subject`). */
+function isWorkGraphSubjectScope(scope) {
+    return !!scope && typeof scope.subject === 'string' && scope.subject.length > 0
+        && scope.personId === scope.subject && scope.day === exports.WORK_GRAPH_NO_DAY && scope.timezone === exports.WORK_GRAPH_NO_DAY;
+}
 //# sourceMappingURL=contracts.js.map

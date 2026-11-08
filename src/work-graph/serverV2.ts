@@ -163,16 +163,23 @@ export interface WorkEventBucketInput {
 /**
  * Buckets observation instants across the query's real local day. Bounds come
  * from the IANA calendar day, so a DST transition shortens or lengthens the
- * day instead of silently dropping or duplicating an hour.
+ * day instead of silently dropping or duplicating an hour. A subject query
+ * (0.147) has no day: pass its window and the buckets are bounded by it.
  */
 export function bucketWorkEvents(
-  query: Pick<WorkGraphQueryV2, 'day' | 'timezone'>,
+  query: Pick<WorkGraphQueryV2, 'day' | 'timezone'> & Partial<Pick<WorkGraphQueryV2, 'subject' | 'windowStart' | 'windowEnd'>>,
   observations: readonly WorkEventBucketInput[],
   options: { bucketMs?: number; observedAt?: string } = {},
 ): Array<{ at: string; count: number }> {
   const bucketMs = options.bucketMs ?? 60_000;
   if (!Number.isSafeInteger(bucketMs) || bucketMs <= 0) throw new RangeError('bucketMs must be a positive integer');
-  const day = workDayWindow(query.day, query.timezone);
+  let day: { start: string; end: string };
+  if (query.subject !== undefined) {
+    if (typeof query.windowStart !== 'string' || typeof query.windowEnd !== 'string') throw new RangeError('a subject query buckets across its window: windowStart and windowEnd are required');
+    day = { start: query.windowStart, end: query.windowEnd };
+  } else {
+    day = workDayWindow(query.day, query.timezone);
+  }
   const start = Date.parse(day.start);
   const end = Date.parse(day.end);
   const ceiling = options.observedAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(options.observedAt);

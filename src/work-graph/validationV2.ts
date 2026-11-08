@@ -31,8 +31,12 @@ function participant(value: unknown): boolean {
 function segment(value: unknown): boolean { return exact(value, ['id', 'at', 'speaker', 'text']) && id(value.id) && time(value.at) && label(value.speaker) && typeof value.text === 'string' && value.text.length > 0 && value.text.length <= WORK_GRAPH_LIMITS.descriptionLength; }
 
 export function validateWorkGraphQueryV2(value: unknown): ValidationResult<WorkGraphQueryV2> {
-  let valid = exact(value, ['schemaVersion', 'personId', 'day', 'timezone', 'windowStart', 'windowEnd', 'mode']) && value.schemaVersion === 2 && id(value.personId) && typeof value.day === 'string' && typeof value.timezone === 'string' && value.timezone.length <= WORK_GRAPH_LIMITS.timezoneLength && time(value.windowStart) && time(value.windowEnd) && ['live', 'as-of'].includes(String(value.mode));
-  if (valid) {
+  let valid = exact(value, ['schemaVersion', 'personId', 'day', 'timezone', 'windowStart', 'windowEnd', 'mode'], ['subject']) && value.schemaVersion === 2 && id(value.personId) && typeof value.day === 'string' && typeof value.timezone === 'string' && value.timezone.length <= WORK_GRAPH_LIMITS.timezoneLength && time(value.windowStart) && time(value.windowEnd) && ['live', 'as-of'].includes(String(value.mode));
+  if (valid && (value as RecordValue).subject !== undefined) {
+    // 0.147 subject query: no day window; the interval is the window itself.
+    const query = value as WorkGraphQueryV2;
+    valid = id(query.subject) && query.personId === query.subject && query.day === '' && query.timezone === '' && query.windowStart < query.windowEnd;
+  } else if (valid) {
     const query = value as WorkGraphQueryV2;
     try {
       const day = workDayWindow(query.day, query.timezone);
@@ -102,7 +106,7 @@ export function validateWorkGraphSnapshotV2(value: unknown): ValidationResult<Wo
   const snapshot = value as unknown as WorkGraphSnapshotV2;
   const nodeById = new Map(snapshot.nodes.map((node) => [node.id, node]));
   const edgeById = new Map(snapshot.edges.map((edge) => [edge.id, edge]));
-  let valid = snapshot.query.personId === snapshot.scope.personId && snapshot.query.day === snapshot.scope.day && snapshot.query.timezone === snapshot.scope.timezone && (snapshot.temporal.mode === 'recent' || snapshot.temporal.mode === snapshot.query.mode);
+  let valid = snapshot.query.personId === snapshot.scope.personId && snapshot.query.day === snapshot.scope.day && snapshot.query.timezone === snapshot.scope.timezone && snapshot.query.subject === snapshot.scope.subject && (snapshot.temporal.mode === 'recent' || snapshot.temporal.mode === snapshot.query.mode);
   const effortIds = new Set<string>();
   for (const effort of efforts) {
     if (!exact(effort, ['id', 'anchorNodeId', 'title', 'nodeIds', 'edgeIds', 'contextNodeIds'], ['subtitle']) || !id(effort.id) || effortIds.has(effort.id) || !id(effort.anchorNodeId) || !label(effort.title) || (effort.subtitle !== undefined && !label(effort.subtitle)) || !ids(effort.nodeIds, WORK_GRAPH_LIMITS.snapshotNodes) || !ids(effort.edgeIds, WORK_GRAPH_LIMITS.snapshotEdges) || !ids(effort.contextNodeIds, WORK_GRAPH_LIMITS.snapshotNodes)) { valid = false; break; }
@@ -151,7 +155,10 @@ export function validateWorkGraphSnapshotV2(value: unknown): ValidationResult<Wo
     if (!process || process.locked || process.disclosure === 'existence' || !['run', 'agent', 'terminal'].includes(process.kind) || !edge || edge.disclosure === 'existence' || ![edge.fromId, edge.toId].includes(process.id) || (snapshot.temporal.mode === 'as-of' && operation.observedAt > snapshot.query.windowEnd)) valid = false;
   }
   const bucketTimes = new Set<string>();
-  const day = workDayWindow(snapshot.query.day, snapshot.query.timezone);
+  // A subject query has no day: its buckets are bounded by its window.
+  const day = snapshot.query.subject !== undefined
+    ? { start: snapshot.query.windowStart, end: snapshot.query.windowEnd }
+    : workDayWindow(snapshot.query.day, snapshot.query.timezone);
   for (const bucket of eventBuckets) {
     if (!exact(bucket, ['at', 'count']) || !time(bucket.at) || !integer(bucket.count) || bucket.count === 0 || bucketTimes.has(bucket.at) || bucket.at < day.start || bucket.at >= day.end || bucket.at > snapshot.temporal.observedAt || (snapshot.temporal.mode === 'as-of' && bucket.at > snapshot.query.windowEnd)) { valid = false; break; }
     bucketTimes.add(bucket.at);

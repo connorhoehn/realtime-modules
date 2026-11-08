@@ -37,6 +37,7 @@ import {
     NOTIFICATION_TTL_SEC,
 } from './constants';
 import type { NotificationRecord, NotificationLogger } from './types';
+import type { NotificationStore } from './NotificationStore';
 
 const LIST_KEY_PREFIX = 'notif:list:';
 const READ_KEY_PREFIX = 'notif:read:';
@@ -69,7 +70,7 @@ interface RedisNotificationStoreOpts {
     readKeyPrefix?: string;
 }
 
-export class RedisNotificationStore {
+export class RedisNotificationStore implements NotificationStore {
     private readonly redis: NotificationRedisClient | null;
     private readonly logger: NotificationLogger;
     private readonly maxPerUser: number;

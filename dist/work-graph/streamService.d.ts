@@ -1,11 +1,16 @@
 import { type AuthorityScope } from '../server-ws/authorityScope';
 import { type ChannelAccessRouter } from '../server-ws/channelAccess';
 export declare const WORK_GRAPH_SERVICE = "work-graph";
-/** The person-day a subscription reads. The viewer is the socket's identity. */
+/**
+ * The person-day a subscription reads, or (0.147) the subject: `subject` set,
+ * repeated in `personId`, `day` and `timezone` `''` (no day window; see
+ * `WorkGraphQueryScope`). The viewer is the socket's identity.
+ */
 export interface WorkGraphStreamScope {
     personId: string;
     day: string;
     timezone: string;
+    subject?: string;
 }
 /** Forwarded verbatim from the subscribe frame (schemaVersion 2 readers). */
 export interface WorkGraphStreamActivityRequest {

@@ -20,6 +20,12 @@
 //     service: 'notification',
 //     payload: { notifications: Notification[] } }
 //
+//   { type: 'notification:resolved',
+//     service: 'notification',
+//     payload: { id } }
+//     (0.147: `NotificationService.resolve` — what the notification asked
+//     for was answered, so it leaves the list in every open tab)
+//
 // The sending half is NOT a frame from here. `NotificationService.notifyUser`
 // (./notification) is what produces these, called from your own server code —
 // `attachRealtime` exposes it as `handle.services.notification`. See
@@ -221,6 +227,10 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 
         setNotifications((prev) => {
           const withRead = applyReadState(n);
+          // 0.147: a re-announced id replaces its entry instead of listing it twice.
+          if (prev.some((existing) => existing.id === withRead.id)) {
+            return prev.map((existing) => (existing.id === withRead.id ? withRead : existing));
+          }
           const next = [...prev, withRead];
           // Trim to cap — drop the oldest (head of the list).
           if (next.length > maxNotifications) {
@@ -239,6 +249,17 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
         setNotifications((prev) =>
           prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
         );
+      } else if (msg.type === 'notification:resolved') {
+        const raw = msg as Record<string, unknown>;
+        const payload = raw.payload as Record<string, unknown> | undefined;
+        const id = typeof payload?.id === 'string' ? payload.id : null;
+        if (!id) return;
+        if (readMapRef.current[id]) {
+          const { [id]: _dropped, ...rest } = readMapRef.current;
+          readMapRef.current = rest;
+          persistReadMap(rest);
+        }
+        setNotifications((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
       } else if (msg.type === 'notification:bulk-update') {
         const raw = msg as Record<string, unknown>;
         const payload = raw.payload as Record<string, unknown> | undefined;
