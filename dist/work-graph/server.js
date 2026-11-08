@@ -20,4 +20,5 @@ __exportStar(require("./serverV2"), exports);
 __exportStar(require("./streamService"), exports);
 var manifest_1 = require("./manifest");
 Object.defineProperty(exports, "WorkGraphStreamManifest", { enumerable: true, get: function () { return manifest_1.WorkGraphStreamManifest; } });
+__exportStar(require("./snapshotDiffSource"), exports);
 //# sourceMappingURL=server.js.map

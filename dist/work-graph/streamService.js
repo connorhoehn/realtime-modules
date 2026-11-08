@@ -7,6 +7,10 @@
 // Until now the library shipped only the client half, so a host had to fake
 // `openWebSocket` and push content-free hints. This service is the stream:
 //
+//   - SUBJECT SCOPES (0.147): a subscription may name a subject
+//     (`{ subject: 'show:<id>' }`) instead of a person-day. `channelFor` gets
+//     `{ personId: subject, subject, day: '', timezone: '' }`; there is no
+//     day window. `createSnapshotDiffSource` is the generic source for it.
 //   - Channels are TENANT-MAPPABLE and DEFAULT-DENY. Each subscription's
 //     `{ personId, day, timezone }` is mapped by the host's `channelFor` to a
 //     router channel (`acme:work-graph:p-001:2026-10-06`). No `channelFor`, or
@@ -37,7 +41,8 @@
 // Frames on the wire (`service: 'work-graph'`):
 //
 //   client → { service, action: 'subscribe', subscriptionGeneration,
-//              scope: { personId, day, timezone }, cursor?, awaitAccess?: 1,
+//              scope: { personId, day, timezone } | { subject } (0.147),
+//              cursor?, awaitAccess?: 1,
 //              activity?, viewPatch?: 1, baseViewHash? }
 //   client → { service, action: 'unsubscribe', subscriptionGeneration }
 //   server → { type: 'work-graph', action: 'subscribed' | 'awaiting', subscriptionGeneration }
@@ -72,7 +77,16 @@ function boundedString(value, max) {
 function parseScope(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         return null;
-    const { personId, day, timezone } = value;
+    const { personId, day, timezone, subject } = value;
+    if (subject !== undefined) {
+        // A subject scope: no day window, the subject repeated in personId.
+        // `day`/`timezone` may be omitted on the wire; they are '' either way.
+        if (!boundedString(subject, contracts_1.WORK_GRAPH_LIMITS.idLength) || (personId !== undefined && personId !== subject))
+            return null;
+        if ((day !== undefined && day !== contracts_1.WORK_GRAPH_NO_DAY) || (timezone !== undefined && timezone !== contracts_1.WORK_GRAPH_NO_DAY))
+            return null;
+        return (0, contracts_1.workGraphSubjectScope)(subject);
+    }
     if (!boundedString(personId, contracts_1.WORK_GRAPH_LIMITS.idLength))
         return null;
     if (typeof day !== 'string' || !DAY.test(day))

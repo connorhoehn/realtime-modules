@@ -52,7 +52,10 @@ function createWorkGraphGatewayTransport(options) {
                 service,
                 action: 'subscribe',
                 subscriptionGeneration: generation,
-                scope: { personId: request.scope.personId, day: request.scope.day, timezone: request.scope.timezone },
+                // 0.147: a subject scope is sent as `{ subject }` (no day window).
+                scope: request.scope.subject !== undefined
+                    ? { subject: request.scope.subject }
+                    : { personId: request.scope.personId, day: request.scope.day, timezone: request.scope.timezone },
                 ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
                 ...(request.awaitAccess ? { awaitAccess: 1 } : {}),
                 ...(request.activity ? { activity: request.activity } : {}),

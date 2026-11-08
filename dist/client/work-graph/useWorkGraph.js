@@ -1,11 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.normalizeWorkGraphClientScope = normalizeWorkGraphClientScope;
 exports.useWorkGraph = useWorkGraph;
 const react_1 = require("react");
+const contracts_1 = require("../../work-graph/contracts");
 const validation_1 = require("../../work-graph/validation");
 const validationV2_1 = require("../../work-graph/validationV2");
 const viewPatch_1 = require("../../work-graph/viewPatch");
 const reduceSnapshot_1 = require("./reduceSnapshot");
+/** The full client scope for either form (a subject scope expanded; a person-day returned as is). */
+function normalizeWorkGraphClientScope(scope) {
+    if (typeof scope.subject === 'string' && scope.subject.length > 0) {
+        return { viewerId: scope.viewerId, ...(0, contracts_1.workGraphSubjectScope)(scope.subject) };
+    }
+    return scope;
+}
 /**
  * A snapshot failure that retrying cannot fix: the platform answered and said
  * no (not authenticated, not shared, not found, a malformed request). A
@@ -36,10 +45,13 @@ const resetReasons = new Set(['gap', 'replay-unavailable', 'scope-changed', 'sou
 const keepVisibleResetReasons = new Set(['gap', 'replay-unavailable', 'source-unavailable']);
 function keyForScope(scope) {
     // JSON encoding avoids delimiter ambiguity; this value never leaves memory.
-    return JSON.stringify([scope.viewerId, scope.personId, scope.day, scope.timezone]);
+    return JSON.stringify([scope.viewerId, scope.personId, scope.day, scope.timezone, scope.subject ?? null]);
 }
 function reducerScope(scope) {
-    return { personId: scope.personId, day: scope.day, timezone: scope.timezone };
+    return {
+        personId: scope.personId, day: scope.day, timezone: scope.timezone,
+        ...(scope.subject !== undefined ? { subject: scope.subject } : {}),
+    };
 }
 function exactRecord(value, keys) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
@@ -137,6 +149,7 @@ function deltaActivity(state, batch, view) {
             personId: state.scope.personId,
             day: state.scope.day,
             timezone: state.scope.timezone,
+            ...(state.scope.subject !== undefined ? { subject: state.scope.subject } : {}),
             policyRevision: batch.policyRevision,
         },
         revision: batch.watermark,
@@ -176,7 +189,10 @@ function defaultGeneration(sequence) {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, retryMaxDelayMs = 15_000, outageGraceMs = 20_000, random = Math.random, snapshotTimeoutMs = 10_000, }) {
+function useWorkGraph({ scope: scopeOption, transport, enabled = true, reconnectDelayMs = 250, createSubscriptionGeneration, schemaVersion = 1, window, retryMaxDelayMs = 15_000, outageGraceMs = 20_000, random = Math.random, snapshotTimeoutMs = 10_000, }) {
+    // Every field below is a primitive, so a fresh object per render is fine:
+    // the effect depends on the fields and the key, never on this identity.
+    const scope = normalizeWorkGraphClientScope(scopeOption);
     const scopeKey = keyForScope(scope);
     const generationSequence = (0, react_1.useRef)(0);
     const generationFactory = (0, react_1.useRef)(createSubscriptionGeneration);
@@ -204,7 +220,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
             error: null,
         });
         setRestart((value) => value + 1);
-    }, [scope.day, scope.personId, scope.timezone, scopeKey]);
+    }, [scope.day, scope.personId, scope.timezone, scope.subject, scopeKey]);
     (0, react_1.useEffect)(() => {
         if (!enabled)
             return undefined;
@@ -326,6 +342,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
                     windowStart: activityRequest.windowStart,
                     windowEnd: activityRequest.windowEnd,
                     mode: activityRequest.mode,
+                    ...(scope.subject !== undefined ? { subject: scope.subject } : {}),
                 });
                 if (!query || !query.ok) {
                     publish((0, reduceSnapshot_1.createClientWorkGraphState)(currentScope, subscriptionGeneration), 'invalid-query');
@@ -502,6 +519,7 @@ function useWorkGraph({ scope, transport, enabled = true, reconnectDelayMs = 250
         scope.day,
         scope.personId,
         scope.timezone,
+        scope.subject,
         scope.viewerId,
         scopeKey,
         transport,

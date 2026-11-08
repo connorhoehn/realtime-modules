@@ -1,4 +1,4 @@
-import { RedisNotificationStore } from './RedisNotificationStore';
+import type { NotificationStore } from './NotificationStore';
 import type { FeaturePrincipal } from '../server/authority/principal';
 import type { NotificationRedisClient } from './RedisNotificationStore';
 import type { NotificationInput, NotificationRecord, NotificationMessageRouter, NotificationLogger } from './types';
@@ -11,8 +11,11 @@ export interface NotificationServiceOpts {
      * a pre-built store; the store wins if both are given.
      */
     redisClient?: NotificationRedisClient | null;
-    /** Pre-built store (tests inject a fake here). */
-    store?: RedisNotificationStore;
+    /**
+     * Pre-built store: any `NotificationStore` (0.147) — `RedisNotificationStore`,
+     * `InMemoryNotificationStore` for a local app with no Redis, or a test fake.
+     */
+    store?: NotificationStore;
     /** Awaited before inbound history/read-state work. False, throw or
      * rejection refuses the action. Recipient delivery filtering belongs to
      * the router so it also covers producer delivery and connect replay. */
@@ -69,6 +72,25 @@ export declare class NotificationService {
      * `notification:read` per id to every live tab. Unknown ids are harmless.
      */
     markReadForUser(userId: string, ids: readonly string[]): Promise<void>;
+    /**
+     * Resolve (0.147): the thing notification `key` asked of `userId` was
+     * answered — a need was met, an approval given — so it leaves every open
+     * inbox, not just the tab that acted. The record is removed from the store
+     * (a store without `remove` marks it read, so it is not replayed), then a
+     * `notification:resolved` frame goes to every live tab of the user; the
+     * client hook drops the item. Idempotent: an unknown or already-resolved
+     * key still sends the frame (a tab may hold it from before a restart) and
+     * reports `removed: false`. Never throws for delivery failures.
+     */
+    resolve(userId: string, key: string): Promise<{
+        removed: boolean;
+        delivered: number;
+    }>;
+    /** Resolve several keys for one user (see `resolve`). */
+    resolveMany(userId: string, keys: readonly string[]): Promise<{
+        removed: number;
+        delivered: number;
+    }>;
     /** The user's stored notifications, oldest first, read state reconciled (0.115: for host-side reads such as an unread index). */
     listForUser(userId: string): Promise<NotificationRecord[]>;
     private handleMarkRead;

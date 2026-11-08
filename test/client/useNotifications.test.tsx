@@ -573,3 +573,39 @@ describe('useNotifications', () => {
     });
   });
 });
+
+// 0.147: NotificationService.resolve — an answered need leaves every tab.
+describe('useNotifications — notification:resolved (0.147)', () => {
+  it('drops the resolved item and forgets its read mark; other items stay', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useNotifications(), { wrapper: makeWrapper(ctx) });
+    act(() => {
+      emitNew(emit, makeNotificationPayload({ id: 'need:a', type: 'approval-requested' }));
+      emitNew(emit, makeNotificationPayload({ id: 'need:b', type: 'approval-requested', timestamp: '2026-05-22T10:01:00.000Z' }));
+    });
+    act(() => result.current.markAsRead('need:a'));
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')).toEqual({ 'need:a': true });
+
+    act(() => emit({ type: 'notification:resolved', service: 'notification', payload: { id: 'need:a' } } as unknown as GatewayMessage));
+    expect(result.current.notifications.map((n) => n.id)).toEqual(['need:b']);
+    expect(result.current.unreadCount).toBe(1);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')).toEqual({});
+
+    // Unknown ids and malformed frames are ignored.
+    act(() => {
+      emit({ type: 'notification:resolved', service: 'notification', payload: { id: 'nope' } } as unknown as GatewayMessage);
+      emit({ type: 'notification:resolved', service: 'notification', payload: {} } as unknown as GatewayMessage);
+    });
+    expect(result.current.notifications.map((n) => n.id)).toEqual(['need:b']);
+  });
+
+  it('a re-announced id replaces its entry instead of listing it twice', () => {
+    const { ctx, emit } = makeGatewayContext();
+    const { result } = renderHook(() => useNotifications(), { wrapper: makeWrapper(ctx) });
+    act(() => {
+      emitNew(emit, makeNotificationPayload({ id: 'need:a', title: 'Approve A' }));
+      emitNew(emit, makeNotificationPayload({ id: 'need:a', title: 'Approve A (2 pictures)' }));
+    });
+    expect(result.current.notifications.map((n) => n.title)).toEqual(['Approve A (2 pictures)']);
+  });
+});

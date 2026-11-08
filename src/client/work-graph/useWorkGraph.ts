@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { WorkGraphDeltaBatch, WorkGraphSnapshot, WorkGraphStreamMessage } from '../../work-graph/contracts';
+import { workGraphSubjectScope } from '../../work-graph/contracts';
 import type { WorkGraphSnapshotV2 } from '../../work-graph/contractsV2';
 import { validateWorkGraphDeltaBatch, validateWorkGraphSnapshot } from '../../work-graph/validation';
 import { validateWorkGraphQueryV2, validateWorkGraphSnapshotV2 } from '../../work-graph/validationV2';
@@ -27,6 +28,24 @@ import {
  */
 export interface WorkGraphClientScope extends ClientWorkGraphScope {
   viewerId: string;
+}
+
+/**
+ * 0.147: a graph about one subject (`show:<id>`) with no day window. The hook
+ * expands it to the full scope (`personId` = subject, `day`/`timezone` = `''`),
+ * which is what transports and `graph.scope` carry.
+ */
+export interface WorkGraphClientSubjectScope {
+  viewerId: string;
+  subject: string;
+}
+
+/** The full client scope for either form (a subject scope expanded; a person-day returned as is). */
+export function normalizeWorkGraphClientScope(scope: WorkGraphClientScope | WorkGraphClientSubjectScope): WorkGraphClientScope {
+  if (typeof (scope as { subject?: unknown }).subject === 'string' && (scope as { subject: string }).subject.length > 0) {
+    return { viewerId: scope.viewerId, ...workGraphSubjectScope((scope as WorkGraphClientSubjectScope).subject) };
+  }
+  return scope as WorkGraphClientScope;
 }
 
 /** Additive request fields. A v1 caller sends exactly the same body as before. */
@@ -105,7 +124,8 @@ export type WorkGraphClientError =
   | 'stream-unavailable';
 
 export interface UseWorkGraphOptions {
-  scope: WorkGraphClientScope;
+  /** A person-day, or (0.147) a subject: `{ viewerId, subject: 'show:<id>' }`. */
+  scope: WorkGraphClientScope | WorkGraphClientSubjectScope;
   transport: WorkGraphClientTransport;
   enabled?: boolean;
   reconnectDelayMs?: number;
@@ -116,7 +136,7 @@ export interface UseWorkGraphOptions {
    * response exactly; 2 requests the activity layer and validates it strictly.
    */
   schemaVersion?: 1 | 2;
-  /** Required with schemaVersion 2: the selected interval inside the local day. */
+  /** Required with schemaVersion 2: the selected interval inside the local day (any interval for a subject scope). */
   window?: { start: string; end: string; mode?: 'live' | 'as-of' };
   /** Ceiling for the backoff between recovery attempts after transient failures. */
   retryMaxDelayMs?: number;
@@ -177,11 +197,14 @@ const keepVisibleResetReasons = new Set(['gap', 'replay-unavailable', 'source-un
 
 function keyForScope(scope: WorkGraphClientScope): string {
   // JSON encoding avoids delimiter ambiguity; this value never leaves memory.
-  return JSON.stringify([scope.viewerId, scope.personId, scope.day, scope.timezone]);
+  return JSON.stringify([scope.viewerId, scope.personId, scope.day, scope.timezone, scope.subject ?? null]);
 }
 
 function reducerScope(scope: WorkGraphClientScope): ClientWorkGraphScope {
-  return { personId: scope.personId, day: scope.day, timezone: scope.timezone };
+  return {
+    personId: scope.personId, day: scope.day, timezone: scope.timezone,
+    ...(scope.subject !== undefined ? { subject: scope.subject } : {}),
+  };
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
@@ -282,6 +305,7 @@ function deltaActivity(
       personId: state.scope.personId,
       day: state.scope.day,
       timezone: state.scope.timezone,
+      ...(state.scope.subject !== undefined ? { subject: state.scope.subject } : {}),
       policyRevision: batch.policyRevision,
     },
     revision: batch.watermark,
@@ -324,7 +348,7 @@ function defaultGeneration(sequence: number): string {
  * deltas, and every async callback is fenced by both scope and generation.
  */
 export function useWorkGraph({
-  scope,
+  scope: scopeOption,
   transport,
   enabled = true,
   reconnectDelayMs = 250,
@@ -336,6 +360,9 @@ export function useWorkGraph({
   random = Math.random,
   snapshotTimeoutMs = 10_000,
 }: UseWorkGraphOptions): UseWorkGraphResult {
+  // Every field below is a primitive, so a fresh object per render is fine:
+  // the effect depends on the fields and the key, never on this identity.
+  const scope = normalizeWorkGraphClientScope(scopeOption);
   const scopeKey = keyForScope(scope);
   const generationSequence = useRef(0);
   const generationFactory = useRef(createSubscriptionGeneration);
@@ -364,7 +391,7 @@ export function useWorkGraph({
       error: null,
     });
     setRestart((value) => value + 1);
-  }, [scope.day, scope.personId, scope.timezone, scopeKey]);
+  }, [scope.day, scope.personId, scope.timezone, scope.subject, scopeKey]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -485,6 +512,7 @@ export function useWorkGraph({
           windowStart: activityRequest.windowStart,
           windowEnd: activityRequest.windowEnd,
           mode: activityRequest.mode,
+          ...(scope.subject !== undefined ? { subject: scope.subject } : {}),
         });
         if (!query || !query.ok) {
           publish(createClientWorkGraphState(currentScope, subscriptionGeneration), 'invalid-query');
@@ -656,6 +684,7 @@ export function useWorkGraph({
     scope.day,
     scope.personId,
     scope.timezone,
+    scope.subject,
     scope.viewerId,
     scopeKey,
     transport,

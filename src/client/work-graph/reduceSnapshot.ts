@@ -18,6 +18,8 @@ export interface ClientWorkGraphScope {
   personId: string;
   day: string;
   timezone: string;
+  /** 0.147: a subject scope (`personId` repeats it, `day`/`timezone` are `''`). */
+  subject?: string;
 }
 
 export interface ClientWorkGraphState {
@@ -50,7 +52,8 @@ export function createClientWorkGraphState(
 }
 
 function sameScope(left: ClientWorkGraphScope, right: ClientWorkGraphScope): boolean {
-  return left.personId === right.personId && left.day === right.day && left.timezone === right.timezone;
+  return left.personId === right.personId && left.day === right.day && left.timezone === right.timezone
+    && left.subject === right.subject;
 }
 
 /** Apply an HTTP snapshot only to the request generation and scope that started it. */

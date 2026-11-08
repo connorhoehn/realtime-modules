@@ -7,6 +7,17 @@ import { type ClientWorkGraphScope, type ClientWorkGraphState } from './reduceSn
 export interface WorkGraphClientScope extends ClientWorkGraphScope {
     viewerId: string;
 }
+/**
+ * 0.147: a graph about one subject (`show:<id>`) with no day window. The hook
+ * expands it to the full scope (`personId` = subject, `day`/`timezone` = `''`),
+ * which is what transports and `graph.scope` carry.
+ */
+export interface WorkGraphClientSubjectScope {
+    viewerId: string;
+    subject: string;
+}
+/** The full client scope for either form (a subject scope expanded; a person-day returned as is). */
+export declare function normalizeWorkGraphClientScope(scope: WorkGraphClientScope | WorkGraphClientSubjectScope): WorkGraphClientScope;
 /** Additive request fields. A v1 caller sends exactly the same body as before. */
 export interface WorkGraphActivityRequest {
     schemaVersion: 2;
@@ -73,7 +84,8 @@ export interface WorkGraphClientTransport {
 }
 export type WorkGraphClientError = 'snapshot-unavailable' | 'invalid-snapshot' | 'invalid-query' | 'stream-unavailable';
 export interface UseWorkGraphOptions {
-    scope: WorkGraphClientScope;
+    /** A person-day, or (0.147) a subject: `{ viewerId, subject: 'show:<id>' }`. */
+    scope: WorkGraphClientScope | WorkGraphClientSubjectScope;
     transport: WorkGraphClientTransport;
     enabled?: boolean;
     reconnectDelayMs?: number;
@@ -84,7 +96,7 @@ export interface UseWorkGraphOptions {
      * response exactly; 2 requests the activity layer and validates it strictly.
      */
     schemaVersion?: 1 | 2;
-    /** Required with schemaVersion 2: the selected interval inside the local day. */
+    /** Required with schemaVersion 2: the selected interval inside the local day (any interval for a subject scope). */
     window?: {
         start: string;
         end: string;
@@ -114,5 +126,5 @@ export interface UseWorkGraphResult {
  * Recovery always obtains a fresh authorized snapshot before accepting more
  * deltas, and every async callback is fenced by both scope and generation.
  */
-export declare function useWorkGraph({ scope, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, retryMaxDelayMs, outageGraceMs, random, snapshotTimeoutMs, }: UseWorkGraphOptions): UseWorkGraphResult;
+export declare function useWorkGraph({ scope: scopeOption, transport, enabled, reconnectDelayMs, createSubscriptionGeneration, schemaVersion, window, retryMaxDelayMs, outageGraceMs, random, snapshotTimeoutMs, }: UseWorkGraphOptions): UseWorkGraphResult;
 //# sourceMappingURL=useWorkGraph.d.ts.map

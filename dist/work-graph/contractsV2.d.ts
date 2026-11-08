@@ -21,6 +21,13 @@ export interface WorkGraphQueryV2 {
     windowStart: string;
     windowEnd: string;
     mode: 'live' | 'as-of';
+    /**
+     * 0.147: a subject query (see `WorkGraphQueryScope.subject`). `personId`
+     * repeats it, `day` and `timezone` are `''`, and the window is any interval
+     * (`windowStart < windowEnd`) rather than one inside a local day; event
+     * buckets are bounded by the window.
+     */
+    subject?: string;
 }
 export interface ViewerWorkEffort {
     id: string;

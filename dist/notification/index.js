@@ -21,11 +21,13 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTIFICATION_TTL_SEC = exports.NOTIFICATION_MAX_PER_USER = exports.RedisNotificationStore = exports.NotificationService = void 0;
+exports.NOTIFICATION_TTL_SEC = exports.NOTIFICATION_MAX_PER_USER = exports.InMemoryNotificationStore = exports.RedisNotificationStore = exports.NotificationService = void 0;
 var NotificationService_1 = require("./NotificationService");
 Object.defineProperty(exports, "NotificationService", { enumerable: true, get: function () { return NotificationService_1.NotificationService; } });
 var RedisNotificationStore_1 = require("./RedisNotificationStore");
 Object.defineProperty(exports, "RedisNotificationStore", { enumerable: true, get: function () { return RedisNotificationStore_1.RedisNotificationStore; } });
+var InMemoryNotificationStore_1 = require("./InMemoryNotificationStore");
+Object.defineProperty(exports, "InMemoryNotificationStore", { enumerable: true, get: function () { return InMemoryNotificationStore_1.InMemoryNotificationStore; } });
 __exportStar(require("./types"), exports);
 var constants_1 = require("./constants");
 Object.defineProperty(exports, "NOTIFICATION_MAX_PER_USER", { enumerable: true, get: function () { return constants_1.NOTIFICATION_MAX_PER_USER; } });
