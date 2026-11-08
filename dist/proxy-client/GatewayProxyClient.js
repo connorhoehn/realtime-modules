@@ -27,65 +27,19 @@
 // `SERVICE_AUTH_SECRET` in the gateway helm chart.
 //
 // HMAC SIGNING — when `serviceAuthSecret` + `serviceAuthClientId` are
-// provided, the client computes the X-Service-Auth header automatically on
-// every request, using the same v1 envelope as @connorhoehn/service-runtime.
-// The algorithm is inlined here (uses Node built-in `crypto`) so the
-// proxy-client subpath has zero extra runtime dependencies. Callers that
-// want the canonical implementation can list @connorhoehn/service-runtime as
-// an optional peer dep and use signEnvelope directly — the wire format is
-// identical. Pipeline status query remains a future addition.
+// provided, the client signs every request with service-runtime's
+// request-bound envelope (createServiceRequestHeaders, audience
+// 'realtime-gateway'): the MAC covers method, path+query and the exact body
+// bytes. The gateway (realtime-examples >= 0.2.8) refuses the older body-only
+// `v1.` envelope, and a precomputed envelope cannot be bound to a request, so
+// this client does not accept one. Pipeline status query remains a future
+// addition.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GatewayProxyClient = void 0;
-const crypto_1 = require("crypto");
+const service_runtime_1 = require("@connorhoehn/service-runtime");
 const types_1 = require("./types");
-// ---------------------------------------------------------------------------
-// Inline HMAC signing — wire-format compatible with @connorhoehn/service-runtime
-// signEnvelope. Format: v1.<serviceId>.<unixTsSec>.<base64url(HMAC-SHA256)>
-// Payload is canonicalised (sorted-keys JSON for objects, raw string otherwise).
-// ---------------------------------------------------------------------------
-function _canonicalise(payload) {
-    if (typeof payload === 'string')
-        return payload;
-    return _stableStringify(payload);
-}
-function _stableStringify(value, seen = new Set()) {
-    if (value === null || typeof value !== 'object')
-        return JSON.stringify(value);
-    const obj = value;
-    if (seen.has(obj))
-        throw new Error('signEnvelope: circular reference in payload');
-    seen.add(obj);
-    try {
-        if (Array.isArray(obj)) {
-            return '[' + obj.map((v) => _stableStringify(v, seen)).join(',') + ']';
-        }
-        const keys = Object.keys(obj).sort();
-        const parts = keys
-            .filter((k) => obj[k] !== undefined)
-            .map((k) => JSON.stringify(k) + ':' + _stableStringify(obj[k], seen));
-        return '{' + parts.join(',') + '}';
-    }
-    finally {
-        seen.delete(obj);
-    }
-}
-function _base64url(buf) {
-    return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-/**
- * Build an X-Service-Auth header value. Wire-format identical to
- * @connorhoehn/service-runtime's signEnvelope (v1 envelope).
- * Used internally by GatewayProxyClient when serviceAuthSecret is configured.
- */
-function _buildServiceAuthHeader(payload, secret, serviceId) {
-    const tsSec = Math.floor(Date.now() / 1000);
-    const payloadStr = _canonicalise(payload);
-    const mac = (0, crypto_1.createHmac)('sha256', secret);
-    mac.update(`${serviceId}.${tsSec}.${payloadStr}`);
-    return `v1.${serviceId}.${tsSec}.${_base64url(mac.digest())}`;
-}
-/** Header name for the HMAC service-auth envelope. */
-const SERVICE_AUTH_HEADER = 'X-Service-Auth';
+/** Audience the gateway verifies request-bound envelopes against. */
+const GATEWAY_AUDIENCE = 'realtime-gateway';
 const DEFAULT_TIMEOUT_MS = 5_000;
 class GatewayProxyClient {
     baseUrl;
@@ -275,18 +229,15 @@ class GatewayProxyClient {
         };
         if (this.authToken)
             headers['Authorization'] = `Bearer ${this.authToken}`;
-        // Compute HMAC envelope when signing is configured. The payload signed
-        // is the request body (or an empty string for GET requests). This matches
-        // the gateway's requireServiceAuthRawHttp verifier which re-canonicalises
-        // the body on the server side.
+        // Request-bound envelope: signs method, path+query and the exact body
+        // string that goes on the wire.
         if (this.serviceAuthSecret && this.serviceAuthClientId) {
-            // Sign the body (or empty string for bodyless requests). The payload
-            // must be string | object for _buildServiceAuthHeader / _canonicalise;
-            // opts.body is `unknown` so we cast after the undefined guard. Any
-            // value that reaches here is always a plain serialisable object or
-            // primitive (set by the public methods above), never a class instance.
-            const signingPayload = opts.body !== undefined ? opts.body : '';
-            headers[SERVICE_AUTH_HEADER] = _buildServiceAuthHeader(signingPayload, this.serviceAuthSecret, this.serviceAuthClientId);
+            const bodyText = opts.body !== undefined ? JSON.stringify(opts.body) : '';
+            Object.assign(headers, (0, service_runtime_1.createServiceRequestHeaders)({
+                secret: this.serviceAuthSecret,
+                serviceId: this.serviceAuthClientId,
+                audience: GATEWAY_AUDIENCE,
+            })({ url, method: opts.method, body: bodyText }));
         }
         const init = { method: opts.method, headers };
         if (opts.body !== undefined) {

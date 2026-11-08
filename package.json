@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.146.3",
+  "version": "0.146.4",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -300,7 +300,7 @@
     "lib0": "^0.2.117",
     "lru-cache": "^10.4.3",
     "yjs": "^13.0.0",
-    "@connorhoehn/service-runtime": "github:connorhoehn/service-runtime#c01db0e6dfe0e6b91081ae92ee5cc3c1e77d2ad6"
+    "@connorhoehn/service-runtime": "github:connorhoehn/service-runtime#6fb67add20ae9177395edecf4a691be1dbd33ce9"
   },
   "peerDependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.146.4 — 2026-11-07
+
+- **`GatewayProxyClient` signs request-bound envelopes.** It now uses service-runtime 0.7.3's `createServiceRequestHeaders` (audience `realtime-gateway`), so the MAC covers method, path and body. The gateway refuses body-only envelopes since realtime-examples 0.2.8, so every earlier client got 401. The hand-rolled signer is removed; the constructor options are unchanged. service-runtime pin moves to 6fb67add.
+
 ## 0.146.3 — 2026-11-07
 
 - **distributed-core 0.51.2.** Pin moves from 682b71a9 to the full-sha 5ff83f5c. 0.51.1 shipped a stale dist/ (0.50.1 code); 0.51.2 carries the real 0.51.x behaviour. dist/ rebuilt, byte-identical.

@@ -71,8 +71,10 @@ export interface ProxyClientOptions {
     /**
      * HMAC secret for automatic X-Service-Auth signing. Must be paired with
      * `serviceAuthClientId`. When both are provided, every request receives a
-     * freshly-computed HMAC envelope matching the v1 wire-format used by
-     * @connorhoehn/service-runtime's signEnvelope.
+     * request-bound envelope from @connorhoehn/service-runtime's
+     * createServiceRequestHeaders (audience `realtime-gateway`). The gateway
+     * refuses body-only envelopes and precomputed ones, so there is no way to
+     * pass a prebuilt envelope.
      *
      * Tip: load from `process.env.SERVICE_AUTH_SECRET` and never hard-code.
      */
