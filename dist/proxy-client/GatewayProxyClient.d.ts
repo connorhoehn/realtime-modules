@@ -1,9 +1,18 @@
+import type { createServiceRequestHeaders as CreateServiceRequestHeaders } from '@connorhoehn/service-runtime';
 import { ProxyClientOptions, GatewayHealthResponse, GatewayClusterInfo, GatewayStatsResponse, GatewayMetricsResponse, PipelineWebhookResponse, TriggerPipelineWebhookOptions, ChatMessage, PresenceEntry, ActivityEvent } from './types';
+type ServiceRequestHeadersFactory = typeof CreateServiceRequestHeaders;
+/**
+ * Registers service-runtime's `createServiceRequestHeaders` for signing.
+ * Called by the `proxy-client/server` entry; hosts never need it directly.
+ * @internal
+ */
+export declare function registerServiceRequestHeaders(factory: ServiceRequestHeadersFactory): void;
 export declare class GatewayProxyClient {
     private readonly baseUrl;
     private readonly authToken?;
     private readonly serviceAuthSecret?;
     private readonly serviceAuthClientId?;
+    private readonly signRequest?;
     private readonly fetchImpl;
     private readonly timeoutMs;
     constructor(opts: ProxyClientOptions);
@@ -94,4 +103,5 @@ export declare class GatewayProxyClient {
     private request;
     private buildUrl;
 }
+export {};
 //# sourceMappingURL=GatewayProxyClient.d.ts.map

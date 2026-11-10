@@ -103,7 +103,8 @@ Every key in the package `exports` map is one entry point. Import from the narro
 | `./adapters/excalidraw` | Excalidraw to Yjs binding for collaborative diagrams |
 | `./agent-streaming` | Server-side AG-UI event stream over SSE for AI agent responses |
 | `./agent-streaming/client` | `useAgentStream`, the browser side of that stream |
-| `./proxy-client` | `GatewayProxyClient`, a typed REST client with optional HMAC signing |
+| `./proxy-client` | `GatewayProxyClient`, a typed REST client; browser-safe, and it signs with HMAC in Node when given a service secret |
+| `./proxy-client/server` | The same client with service-runtime imported statically, for bundled server code that signs requests; Node only |
 | `./server-ws` | `createWsHandler`, the generic WebSocket handler factory |
 | `./server` | `attachRealtime`, the feature factories, channel authorization and the document stack |
 | `./server/stores/dynamo` | DynamoDB-backed chat storage |

@@ -1,6 +1,6 @@
 {
   "name": "@connorhoehn/realtime-modules",
-  "version": "0.147.0",
+  "version": "0.147.1",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
@@ -51,6 +51,9 @@
       ],
       "proxy-client": [
         "dist/proxy-client/index.d.ts"
+      ],
+      "proxy-client/server": [
+        "dist/proxy-client/server.d.ts"
       ],
       "server-ws": [
         "dist/server-ws/index.d.ts"
@@ -183,6 +186,10 @@
       "types": "./dist/proxy-client/index.d.ts",
       "default": "./dist/proxy-client/index.js"
     },
+    "./proxy-client/server": {
+      "types": "./dist/proxy-client/server.d.ts",
+      "default": "./dist/proxy-client/server.js"
+    },
     "./server-ws": {
       "types": "./dist/server-ws/index.d.ts",
       "default": "./dist/server-ws/index.js"
@@ -290,17 +297,18 @@
     "demo": "cd demo && npm run dev",
     "demo:build": "cd demo && npm run build",
     "clean": "rm -rf dist",
-    "verify:exports": "node scripts/verify-exports.mjs",
+    "verify:exports": "node scripts/verify-exports.mjs && npm run verify:browser-safe",
+    "verify:browser-safe": "node scripts/verify-browser-safe.mjs",
     "verify:packed": "node scripts/verify-packed-consumer.mjs",
     "smoke:features": "node scripts/smoke-features.mjs"
   },
   "dependencies": {
+    "@connorhoehn/service-runtime": "github:connorhoehn/service-runtime#6fb67add20ae9177395edecf4a691be1dbd33ce9",
     "@mediapipe/tasks-vision": "^0.10.34",
     "distributed-core": "github:connorhoehn/distributed-core#5ff83f5c77a9dd4da0d55437b128a847e1c77a79",
     "lib0": "^0.2.117",
     "lru-cache": "^10.4.3",
-    "yjs": "^13.0.0",
-    "@connorhoehn/service-runtime": "github:connorhoehn/service-runtime#6fb67add20ae9177395edecf4a691be1dbd33ce9"
+    "yjs": "^13.0.0"
   },
   "peerDependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
@@ -429,6 +437,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
     "express": "^4.22.2",
     "jest": "^30.0.0",
     "jest-environment-jsdom": "^30.4.1",

@@ -33,8 +33,18 @@
 // `v1.` envelope, and a precomputed envelope cannot be bound to a request, so
 // this client does not accept one. Pipeline status query remains a future
 // addition.
+//
+// BROWSER SAFETY — browser apps import this subpath at boot and never sign.
+// @connorhoehn/service-runtime is Node-only (async_hooks), so it is never
+// imported at the top of this module (0.147.0 did, and every consumer page
+// rendered blank on a fresh Vite cache). It is loaded only when a signing
+// secret is configured, through a require whose specifier bundlers cannot
+// follow. Server code that is itself bundled (esbuild Lambda bundles) should
+// import `@connorhoehn/realtime-modules/proxy-client/server`, which imports
+// service-runtime statically and registers it here.
+// `scripts/verify-browser-safe.mjs` keeps this subpath free of Node imports.
 
-import { createServiceRequestHeaders } from '@connorhoehn/service-runtime';
+import type { createServiceRequestHeaders as CreateServiceRequestHeaders } from '@connorhoehn/service-runtime';
 import {
     ProxyClientOptions,
     ProxyClientNetworkError,
@@ -54,6 +64,48 @@ import {
 /** Audience the gateway verifies request-bound envelopes against. */
 const GATEWAY_AUDIENCE = 'realtime-gateway';
 
+type ServiceRequestHeadersFactory = typeof CreateServiceRequestHeaders;
+type RequestSigner = ReturnType<ServiceRequestHeadersFactory>;
+
+let registeredHeadersFactory: ServiceRequestHeadersFactory | undefined;
+
+/**
+ * Registers service-runtime's `createServiceRequestHeaders` for signing.
+ * Called by the `proxy-client/server` entry; hosts never need it directly.
+ * @internal
+ */
+export function registerServiceRequestHeaders(factory: ServiceRequestHeadersFactory): void {
+    registeredHeadersFactory = factory;
+}
+
+declare const require: ((id: string) => unknown) | undefined;
+
+function loadServiceRequestHeaders(): ServiceRequestHeadersFactory {
+    if (registeredHeadersFactory) return registeredHeadersFactory;
+    // Built at runtime so browser bundlers (Vite, esbuild, Rollup) do not
+    // follow it into service-runtime's Node-only code.
+    const specifier = ['@connorhoehn', 'service-runtime'].join('/');
+    let mod: { createServiceRequestHeaders?: ServiceRequestHeadersFactory } | undefined;
+    try {
+        mod = typeof require === 'function'
+            ? (require(specifier) as { createServiceRequestHeaders?: ServiceRequestHeadersFactory })
+            : undefined;
+    } catch (err) {
+        throw new Error(
+            `GatewayProxyClient: request signing needs the service-runtime package (${describeError(err)}). ` +
+                'Signing is server-side only; bundled server code should import the realtime-modules proxy-client/server entry.',
+        );
+    }
+    if (!mod || typeof mod.createServiceRequestHeaders !== 'function') {
+        throw new Error(
+            'GatewayProxyClient: request signing is server-side only and service-runtime could not be loaded here. ' +
+                'Browsers never sign; server code should import the realtime-modules proxy-client/server entry.',
+        );
+    }
+    registeredHeadersFactory = mod.createServiceRequestHeaders;
+    return registeredHeadersFactory;
+}
+
 const DEFAULT_TIMEOUT_MS = 5_000;
 
 interface RequestOptions {
@@ -69,6 +121,7 @@ export class GatewayProxyClient {
     private readonly authToken?: string;
     private readonly serviceAuthSecret?: string;
     private readonly serviceAuthClientId?: string;
+    private readonly signRequest?: RequestSigner;
     private readonly fetchImpl: typeof fetch;
     private readonly timeoutMs: number;
 
@@ -92,6 +145,13 @@ export class GatewayProxyClient {
         }
         this.serviceAuthSecret = opts.serviceAuthSecret;
         this.serviceAuthClientId = opts.serviceAuthClientId;
+        if (this.serviceAuthSecret && this.serviceAuthClientId) {
+            this.signRequest = loadServiceRequestHeaders()({
+                secret: this.serviceAuthSecret,
+                serviceId: this.serviceAuthClientId,
+                audience: GATEWAY_AUDIENCE,
+            });
+        }
 
         const f = opts.fetch ?? (globalThis as { fetch?: typeof fetch }).fetch;
         if (typeof f !== 'function') {
@@ -288,16 +348,9 @@ export class GatewayProxyClient {
 
         // Request-bound envelope: signs method, path+query and the exact body
         // string that goes on the wire.
-        if (this.serviceAuthSecret && this.serviceAuthClientId) {
+        if (this.signRequest) {
             const bodyText = opts.body !== undefined ? JSON.stringify(opts.body) : '';
-            Object.assign(
-                headers,
-                createServiceRequestHeaders({
-                    secret: this.serviceAuthSecret,
-                    serviceId: this.serviceAuthClientId,
-                    audience: GATEWAY_AUDIENCE,
-                })({ url, method: opts.method, body: bodyText }),
-            );
+            Object.assign(headers, this.signRequest({ url, method: opts.method, body: bodyText }));
         }
 
         const init: RequestInit = { method: opts.method, headers };

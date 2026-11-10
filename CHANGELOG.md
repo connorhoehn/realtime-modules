@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.147.1 — 2026-11-09
+
+Fix: `./proxy-client` is browser-safe again. Since 0.146.4 its compiled module required `@connorhoehn/service-runtime` at load time; that package is Node-only (`async_hooks`), so any browser app importing the subpath threw `AsyncLocalStorage is not a constructor` at boot and rendered blank once its bundler cache was rebuilt.
+
+- **Proxy client** (lane: browser-safe). `GatewayProxyClient` loads service-runtime only when `serviceAuthSecret` is configured, through a require bundlers do not follow; a client without a secret never touches it. A secret in a runtime where service-runtime cannot load now throws at construction with a message naming the server entry. The options and the signed request-bound envelope are unchanged for Node callers.
+- **New `./proxy-client/server`** (lane: browser-safe). The same exports with service-runtime imported statically, for server code that is bundled (an esbuild Lambda bundle does not follow the lazy require). Node only.
+- **Guard** (lane: browser-safe). `scripts/verify-browser-safe.mjs` (`npm run verify:browser-safe`, part of `verify:exports` and so `build`; CI runs `npm run build`) bundles every client-facing subpath with esbuild `platform: 'browser'` and fails on a Node builtin, service-runtime, `ws`, `express`, `@aws-sdk/*` or Redis client. Client-facing: `./client`, `./client/ws`, `./client/video`, `./client/voice`, `./client/media-effects`, `./client/hangout-rooms`, `./client/meeting`, `./client/pipelines`, `./client/documents`, `./adapters/tiptap`, `./adapters/excalidraw`, `./agent-streaming/client`, `./proxy-client`, `./call`, `./room`, `./meeting`, `./hangout-rooms`, `./deck`, `./typed-documents`, `./work-graph`; every other subpath is listed as server-only with its reason, and an unclassified new subpath fails the run. `test/proxy-client/browserSafe.test.ts` runs it against the sources and checks that the client without a secret never loads service-runtime. esbuild 0.28.2 is a new dev dependency.
+
 ## 0.147.0 — 2026-11-09
 
 Breaking default: every authorization hook is required. A constructor or attach point whose hook is missing throws at startup instead of allowing everything. The one shared opt-out is `insecureAllowAll: true`, for local development only: it logs one warning the first time it is accepted and throws when `NODE_ENV=production`.
