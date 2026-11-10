@@ -33,6 +33,7 @@
 import { EvictionTimer, PeriodicSweep } from 'distributed-core';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
 import { routerEnforcesChannelAccess, routerPermits } from '../server-ws/channelAccess';
+import { requireHook } from '../server-ws/insecureAllowAll';
 import type { PresenceStore } from './PresenceStore';
 import type {
     PresenceConfig,
@@ -135,6 +136,10 @@ class PresenceService {
             throw new Error('Shared presence requires fresh router identity and liveness');
         }
         this.logger = logger;
+        // 0.147.0: fail closed. Without its own hook and without a router that
+        // enforces channel access, every channel was open to every connection.
+        requireHook('PresenceService', 'an authorizeChannel hook (or a router with an authorize hook)',
+            typeof config.authorizeChannel === 'function' || routerEnforcesChannelAccess(messageRouter as any), config.insecureAllowAll, messageRouter);
         this.authorizeChannel = config.authorizeChannel || (() => true);
         this.hasAuthorizeChannel = typeof config.authorizeChannel === 'function';
         this.resolveSender = config.resolveSender ?? null;

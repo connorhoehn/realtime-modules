@@ -36,6 +36,7 @@ function makeRouter() {
         sendToClient: (clientId: string, message: any) => {
             sentToClient.push({ clientId, message });
         },
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn(
             (channel: string, message: any, excludeClientId?: string | null, opts?: any) => {
                 sendToChannelCalls.push({ channel, message, excludeClientId, opts });
@@ -110,7 +111,7 @@ describe('ChatService identityResolver — userId stamping', () => {
         expect(msg.metadata.avatarUrl).toBe('https://a/hank.png');
     });
 
-    it('trustFrameSender: sender-provided metadata wins over resolver hints', async () => {
+    it('trustFrameSender is ignored (0.147.0): the resolver names the sender', async () => {
         const { router, sendToChannelCalls } = makeRouter();
         const svc = makeService(router, { identityResolver: resolver, trustFrameSender: true });
         await svc.handleJoinChannel('conn-hank', { channel: 'chat:general' });
@@ -121,29 +122,26 @@ describe('ChatService identityResolver — userId stamping', () => {
         });
 
         const msg = sendToChannelCalls[0].message.message;
-        expect(msg.metadata.displayName).toBe('The Hankster'); // sender wins
-        expect(msg.metadata.avatarUrl).toBe('https://a/hank.png'); // hole filled by resolver
+        expect(msg.metadata.displayName).toBe('Hank');
+        expect(msg.metadata.avatarUrl).toBe('https://a/hank.png');
     });
 
-    it('no resolver → behavior identical to today (no userId, metadata untouched)', async () => {
+    it('no resolver and no auth context → the send is refused (0.147.0)', async () => {
         const { router, sendToChannelCalls } = makeRouter();
         const svc = makeService(router);
         await svc.handleJoinChannel('conn-x', { channel: 'chat:general' });
-        await svc.handleSendMessage('conn-x', { channel: 'chat:general', message: 'hi' });
+        await svc.handleSendMessage('conn-x', { channel: 'chat:general', message: 'hi', metadata: { userId: 'mallory' } });
 
-        const msg = sendToChannelCalls[0].message.message;
-        expect(msg.userId).toBeUndefined();
-        expect(msg.metadata).toEqual({});
+        expect(sendToChannelCalls).toHaveLength(0);
     });
 
-    it('resolver yields no userId → no stamp, send still goes out on non-dm channels', async () => {
+    it('resolver yields no userId → the send is refused on non-dm channels too (0.147.0)', async () => {
         const { router, sendToChannelCalls } = makeRouter();
         const svc = makeService(router, { identityResolver: resolver });
         await svc.handleJoinChannel('conn-anon', { channel: 'chat:general' });
         await svc.handleSendMessage('conn-anon', { channel: 'chat:general', message: 'hi' });
 
-        expect(sendToChannelCalls).toHaveLength(1);
-        expect(sendToChannelCalls[0].message.message.userId).toBeUndefined();
+        expect(sendToChannelCalls).toHaveLength(0);
     });
 
     it('userId round-trips through the ChatStore', async () => {

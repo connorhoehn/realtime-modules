@@ -20,7 +20,11 @@ const realtime = attachRealtime(httpServer, {
         // document (`doc:<id>`; '' for a create)? Without it attach throws.
         authz: async (clientId, channel, service, action) => canUseDocument(clientId, channel, action),
     })],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // presence names/colors
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // presence names/colors; exp in seconds
+    },
+    allowedOrigins: ['https://app.example.com'],   // other browser origins get 403
     // Asked too, for every document action: `subscribe` for reads, `publish` for writes.
     authorize: ({ channel, ctx }) => sameTenant(channel, ctx),
 });
@@ -28,7 +32,7 @@ httpServer.listen(3000);
 ```
 
 `collabDocs({ insecureAllowAll: true })` starts without `authz` — single-user
-demos only. A frame whose `documentId` and `channel` name different documents
+demos only (`// local development only`). A frame whose `documentId` and `channel` name different documents
 is refused. `documentCreated` / `documentDeleted` / `documentMetaUpdated` and
 the `documents:presence` push reach only connections that may read the
 document (through a router with `supportsScopedBroadcast`, which both built-in

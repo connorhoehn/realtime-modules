@@ -53,7 +53,7 @@ type Harness = { connect: (sub: string) => Promise<Conn>; settle: () => Promise<
 /** attachRealtime + calls() over real sockets. */
 async function socketHarness(store: CallStateStore): Promise<Harness> {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features: [calls({ stateStore: store })],
         path: '/realtime',
         auth: async (req: http.IncomingMessage) => {

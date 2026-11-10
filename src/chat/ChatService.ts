@@ -124,6 +124,12 @@ const ErrorCodes = {
      * issue. Nothing is stored or broadcast.
      */
     CHAT_BAD_ATTACHMENT: 'CHAT_BAD_ATTACHMENT',
+    /**
+     * Send (0.147.0): the connection has no authenticated sender (no auth
+     * context with a userId, no `identityResolver` userId). The frame's own
+     * sender fields are never used instead, so nothing is stored or broadcast.
+     */
+    CHAT_UNAUTHENTICATED: 'CHAT_UNAUTHENTICATED',
 } as const;
 
 function createErrorResponse(
@@ -272,7 +278,8 @@ export interface ChatServiceOpts {
      * `message.metadata` in place of the frame's copies (see
      * `trustFrameSender`). The router's auth context
      * (`getClientData(clientId).userContext`) fills whatever this leaves
-     * out. Neither ⇒ no userId stamped and the frame's metadata kept.
+     * out. Neither ⇒ 0.147.0: the send is refused with `CHAT_UNAUTHENTICATED`
+     * (before, it went out with the frame's metadata as the sender).
      *
      * Also the identity source for dm-membership enforcement — see
      * `enforceDmMembership`.
@@ -313,12 +320,10 @@ export interface ChatServiceOpts {
     resolveSender?: ResolveSender;
 
     /**
-     * Let the frame name the sender. Default false: once a connection is
-     * identified (auth context with a userId, or an `identityResolver`
-     * userId), the frame's `metadata.userId` / `displayName` / `avatarUrl`
-     * are dropped and the server's identity stamped instead, on send and on
-     * edit. True restores the pre-0.98.5 rule (frame metadata wins, the
-     * server fills gaps). `message.userId` is always the server's.
+     * @deprecated 0.147.0: ignored. The frame never names the sender: the
+     * frame's `metadata.userId` / `displayName` / `avatarUrl` are always
+     * dropped and the authenticated identity stamped instead, on send and on
+     * edit. (It used to restore the pre-0.98.5 rule, frame metadata wins.)
      */
     trustFrameSender?: boolean;
 
@@ -579,7 +584,8 @@ export class ChatService {
         this.authz = opts.authz ?? (() => true);
         this.identityResolver = opts.identityResolver ?? null;
         this.resolveSender = opts.resolveSender ?? null;
-        this.trustFrameSender = opts.trustFrameSender === true;
+        // 0.147.0: kept for API stability only; the frame never names the sender.
+        this.trustFrameSender = false;
         this.attachmentUrlFor = opts.attachmentUrlFor ?? defaultAttachmentUrlFor;
         // DM enforcement is ON unless switched off explicitly (0.146.0).
         this.enforceDmMembership = opts.enforceDmMembership ?? true;
@@ -962,6 +968,12 @@ export class ChatService {
         // Resolve identity ONCE — feeds both the dm-membership gate and
         // the userId stamp below.
         const identity = this._resolveIdentity(clientId, frame);
+        // 0.147.0: the sender is the authenticated principal, never the
+        // frame. A connection without one cannot send.
+        if (!identity || !identity.userId) {
+            this.sendError(clientId, 'Sending needs an authenticated user', ErrorCodes.CHAT_UNAUTHENTICATED, channel);
+            return;
+        }
 
         // Membership before subscription: a person the owner just removed
         // was also unsubscribed, and "you must join first" would send them
@@ -983,21 +995,10 @@ export class ChatService {
         }
 
         try {
-            if (identity && identity.userId && !this.trustFrameSender) {
-                // An identified sender is named by the server. The frame's
-                // copies of the sender fields are advisory and dropped —
-                // otherwise any socket could post under anybody's name.
-                metadata = stampSender(metadata, identity);
-            } else if (identity && identity.userId) {
-                // trustFrameSender: the pre-0.98.5 rule — merge the server's
-                // presentation hints ONLY where the frame left them out.
-                if (identity.displayName !== undefined && metadata.displayName === undefined) {
-                    metadata.displayName = identity.displayName;
-                }
-                if (identity.avatarUrl !== undefined && metadata.avatarUrl === undefined) {
-                    metadata.avatarUrl = identity.avatarUrl;
-                }
-            }
+            // The server names the sender. The frame's copies of the sender
+            // fields are dropped — otherwise any socket could post under
+            // anybody's name.
+            metadata = stampSender(metadata, identity);
 
             const messageData: ChatMessage = {
                 id: this.generateMessageId(),

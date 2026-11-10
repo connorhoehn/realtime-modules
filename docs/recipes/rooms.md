@@ -13,9 +13,13 @@ import { attachRealtime, rooms } from '@connorhoehn/realtime-modules/server';
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [rooms()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // required to join a room
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // required to join a room; exp in seconds
+    },
     // Judges `room:<slug>` for every room action and every room frame.
     authorize: ({ channel, ctx }) => sameTenant(channel, ctx),
+    allowedOrigins: ['https://app.example.com'],   // other browser origins get 403
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);

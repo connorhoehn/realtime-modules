@@ -36,7 +36,7 @@ const http = require('node:http');
 const { attachRealtime, planRealtimeComposition, RealtimeStartupError } = require('rtm/server');
 const feature = { manifest: { name: 'durable', version: '1', adapterRequirements: [{ provider: 'store', capabilities: ['conditional-write'] }] }, create: () => ({ handleAction() {} }) };
 assert.throws(() => planRealtimeComposition([feature]), /missing-provider/);
-const handle = attachRealtime(http.createServer(), { features: [feature], capabilityProviders: [{ id: 'store', capabilities: ['conditional-write'] }] });
+const handle = attachRealtime(http.createServer(), { features: [feature], capabilityProviders: [{ id: 'store', capabilities: ['conditional-write'] }], insecureAllowAll: true });
 handle.dispose().catch(error => { console.error(error); process.exitCode = 1; });
 assert.equal(typeof RealtimeStartupError, 'function');`;
     run(process.execPath, ['-e', serverProbe], consumer);

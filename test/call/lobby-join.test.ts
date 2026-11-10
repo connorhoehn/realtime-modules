@@ -59,6 +59,7 @@ describe.each(storeCases)('lobby join over sockets ($name)', (sc) => {
   beforeAll(async () => {
     server = http.createServer();
     handle = attachRealtime(server, {
+      insecureAllowAll: true,
       features: [calls({
         stateStore: store, rejoinGraceMs: 200,
         // Only the team's people may enter its lobby; `org` is the tenant.

@@ -42,6 +42,7 @@ exports.inviteDedupKey = inviteDedupKey;
 const types_1 = require("./types");
 const lobbyChannel_1 = require("./lobbyChannel");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 // Tracing is an injected seam (CallServiceOptions.withSpan) rather than a
 // require('distributed-core') — this library does not depend on
 // distributed-core, and the gateway supplies its real withSpan at
@@ -273,6 +274,8 @@ class CallService {
         this.onOfflineInviteHook = opts.onOfflineInvite ?? null;
         this.isClientAliveHook = opts.isClientAlive ?? null;
         const config = opts.config ?? {};
+        // 0.147.0: fail closed. No authorize hook allowed every call action.
+        (0, insecureAllowAll_1.requireHook)('CallService', 'a config.authorize hook', typeof config.authorize === 'function', opts.insecureAllowAll, opts.messageRouter);
         this.authorize = config.authorize ?? (() => true);
         this.canCallHook = config.canCall ?? null;
         this.recordCallActionHook = config.recordCallAction ?? null;

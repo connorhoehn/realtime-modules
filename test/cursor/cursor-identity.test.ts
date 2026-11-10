@@ -11,6 +11,7 @@ function setup(contexts: Record<string, unknown>, config: Record<string, unknown
     const router = {
         getClientData: (id: string) => (contexts[id] ? { userContext: contexts[id] } : null),
         sendToClient: jest.fn(),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn((channel: string, message: unknown) => { sent.push({ channel, message }); }),
         subscribeToChannel: jest.fn(async () => true),
         unsubscribeFromChannel: jest.fn(),

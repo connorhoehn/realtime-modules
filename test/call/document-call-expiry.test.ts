@@ -15,7 +15,7 @@ function singleNode(extra: Record<string, unknown> = {}) {
   const dir: Directory = new Map();
   const wire: Sent[] = [];
   const router = makeNodeRouter('A', dir, wire);
-  const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0, ...extra });
+  const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0, ...extra });
   return { dir, wire, router, svc, connect: (c: string, u: string) => dir.set(c, { userId: u, node: 'A' }) };
 }
 

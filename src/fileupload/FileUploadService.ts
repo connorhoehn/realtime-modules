@@ -39,6 +39,8 @@ import { randomUUID } from 'crypto';
 import { FileBlobStore, resolveMaxBytes } from './FileBlobStore';
 import { sanitizeUploadId } from './FileBlobStore';
 import { defaultUploadBase, normalizeUploadBase, uploadUrlFor } from './uploadUrl';
+import { routerEnforcesChannelAccess, routerPermits, type ChannelAccessRouter } from '../server-ws/channelAccess';
+import { requireHook } from '../server-ws/insecureAllowAll';
 
 // Wire error code kept as a local constant — the value is part of the WS
 // protocol, not of any one app's error-code table.
@@ -131,12 +133,18 @@ export interface FileUploadServiceOptions {
     /**
      * Channel authz hook (v0.18.0 extraction seam). The gateway wires its
      * enforceChannelPermission interceptor (reads clientData.userContext,
-     * emits AUTHZ_CHANNEL_DENIED on failure). Default allows everything —
-     * fine for single-tenant kick-starters; a multi-tenant deployment that
-     * skips this has a cross-tenant isolation hole, per the gateway's own
-     * interceptor doc.
+     * emits AUTHZ_CHANNEL_DENIED on failure). 0.147.0: without it the
+     * router's `checkChannel('publish', …)` decides, and a router that does
+     * not enforce channel access (no `authorize`) makes the constructor throw
+     * unless `insecureAllowAll` is true.
      */
     authz?: (service: FileUploadService, clientId: string, channel: string) => boolean | Promise<boolean>;
+    /**
+     * 0.147.0: start with no `authz` on a router that does not enforce
+     * channel access. Local development only: logs one warning, throws when
+     * NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
     /**
      * Public base URL the browser uses to reach this gateway's HTTP surface.
      * Defaults to '' so the issued uploadUrl/downloadUrl are root-relative
@@ -245,7 +253,11 @@ export class FileUploadService {
         this.metricsCollector = opts.metricsCollector;
         this.blobStore = opts.blobStore ?? new FileBlobStore();
         this.metadataRepo = opts.metadataRepo ?? new InMemoryFileUploadMetadataStore();
-        this.authz = opts.authz ?? (() => true);
+        // 0.147.0: fail closed. No authz used to allow every channel.
+        const router = opts.messageRouter as unknown as ChannelAccessRouter;
+        requireHook('FileUploadService', 'an authz hook (or a router with an authorize hook)',
+            typeof opts.authz === 'function' || routerEnforcesChannelAccess(router), opts.insecureAllowAll, router);
+        this.authz = opts.authz ?? ((_svc, clientId, channel) => routerPermits(router, 'publish', clientId, channel));
         this.publicBaseUrl = opts.publicBaseUrl !== undefined ? normalizeUploadBase(opts.publicBaseUrl) : defaultUploadBase();
         this.maxBytes = opts.maxBytes ?? resolveMaxBytes();
         this.mintUploadId = opts.mintUploadId ?? (() => randomUUID());

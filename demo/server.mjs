@@ -40,6 +40,10 @@ const realtime = attachRealtime(httpServer, {
         const userId = url.searchParams.get('user') || `demo-${Math.random().toString(36).slice(2, 8)}`;
         return { userId, displayName: userId };
     },
+    // A local demo: anyone may pick any ?user= and use any channel. Since
+    // 0.147.0 that needs the explicit opt-out (refused when NODE_ENV=production).
+    // A real host passes authorize, allowedOrigins and an auth that returns exp.
+    insecureAllowAll: true,
     logger: console,
 });
 

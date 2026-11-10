@@ -6,6 +6,7 @@ const perf_hooks_1 = require("perf_hooks");
 const leases_1 = require("distributed-core/cluster/leases");
 const router_1 = require("./router");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const authorityScope_1 = require("../server-ws/authorityScope");
 const NOOP_LOGGER = { debug() { }, info() { }, warn() { }, error() { } };
 const REGISTER = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
@@ -110,6 +111,9 @@ class RedisRealtimeRouter {
         this.opts = opts;
         if (!opts.namespace || !opts.nodeId)
             throw new Error('Cluster namespace and nodeId are required');
+        // 0.147.0: fail closed (see LocalRealtimeRouter).
+        (0, insecureAllowAll_1.requireHook)('RedisRealtimeRouter', 'an authorize hook', typeof opts.authorize === 'function', opts.insecureAllowAll);
+        this.insecureAllowAll = typeof opts.authorize !== 'function';
         this.nodeId = opts.nodeId;
         this.prefix = `realtime:${encodeURIComponent(opts.namespace)}:`;
         this.leaseMs = opts.leaseMs ?? 30_000;
@@ -124,7 +128,7 @@ class RedisRealtimeRouter {
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs)
             throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
-        this.local = new router_1.LocalRealtimeRouter({ authorize: opts.authorize, authorizeBatch: opts.authorizeBatch, filterClientMessage: opts.filterClientMessage,
+        this.local = new router_1.LocalRealtimeRouter({ authorize: opts.authorize, insecureAllowAll: this.insecureAllowAll, authorizeBatch: opts.authorizeBatch, filterClientMessage: opts.filterClientMessage,
             plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
         this.membershipTopic = opts.membershipEventTopic ?? 'chat:membership';
         if (opts.membershipStore)
@@ -409,6 +413,8 @@ class RedisRealtimeRouter {
         return this.live() ? this.local.sendToLocalClient(clientId, message) : false;
     }
     hasChannelAuthorize() { return this.local.hasChannelAuthorize(); }
+    /** 0.147.0: built without `authorize` under the local-development opt-out. */
+    insecureAllowAll;
     async checkChannel(kind, clientId, channel, opts = {}) {
         if (!this.live())
             return false;

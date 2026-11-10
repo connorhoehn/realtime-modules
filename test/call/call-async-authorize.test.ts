@@ -10,7 +10,7 @@ function harness(authorize: CallConfig['authorize'], wrapped = false) {
     const state = new InMemoryCallStateStore();
     const contexts: Record<string, WsAuthContext> = { alice: { userId: 'alice', org: 'social' }, bob: { userId: 'bob', org: 'social' } };
     const frames: any[] = [];
-    const router = new LocalRealtimeRouter();
+    const router = new LocalRealtimeRouter({ insecureAllowAll: true });
     const handle: WsHandlerHandle = { wss: {}, dispose: async () => undefined, listClients: () => Object.keys(contexts),
         getClientContext: id => contexts[id] ?? null, sendToClient: (id, frame) => { frames.push({ id, ...frame }); return true; } };
     router._setHandle(handle);
@@ -19,7 +19,7 @@ function harness(authorize: CallConfig['authorize'], wrapped = false) {
     const config: CallConfig = { authorize, canCall: onInvite };
     const service = wrapped
         ? calls({ stateStore: state, config, lobbyGuard: guard }).create({ router, logger }) as CallService
-        : new CallService({ messageRouter: router as any, logger, stateStore: state, config });
+        : new CallService({ insecureAllowAll: true, messageRouter: router as any, logger, stateStore: state, config });
     return { service, state, frames, onInvite, guard, contexts };
 }
 

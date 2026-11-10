@@ -6,6 +6,7 @@ const channel = 'doc:hydration';
 function fixture() {
     const store = new MemorySnapshotStore();
     const router = {
+        checkChannel: () => true, // 0.147.0: a router without a channel check is refused
         sendToChannel: jest.fn(), broadcastToAll: jest.fn(), onRemoteChannelMessage: jest.fn(),
         subscribeToChannel: jest.fn(), unsubscribeFromChannel: jest.fn(), sendToClient: jest.fn(),
         getClientData: () => ({ userId: 'actor', userContext: { userId: 'actor' } }),

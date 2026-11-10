@@ -21,6 +21,8 @@ function makeService(opts: Record<string, unknown> = {}) {
     const sent: any[] = [];
     const router: any = {
         sendToClient: jest.fn((_id: string, frame: any) => { sent.push(frame); }),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
+        getClientData: ((ctx: Record<string, any>) => (id: string) => (ctx[id] ??= { userContext: { userId: `user-${id}` } }))({}), // 0.147.0: chat sends need an authenticated sender (one stable context per connection)
         sendToChannel: jest.fn(async () => {}),
         subscribeToChannel: jest.fn(async () => true),
         unsubscribeFromChannel: jest.fn(async () => {}),

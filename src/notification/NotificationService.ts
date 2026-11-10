@@ -43,6 +43,7 @@
 
 import { randomUUID } from 'crypto';
 import { RedisNotificationStore } from './RedisNotificationStore';
+import { requireHook, routerAllowsAll } from '../server-ws/insecureAllowAll';
 import type { FeaturePrincipal } from '../server/authority/principal';
 import type { NotificationRedisClient } from './RedisNotificationStore';
 import type {
@@ -68,7 +69,8 @@ export interface NotificationServiceOpts {
     store?: RedisNotificationStore;
     /** Awaited before inbound history/read-state work. False, throw or
      * rejection refuses the action. Recipient delivery filtering belongs to
-     * the router so it also covers producer delivery and connect replay. */
+     * the router so it also covers producer delivery and connect replay.
+     * 0.147.0: required (see `insecureAllowAll`). */
     authorize?: (clientId: string, action: string) => boolean | Promise<boolean>;
     /**
      * READ ADMISSION (0.118). Asked FRESH for every record at every delivery
@@ -77,8 +79,17 @@ export interface NotificationServiceOpts {
      * authority (e.g. "may this person still read the page this item is
      * about"). False, a throw or a rejection withholds the record from that
      * delivery; it stays stored, and a later delivery asks again.
+     * 0.147.0: required — the constructor throws without it unless
+     * `insecureAllowAll` is true.
      */
     admit?: (userId: string, record: NotificationRecord) => boolean | Promise<boolean>;
+    /**
+     * 0.147.0: start without `authorize` / `admit` (every action and every
+     * record allowed), and let a router with no `getUserIdForClient` take the
+     * user from the frame. Local development only: logs one warning, throws
+     * when NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
     /**
      * Replay the user's unread inbox to each new connection, once per
      * connection, through `admit`. Replaces a host `onConnect` that called
@@ -103,6 +114,8 @@ export class NotificationService {
     private readonly principal: FeaturePrincipal | undefined;
     /** Connections already replayed once (cleared on disconnect). */
     private readonly replayed = new Set<string>();
+    /** 0.147.0: built under insecureAllowAll (frame userId accepted without a router lookup). */
+    private readonly insecure: boolean;
 
     constructor(opts: NotificationServiceOpts) {
         if (!opts || !opts.messageRouter) {
@@ -113,6 +126,11 @@ export class NotificationService {
         }
         this.messageRouter = opts.messageRouter;
         this.logger = opts.logger;
+        // 0.147.0: fail closed. Without these every inbound action and every
+        // stored record was allowed.
+        requireHook('NotificationService', 'an authorize hook', typeof opts.authorize === 'function', opts.insecureAllowAll, opts.messageRouter);
+        requireHook('NotificationService', 'an admit hook', typeof opts.admit === 'function', opts.insecureAllowAll, opts.messageRouter);
+        this.insecure = opts.insecureAllowAll === true || routerAllowsAll(opts.messageRouter);
         this.authorize = opts.authorize;
         this.admit = opts.admit;
         this.replayOnConnect = opts.replayOnConnect === true;
@@ -426,10 +444,10 @@ export class NotificationService {
             const u = router.getUserIdForClient(clientId);
             return typeof u === 'string' && u ? u : null;
         }
-        // Router without a reverse lookup (test harnesses / minimal routers):
-        // fall back to a client-supplied userId. Production always wires the
-        // real MessageRouter, which has getUserIdForClient.
-        if (typeof data?.userId === 'string' && data.userId) return data.userId;
+        // Router without a reverse lookup: 0.147.0 refuses, unless the service
+        // runs under insecureAllowAll (local development), where the frame's
+        // userId is taken as before.
+        if (this.insecure && typeof data?.userId === 'string' && data.userId) return data.userId;
         return null;
     }
 

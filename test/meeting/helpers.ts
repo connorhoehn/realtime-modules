@@ -38,6 +38,8 @@ export function fakeRouter(): FakeRouter {
             return true;
         },
         unsubscribeFromChannel: (clientId, channel) => { subs.get(clientId)?.delete(channel); },
+        // 0.147.0: MeetingService requires a channel check; `deny` refuses here too.
+        checkChannel: (_kind, clientId) => !deny.has(clientId),
         getUserIdForClient: (clientId) => users.get(clientId),
         getClientData: (clientId) => ({ userContext: { userId: users.get(clientId), displayName: names.get(clientId) } }),
         framesFor: (clientId, action) => (toClient.get(clientId) ?? []).filter((f) => !action || f.action === action),

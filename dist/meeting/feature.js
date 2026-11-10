@@ -14,7 +14,8 @@ function meeting(opts = {}) {
     return {
         manifest: manifest_1.MeetingManifest,
         serviceName: 'meeting',
-        create: ({ router, logger }) => new MeetingService_1.MeetingService({
+        create: ({ router, logger, insecureAllowAll }) => new MeetingService_1.MeetingService({
+            ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
             router: router,
             logger: logger,
             config: opts,

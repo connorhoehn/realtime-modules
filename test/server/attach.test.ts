@@ -86,7 +86,7 @@ async function boot(features: RealtimeFeature[], opts: Record<string, unknown> =
         res.writeHead(200, { 'content-type': 'text/plain' });
         res.end('existing-app-route');
     });
-    const handle = attachRealtime(server, { features, path: '/realtime', ...opts } as any);
+    const handle = attachRealtime(server, { insecureAllowAll: true, features, path: '/realtime', ...opts } as any);
     const port = await listen(server);
     return { server, port, handle };
 }
@@ -496,7 +496,8 @@ describe('attachRealtime — presets forward their service config', () => {
 
 describe('attachRealtime — end-to-end behaviour on the local router', () => {
     it('chat: join + send round-trips with sender echo', async () => {
-        const { server, port, handle } = await boot([chat()]);
+        // 0.147.0: chat sends need an authenticated sender.
+        const { server, port, handle } = await boot([chat()], { auth: async () => ({ userId: 'user-a' }) });
         const a = await connect(port);
         const b = await connect(port);
 

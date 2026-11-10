@@ -45,6 +45,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationService = void 0;
 const crypto_1 = require("crypto");
 const RedisNotificationStore_1 = require("./RedisNotificationStore");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 class NotificationService {
     messageRouter;
     logger;
@@ -55,6 +56,8 @@ class NotificationService {
     principal;
     /** Connections already replayed once (cleared on disconnect). */
     replayed = new Set();
+    /** 0.147.0: built under insecureAllowAll (frame userId accepted without a router lookup). */
+    insecure;
     constructor(opts) {
         if (!opts || !opts.messageRouter) {
             throw new Error('NotificationService: messageRouter is required');
@@ -64,6 +67,11 @@ class NotificationService {
         }
         this.messageRouter = opts.messageRouter;
         this.logger = opts.logger;
+        // 0.147.0: fail closed. Without these every inbound action and every
+        // stored record was allowed.
+        (0, insecureAllowAll_1.requireHook)('NotificationService', 'an authorize hook', typeof opts.authorize === 'function', opts.insecureAllowAll, opts.messageRouter);
+        (0, insecureAllowAll_1.requireHook)('NotificationService', 'an admit hook', typeof opts.admit === 'function', opts.insecureAllowAll, opts.messageRouter);
+        this.insecure = opts.insecureAllowAll === true || (0, insecureAllowAll_1.routerAllowsAll)(opts.messageRouter);
         this.authorize = opts.authorize;
         this.admit = opts.admit;
         this.replayOnConnect = opts.replayOnConnect === true;
@@ -377,10 +385,10 @@ class NotificationService {
             const u = router.getUserIdForClient(clientId);
             return typeof u === 'string' && u ? u : null;
         }
-        // Router without a reverse lookup (test harnesses / minimal routers):
-        // fall back to a client-supplied userId. Production always wires the
-        // real MessageRouter, which has getUserIdForClient.
-        if (typeof data?.userId === 'string' && data.userId)
+        // Router without a reverse lookup: 0.147.0 refuses, unless the service
+        // runs under insecureAllowAll (local development), where the frame's
+        // userId is taken as before.
+        if (this.insecure && typeof data?.userId === 'string' && data.userId)
             return data.userId;
         return null;
     }

@@ -27,7 +27,7 @@ describe('calls({ lobbyGuard })', () => {
 
     beforeAll(async () => {
         server = http.createServer();
-        handle = attachRealtime(server, {
+        handle = attachRealtime(server, { insecureAllowAll: true,
             features: [calls({ lobbyGuard: (auth, lobby) => { seen.push([auth, lobby]); return lobby.startsWith(`${String(auth.org)}:`); } })],
             path: '/realtime',
             auth: async (req: http.IncomingMessage) => {

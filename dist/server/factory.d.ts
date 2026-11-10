@@ -128,7 +128,7 @@ export interface RealtimeServerOptions extends Omit<WsHandlerOptions, 'services'
  *   const handle = createRealtimeServer(
  *     [ChatManifest, PresenceManifest],
  *     inMemoryAdapters(),
- *     { server: httpServer },
+ *     { server: httpServer, insecureAllowAll: true }, // local development only (0.147.0)
  *   );
  *   httpServer.listen(3000);
  *

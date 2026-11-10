@@ -15,7 +15,8 @@ export interface NotificationServiceOpts {
     store?: RedisNotificationStore;
     /** Awaited before inbound history/read-state work. False, throw or
      * rejection refuses the action. Recipient delivery filtering belongs to
-     * the router so it also covers producer delivery and connect replay. */
+     * the router so it also covers producer delivery and connect replay.
+     * 0.147.0: required (see `insecureAllowAll`). */
     authorize?: (clientId: string, action: string) => boolean | Promise<boolean>;
     /**
      * READ ADMISSION (0.118). Asked FRESH for every record at every delivery
@@ -24,8 +25,17 @@ export interface NotificationServiceOpts {
      * authority (e.g. "may this person still read the page this item is
      * about"). False, a throw or a rejection withholds the record from that
      * delivery; it stays stored, and a later delivery asks again.
+     * 0.147.0: required — the constructor throws without it unless
+     * `insecureAllowAll` is true.
      */
     admit?: (userId: string, record: NotificationRecord) => boolean | Promise<boolean>;
+    /**
+     * 0.147.0: start without `authorize` / `admit` (every action and every
+     * record allowed), and let a router with no `getUserIdForClient` take the
+     * user from the frame. Local development only: logs one warning, throws
+     * when NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
     /**
      * Replay the user's unread inbox to each new connection, once per
      * connection, through `admit`. Replaces a host `onConnect` that called
@@ -49,6 +59,8 @@ export declare class NotificationService {
     private readonly principal;
     /** Connections already replayed once (cleared on disconnect). */
     private readonly replayed;
+    /** 0.147.0: built under insecureAllowAll (frame userId accepted without a router lookup). */
+    private readonly insecure;
     constructor(opts: NotificationServiceOpts);
     /**
      * Publish a notification to a user. Persists it (Redis) then delivers a

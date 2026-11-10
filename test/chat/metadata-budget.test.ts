@@ -30,6 +30,8 @@ function makeService() {
     const router: any = {
         sendToLocalClient: jest.fn(),
         sendToClient: jest.fn(),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
+        getClientData: ((ctx: Record<string, any>) => (id: string) => (ctx[id] ??= { userContext: { userId: `user-${id}` } }))({}), // 0.147.0: chat sends need an authenticated sender (one stable context per connection)
         sendToChannel: jest.fn(async () => {}),
         subscribeToChannel: jest.fn(async () => {}),
         unsubscribeFromChannel: jest.fn(async () => {}),

@@ -27,6 +27,12 @@ export interface FeatureContext {
     service?: (name: string) => unknown;
     /** Register a partially acquired resource synchronously during create(). Runs after service shutdown. */
     onCleanup?: (cleanup: RealtimeCleanup) => void;
+    /**
+     * 0.147.0: `attachRealtime({ insecureAllowAll: true })` — the local-development
+     * opt-out, already accepted (and warned about) once. A feature whose own
+     * hook is missing may start anyway when this is true.
+     */
+    insecureAllowAll?: boolean;
 }
 /** A pluggable realtime capability: manifest + service factory. */
 export interface RealtimeFeature {
@@ -79,8 +85,10 @@ export declare function calls(opts?: {
      * returned }`) and the frame's `lobbyName`, for every call frame that
      * names one. Return false and the frame is refused with an error, before
      * any routing. A tenant-scoped host checks the prefix:
-     * `(auth, lobby) => lobby.startsWith(`${auth.org}:`)`. Default: allow.
-     * Runs after `config.authorize` (both must pass).
+     * `(auth, lobby) => lobby.startsWith(`${auth.org}:`)`. Runs after
+     * `config.authorize` (both must pass). 0.147.0: `calls()` throws at
+     * startup unless one of `lobbyGuard` or `config.authorize` is given (or
+     * `insecureAllowAll`, local development only).
      */
     lobbyGuard?: (auth: import('../server-ws/types').WsAuthContext, lobbyName: string) => boolean;
     /**
@@ -186,7 +194,10 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     features: RealtimeFeature[];
     /** Explicit adapter guarantees checked before construction; not live availability. */
     capabilityProviders?: readonly CapabilityProvider[];
-    /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
+    /**
+     * Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives.
+     * 0.147.0: required with the local router (attaching without it throws) unless `insecureAllowAll` is true.
+     */
     authorize?: ChannelAuthorize;
     /** Last-mile direct/broadcast/channel delivery filtering for the local router. */
     filterClientMessage?: ClientMessageFilter;

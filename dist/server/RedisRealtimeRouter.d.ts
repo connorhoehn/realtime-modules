@@ -46,7 +46,10 @@ export interface RedisRealtimeRouterOptions {
     namespace: string;
     /** Unique among live replicas. A second live owner is rejected. */
     nodeId: string;
+    /** Channel authz. 0.147.0: required unless `insecureAllowAll` (local development only). */
     authorize?: ChannelAuthorize;
+    /** 0.147.0: start without `authorize` (local development only; refused when NODE_ENV=production). */
+    insecureAllowAll?: boolean;
     /** 0.119 (lane R6): one host call per local fan-out (see `ChannelAuthorizeBatch`). */
     authorizeBatch?: ChannelAuthorizeBatch;
     filterClientMessage?: ClientMessageFilter;
@@ -210,6 +213,8 @@ export declare class RedisRealtimeRouter implements RealtimeRouter {
     private request;
     sendToLocalClient(clientId: string, message: unknown): boolean | Promise<boolean>;
     hasChannelAuthorize(): boolean;
+    /** 0.147.0: built without `authorize` under the local-development opt-out. */
+    readonly insecureAllowAll: boolean;
     checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
     subscribeToChannel(clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     unsubscribeFromChannel(clientId: string, channel: string): void;

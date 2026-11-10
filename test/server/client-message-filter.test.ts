@@ -9,7 +9,7 @@ function deferred<T>() {
 function harness(filterClientMessage?: ClientMessageFilter) {
     const contexts = new Map<string, WsAuthContext>([['a', { userId: 'alice' }], ['b', { userId: 'bob' }]]);
     const frames: Array<{ clientId: string; frame: unknown }> = [];
-    const router = new LocalRealtimeRouter({ filterClientMessage });
+    const router = new LocalRealtimeRouter({ insecureAllowAll: true, filterClientMessage });
     const handle: WsHandlerHandle = { wss: {}, dispose: async () => undefined,
         listClients: () => [...contexts.keys()], getClientContext: id => contexts.get(id) ?? null,
         sendToClient: (clientId, frame) => { if (!contexts.has(clientId)) return false; frames.push({ clientId, frame }); return true; } };
@@ -66,14 +66,14 @@ test('notification actions wait for authorization before any store work and reje
     const h = harness(); const waiting = deferred<boolean>();
     const store = { list: jest.fn(async () => []), markRead: jest.fn(async () => undefined), markAllRead: jest.fn(async () => []) };
     const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
-    const service = new NotificationService({ messageRouter: h.router as any, logger, store: store as any, authorize: () => waiting.promise });
+    const service = new NotificationService({ insecureAllowAll: true, messageRouter: h.router as any, logger, store: store as any, authorize: () => waiting.promise });
     const action = service.handleAction('a', 'markRead', { id: 'private-id', userId: 'bob' });
     expect(store.markRead).not.toHaveBeenCalled(); waiting.resolve(false); await action;
     expect(store.markRead).not.toHaveBeenCalled(); expect(h.frames[0].frame).toMatchObject({ code: 'AUTHZ_NOTIFICATION_DENIED' });
-    const allowed = new NotificationService({ messageRouter: h.router as any, logger, store: store as any, authorize: async () => true });
+    const allowed = new NotificationService({ insecureAllowAll: true, messageRouter: h.router as any, logger, store: store as any, authorize: async () => true });
     await allowed.handleAction('a', 'markRead', { id: 'private-id', userId: 'bob' });
     expect(store.markRead).toHaveBeenCalledWith('alice', 'private-id');
-    const offline = new NotificationService({ messageRouter: h.router as any, logger, store: store as any, authorize: async () => { throw new Error('offline'); } });
+    const offline = new NotificationService({ insecureAllowAll: true, messageRouter: h.router as any, logger, store: store as any, authorize: async () => { throw new Error('offline'); } });
     await offline.handleAction('a', 'getHistory', {}); await offline.handleAction('a', 'markAllRead', {});
     expect(store.list).not.toHaveBeenCalled(); expect(store.markAllRead).not.toHaveBeenCalled();
 });
@@ -81,7 +81,7 @@ test('notification delivered counts omit filtered clients while preserving the s
     const h = harness(() => null);
     const store = { append: jest.fn(async () => undefined) };
     const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
-    const service = new NotificationService({ messageRouter: h.router as any, logger, store: store as any });
+    const service = new NotificationService({ insecureAllowAll: true, messageRouter: h.router as any, logger, store: store as any });
     const result = await service.notifyUser('alice', { type: 'system', title: 'Private record' });
     expect(result.delivered).toBe(0); expect(h.frames).toEqual([]);
     expect(store.append).toHaveBeenCalledWith('alice', expect.objectContaining({ id: result.record.id, title: 'Private record' }));

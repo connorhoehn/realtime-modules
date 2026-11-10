@@ -75,7 +75,7 @@ describe('composition ownership and rollback', () => {
             expect(service?.('wire')).toBe(baseService);
             return { handleAction() {} };
         };
-        const handle = attachRealtime(http.createServer(), { features: [dependent, base] });
+        const handle = attachRealtime(http.createServer(), { insecureAllowAll: true, features: [dependent, base] });
         expect(Object.keys(handle.services)).toEqual(['wire', 'dependent', 'subscribe']);
         await handle.dispose();
     });
@@ -83,7 +83,7 @@ describe('composition ownership and rollback', () => {
     it('awaits partial-resource rollback and continues after an asynchronous cleanup failure', async () => {
         const order: string[] = [];
         const failedCleanup = new Error('cleanup failed');
-        const router = Object.assign(new LocalRealtimeRouter(), { shutdown: async () => { order.push('router'); } });
+        const router = Object.assign(new LocalRealtimeRouter({ insecureAllowAll: true }), { shutdown: async () => { order.push('router'); } });
         const base = defineFeature({ ...feature('base'), create: () => ({ handleAction() {},
             async shutdown() { order.push('base'); },
         }) });
@@ -93,7 +93,7 @@ describe('composition ownership and rollback', () => {
         } });
         const server = http.createServer();
         let failure!: RealtimeStartupError;
-        try { attachRealtime(server, { features: [broken, base], router }); }
+        try { attachRealtime(server, { insecureAllowAll: true, features: [broken, base], router }); }
         catch (error) { failure = error as RealtimeStartupError; }
         expect(failure).toBeInstanceOf(RealtimeStartupError);
         expect(failure.cause).toEqual(new Error('factory failed'));
@@ -104,12 +104,12 @@ describe('composition ownership and rollback', () => {
 
     it('removes a handler installed before router binding fails', async () => {
         const server = http.createServer();
-        const router = new LocalRealtimeRouter();
+        const router = new LocalRealtimeRouter({ insecureAllowAll: true });
         jest.spyOn(router, '_setHandle').mockImplementation(() => { throw new Error('bind'); });
         const stop = jest.fn();
         const item = { ...feature('one'), create: () => ({ handleAction() {}, stop }) };
         let failure!: RealtimeStartupError;
-        try { attachRealtime(server, { features: [item], router }); }
+        try { attachRealtime(server, { insecureAllowAll: true, features: [item], router }); }
         catch (error) { failure = error as RealtimeStartupError; }
         expect(await failure.cleanup).toEqual([]);
         expect(stop).toHaveBeenCalledTimes(1);
@@ -125,7 +125,7 @@ describe('composition ownership and rollback', () => {
         });
         const stop = jest.fn();
         let failure!: RealtimeStartupError;
-        try { attachRealtime(server, { features: [{ ...feature('one'), create: () => ({ handleAction() {}, stop }) }] }); }
+        try { attachRealtime(server, { insecureAllowAll: true, features: [{ ...feature('one'), create: () => ({ handleAction() {}, stop }) }] }); }
         catch (error) { failure = error as RealtimeStartupError; }
         expect(await failure.cleanup).toEqual([]);
         expect(stop).toHaveBeenCalledTimes(1);
@@ -135,7 +135,7 @@ describe('composition ownership and rollback', () => {
     it('disposes once in reverse dependency order, reports failures and closes stats', async () => {
         const server = http.createServer();
         const order: string[] = [];
-        const router = Object.assign(new LocalRealtimeRouter(), { shutdown: async () => { order.push('router'); } });
+        const router = Object.assign(new LocalRealtimeRouter({ insecureAllowAll: true }), { shutdown: async () => { order.push('router'); } });
         const make = (name: string, dependencies: string[]) => defineFeature({ ...feature(name, dependencies),
             create: ({ onCleanup }) => {
                 onCleanup?.(() => { order.push(`${name} resource`); });
@@ -146,7 +146,7 @@ describe('composition ownership and rollback', () => {
                 } };
             },
         });
-        const handle = attachRealtime(server, { router, features: [make('leaf', ['base']), make('base', [])] });
+        const handle = attachRealtime(server, { insecureAllowAll: true, router, features: [make('leaf', ['base']), make('base', [])] });
         handle.stats(); handle.onStats(() => undefined);
         const first = handle.dispose();
         expect(handle.dispose()).toBe(first);
@@ -176,7 +176,7 @@ describe('legacy factory parity', () => {
     it('maps the exported pipeline manifest and closes services once', async () => {
         const shutdown = jest.spyOn(ChatService.prototype, 'shutdown');
         const pipelineAction = jest.spyOn(PipelineWsRouter.prototype, 'handleAction');
-        const handle = createRealtimeServer([feature('chat').manifest, PipelineWsManifest], {}, { server: http.createServer() });
+        const handle = createRealtimeServer([feature('chat').manifest, PipelineWsManifest], {}, { insecureAllowAll: true, server: http.createServer() });
         const first = handle.dispose();
         expect(handle.dispose()).toBe(first);
         await first;
@@ -187,7 +187,7 @@ describe('legacy factory parity', () => {
     it('rolls back services when handler options fail', async () => {
         const shutdown = jest.spyOn(ChatService.prototype, 'shutdown');
         let failure!: RealtimeStartupError;
-        try { createRealtimeServer([feature('chat').manifest], {}, { server: http.createServer(), maxPayload: 0 }); }
+        try { createRealtimeServer([feature('chat').manifest], {}, { insecureAllowAll: true, server: http.createServer(), maxPayload: 0 }); }
         catch (error) { failure = error as RealtimeStartupError; }
         expect(failure).toBeInstanceOf(RealtimeStartupError);
         expect(await failure.cleanup).toEqual([]);
@@ -206,7 +206,7 @@ describe('real sockets crossing composition shutdown', () => {
         const server = http.createServer();
         const entered = deferred(), release = deferred();
         const connected = jest.fn();
-        const handle = attachRealtime(server, { features: [], auth: async () => {
+        const handle = attachRealtime(server, { insecureAllowAll: true, features: [], auth: async () => {
             entered.resolve(); await release.promise; return { userId: 'alice' };
         }, onConnect: connected });
         server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -237,7 +237,7 @@ describe('real sockets crossing composition shutdown', () => {
             async onClientDisconnect() { order.push('disconnected'); },
             async shutdown() { order.push('shutdown'); },
         }) };
-        const handle = attachRealtime(server, { features: [item], pingIntervalMs: 0 });
+        const handle = attachRealtime(server, { insecureAllowAll: true, features: [item], pingIntervalMs: 0 });
         server.listen(0, '127.0.0.1'); await once(server, 'listening');
         const port = (server.address() as import('node:net').AddressInfo).port;
         const ws = new WebSocket(`ws://127.0.0.1:${port}`);

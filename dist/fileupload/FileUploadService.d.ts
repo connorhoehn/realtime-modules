@@ -83,12 +83,18 @@ export interface FileUploadServiceOptions {
     /**
      * Channel authz hook (v0.18.0 extraction seam). The gateway wires its
      * enforceChannelPermission interceptor (reads clientData.userContext,
-     * emits AUTHZ_CHANNEL_DENIED on failure). Default allows everything —
-     * fine for single-tenant kick-starters; a multi-tenant deployment that
-     * skips this has a cross-tenant isolation hole, per the gateway's own
-     * interceptor doc.
+     * emits AUTHZ_CHANNEL_DENIED on failure). 0.147.0: without it the
+     * router's `checkChannel('publish', …)` decides, and a router that does
+     * not enforce channel access (no `authorize`) makes the constructor throw
+     * unless `insecureAllowAll` is true.
      */
     authz?: (service: FileUploadService, clientId: string, channel: string) => boolean | Promise<boolean>;
+    /**
+     * 0.147.0: start with no `authz` on a router that does not enforce
+     * channel access. Local development only: logs one warning, throws when
+     * NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
     /**
      * Public base URL the browser uses to reach this gateway's HTTP surface.
      * Defaults to '' so the issued uploadUrl/downloadUrl are root-relative

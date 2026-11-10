@@ -46,6 +46,7 @@
 
 import type { FeatureManifest } from '../feature-manifest/types';
 import type { WsHandlerHandle, WsHandlerOptions } from '../server-ws/types';
+import { acceptInsecureAllowAll } from '../server-ws/insecureAllowAll';
 import { createWsHandler } from '../server-ws/createWsHandler';
 import { planRealtimeComposition, type CapabilityProvider } from './composition';
 import { CompositionLifecycle, RealtimeStartupError, serviceCleanup } from './compositionLifecycle';
@@ -225,6 +226,8 @@ class LocalMessageRouter {
 
     readonly redisAvailable = false;
     readonly nodeId = 'local';
+    /** 0.147.0: this router has no authorization; it exists only under the opt-out. */
+    readonly insecureAllowAll = true;
 
     constructor(plugins: FeaturePlugin[] = []) {
         this.plugins = plugins;
@@ -526,7 +529,7 @@ export interface RealtimeServerOptions extends Omit<WsHandlerOptions, 'services'
  *   const handle = createRealtimeServer(
  *     [ChatManifest, PresenceManifest],
  *     inMemoryAdapters(),
- *     { server: httpServer },
+ *     { server: httpServer, insecureAllowAll: true }, // local development only (0.147.0)
  *   );
  *   httpServer.listen(3000);
  *
@@ -556,6 +559,11 @@ export function createRealtimeServer(
         return { manifest, serviceName, create: FEATURE_REGISTRY[serviceName]! };
     });
     const plan = planRealtimeComposition(definitions, capabilityProviders);
+    // 0.147.0: this helper's router has no authorization seam, so it runs only
+    // under the local-development opt-out. Production hosts use attachRealtime.
+    if (!acceptInsecureAllowAll('createRealtimeServer', opts.insecureAllowAll)) {
+        throw new Error('createRealtimeServer: it has no authorization hooks; pass insecureAllowAll: true (local development only) or use attachRealtime({ auth, authorize, allowedOrigins })');
+    }
     const router = new LocalMessageRouter(plugins);
     const lifecycle = new CompositionLifecycle();
     lifecycle.add('router', () => router.shutdown());

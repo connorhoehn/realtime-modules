@@ -20,6 +20,7 @@ exports.routerPermits = routerPermits;
 exports.routerEnforcesChannelAccess = routerEnforcesChannelAccess;
 exports.channelDeniedFrame = channelDeniedFrame;
 const lobbyChannel_1 = require("../call/lobbyChannel");
+const insecureAllowAll_1 = require("./insecureAllowAll");
 /**
  * Services that wrap the consumer's channel name in a prefix of their own
  * before handing it to the router. Every other service (chat, activity,
@@ -68,13 +69,17 @@ function baseChannel(name) {
     return (0, lobbyChannel_1.lobbyForChatLobbyChannel)(unwrapped) ?? unwrapped;
 }
 /**
- * Ask the router whether `clientId` may `kind` `channel`. A router without
- * `checkChannel` (a custom transport that enforces only at fan-out) allows.
- * A throwing check refuses.
+ * Ask the router whether `clientId` may `kind` `channel`. A throwing check
+ * refuses. 0.147.0: a router without `checkChannel` is refused too (before,
+ * it allowed and trusted the router to enforce at fan-out), unless it was
+ * accepted under `insecureAllowAll` (local development only).
  */
 async function routerPermits(router, kind, clientId, channel, opts) {
-    if (!router || typeof router.checkChannel !== 'function')
+    // No router at all: no transport, nothing to gate (unit-level services).
+    if (!router)
         return true;
+    if (typeof router.checkChannel !== 'function')
+        return (0, insecureAllowAll_1.routerAllowsAll)(router);
     try {
         return (await router.checkChannel(kind, clientId, channel, opts)) !== false;
     }

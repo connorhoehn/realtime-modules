@@ -12,7 +12,8 @@ function harness(authorize?: ChannelAuthorize) {
     const frames: Array<{ clientId: string; frame: unknown }> = [];
     const messages = jest.fn();
     const connections = jest.fn();
-    const router = new LocalRealtimeRouter({ authorize, plugins: [{ name: 'observe', onMessage: messages, onConnect: connections }] });
+    // 0.147.0: an absent predicate is the local-development opt-out.
+    const router = new LocalRealtimeRouter({ authorize, insecureAllowAll: !authorize, plugins: [{ name: 'observe', onMessage: messages, onConnect: connections }] });
     const handle: WsHandlerHandle = {
         wss: {}, dispose: async () => undefined,
         listClients: () => [...contexts.keys()], getClientContext: id => contexts.get(id) ?? null,

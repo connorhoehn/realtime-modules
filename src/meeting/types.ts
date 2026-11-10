@@ -284,9 +284,16 @@ export interface MeetingConfig {
 }
 
 export interface MeetingServiceOptions {
+    /** 0.147.0: must have `checkChannel` (the constructor throws without it unless `insecureAllowAll`). */
     router: MeetingRouter;
     logger?: MeetingLogger;
     config?: MeetingConfig;
+    /**
+     * 0.147.0: accept a router with no `checkChannel` (every meeting channel
+     * open). Local development only: logs one warning, throws when
+     * NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
 }
 
 export const MEETING_CHANNEL_PREFIX = 'meeting:';

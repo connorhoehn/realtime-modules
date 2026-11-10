@@ -13,7 +13,7 @@ type Conn = { ws: WebSocket; frames: any[] };
 
 async function start(opts: Parameters<typeof calls>[0]) {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features: [calls(opts)],
         path: '/realtime',
         auth: async (req: http.IncomingMessage) => {

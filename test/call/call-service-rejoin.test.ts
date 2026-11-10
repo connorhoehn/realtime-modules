@@ -61,7 +61,7 @@ describe('CallService — rejoin on participant-state (default 30 s grace, fake 
     ])('1:1 (%s): drop, reconnect 2 s later, re-announce → no ended at 30 s; status lists both', async (_n, make) => {
         jest.useFakeTimers();
         const router = makeRouter(users);
-        const svc = new CallService({ messageRouter: router as any, logger: quiet, stateStore: make() });
+        const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: quiet, stateStore: make() });
         await establish(svc, 'call-1', LOBBY, ['c-alice', 'u-alice'], [['c-bob', 'u-bob']]);
         await svc.handleDisconnect('c-bob');
         await jest.advanceTimersByTimeAsync(2_000);
@@ -83,7 +83,7 @@ describe('CallService — rejoin on participant-state (default 30 s grace, fake 
     test('group of four: the reconnected member is back on the roster', async () => {
         jest.useFakeTimers();
         const router = makeRouter(users);
-        const svc = new CallService({ messageRouter: router as any, logger: quiet, stateStore: new InMemoryCallStateStore() });
+        const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: quiet, stateStore: new InMemoryCallStateStore() });
         const lobby = 'acme:room:standup';
         await establish(svc, 'call-g', lobby, ['c-alice', 'u-alice'], [['c-bob', 'u-bob'], ['c-carol', 'u-carol'], ['c-dave', 'u-dave']]);
         await svc.handleDisconnect('c-bob');
@@ -101,7 +101,7 @@ describe('CallService — rejoin on participant-state (default 30 s grace, fake 
     test('refused: a user who never held a seat announcing into the call does not save it', async () => {
         jest.useFakeTimers();
         const router = makeRouter(users);
-        const svc = new CallService({ messageRouter: router as any, logger: quiet, stateStore: new InMemoryCallStateStore() });
+        const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: quiet, stateStore: new InMemoryCallStateStore() });
         await establish(svc, 'call-1', LOBBY, ['c-alice', 'u-alice'], [['c-bob', 'u-bob']]);
         await svc.handleDisconnect('c-bob');
         await announce(svc, 'c-eve', 'call-1', LOBBY, ['u-alice']);
@@ -123,8 +123,8 @@ describe('CallService — rejoin on another node (the seat is only in the shared
         jest.useFakeTimers();
         const store = make();
         const router = makeRouter(users);
-        const nodeA = new CallService({ messageRouter: router as any, logger: quiet, stateStore: store });
-        const nodeB = new CallService({ messageRouter: router as any, logger: quiet, stateStore: store });
+        const nodeA = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: quiet, stateStore: store });
+        const nodeB = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: quiet, stateStore: store });
         await establish(nodeA, 'call-x', LOBBY, ['c-alice', 'u-alice'], [['c-bob', 'u-bob']]);
         await jest.advanceTimersByTimeAsync(10); // fire-and-forget store mirrors
         await nodeA.handleDisconnect('c-bob');

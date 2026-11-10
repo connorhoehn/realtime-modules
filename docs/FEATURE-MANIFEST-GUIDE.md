@@ -79,7 +79,7 @@ export interface FeatureManifest {
 ## 3. Server-side wiring (Express + WebSocket)
 
 The `./server-ws` subpath exports `createWsHandler` — a thin factory that
-attaches to a Node `http.Server`, runs an optional auth callback, and routes
+attaches to a Node `http.Server`, runs an auth callback (required since 0.147.0, unless `insecureAllowAll: true`), and routes
 inbound frames (`{ service, action, ...data }`) to the named service's
 `handleAction(clientId, action, data)` method.
 
@@ -103,6 +103,10 @@ const router = {
   sendToChannel(channel: string, msg: unknown, exclude?: string) { /* fan-out */ },
   subscribeToChannel(clientId: string, channel: string) { /* track sub */ },
   unsubscribeFromChannel(clientId: string, channel: string) { /* remove sub */ },
+  // Since 0.147.0 a router with no `checkChannel` is refused by the services
+  // that need it (presence, rooms, meeting, …). Add one:
+  checkChannel(kind: 'subscribe' | 'publish', clientId: string, channel: string) { return mayUse(clientId, channel, kind); },
+  // (or pass `insecureAllowAll: true` to the service — local development only)
 };
 
 const logger = {
@@ -133,10 +137,12 @@ const wsHandle = createWsHandler({
     // add more services here — key = the `service` field in inbound frames
   },
   auth: async (req) => {
-    // Extract userId from token in header / cookie / query string.
+    // Verify the token in the header / cookie / query string.
     // Throw to reject the upgrade with 401.
-    return { userId: req.headers['x-user-id'] as string };
+    const claims = await verifyToken(extractToken(req));
+    return { userId: claims.sub, exp: claims.exp };   // exp: token expiry, in seconds (0.147.0)
   },
+  allowedOrigins: ['https://app.example.com'],   // 0.147.0: other browser origins get 403
   onConnect:    (clientId, ctx) => console.log('connected', clientId, ctx),
   onDisconnect: (clientId)      => console.log('disconnected', clientId),
 });
@@ -421,7 +427,11 @@ Add an entry to `exports` in `package.json`:
 import { NotificationService }  from '@connorhoehn/realtime-modules/notifications';
 import { NotificationsManifest } from '@connorhoehn/realtime-modules/notifications';
 
-const notificationService = new NotificationService(/* deps */);
+const notificationService = new NotificationService({
+  /* deps, */
+  authorize: async (clientId, action) => canUseInbox(clientId, action),    // both required since 0.147.0
+  admit: async (userId, record) => mayStillRead(userId, record),
+});
 
 // Add to createWsHandler services map:
 const wsHandle = createWsHandler({
@@ -432,6 +442,7 @@ const wsHandle = createWsHandler({
     notifications: notificationService,  // <-- new
   },
   auth,
+  allowedOrigins: ['https://app.example.com'],
 });
 
 // Read the manifest for env-var validation at boot:
@@ -447,7 +458,7 @@ import { NotificationService } from '@connorhoehn/realtime-modules/notifications
 
 describe('NotificationService', () => {
   it('handles subscribe action', async () => {
-    const svc = new NotificationService(/* mock deps */);
+    const svc = new NotificationService({ /* mock deps, */ insecureAllowAll: true });  // local development only
     await expect(
       svc.handleAction('client-1', 'subscribe', { channel: 'notifications:user-1' })
     ).resolves.not.toThrow();

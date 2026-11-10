@@ -31,6 +31,7 @@ exports.ReactionService = void 0;
 const types_1 = require("./types");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const DEFAULT_MAX_HISTORY = 50;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
 const DEFAULT_MAX_HISTORY_REPLAY = 500;
@@ -107,6 +108,9 @@ class ReactionService {
         this.availableReactions = config.availableReactions
             ? { ...config.availableReactions }
             : { ...types_1.DEFAULT_AVAILABLE_REACTIONS };
+        // 0.147.0: fail closed. Without its own hook and without a router that
+        // enforces channel access, every channel was open to every connection.
+        (0, insecureAllowAll_1.requireHook)('ReactionService', 'an authorizeChannel hook (or a router with an authorize hook)', typeof config.authorizeChannel === 'function' || (0, channelAccess_1.routerEnforcesChannelAccess)(opts.messageRouter), config.insecureAllowAll, opts.messageRouter);
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.identityResolver = config.identityResolver ?? null;
         this.resolveSender = config.resolveSender ?? null;

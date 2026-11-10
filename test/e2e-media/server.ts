@@ -127,7 +127,7 @@ export async function startMediaServer(opts: MediaServerOptions): Promise<MediaS
         return send(404, 'text/plain', 'not found');
     });
 
-    const handle = attachRealtime(server, {
+    const handle = attachRealtime(server, { insecureAllowAll: true,
         features: [meeting()],
         path: '/realtime',
         auth: (req: http.IncomingMessage) => {

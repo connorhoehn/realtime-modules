@@ -51,7 +51,7 @@ describe.each(storeCases)('calls() over sockets — a reconnected socket rejoins
 
     beforeAll(async () => {
         server = http.createServer();
-        handle = attachRealtime(server, {
+        handle = attachRealtime(server, { insecureAllowAll: true,
             features: [calls({
                 stateStore: sc.make(),
                 rejoinGraceMs: GRACE_MS,
@@ -307,7 +307,7 @@ describe('calls() — crossNodePubSub is forwarded to CallService', () => {
             getClientsByUserId: (ids: string[]) => ids.map((u) => ({ clientId: `c-${u}`, userId: u })),
             getUserIdForClient: (cid: string) => cid.replace(/^c-/, ''),
         };
-        const svc: any = calls({ crossNodePubSub: pubsub, rejoinGraceMs: 0 }).create({ router: router as any, logger: { debug() {}, info() {}, warn() {}, error() {} } as any });
+        const svc: any = calls({ crossNodePubSub: pubsub, rejoinGraceMs: 0, lobbyGuard: () => true }).create({ router: router as any, logger: { debug() {}, info() {}, warn() {}, error() {} } as any });
         expect(subscribed).toEqual(['call:client-departed']);
         await svc.handleCallEvent('c-u-a', 'invite', { callId: 'k1', lobbyName: 'acme:room:x', callerId: 'u-a', targetUserIds: ['u-b'] });
         await svc.handleCallEvent('c-u-b', 'accepted', { callId: 'k1', lobbyName: 'acme:room:x', callerId: 'u-b', targetUserIds: ['u-a'] });

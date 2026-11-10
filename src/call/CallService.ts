@@ -60,6 +60,7 @@ import {
 } from './types';
 import { callLobbyChannel, dmLobbyMembers, lobbyConversationKind } from './lobbyChannel';
 import { resolveAuthSender } from '../server-ws/senderIdentity';
+import { requireHook } from '../server-ws/insecureAllowAll';
 
 // Tracing is an injected seam (CallServiceOptions.withSpan) rather than a
 // require('distributed-core') — this library does not depend on
@@ -350,6 +351,8 @@ export class CallService {
         this.isClientAliveHook = opts.isClientAlive ?? null;
 
         const config: CallConfig = opts.config ?? {};
+        // 0.147.0: fail closed. No authorize hook allowed every call action.
+        requireHook('CallService', 'a config.authorize hook', typeof config.authorize === 'function', opts.insecureAllowAll, opts.messageRouter);
         this.authorize = config.authorize ?? (() => true);
         this.canCallHook = config.canCall ?? null;
         this.recordCallActionHook = config.recordCallAction ?? null;

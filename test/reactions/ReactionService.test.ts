@@ -32,6 +32,7 @@ function makeRouter() {
         sendToLocalClient: (clientId: string, message: any) => {
             sentToClient.push({ clientId, message });
         },
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn((channel: string, message: any) => {
             sendToChannelCalls.push({ channel, message });
             return Promise.resolve();

@@ -30,6 +30,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CursorService = void 0;
 const distributed_core_1 = require("distributed-core");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
 const types_1 = require("./types");
 class CursorService {
@@ -66,6 +67,9 @@ class CursorService {
         this.supportedModes = config.supportedModes
             ? { ...config.supportedModes }
             : { ...types_1.DEFAULT_SUPPORTED_MODES };
+        // 0.147.0: fail closed. Without its own hook and without a router that
+        // enforces channel access, every channel was open to every connection.
+        (0, insecureAllowAll_1.requireHook)('CursorService', 'an authorizeChannel hook (or a router with an authorize hook)', typeof config.authorizeChannel === 'function' || (0, channelAccess_1.routerEnforcesChannelAccess)(opts.messageRouter), config.insecureAllowAll, opts.messageRouter);
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.resolveIdentity = config.resolveIdentity ?? null;
         this.metadataAllowlist = new Set(config.metadataAllowlist ?? []);

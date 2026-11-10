@@ -53,7 +53,7 @@ class Host {
 
 async function boot(host: Host, maxAge: number | undefined, store = new InMemoryChatStore()) {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features: [chat({ chatStore: store })],
         path: '/realtime',
         auth: async (req: http.IncomingMessage) => ({ userId: new URL(req.url ?? '', 'http://x').searchParams.get('user') ?? 'anon' }),
@@ -237,6 +237,6 @@ describe('publish proof helpers (P1-P5)', () => {
         await router.sendToChannel('room', { hi: 3 }, null, { publisherClientId: 'a', scope });
         expect(asks.filter((x) => x.startsWith('publish'))).toEqual(['publish:a', 'publish:a']);
         scope.close();
-        expect(() => new LocalRealtimeRouter({ publishProofMaxAgeMs: -1 })).toThrow();
+        expect(() => new LocalRealtimeRouter({ publishProofMaxAgeMs: -1, insecureAllowAll: true })).toThrow(/publishProofMaxAgeMs/);
     });
 });

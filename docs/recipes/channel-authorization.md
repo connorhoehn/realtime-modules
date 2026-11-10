@@ -1,7 +1,9 @@
 # Channel authorization — `attachRealtime({ authorize })`
 
 One hook decides who may read and write every channel, for every built-in
-feature:
+feature. Since 0.147.0 it is required: `attachRealtime` throws without
+`authorize` (or `insecureAllowAll: true`, local development only), and a
+connection whose token has no `exp` is refused:
 
 ```ts
 import { attachRealtime, chat, presence, reactions, cursor, splitServiceChannel }
@@ -9,10 +11,15 @@ import { attachRealtime, chat, presence, reactions, cursor, splitServiceChannel 
 
 const realtime = attachRealtime(httpServer, {
     features: [chat(), presence(), reactions(), cursor()],
-    auth: async (req) => ({ userId: await verify(req), org: orgOf(req) }),
+    auth: async (req) => {
+        const claims = await verify(req);
+        return { userId: claims.sub, org: orgOf(req), exp: claims.exp };   // exp in seconds
+    },
     // Tenant scoping: a channel belongs to the org it is prefixed with.
     authorize: ({ kind, channel, ctx }) =>
         !!ctx && splitServiceChannel(channel).channel.startsWith(`${ctx.org}:`),
+    // Browser upgrades from any other Origin are refused with 403.
+    allowedOrigins: ['https://app.example.com'],
 });
 ```
 
@@ -70,8 +77,8 @@ layers). The caller gets the entry with only the channels it may read; a
 target in no readable channel — including a target in no channel at all —
 answers `{ "type": "error", "service": "presence", "message": "Client not
 found" }`, exactly like a clientId that does not exist, and these checks send
-no `AUTHZ_CHANNEL_DENIED` frame. A client reading itself, and any read with no
-`authorize` and no `authorizeChannel` configured, gets the whole entry.
+no `AUTHZ_CHANNEL_DENIED` frame. A client reading itself, and any read on an
+attachment started with `insecureAllowAll: true`, gets the whole entry.
 
 ## Per-feature hooks
 
@@ -85,8 +92,10 @@ the writes (presence `set`, reaction `send`/`remove`, cursor `update`).
 `attachRealtime({ router })` makes channel authz the router's job. Services
 ask it through `router.subscribeToChannel` (a `false` return is a refusal)
 and the optional `router.checkChannel(kind, clientId, channel, { service,
-clientChannel, silent })`; a router without `checkChannel` is enforced only at
-its own `sendToChannel`. `silent: true` means "refuse without sending the
+clientChannel, silent })`; since 0.147.0 a router without `checkChannel` is refused (the
+services that need it throw) unless `insecureAllowAll: true`. `silent: true` means "refuse without sending the
 error frame". A router may add `hasChannelAuthorize()` returning false when it
 has no channel authz; without it, a router with `checkChannel` is assumed to
 enforce (so presence `get` by id hides channel-less entries of other clients).
+`new LocalRealtimeRouter({ authorize })` and `new RedisRealtimeRouter({ authorize, … })`
+require the hook too, or `insecureAllowAll: true`.

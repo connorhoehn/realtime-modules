@@ -8,7 +8,9 @@
 //   const httpServer = http.createServer(app);   // your EXISTING app
 //   const realtime = attachRealtime(httpServer, {
 //       features: [chat(), presence(), rooms()],
-//       auth: async (req) => ({ userId: await verify(req) }),
+//       auth: async (req) => verify(req),            // { userId, exp, … } — exp is required (0.147.0)
+//       authorize: ({ channel, ctx }) => mayUse(ctx, channel),
+//       allowedOrigins: ['https://app.example.com'],
 //   });
 //   httpServer.listen(3000);
 //
@@ -42,6 +44,7 @@ import { planRealtimeComposition, type CapabilityProvider } from './composition'
 import { CompositionLifecycle, RealtimeStartupError, serviceCleanup, type RealtimeCleanup } from './compositionLifecycle';
 import type { WsHandlerHandle, WsHandlerOptions, WsHandlerStats, WsService } from '../server-ws/types';
 import { createWsHandler } from '../server-ws/createWsHandler';
+import { acceptInsecureAllowAll, requireHook } from '../server-ws/insecureAllowAll';
 import {
     LocalRealtimeRouter,
     type ChannelAuthorize,
@@ -93,6 +96,12 @@ export interface FeatureContext {
     service?: (name: string) => unknown;
     /** Register a partially acquired resource synchronously during create(). Runs after service shutdown. */
     onCleanup?: (cleanup: RealtimeCleanup) => void;
+    /**
+     * 0.147.0: `attachRealtime({ insecureAllowAll: true })` — the local-development
+     * opt-out, already accepted (and warned about) once. A feature whose own
+     * hook is missing may start anyway when this is true.
+     */
+    insecureAllowAll?: boolean;
 }
 
 /** A pluggable realtime capability: manifest + service factory. */
@@ -171,7 +180,7 @@ export function presence(
 ): RealtimeFeature {
     return defineFeature({
         manifest: require('../presence/manifest').PresenceManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const PresenceService = require('../presence/PresenceService') as any;
             const Svc = PresenceService.default ?? PresenceService;
             // Forward the full config — including `authorizeChannel`, which
@@ -181,7 +190,7 @@ export function presence(
             // factory hardcoded 30_000/30_000/5_000 for the three fields it
             // did pass, which shadowed the env-var fallback for anyone not
             // explicitly setting them.
-            return new Svc(router as any, logger as any, opts);
+            return new Svc(router as any, logger as any, insecureAllowAll && opts.insecureAllowAll === undefined ? { ...opts, insecureAllowAll } : opts);
         },
     });
 }
@@ -191,9 +200,10 @@ export function cursor(
 ): RealtimeFeature {
     return defineFeature({
         manifest: require('../cursor/manifest').CursorManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { CursorService } = require('../cursor/CursorService') as typeof import('../cursor/CursorService');
-            return new CursorService({ messageRouter: router as any, logger: logger as any, config: opts });
+            return new CursorService({ messageRouter: router as any, logger: logger as any,
+                config: insecureAllowAll && opts.insecureAllowAll === undefined ? { ...opts, insecureAllowAll } : opts });
         },
     });
 }
@@ -210,9 +220,10 @@ export function reactions(
         // SERVICE_NOT_AVAILABLE, so reactions did not work through
         // attachRealtime at all.
         serviceName: 'reaction',
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { ReactionService } = require('../reactions/ReactionService') as typeof import('../reactions/ReactionService');
             const { identityResolver, ...rest } = opts;
+            if (insecureAllowAll && rest.insecureAllowAll === undefined) rest.insecureAllowAll = true;
             return new ReactionService({
                 messageRouter: router as any,
                 logger: logger as any,
@@ -288,8 +299,10 @@ export function calls(opts: {
      * returned }`) and the frame's `lobbyName`, for every call frame that
      * names one. Return false and the frame is refused with an error, before
      * any routing. A tenant-scoped host checks the prefix:
-     * `(auth, lobby) => lobby.startsWith(`${auth.org}:`)`. Default: allow.
-     * Runs after `config.authorize` (both must pass).
+     * `(auth, lobby) => lobby.startsWith(`${auth.org}:`)`. Runs after
+     * `config.authorize` (both must pass). 0.147.0: `calls()` throws at
+     * startup unless one of `lobbyGuard` or `config.authorize` is given (or
+     * `insecureAllowAll`, local development only).
      */
     lobbyGuard?: (auth: import('../server-ws/types').WsAuthContext, lobbyName: string) => boolean;
     /**
@@ -333,9 +346,13 @@ export function calls(opts: {
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../call/manifest').CallManifest,
-        create: ({ router, logger, principal }) => {
+        create: ({ router, logger, principal, insecureAllowAll }) => {
             const { CallService } = require('../call/CallService') as typeof import('../call/CallService');
             const { lobbyGuard } = opts;
+            // 0.147.0: fail closed. Without a lobby rule any socket could ring
+            // into, watch or join any lobby, another tenant's included.
+            requireHook('calls()', 'a lobbyGuard or config.authorize hook',
+                typeof lobbyGuard === 'function' || typeof opts.config?.authorize === 'function', insecureAllowAll, router);
             const allowUntargetedInvites = opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false;
             let config: import('../call/types').CallConfig = {
                 ...(opts.config ?? {}),
@@ -384,6 +401,7 @@ export function calls(opts: {
                 logger: logger as any,
                 stateStore: opts.stateStore,
                 config,
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
                 ...(opts.crossNodePubSub ? { crossNodePubSub: opts.crossNodePubSub } : {}),
                 ...(router.isClientAlive ? { isClientAlive: router.isClientAlive.bind(router) } : {}),
@@ -467,9 +485,10 @@ export function rooms(opts: {
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../room/manifest').RoomManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { RoomService } = require('../room/RoomService') as typeof import('../room/RoomService');
             return new RoomService({
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 messageRouter: router as any,
                 logger: logger as any,
                 stateStore: opts.stateStore,
@@ -491,8 +510,10 @@ export function notifications(opts: {
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../notification/manifest').NotificationManifest,
-        create: ({ router, logger, principal }) => {
+        create: ({ router, logger, principal, insecureAllowAll }) => {
             const { NotificationService } = require('../notification/NotificationService') as typeof import('../notification/NotificationService');
+            // 0.147.0: judged on the host's own hook, before the principal wraps it.
+            requireHook('notifications()', 'an authorize hook', typeof opts.authorize === 'function', insecureAllowAll, router);
             return new NotificationService({
                 messageRouter: router as any,
                 logger: logger as any,
@@ -504,6 +525,7 @@ export function notifications(opts: {
                 authorize: principal ? gateOnPrincipal(principal, opts.authorize) : opts.authorize,
                 admit: opts.admit,
                 replayOnConnect: opts.replayOnConnect,
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 ...(principal ? { principal } : {}),
             });
         },
@@ -519,7 +541,7 @@ export function fileUploads(opts: {
 } = {}): RealtimeFeature {
     return defineFeature({
         manifest: require('../fileupload/manifest').FileUploadManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { FileUploadService } = require('../fileupload/FileUploadService') as typeof import('../fileupload/FileUploadService');
             return new FileUploadService({
                 messageRouter: router as any,
@@ -529,6 +551,7 @@ export function fileUploads(opts: {
                 publicBaseUrl: opts.publicBaseUrl,
                 maxBytes: opts.maxBytes,
                 authz: opts.authz,
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
             });
         },
     });
@@ -554,7 +577,7 @@ export function collabDocs(opts: {
     return defineFeature({
         manifest: require('./manifest').crdtManifest,
         serviceName: 'crdt', // wire key clients address; manifest identity is 'document-sharing'
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll: attachInsecure }) => {
             const { CRDTService } = require('./CRDTService') as typeof import('./CRDTService');
             const { MemorySnapshotStore, MemoryHotCache, MemoryMetadataStore } = require('./stores/MemoryStore') as any;
             return new CRDTService({
@@ -564,7 +587,7 @@ export function collabDocs(opts: {
                 metadataStore: opts.metadataStore ?? new MemoryMetadataStore(),
                 hotCache: opts.hotCache === undefined ? new MemoryHotCache() : opts.hotCache,
                 authz: opts.authz,
-                insecureAllowAll: opts.insecureAllowAll,
+                insecureAllowAll: opts.insecureAllowAll ?? attachInsecure,
                 activityChannelFor: opts.activityChannelFor,
             });
         },
@@ -580,7 +603,10 @@ export interface AttachRealtimeOptions extends Omit<WsHandlerOptions, 'services'
     features: RealtimeFeature[];
     /** Explicit adapter guarantees checked before construction; not live availability. */
     capabilityProviders?: readonly CapabilityProvider[];
-    /** Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives. */
+    /**
+     * Channel authz for the local router — every feature asks it before a subscribe, a read or a write. See `ChannelAuthorize` for the kinds and the channel names it receives.
+     * 0.147.0: required with the local router (attaching without it throws) unless `insecureAllowAll` is true.
+     */
     authorize?: ChannelAuthorize;
     /** Last-mile direct/broadcast/channel delivery filtering for the local router. */
     filterClientMessage?: ClientMessageFilter;
@@ -719,6 +745,9 @@ export function attachRealtime(
 ): RealtimeHandle {
     const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal,
         authorizeBatch, authorityCache: cacheOpts, maxChannelsPerSocket, ...wsOpts } = opts;
+    // 0.147.0: one opt-out for the whole attachment (router, socket handler,
+    // features); refused in production, warned about once.
+    const insecureAllowAll = acceptInsecureAllowAll('attachRealtime', opts.insecureAllowAll);
     const plan = planRealtimeComposition(features, capabilityProviders);
     for (const feature of plan.features) {
         if (typeof feature.create !== 'function') throw new Error(`Realtime composition: '${feature.manifest.name}' requires a create factory`);
@@ -735,7 +764,7 @@ export function attachRealtime(
         ? withPrincipalRevalidation(inner, principal, verdictCache ? { onStale: (id) => verdictCache.invalidateConnection(id) } : {})
         : inner;
     const router: NonNullable<AttachRealtimeOptions['router']> = customRouter ?? new LocalRealtimeRouter({
-        plugins, authorize: hooks.authorize, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
+        plugins, authorize: hooks.authorize, insecureAllowAll, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
         filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs,
         ...(maxChannelsPerSocket !== undefined ? { maxChannelsPerClient: maxChannelsPerSocket } : {}) });
     if (principal) wsOpts.auth = revalidatingAuth(wsOpts.auth, principal);
@@ -767,6 +796,7 @@ export function attachRealtime(
                         if (!constructing) throw new Error(`'${name}' must register cleanup during create()`);
                         lifecycle.add(`${name} resource`, cleanup);
                     },
+                    ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                     ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
             } finally { constructing = false; }
             lifecycle.add(name, serviceCleanup(service));

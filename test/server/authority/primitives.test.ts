@@ -225,7 +225,7 @@ describe('tokenFromSubprotocol', () => {
 type Conn = { ws: WebSocket; frames: any[] };
 async function serve(opts: Parameters<typeof attachRealtime>[1]) {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, { path: '/rt', ...opts });
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true, path: '/rt', ...opts });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
     const port = (server.address() as AddressInfo).port;
     const conns: Conn[] = [];
@@ -448,7 +448,7 @@ describe('onCallMissed carries who was rung and from which conversation', () => 
     const flush = () => new Promise((r) => setImmediate(r));
     it('the union of every invite, the caller excluded, and the invite channel', async () => {
         const onCallMissed = jest.fn();
-        const svc = new CallService({ messageRouter: router as never, logger: { debug() {}, info() {}, warn() {}, error() {} } as never,
+        const svc = new CallService({ insecureAllowAll: true, messageRouter: router as never, logger: { debug() {}, info() {}, warn() {}, error() {} } as never,
             stateStore: new InMemoryCallStateStore(), rejoinGraceMs: 0, config: { onCallMissed } });
         const lobby = 'acme:room:standup';
         await svc.handleCallEvent('c-alice', 'invite', { callId: 'm1', lobbyName: lobby, callerId: 'u-alice', targetUserIds: ['u-bob'], channel: 'acme:ch:general' } as never);

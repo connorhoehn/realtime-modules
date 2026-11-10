@@ -27,6 +27,7 @@
 
 import { attachWsHeartbeat, wsSend } from 'distributed-core/transport';
 import { DEFAULT_WS_MAX_PAYLOAD, DEFAULT_INDEPENDENT_SERVICES, DEFAULT_WS_MAX_QUEUE_DEPTH, DEFAULT_TOKEN_EXPIRY_GRACE_MS } from './types';
+import { requireHook } from './insecureAllowAll';
 import type {
     InboundRateLimitOptions,
     WsHandlerStats,
@@ -127,7 +128,30 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         inboundRateLimit,
         maxQueueDepth = DEFAULT_WS_MAX_QUEUE_DEPTH,
         tokenExpiryGraceMs = DEFAULT_TOKEN_EXPIRY_GRACE_MS,
+        allowedOrigins,
+        insecureAllowAll: insecureFlag,
     } = opts;
+    // 0.147.0: fail closed. No auth hook meant every upgrade was admitted with
+    // an empty context; no origin rule meant any web page could open a socket
+    // with the visitor's cookies.
+    requireHook('createWsHandler', 'an auth hook', typeof auth === 'function', insecureFlag);
+    const insecure = insecureFlag === true;
+    const originRule = typeof allowedOrigins === 'function' ? allowedOrigins : null;
+    if (allowedOrigins !== undefined && !originRule
+        && (!Array.isArray(allowedOrigins) || allowedOrigins.some(o => typeof o !== 'string'))) {
+        throw new Error('createWsHandler: allowedOrigins must be an array of origin strings or a predicate');
+    }
+    const origins = new Set(originRule ? [] : (allowedOrigins as readonly string[] | undefined) ?? []);
+    /** An upgrade with no Origin header (not a browser) passes; a browser origin must be listed. */
+    const originAllowed = (origin: unknown, req: any): boolean => {
+        if (origin === undefined) return true;
+        if (typeof origin !== 'string') return false;
+        if (originRule) {
+            try { return originRule(origin, req) === true; } catch { return false; }
+        }
+        if (origins.has(origin)) return true;
+        return insecure && allowedOrigins === undefined;
+    };
     const independentServices = new Set(independentServiceNames);
     const rateLimit = resolveRateLimit(inboundRateLimit);
     if (!(maxQueueDepth >= 1)) {
@@ -136,8 +160,13 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
     if (!(Number.isFinite(tokenExpiryGraceMs) && tokenExpiryGraceMs >= 0)) {
         throw new Error(`createWsHandler: tokenExpiryGraceMs must be a non-negative number (got ${tokenExpiryGraceMs})`);
     }
-    /** Whether a token with this expiry is past it (and its grace) now. */
-    const expired = (expiresAt: number | null): boolean => expiresAt !== null && Date.now() >= expiresAt + tokenExpiryGraceMs;
+    /**
+     * Whether a token with this expiry is past it (and its grace) now. 0.147.0:
+     * no expiry counts as expired, except under insecureAllowAll.
+     */
+    const expired = (expiresAt: number | null): boolean => expiresAt === null
+        ? !insecure
+        : Date.now() >= expiresAt + tokenExpiryGraceMs;
 
     if (!(Number.isFinite(maxPayload) && maxPayload > 0)) {
         throw new Error(`createWsHandler: maxPayload must be a positive number of bytes (got ${maxPayload})`);
@@ -187,6 +216,7 @@ export function createWsHandler(opts: WsHandlerOptions): WsHandlerHandle {
         }
 
         if (disposing) { denyUpgrade(socket, 503, 'Service Unavailable'); return; }
+        if (!originAllowed(req?.headers?.origin, req)) { denyUpgrade(socket, 403, 'Forbidden'); return; }
         let ctx: WsAuthContext = {};
         authenticating.add(socket);
         if (auth) {

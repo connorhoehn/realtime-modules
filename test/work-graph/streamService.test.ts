@@ -62,7 +62,7 @@ const allowed = new Set(['alice', 'bob']);
 async function boot(config: WorkGraphStreamConfig, opts: { authorize?: boolean } = {}) {
     const server = http.createServer();
     const checks: Array<{ kind: string; channel: string; user: string; scope?: AuthorityScope }> = [];
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features: [workGraph(config)],
         path: '/realtime',
         auth: async (req: http.IncomingMessage) => ({ userId: new URL(req.url ?? '', 'http://x').searchParams.get('user') ?? 'anon', org: 'acme' }),

@@ -16,7 +16,7 @@ async function eventually(predicate: () => boolean, ms = 2000) {
 
 async function rig(opts: Partial<WsHandlerOptions>, service: WsService) {
     const server = http.createServer();
-    const handle: WsHandlerHandle = createWsHandler({ server, services: { echo: service }, pingIntervalMs: 0, ...opts });
+    const handle: WsHandlerHandle = createWsHandler({ insecureAllowAll: true, server, services: { echo: service }, pingIntervalMs: 0, ...opts });
     await new Promise<void>(res => server.listen(0, '127.0.0.1', () => res()));
     const port = (server.address() as AddressInfo).port;
     const sockets: WebSocket[] = [];
@@ -110,9 +110,9 @@ describe('createWsHandler({ inboundRateLimit })', () => {
     it('rejects invalid budgets', () => {
         const server = http.createServer();
         const services = {};
-        expect(() => createWsHandler({ server, services, inboundRateLimit: { framesPerSecond: 0 } })).toThrow(/framesPerSecond/);
-        expect(() => createWsHandler({ server, services, inboundRateLimit: { framesPerSecond: 10, burst: 0 } })).toThrow(/burst/);
-        expect(() => createWsHandler({ server, services, inboundRateLimit: { windowMs: -1 } })).toThrow(/windowMs/);
+        expect(() => createWsHandler({ server, services, insecureAllowAll: true, inboundRateLimit: { framesPerSecond: 0 } })).toThrow(/framesPerSecond/);
+        expect(() => createWsHandler({ server, services, insecureAllowAll: true, inboundRateLimit: { framesPerSecond: 10, burst: 0 } })).toThrow(/burst/);
+        expect(() => createWsHandler({ server, services, insecureAllowAll: true, inboundRateLimit: { windowMs: -1 } })).toThrow(/windowMs/);
     });
 });
 

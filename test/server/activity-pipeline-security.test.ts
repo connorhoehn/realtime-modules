@@ -45,7 +45,7 @@ const settle = () => new Promise((r) => setTimeout(r, 60));
 
 async function boot(features: RealtimeFeature[], authorize?: (args: any) => boolean | Promise<boolean>) {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features,
         path: '/realtime',
         auth: async (req: http.IncomingMessage) => {

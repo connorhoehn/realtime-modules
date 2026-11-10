@@ -14,8 +14,9 @@ import { meeting } from '@connorhoehn/realtime-modules/meeting';
 
 const realtime = attachRealtime(httpServer, {
     features: [calls({ lobbyGuard }), meeting({ isOrganizer: ({ userId, meetingId }) => hosts(meetingId).has(userId) })],
-    auth,
-    authorize, // admits `meeting:<meetingId>` like any other channel
+    auth,                                  // must return the token's `exp` (seconds)
+    authorize, // required since 0.147.0; admits `meeting:<meetingId>` like any other channel
+    allowedOrigins: ['https://app.example.com'],
 });
 ```
 

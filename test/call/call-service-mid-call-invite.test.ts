@@ -70,7 +70,7 @@ describe('CallService — mid-call invite', () => {
   it('keeps invitation policy failure correlated and does not imply fan-out or acceptance', async () => {
     for (const throws of [false, true]) {
       const router = makeRouter();
-      const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any,
+      const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any,
         config: { canCall: () => { if (throws) throw new Error('Policy unavailable'); return false; } } });
       await svc.handleAction('c-alice', 'invite', { callId: 'call-live', lobbyName: 'orgiq:initiative:p-observability', callerId: 'u-alice',
         targetUserIds: ['u-carol'], requestId: 'request-policy' });
@@ -82,7 +82,7 @@ describe('CallService — mid-call invite', () => {
 
   it('rings a new person on an existing callId inside the dedup window', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any });
 
     // Alice rings Bob; they are on call-1 together.
     await svc.handleCallEvent('c-alice', 'invite', {
@@ -109,7 +109,7 @@ describe('CallService — mid-call invite', () => {
 
   it('still suppresses a genuine double-click at the same audience', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any });
 
     for (let i = 0; i < 3; i++) {
       await svc.handleCallEvent('c-alice', 'invite', {
@@ -124,7 +124,7 @@ describe('CallService — mid-call invite', () => {
     const router = makeRouter();
     // Untargeted invites are refused by default since 0.146.0; this exercises
     // the broadcast path a host opts back into.
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, config: { allowUntargetedInvites: true } });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any, config: { allowUntargetedInvites: true } });
 
     await svc.handleCallEvent('c-alice', 'invite', {
       callId: 'call-3', lobbyName: 'global-hangout', callerId: 'u-alice',

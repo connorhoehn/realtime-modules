@@ -37,7 +37,7 @@ function harness(opts: {
     };
     beforeAll(async () => {
         h.server = http.createServer();
-        h.handle = attachRealtime(h.server, {
+        h.handle = attachRealtime(h.server, { insecureAllowAll: true,
             features: [
                 chat({ chatStore: h.store, ...(opts.chatOpts ?? {}) }),
                 presence({ heartbeatIntervalMs: 60_000, cleanupIntervalMs: 60_000, ...(opts.presenceOpts ?? {}) }),
@@ -226,28 +226,27 @@ describe('chat({ resolveSender }) maps the auth context', () => {
     });
 });
 
-describe('chat({ trustFrameSender: true }) keeps the old frame-wins behaviour', () => {
+describe('chat({ trustFrameSender: true }) is ignored since 0.147.0', () => {
     const t = harness({ withAuth: true, chatOpts: { trustFrameSender: true } });
-    test('frame displayName wins, userId still from auth', async () => {
+    test('the auth context still names the sender', async () => {
         const channel = chan();
         const alice = await t.connect('alice', 'Alice Real');
         await t.joinChat(alice, channel);
         const echo = await t.post(alice, channel, { metadata: { displayName: 'Custom Name' } });
         expect(echo.message.userId).toBe('alice');
-        expect(echo.message.metadata.displayName).toBe('Custom Name');
+        expect(echo.message.metadata.displayName).toBe('Alice Real');
     });
 });
 
 describe('no auth context (attachRealtime without auth): today’s behaviour', () => {
     const t = harness({ withAuth: false });
-    test('chat send keeps the frame metadata and stamps no userId', async () => {
+    test('0.147.0: chat refuses the send; the frame never names the sender', async () => {
         const channel = chan();
         const anon = await t.connect();
         await t.joinChat(anon, channel);
-        const echo = await t.post(anon, channel, { metadata: { displayName: 'Guest 7', avatarUrl: 'a.png' } });
-        expect(echo.message.userId).toBeUndefined();
-        expect(echo.message.metadata.displayName).toBe('Guest 7');
-        expect(echo.message.metadata.avatarUrl).toBe('a.png');
+        t.send(anon, { service: 'chat', action: 'send', channel, message: 'hello', metadata: { displayName: 'Guest 7', avatarUrl: 'a.png' } });
+        await t.waitFrame(anon, (f) => JSON.stringify(f).includes('CHAT_UNAUTHENTICATED'));
+        expect(anon.frames.some((f) => f.type === 'chat' && f.action === 'message')).toBe(false);
     });
     test('presence metadata passes through', async () => {
         const anon = await t.connect();

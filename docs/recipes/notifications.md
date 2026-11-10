@@ -18,8 +18,20 @@ import { attachRealtime, notifications } from '@connorhoehn/realtime-modules/ser
 
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
-    features: [notifications()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    features: [notifications({
+        // Both required since 0.147.0. `authorize` gates history/read-state actions;
+        // `admit` is asked fresh for every record at every delivery and replay.
+        authorize: async (clientId, action) => canUseInbox(clientId, action),
+        admit: async (userId, record) => mayStillRead(userId, record),
+    })],
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // exp: the token's expiry, in seconds
+    },
+    // Required since 0.147.0: judges every channel read (`subscribe`) and write (`publish`).
+    authorize: ({ kind, channel, ctx }) => !!ctx && canUseChannel(ctx, channel, kind),
+    // Browser upgrades from any other Origin are refused with 403.
+    allowedOrigins: ['https://app.example.com'],
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);

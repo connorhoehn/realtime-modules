@@ -13,7 +13,14 @@ import { attachRealtime, chat } from '@connorhoehn/realtime-modules/server';
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [chat()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // exp: the token's expiry, in seconds
+    },
+    // Required since 0.147.0: judges every channel read (`subscribe`) and write (`publish`).
+    authorize: ({ kind, channel, ctx }) => !!ctx && canUseChannel(ctx, channel, kind),
+    // Browser upgrades from any other Origin are refused with 403.
+    allowedOrigins: ['https://app.example.com'],
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);
@@ -30,14 +37,14 @@ and `metadata.displayName` / `metadata.avatarUrl` itself and drops the
 frame's copies of `userId`, `displayName` and `avatarUrl`, on `send` and on
 `edit`. Typing and read receipts carry the same identity; edit and delete
 are allowed only for the message's own `userId`. The frame's sender fields
-are advisory: a socket cannot post under someone else's name.
+are ignored: a socket cannot post under someone else's name.
 
 Return the name from `auth` and it shows up everywhere:
 
 ```ts
 auth: async (req) => {
     const claims = await verifyToken(req);
-    return { userId: claims.sub, displayName: claims.name, org: claims.org };
+    return { userId: claims.sub, displayName: claims.name, org: claims.org, exp: claims.exp };
 },
 ```
 
@@ -52,11 +59,10 @@ chat({
 })
 ```
 
-`chat({ trustFrameSender: true })` restores the old rule (the frame's
-`metadata.displayName` / `avatarUrl` win and the server only fills gaps) for
-a deployment that sets names client-side on purpose; `message.userId` is the
-server's either way. A connection with no auth context (no `auth`, dev mode)
-behaves as before: no `userId`, the frame's metadata kept.
+A connection with no `userId` cannot send: since 0.147.0 the service refuses
+the frame with `CHAT_UNAUTHENTICATED` (before, it went out with the frame's
+metadata as the sender). `chat({ trustFrameSender })` is deprecated and
+ignored; the sender is always the authenticated principal.
 
 ## 2 — Client (React hook)
 

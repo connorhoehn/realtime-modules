@@ -35,7 +35,7 @@ const open: WebSocket[] = [];
 
 beforeAll(async () => {
     server = http.createServer();
-    handle = attachRealtime(server, {
+    handle = attachRealtime(server, { insecureAllowAll: true,
         features: [
             chat(),
             presence({ heartbeatIntervalMs: 60_000, cleanupIntervalMs: 60_000 }),

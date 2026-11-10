@@ -70,7 +70,7 @@ describe.each(storeCases)('calls() over sockets — no ghost participant after b
         store = await sc.make();
         if (!store) return;
         server = http.createServer();
-        handle = attachRealtime(server, {
+        handle = attachRealtime(server, { insecureAllowAll: true,
             features: [calls({
                 stateStore: store,
                 rejoinGraceMs: GRACE_MS,

@@ -45,6 +45,7 @@ function makeRouter() {
 function makeService(onCallEnded?: any, logger = new NoopLogger()) {
   return {
     svc: new CallService({
+      insecureAllowAll: true,
       messageRouter: makeRouter(),
       logger: logger as any,
       stateStore: new InMemoryCallStateStore(),
@@ -192,7 +193,7 @@ const ROOM_LOBBY = 'room:design';
 function roomService(onCallEnded: any, roomBridge: any = {
   handleMemberJoined: jest.fn(), handleMemberLeft: jest.fn(),
 }) {
-  const svc = new CallService({
+  const svc = new CallService({ insecureAllowAll: true,
       messageRouter: makeRouter(),
       logger: new NoopLogger() as any,
       stateStore: new InMemoryCallStateStore(),

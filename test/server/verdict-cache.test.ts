@@ -246,7 +246,7 @@ function rig(opts: { batch?: boolean; cache?: boolean } = {}) {
         server: null as unknown as http.Server, handle: null as unknown as RealtimeHandle, port: 0, open: [] as WebSocket[],
         async start() {
             r.server = http.createServer();
-            r.handle = attachRealtime(r.server, {
+            r.handle = attachRealtime(r.server, { insecureAllowAll: true,
                 features: [chat()], path: '/rt', pingIntervalMs: 0,
                 auth: req => ({ userId: new URL(req.url ?? '', 'http://x').searchParams.get('u') ?? '' }),
                 authorize,
@@ -388,7 +388,7 @@ describe('attachRealtime({ authorizeBatch }) — one host call per fan-out', () 
 
     it('a malformed batch answer refuses every recipient (fail closed)', async () => {
         const server = http.createServer();
-        const handle = attachRealtime(server, {
+        const handle = attachRealtime(server, { insecureAllowAll: true,
             features: [chat()], path: '/rt', pingIntervalMs: 0,
             auth: req => ({ userId: new URL(req.url ?? '', 'http://x').searchParams.get('u') ?? '' }),
             authorize: () => true,
@@ -434,7 +434,7 @@ describe('RedisRealtimeRouter({ authorityCache }) — membership events drop ver
         const sa = store(), sb = store();
         const ia: string[] = [], ib: string[] = [];
         const mk = (nodeId: string, s: ReturnType<typeof store>, seen: string[]) => {
-            const router = new RedisRealtimeRouter({ redis: redis.port(), namespace: 'ns', nodeId, leaseMs: 600, requestTimeoutMs: 150,
+            const router = new RedisRealtimeRouter({ insecureAllowAll: true, redis: redis.port(), namespace: 'ns', nodeId, leaseMs: 600, requestTimeoutMs: 150,
                 membershipStore: s, authorityCache: { invalidateChannel: c => { seen.push(c); } } });
             router._setHandle({ wss: null, dispose: async () => undefined, listClients: () => [], getClientContext: () => null, sendToClient: () => false });
             routers.push(router);

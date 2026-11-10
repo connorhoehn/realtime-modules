@@ -64,6 +64,13 @@ export interface PresenceConfig {
      */
     authorizeChannel?: (clientId: string, channel: string) => boolean;
     /**
+     * 0.147.0: start without `authorizeChannel` on a router that does not
+     * enforce channel access itself. Local development only: logs one
+     * warning, throws when NODE_ENV=production. Not needed when the router
+     * has an `authorize` hook (it then judges every channel).
+     */
+    insecureAllowAll?: boolean;
+    /**
      * Map the connection's auth context to the identity stamped on its
      * presence entry. Default: `userId`, `displayName ?? name`,
      * `avatarUrl ?? picture` off the context. Runs only for a context with a

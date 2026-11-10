@@ -11,6 +11,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MeetingService = void 0;
 const MeetingStateStore_1 = require("./MeetingStateStore");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const lobby_1 = require("./lobby");
 const types_1 = require("./types");
 const DEFAULT_MAX_ROOMS = 50;
@@ -62,6 +63,9 @@ class MeetingService {
     constructor(opts) {
         if (!opts || !opts.router)
             throw new Error('MeetingService: router is required');
+        // 0.147.0: fail closed. A router with no checkChannel left every
+        // meeting open to any connection that named it.
+        (0, insecureAllowAll_1.requireHook)('MeetingService', 'a router with checkChannel', typeof opts.router.checkChannel === 'function', opts.insecureAllowAll, opts.router);
         const config = opts.config ?? {};
         this.router = opts.router;
         this.logger = opts.logger ?? NOOP_LOGGER;
@@ -300,6 +304,7 @@ class MeetingService {
             if (ok === false)
                 throw new MeetingError('FORBIDDEN', 'Not allowed in this meeting');
         }
+        // (A router with neither was accepted only under insecureAllowAll.)
         const userId = this.userIdOf(clientId);
         const entry = this.clients.get(clientId) ?? { userId, meetings: new Set() };
         entry.userId = userId;

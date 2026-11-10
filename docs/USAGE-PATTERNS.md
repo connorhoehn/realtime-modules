@@ -613,10 +613,13 @@ const handle = createWsHandler({
     },
   },
   auth: async (req) => {
-    const userId = await verifyToken(extractToken(req));
-    if (!userId) throw new Error('unauthorized');   // → 401
-    return { userId };
+    const claims = await verifyToken(extractToken(req));
+    if (!claims) throw new Error('unauthorized');   // → 401
+    return { userId: claims.sub, exp: claims.exp };   // exp: token expiry, in seconds
   },
+  allowedOrigins: ['https://app.example.com'],      // other browser origins get 403
+  // Since 0.147.0 `auth` (with `exp`), `allowedOrigins` or `insecureAllowAll: true`
+  // (local development only) is required.
   pingIntervalMs: 30_000,
   path: '/ws',
   onConnect: (clientId, ctx) => console.log('connect', clientId, ctx),
@@ -653,7 +656,7 @@ client's `sessionTimeoutMs` fallback (default 3000 ms).
 - **Cross-node fan-out** — every `*MessageRouter` interface in the
   gateway is a contract; the gateway supplies its own Redis pub/sub
   implementations.
-- **Auth / authz** — `createWsHandler` accepts an `auth` callback;
+- **Auth / authz** — `createWsHandler` requires an `auth` callback (0.147.0);
   `GatewaySocketProvider` forwards a `token`; gateway routes check
   service-auth headers. The rest is application logic.
 - **DDB / Redis client lifecycle** — gateway adapters own their
@@ -662,6 +665,13 @@ client's `sessionTimeoutMs` fallback (default 3000 ms).
 
 
 ### Current channel authority and durable receipts (0.100.3)
+
+Since 0.147.0 authorization fails closed: `attachRealtime` needs `authorize`
+and `auth` (whose result includes the token's `exp`, in seconds) plus
+`allowedOrigins`, or `insecureAllowAll: true` (local development only).
+Nothing is allowed by default, a token without `exp` is refused, and a custom
+router without `checkChannel` is refused by the services that need it.
+`createRealtimeServer` runs only with `insecureAllowAll: true`.
 
 `attachRealtime({ authorize })` accepts a boolean or `Promise<boolean>`.
 The local router awaits each predicate and fails closed on rejection. A

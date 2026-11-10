@@ -10,6 +10,7 @@ function makeRouter() {
     const router: any = {
         redisAvailable: false,
         sendToClient: jest.fn((clientId: string, message: any) => { sentToClient.push({ clientId, message }); }),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn(async () => undefined),
         subscribeToChannel: jest.fn(async () => true),
         unsubscribeFromChannel: jest.fn(async () => undefined),

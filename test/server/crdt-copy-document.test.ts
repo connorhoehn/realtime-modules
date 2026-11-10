@@ -8,6 +8,7 @@ function setup(opts: { authz?: (clientId: string, channel: string, svc: any, act
     const router: any = {
         // 0.146.0: document lifecycle frames go only through a router that scopes broadcasts.
         supportsScopedBroadcast: true,
+        checkChannel: () => true, // 0.147.0: a router without a channel check is refused
         sendToChannel: jest.fn(), broadcastToAll: jest.fn(), onRemoteChannelMessage: jest.fn(),
         subscribeToChannel: jest.fn(), unsubscribeFromChannel: jest.fn(), sendToClient: jest.fn(),
         getClientData: () => ({ userContext: 'userContext' in opts ? opts.userContext : { userId: 'copier', displayName: 'Copier' } }),

@@ -57,6 +57,7 @@ a send.
 ```ts
 attachRealtime(server, {
     features: [chat(), presence(), reactions()],
+    auth, authorize, allowedOrigins: ['https://app.example.com'],   // required since 0.147.0
     plugins: [{
         name: 'audit',
         onConnect: ({ clientId, channelId, userId }) => { /* subscribed */ },
@@ -78,6 +79,9 @@ publish (a system message); `userId` is also `undefined` for a connection
 with no authenticated user.
 
 ## Composition, startup and disposal
+
+Since 0.147.0 `createRealtimeServer` starts only with `insecureAllowAll: true` (it has no
+authorization seam; production uses `attachRealtime` with `authorize`).
 
 `attachRealtime` and `createRealtimeServer` check the whole feature graph
 before they create a service or install a listener. Dependencies may name a

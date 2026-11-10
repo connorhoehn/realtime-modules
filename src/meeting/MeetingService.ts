@@ -9,6 +9,7 @@
 // once cannot lose each other's change inside one process.
 
 import { InMemoryMeetingStateStore, type MeetingStateStore } from './MeetingStateStore';
+import { requireHook } from '../server-ws/insecureAllowAll';
 import { BREAKOUT_LOBBY_SEPARATOR, breakoutRoomFor, parseBreakoutLobby } from './lobby';
 import {
     BREAKOUT_ROOM_ID_PATTERN,
@@ -100,6 +101,9 @@ export class MeetingService {
 
     constructor(opts: MeetingServiceOptions) {
         if (!opts || !opts.router) throw new Error('MeetingService: router is required');
+        // 0.147.0: fail closed. A router with no checkChannel left every
+        // meeting open to any connection that named it.
+        requireHook('MeetingService', 'a router with checkChannel', typeof opts.router.checkChannel === 'function', opts.insecureAllowAll, opts.router);
         const config = opts.config ?? {};
         this.router = opts.router;
         this.logger = opts.logger ?? NOOP_LOGGER;
@@ -315,6 +319,7 @@ export class MeetingService {
             const ok = await this.router.checkChannel('subscribe', clientId, channel);
             if (ok === false) throw new MeetingError('FORBIDDEN', 'Not allowed in this meeting');
         }
+        // (A router with neither was accepted only under insecureAllowAll.)
         const userId = this.userIdOf(clientId);
         const entry = this.clients.get(clientId) ?? { userId, meetings: new Set<string>() };
         entry.userId = userId;

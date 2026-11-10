@@ -219,9 +219,15 @@ export interface RoomConfig {
  * Options bag for the RoomService constructor.
  */
 export interface RoomServiceOptions {
+    /** 0.147.0: must have `checkChannel` (the constructor throws without it unless `insecureAllowAll`). */
     messageRouter: RoomMessageRouter;
     logger: RoomLogger;
     config?: RoomConfig;
+    /**
+     * 0.147.0: accept a router with no `checkChannel` (every room open).
+     * Local development only: logs one warning, throws when NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
     /**
      * Optional RoomStateStore implementation. When provided, RoomService
      * delegates membership state to it (Redis-backed for multi-replica

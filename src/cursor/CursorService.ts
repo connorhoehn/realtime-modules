@@ -27,7 +27,8 @@
 // semantics, getStats, mode catalog) is byte-faithful to the original.
 
 import { PeriodicSweep } from 'distributed-core';
-import { routerPermits } from '../server-ws/channelAccess';
+import { routerEnforcesChannelAccess, routerPermits } from '../server-ws/channelAccess';
+import { requireHook } from '../server-ws/insecureAllowAll';
 import { resolveAuthSender, type ResolveSender } from '../server-ws/senderIdentity';
 
 import {
@@ -84,6 +85,10 @@ export class CursorService {
         this.supportedModes = config.supportedModes
             ? { ...config.supportedModes }
             : { ...DEFAULT_SUPPORTED_MODES };
+        // 0.147.0: fail closed. Without its own hook and without a router that
+        // enforces channel access, every channel was open to every connection.
+        requireHook('CursorService', 'an authorizeChannel hook (or a router with an authorize hook)',
+            typeof config.authorizeChannel === 'function' || routerEnforcesChannelAccess(opts.messageRouter as any), config.insecureAllowAll, opts.messageRouter);
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.resolveIdentity = config.resolveIdentity ?? null;
         this.metadataAllowlist = new Set(config.metadataAllowlist ?? []);

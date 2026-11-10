@@ -51,7 +51,7 @@ async function rig(features: Parameters<typeof attachRealtime>[1]['features'], m
         auth: (req) => {
             const q = new URL(req.url ?? '/', 'http://x').searchParams;
             const user = q.get('user')!;
-            return { userId: user, tenant: user.split('.')[0], displayName: user };
+            return { userId: user, tenant: user.split('.')[0], displayName: user, exp: Math.floor(Date.now() / 1000) + 3600 };
         },
         authorize: async ({ channel, ctx }) => !!ctx && (await tenantOf(baseChannel(channel))) === ctx.tenant,
     });
@@ -89,7 +89,7 @@ function yUpdate(text: string): string {
 describe('documents (crdt)', () => {
     it('refuses to start without an authz hook', () => {
         const server = http.createServer();
-        expect(() => attachRealtime(server, { features: [collabDocs()], path: '/realtime' })).toThrow(/authz/);
+        expect(() => attachRealtime(server, { features: [collabDocs()], path: '/realtime', authorize: () => true, auth: () => ({ userId: 'u', exp: 4e9 }) })).toThrow(/authz/);
     });
 
     it('tenant A receives nothing while tenant B edits, creates and renames documents', async () => {
@@ -144,7 +144,7 @@ describe('documents (crdt)', () => {
 
 describe('calls', () => {
     it('tenant A receives nothing while tenant B rings, signals and hangs up', async () => {
-        const r = await rig([calls()]);
+        const r = await rig([calls({ lobbyGuard: (auth, lobby) => lobby.startsWith(`${String(auth.tenant)}:`) })]);
         try {
             const alice = await r.connect('acme.alice');
             const bob = await r.connect('zebra.bob');

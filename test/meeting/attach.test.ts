@@ -11,7 +11,7 @@ const M = 'room:lounge';
 
 async function boot(features: RealtimeFeature[], extra: Record<string, unknown> = {}) {
     const server = http.createServer((_q, s) => { s.end('ok'); });
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features,
         path: '/realtime',
         auth: (req: http.IncomingMessage) => {

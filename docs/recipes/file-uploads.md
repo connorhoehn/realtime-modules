@@ -13,7 +13,14 @@ import { attachRealtime, fileUploads } from '@connorhoehn/realtime-modules/serve
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [fileUploads()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // exp: the token's expiry, in seconds
+    },
+    // Required since 0.147.0: judges every channel read (`subscribe`) and write (`publish`).
+    authorize: ({ kind, channel, ctx }) => !!ctx && canUseChannel(ctx, channel, kind),
+    // Browser upgrades from any other Origin are refused with 403.
+    allowedOrigins: ['https://app.example.com'],
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);

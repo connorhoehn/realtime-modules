@@ -41,6 +41,7 @@ import type { HotCache, SnapshotStore } from './stores/SnapshotStore';
 import type { MetadataStore } from './stores/MetadataStore';
 import type { MessageRouterContract } from './stores/MessageRouterContract';
 import { routerPermits } from '../server-ws/channelAccess';
+import { requireHook, routerAllowsAll } from '../server-ws/insecureAllowAll';
 
 // ---- Inlined error-code helpers (gateway/utils replacement) ---------------
 
@@ -98,7 +99,8 @@ export interface CRDTServiceOpts {
     /**
      * 0.146.0: start without an `authz` hook, allowing every document action
      * the router's channel check allows. For local demos only; never in a
-     * deployment with more than one user.
+     * deployment with more than one user. 0.147.0: logs one warning and
+     * throws when NODE_ENV=production.
      */
     insecureAllowAll?: boolean;
     /**
@@ -164,9 +166,8 @@ class CRDTService {
 
         // 0.146.0: fail closed. A document service with no authz hook let any
         // connection read and write any document.
-        if (typeof authz !== 'function' && insecureAllowAll !== true) {
-            throw new Error('CRDTService: an authz hook is required (or insecureAllowAll: true for a single-user demo)');
-        }
+        // 0.147.0: the shared opt-out rule (warned once, refused in production).
+        requireHook('CRDTService', 'an authz hook', typeof authz === 'function', insecureAllowAll, messageRouter);
 
         this.messageRouter = messageRouter;
         this.logger = logger;
@@ -175,8 +176,10 @@ class CRDTService {
         // The router's channel check is the second gate on every action. A
         // router without one is trusted to enforce at its own level; say so
         // once, so a host that meant to have a tenant rule notices.
-        if (typeof (messageRouter as any)?.checkChannel !== 'function') {
-            this.logger?.warn?.('[crdt] the router has no checkChannel: document actions rely on the authz hook alone and the router is trusted to enforce channel access itself');
+        // 0.147.0: a router without one refuses every document action (the
+        // shared channel check fails closed), unless accepted under the opt-out.
+        if (typeof (messageRouter as any)?.checkChannel !== 'function' && !routerAllowsAll(messageRouter)) {
+            this.logger?.warn?.('[crdt] the router has no checkChannel: every document action will be refused');
         }
         this._onDocumentCreated = onDocumentCreated ?? null;
 

@@ -13,7 +13,14 @@ import { attachRealtime, reactions } from '@connorhoehn/realtime-modules/server'
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [reactions()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // exp: the token's expiry, in seconds
+    },
+    // Required since 0.147.0: judges every channel read (`subscribe`) and write (`publish`).
+    authorize: ({ kind, channel, ctx }) => !!ctx && canUseChannel(ctx, channel, kind),
+    // Browser upgrades from any other Origin are refused with 403.
+    allowedOrigins: ['https://app.example.com'],
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);
@@ -27,7 +34,7 @@ Since 0.98.5 a reaction's `userId` / `displayName` come from the connection's
 auth context (or `identityResolver`), and for an identified sender the
 frame's `metadata.userId` / `displayName` / `avatarUrl` are replaced with the
 server's. `reactions({ resolveSender })` maps a differently shaped context;
-`reactions({ trustFrameSender: true })` lets the frame's metadata stand.
+`reactions({ trustFrameSender })` no longer has an effect.
 
 ## 2 — Client (React hook)
 

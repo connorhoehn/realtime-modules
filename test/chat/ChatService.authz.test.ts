@@ -37,6 +37,8 @@ function makeRouter(opts: { subscribeReturns?: boolean | void } = {}) {
         sendToClient: (clientId: string, message: any) => {
             sentToClient.push({ clientId, message });
         },
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
+        getClientData: ((ctx: Record<string, any>) => (id: string) => (ctx[id] ??= { userContext: { userId: `user-${id}` } }))({}), // 0.147.0: chat sends need an authenticated sender (one stable context per connection)
         sendToChannel: jest.fn(
             (channel: string, message: any, excludeClientId?: string | null, opts?: any) => {
                 sendToChannelCalls.push({ channel, message, excludeClientId, opts });

@@ -34,7 +34,7 @@ const ringFor = (router: ReturnType<typeof makeRouter>, clientId: string) =>
 describe('CallService — the caller is the socket, not the frame', () => {
   it('a spoofed callerName / callerId in the invite does not reach the invitee', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router as any, logger: new Quiet() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: new Quiet() as any });
     await svc.handleCallEvent('c-alice', 'invite', {
       callId: 'k1', lobbyName: 'acme:dm:u-alice:u-bob', callerId: 'u-ceo',
       callerName: 'The CEO (urgent)', targetUserIds: ['u-bob'],
@@ -47,7 +47,7 @@ describe('CallService — the caller is the socket, not the frame', () => {
 
   it('clamps the context name to 80 characters', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router as any, logger: new Quiet() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: new Quiet() as any });
     await svc.handleCallEvent('c-long', 'invite', { callId: 'k2', lobbyName: 'acme:huddle', callerId: 'u-long', targetUserIds: ['u-bob'] });
     expect(ringFor(router, 'c-bob').callerName).toHaveLength(80);
     await svc.dispose();
@@ -55,7 +55,7 @@ describe('CallService — the caller is the socket, not the frame', () => {
 
   it('drops the frame name when the context has none', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router as any, logger: new Quiet() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: new Quiet() as any });
     await svc.handleCallEvent('c-noname', 'invite', { callId: 'k3', lobbyName: 'acme:huddle', callerId: 'u-noname', callerName: 'Someone Else', targetUserIds: ['u-bob'] });
     const ring = ringFor(router, 'c-bob');
     expect(ring.callerId).toBe('u-noname');
@@ -65,7 +65,7 @@ describe('CallService — the caller is the socket, not the frame', () => {
 
   it('a join announces the context name to those already seated', async () => {
     const router = makeRouter();
-    const svc = new CallService({ messageRouter: router as any, logger: new Quiet() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router as any, logger: new Quiet() as any });
     await svc.handleCallEvent('c-bob', 'join', { callId: 'h1', lobbyName: 'acme:team:t1', callerId: 'u-bob', callerName: 'Bob' });
     await svc.handleCallEvent('c-alice', 'join', { callId: 'h1', lobbyName: 'acme:team:t1', callerId: 'u-ceo', callerName: 'The CEO' });
     const status = router.sent.find((s) => s.clientId === 'c-bob' && s.message.action === 'user-status')?.message.data;

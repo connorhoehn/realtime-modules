@@ -350,7 +350,9 @@ export interface CallConfig {
      * Authorization hook. Called once per handleAction invocation BEFORE
      * any routing happens. Return false to deny (the service emits an
      * error frame and the action is dropped). Async decisions are awaited;
-     * throws/rejections deny before any state mutation. Default: allow all.
+     * throws/rejections deny before any state mutation. 0.147.0: required —
+     * `CallService` throws at construction without it unless
+     * `CallServiceOptions.insecureAllowAll` is true (local development only).
      *
      * Replaces gateway's enforceChannelPermission interceptor — call
      * routing is direct user-to-user so there's no channel to gate, but
@@ -520,6 +522,11 @@ export interface CallServiceOptions {
     messageRouter: CallMessageRouter;
     logger: CallLogger;
     config?: CallConfig;
+    /**
+     * 0.147.0: start without `config.authorize` (every call action allowed).
+     * Local development only: logs one warning, throws when NODE_ENV=production.
+     */
+    insecureAllowAll?: boolean;
     /**
      * F2 (2026-08-22) — rejoin grace. When a disconnect would leave a
      * call with <=1 participants, the call is NOT torn down immediately:

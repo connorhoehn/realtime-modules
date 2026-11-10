@@ -13,7 +13,8 @@ import { attachRealtime, calls } from '@connorhoehn/realtime-modules/server';
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [calls({
-        // Optional: refuse lobbies this connection may not use. `auth` is what
+        // Required since 0.147.0 (this or `config: { authorize }`): refuse lobbies
+        // this connection may not use. `auth` is what
         // your resolver below returned; `lobbyName` is the frame's, verbatim.
         lobbyGuard: (auth, lobbyName) => lobbyName.startsWith(`${auth.org}:`),
         // Optional: default false — an invite with no targetUserIds is refused.
@@ -29,9 +30,12 @@ const realtime = attachRealtime(httpServer, {
     // maxPayload: 256 * 1024,
     // Rings route by the userId this returns (`getClientsByUserId`).
     auth: async (req) => {
-        const { sub, displayName, org } = await verifyJwt(req);
-        return { userId: sub, displayName, org };
+        const { sub, displayName, org, exp } = await verifyJwt(req);
+        return { userId: sub, displayName, org, exp };   // exp: token expiry, in seconds
     },
+    // Required since 0.147.0: judges every channel read and write.
+    authorize: ({ kind, channel, ctx }) => !!ctx && channel.includes(`${ctx.org}:`),
+    allowedOrigins: ['https://app.example.com'],   // other browser origins get 403
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);
@@ -260,6 +264,7 @@ import { CallService, RedisCallStateStore, RedisDocumentCallMetaStore } from '@c
 
 new CallService({
   messageRouter, logger,
+  config: { authorize: async (clientId, action, frame) => mayCall(clientId, action, frame) },  // required since 0.147.0
   stateStore: new RedisCallStateStore(redis),
   metaStore: new RedisDocumentCallMetaStore(redis),       // call:meta:<callId>, TTL 4 h
   onOfflineInvite: (userId, invite) => notifications.notifyUser(userId, …),

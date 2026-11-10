@@ -41,7 +41,8 @@ import {
     type StoredReaction,
 } from './types';
 import { resolveAuthSender, stampSender, type ResolveSender } from '../server-ws/senderIdentity';
-import { routerPermits } from '../server-ws/channelAccess';
+import { routerEnforcesChannelAccess, routerPermits } from '../server-ws/channelAccess';
+import { requireHook } from '../server-ws/insecureAllowAll';
 
 const DEFAULT_MAX_HISTORY = 50;
 const DEFAULT_MAX_CHANNEL_NAME_LENGTH = 50;
@@ -127,6 +128,10 @@ export class ReactionService {
         this.availableReactions = config.availableReactions
             ? { ...config.availableReactions }
             : { ...DEFAULT_AVAILABLE_REACTIONS };
+        // 0.147.0: fail closed. Without its own hook and without a router that
+        // enforces channel access, every channel was open to every connection.
+        requireHook('ReactionService', 'an authorizeChannel hook (or a router with an authorize hook)',
+            typeof config.authorizeChannel === 'function' || routerEnforcesChannelAccess(opts.messageRouter as any), config.insecureAllowAll, opts.messageRouter);
         this.authorizeChannel = config.authorizeChannel ?? (() => true);
         this.identityResolver = config.identityResolver ?? null;
         this.resolveSender = config.resolveSender ?? null;

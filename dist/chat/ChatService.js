@@ -108,6 +108,12 @@ const ErrorCodes = {
      * issue. Nothing is stored or broadcast.
      */
     CHAT_BAD_ATTACHMENT: 'CHAT_BAD_ATTACHMENT',
+    /**
+     * Send (0.147.0): the connection has no authenticated sender (no auth
+     * context with a userId, no `identityResolver` userId). The frame's own
+     * sender fields are never used instead, so nothing is stored or broadcast.
+     */
+    CHAT_UNAUTHENTICATED: 'CHAT_UNAUTHENTICATED',
 };
 function createErrorResponse(code, message, context = {}) {
     return { error: { code, message, ...context } };
@@ -250,7 +256,8 @@ class ChatService {
         this.authz = opts.authz ?? (() => true);
         this.identityResolver = opts.identityResolver ?? null;
         this.resolveSender = opts.resolveSender ?? null;
-        this.trustFrameSender = opts.trustFrameSender === true;
+        // 0.147.0: kept for API stability only; the frame never names the sender.
+        this.trustFrameSender = false;
         this.attachmentUrlFor = opts.attachmentUrlFor ?? attachments_1.defaultAttachmentUrlFor;
         // DM enforcement is ON unless switched off explicitly (0.146.0).
         this.enforceDmMembership = opts.enforceDmMembership ?? true;
@@ -595,6 +602,12 @@ class ChatService {
         // Resolve identity ONCE — feeds both the dm-membership gate and
         // the userId stamp below.
         const identity = this._resolveIdentity(clientId, frame);
+        // 0.147.0: the sender is the authenticated principal, never the
+        // frame. A connection without one cannot send.
+        if (!identity || !identity.userId) {
+            this.sendError(clientId, 'Sending needs an authenticated user', ErrorCodes.CHAT_UNAUTHENTICATED, channel);
+            return;
+        }
         // Membership before subscription: a person the owner just removed
         // was also unsubscribed, and "you must join first" would send them
         // off to join — which is refused — when the true answer is that they
@@ -614,22 +627,10 @@ class ChatService {
             return;
         }
         try {
-            if (identity && identity.userId && !this.trustFrameSender) {
-                // An identified sender is named by the server. The frame's
-                // copies of the sender fields are advisory and dropped —
-                // otherwise any socket could post under anybody's name.
-                metadata = (0, senderIdentity_1.stampSender)(metadata, identity);
-            }
-            else if (identity && identity.userId) {
-                // trustFrameSender: the pre-0.98.5 rule — merge the server's
-                // presentation hints ONLY where the frame left them out.
-                if (identity.displayName !== undefined && metadata.displayName === undefined) {
-                    metadata.displayName = identity.displayName;
-                }
-                if (identity.avatarUrl !== undefined && metadata.avatarUrl === undefined) {
-                    metadata.avatarUrl = identity.avatarUrl;
-                }
-            }
+            // The server names the sender. The frame's copies of the sender
+            // fields are dropped — otherwise any socket could post under
+            // anybody's name.
+            metadata = (0, senderIdentity_1.stampSender)(metadata, identity);
             const messageData = {
                 id: this.generateMessageId(),
                 clientId,

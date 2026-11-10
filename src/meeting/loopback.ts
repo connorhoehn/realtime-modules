@@ -54,6 +54,9 @@ export function createMeetingLoopback(config: MeetingConfig = {}): MeetingLoopba
             return true;
         },
         unsubscribeFromChannel: (clientId, channel) => { channels.get(channel)?.delete(clientId); },
+        // One process, simulated clients, no tenants: every meeting channel is
+        // open by construction (MeetingService requires a channel check, 0.147.0).
+        checkChannel: () => true,
         getUserIdForClient: (clientId) => users.get(clientId)?.userId ?? undefined,
         getClientData: (clientId) => {
             const u = users.get(clientId);

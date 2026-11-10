@@ -26,6 +26,7 @@ function makeService() {
     const stored: any[] = [];
     const router: any = {
         sendToLocalClient: jest.fn(),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn(async (channel: string, message: any) => {
             broadcasts.push({ channel, message });
         }),

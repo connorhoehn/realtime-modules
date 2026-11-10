@@ -4,6 +4,7 @@ import { FencedLease, LeaseHeldError, type FenceEvent, type FencedOwner, type Le
 import type { WsAuthContext, WsHandlerHandle } from '../server-ws/types';
 import { LocalRealtimeRouter, liveUsersOnChannel, type RealtimeRouter, type ChannelAuthorize, type ChannelAuthorizeBatch, type ClientMessageFilter, type FeaturePlugin, type RouterLogger } from './router';
 import { channelDeniedFrame, type ChannelAccessKind, type ChannelAccessOpts } from '../server-ws/channelAccess';
+import { requireHook } from '../server-ws/insecureAllowAll';
 import type { CallCrossNodePubSub } from '../call/types';
 import { acceptsOriginPublishProof, createAuthorityScope, scopeFor, type AuthorityScope } from '../server-ws/authorityScope';
 
@@ -49,7 +50,10 @@ export interface RedisRealtimeRouterOptions {
     namespace: string;
     /** Unique among live replicas. A second live owner is rejected. */
     nodeId: string;
+    /** Channel authz. 0.147.0: required unless `insecureAllowAll` (local development only). */
     authorize?: ChannelAuthorize;
+    /** 0.147.0: start without `authorize` (local development only; refused when NODE_ENV=production). */
+    insecureAllowAll?: boolean;
     /** 0.119 (lane R6): one host call per local fan-out (see `ChannelAuthorizeBatch`). */
     authorizeBatch?: ChannelAuthorizeBatch;
     filterClientMessage?: ClientMessageFilter;
@@ -214,6 +218,9 @@ export class RedisRealtimeRouter implements RealtimeRouter {
 
     constructor(private readonly opts: RedisRealtimeRouterOptions) {
         if (!opts.namespace || !opts.nodeId) throw new Error('Cluster namespace and nodeId are required');
+        // 0.147.0: fail closed (see LocalRealtimeRouter).
+        requireHook('RedisRealtimeRouter', 'an authorize hook', typeof opts.authorize === 'function', opts.insecureAllowAll);
+        this.insecureAllowAll = typeof opts.authorize !== 'function';
         this.nodeId = opts.nodeId;
         this.prefix = `realtime:${encodeURIComponent(opts.namespace)}:`;
         this.leaseMs = opts.leaseMs ?? 30_000;
@@ -226,7 +233,7 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         if (![this.leaseMs, this.timeoutMs, this.maxBytes, this.maxPending, this.maxSeen].every(n => Number.isSafeInteger(n) && n > 0)
             || this.leaseMs < 300 || this.timeoutMs >= this.leaseMs) throw new Error('Invalid cluster bounds');
         this.log = opts.logger ?? NOOP_LOGGER;
-        this.local = new LocalRealtimeRouter({ authorize: opts.authorize, authorizeBatch: opts.authorizeBatch, filterClientMessage: opts.filterClientMessage,
+        this.local = new LocalRealtimeRouter({ authorize: opts.authorize, insecureAllowAll: this.insecureAllowAll, authorizeBatch: opts.authorizeBatch, filterClientMessage: opts.filterClientMessage,
             plugins: opts.plugins, logger: this.log, publishProofMaxAgeMs: opts.publishProofMaxAgeMs ?? 0 });
         this.membershipTopic = opts.membershipEventTopic ?? 'chat:membership';
         if (opts.membershipStore) this.validateEventTopic(this.membershipTopic);
@@ -452,6 +459,8 @@ export class RedisRealtimeRouter implements RealtimeRouter {
         return this.live() ? this.local.sendToLocalClient(clientId, message) : false;
     }
     hasChannelAuthorize() { return this.local.hasChannelAuthorize(); }
+    /** 0.147.0: built without `authorize` under the local-development opt-out. */
+    readonly insecureAllowAll: boolean;
     async checkChannel(kind: ChannelAccessKind, clientId: string, channel: string, opts: ChannelAccessOpts = {}): Promise<boolean> {
         if (!this.live()) return false;
         if (this.current(clientId)) return this.local.checkChannel(kind, clientId, channel, opts);

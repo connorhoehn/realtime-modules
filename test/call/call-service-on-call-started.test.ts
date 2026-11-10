@@ -39,7 +39,7 @@ function makeRouter() {
   } as unknown as CallMessageRouter & { sent: any[] };
 }
 function makeService(config: Record<string, unknown>) {
-  return new CallService({
+  return new CallService({ insecureAllowAll: true,
     messageRouter: makeRouter(),
     logger: new NoopLogger() as any,
     stateStore: new InMemoryCallStateStore(),
@@ -140,7 +140,7 @@ describe('CallService — the end is announced from wherever the call is seen to
     try {
       const onCallEnded = jest.fn();
       const store = new InMemoryCallStateStore();
-      const svc = new CallService({
+      const svc = new CallService({ insecureAllowAll: true,
         messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: store, rejoinGraceMs: 30_000, config: { onCallEnded },
       });
       await invite(svc);
@@ -173,7 +173,7 @@ describe('CallService — the end is announced from wherever the call is seen to
     const onCallMissed = jest.fn();
     const store = new InMemoryCallStateStore();
     await store.markAccepted('call-1', 600);
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: store, rejoinGraceMs: 0, config: { onCallEnded, onCallMissed },
     });
     await invite(svc);
@@ -193,7 +193,7 @@ describe('CallService — the end is announced from wherever the call is seen to
     await store.takeAccepted('call-1');
     // The store still lists the other party, so it is not a missed call either.
     await store.registerParticipant('call-1', 'c-bob', 'u-alice', lobby, ['u-bob']);
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: store, rejoinGraceMs: 0, config: { onCallEnded, onCallMissed },
     });
     await invite(svc);
@@ -210,7 +210,7 @@ describe('CallService — a lone drop ends after the grace, dated when they drop
     jest.useFakeTimers();
     try {
       const onCallEnded = jest.fn();
-      const svc = new CallService({
+      const svc = new CallService({ insecureAllowAll: true,
         messageRouter: makeRouter(), logger: new NoopLogger() as any, stateStore: new InMemoryCallStateStore(), rejoinGraceMs: 30_000, config: { onCallEnded },
       });
       await invite(svc);

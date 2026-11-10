@@ -62,7 +62,7 @@ async function establishedCall(
   router: ReturnType<typeof makeRouter>,
   store: InMemoryCallStateStore,
 ): Promise<CallService> {
-  const svc = new CallService({
+  const svc = new CallService({ insecureAllowAll: true,
     messageRouter: router,
     logger: new NoopLogger() as any,
     stateStore: store,
@@ -179,7 +179,7 @@ describe('CallService — status query reaps provably-dead calls', () => {
     await store.registerUserCall!('u-bob', 'call-9', 3600);
 
     const router = makeRouter(users, (cid) => (cid === 'c-ghost' ? false : true));
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: router,
       logger: new NoopLogger() as any,
       stateStore: store,

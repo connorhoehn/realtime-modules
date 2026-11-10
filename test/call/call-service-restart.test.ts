@@ -25,7 +25,7 @@ function router(users: Record<string, string>) {
 }
 
 async function persistCall(store: CallStateStore, targets = ['bob']) {
-  const svc = new CallService({ stateStore: store, messageRouter: router({ 'old-alice': 'alice', 'old-bob': 'bob' }) as any, logger: quiet });
+  const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: router({ 'old-alice': 'alice', 'old-bob': 'bob' }) as any, logger: quiet });
   await svc.handleAction('old-alice', 'invite', { callId: CALL, lobbyName: LOBBY, callerId: 'alice', callerName: 'Alice Original', targetUserIds: targets });
   await svc.handleAction('old-bob', 'accepted', { callId: CALL, lobbyName: LOBBY, callerId: 'bob', userId: 'bob', targetUserIds: ['alice'] });
   await jest.advanceTimersByTimeAsync(10);
@@ -49,7 +49,7 @@ describe.each<[string, () => CallStateStore]>([
     const store = makeStore();
     const original = await persistCall(store);
     const r = router({ 'new-alice': 'alice', 'new-bob': 'bob' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet });
     try {
       await status(svc, 'new-alice');
       expect(r.sent.at(-1)!.message.data.active).toBe(false); // no seat granted by discovery
@@ -70,7 +70,7 @@ describe.each<[string, () => CallStateStore]>([
     const store = makeStore();
     await persistCall(store, ['bob', 'eve']);
     const r = router({ observer: 'alice' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet });
     try {
       await status(svc, 'observer');
       expect(await store.getCall(CALL)).not.toBeNull();
@@ -91,7 +91,7 @@ describe.each<[string, () => CallStateStore]>([
     const store = makeStore();
     await persistCall(store, ['bob', 'eve']);
     const r = router({ outsider: 'eve' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet });
     try {
       await status(svc, 'outsider');
       await announce(svc, 'outsider', 'alice', 'bob'); // payload identity is forged
@@ -117,7 +117,7 @@ describe.each<[string, () => CallStateStore]>([
     const store = makeStore();
     await persistCall(store);
     const r = router({ 'new-alice': 'alice' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet });
     try {
       await announce(svc, 'new-alice', 'alice', 'bob', 'foreign:room:other');
       expect((await store.getCall(CALL))!.participantClientIds).not.toContain('new-alice');
@@ -141,7 +141,7 @@ describe.each<[string, () => CallStateStore]>([
       return ids;
     };
     const r = router({ 'new-alice': 'alice' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet });
     try {
       const pending = announce(svc, 'new-alice', 'alice', 'bob');
       await blocked;
@@ -156,7 +156,7 @@ describe.each<[string, () => CallStateStore]>([
     const store = makeStore();
     await persistCall(store);
     const r = router({ 'new-alice': 'alice', 'new-bob': 'bob' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet, rejoinGraceMs: 0 });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet, rejoinGraceMs: 0 });
     const originalGet = store.getCall.bind(store);
     let release!: () => void;
     let entered!: () => void;
@@ -181,7 +181,7 @@ describe.each<[string, () => CallStateStore]>([
     const store = makeStore();
     await persistCall(store);
     const r = router({ 'new-alice': 'alice' });
-    const svc = new CallService({ stateStore: store, messageRouter: r as any, logger: quiet });
+    const svc = new CallService({ insecureAllowAll: true, stateStore: store, messageRouter: r as any, logger: quiet });
     try {
       await announce(svc, 'new-alice', 'alice', 'bob');
       expect((await store.getCall(CALL))!.participantClientIds).toEqual(['new-alice']);

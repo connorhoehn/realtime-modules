@@ -13,7 +13,14 @@ import { attachRealtime, presence } from '@connorhoehn/realtime-modules/server';
 const httpServer = http.createServer(app);      // your existing app
 const realtime = attachRealtime(httpServer, {
     features: [presence()],
-    auth: async (req) => ({ userId: await verifyToken(req) }),   // optional but recommended
+    auth: async (req) => {
+        const claims = await verifyToken(req);
+        return { userId: claims.sub, exp: claims.exp };   // exp: the token's expiry, in seconds
+    },
+    // Required since 0.147.0: judges every channel read (`subscribe`) and write (`publish`).
+    authorize: ({ kind, channel, ctx }) => !!ctx && canUseChannel(ctx, channel, kind),
+    // Browser upgrades from any other Origin are refused with 403.
+    allowedOrigins: ['https://app.example.com'],
     path: '/realtime',   // omit this and the handler claims EVERY upgrade on the server
 });
 httpServer.listen(3000);
@@ -27,8 +34,9 @@ Since 0.98.5, for an authenticated connection the presence entry carries
 `userId` and its `metadata.userId` / `displayName` / `avatarUrl` come from
 the auth context; the `set` frame's copies are dropped, so nobody can appear
 online as somebody else. `presence({ resolveSender })` maps a differently
-shaped context, and `presence({ trustFrameSender: true })` lets the frame's
-metadata stand. Anonymous connections are unaffected.
+shaped context, and `presence({ trustFrameSender })` no longer has an effect. A connection with no
+`userId` is only reachable through `insecureAllowAll: true` (local development
+only).
 
 ## 2 — Client (React hook)
 

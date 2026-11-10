@@ -15,8 +15,9 @@ export function meeting(opts: MeetingConfig = {}): RealtimeFeature {
     return {
         manifest: MeetingManifest,
         serviceName: 'meeting',
-        create: ({ router, logger }) =>
+        create: ({ router, logger, insecureAllowAll }) =>
             new MeetingService({
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 router: router as unknown as MeetingRouter,
                 logger: logger as unknown as MeetingLogger,
                 config: opts,

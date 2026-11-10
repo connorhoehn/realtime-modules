@@ -36,13 +36,14 @@ const router = new RedisRealtimeRouter({
             return () => subscriber.unsubscribe(topic);
         },
     },
-    authorize: currentChannelAuthorization,
+    authorize: currentChannelAuthorization,   // required since 0.147.0 (or insecureAllowAll: true, local development only)
     filterClientMessage: currentRecipientAuthorization,
 });
 await router.start();
 const realtime = attachRealtime(httpServer, {
     router,
-    auth: authenticateUpgrade,
+    auth: authenticateUpgrade,   // its result must include the token's `exp` (seconds)
+    allowedOrigins: ['https://app.example.com'],
     features: [chat({ /* application's durable stores */ })],
 });
 // At shutdown: drain sockets/services, then unsubscribe/release this owner.
@@ -160,8 +161,8 @@ const [wsRedis, cookieRedis] = await Promise.all([
     createBoundedRedis(redisUrl, { timeoutMs: 2000 }), createBoundedRedis(redisUrl, { timeoutMs: 2000 })]);
 const group = new LeaseGroup();        // one node = one owner
 const gate = new ReadinessGate();
-const ws = new RedisRealtimeRouter({ redis: wsRedis, namespace: 'app:ws', nodeId: replicaId, leaseGroup: group });
-const cookie = new RedisRealtimeRouter({ redis: cookieRedis, namespace: 'app:realtime', nodeId: replicaId, leaseGroup: group });
+const ws = new RedisRealtimeRouter({ redis: wsRedis, namespace: 'app:ws', nodeId: replicaId, leaseGroup: group, authorize });
+const cookie = new RedisRealtimeRouter({ redis: cookieRedis, namespace: 'app:realtime', nodeId: replicaId, leaseGroup: group, authorize });
 gate.addOwner('ws', ws); gate.addOwner('realtime', cookie);
 await ws.start(); await cookie.start();
 server.listen(port, () => gate.setListening(true));

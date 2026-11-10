@@ -68,7 +68,8 @@ export interface CRDTServiceOpts {
     /**
      * 0.146.0: start without an `authz` hook, allowing every document action
      * the router's channel check allows. For local demos only; never in a
-     * deployment with more than one user.
+     * deployment with more than one user. 0.147.0: logs one warning and
+     * throws when NODE_ENV=production.
      */
     insecureAllowAll?: boolean;
     /**

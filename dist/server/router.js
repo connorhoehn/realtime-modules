@@ -21,6 +21,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalRealtimeRouter = exports.DEFAULT_MAX_CHANNELS_PER_SOCKET = exports.PLUGIN_SCOPE_RETAIN_MAX_MS = void 0;
 exports.liveUsersOnChannel = liveUsersOnChannel;
 const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const authorityScope_1 = require("../server-ws/authorityScope");
 /**
  * `scope` on plugin hooks (0.108). `onMessage` receives the authority scope
@@ -117,7 +118,13 @@ class LocalRealtimeRouter {
     maxChannelsPerClient;
     redisAvailable = false;
     nodeId = 'local';
+    /** 0.147.0: built without `authorize` under the local-development opt-out. */
+    insecureAllowAll;
     constructor(opts = {}) {
+        // 0.147.0: fail closed. A router with no authorize let any connection
+        // subscribe and publish on every channel, every tenant's included.
+        (0, insecureAllowAll_1.requireHook)('LocalRealtimeRouter', 'an authorize hook', typeof opts.authorize === 'function', opts.insecureAllowAll);
+        this.insecureAllowAll = typeof opts.authorize !== 'function';
         const maxChannels = opts.maxChannelsPerClient ?? exports.DEFAULT_MAX_CHANNELS_PER_SOCKET;
         if (!(maxChannels >= 1))
             throw new Error('maxChannelsPerClient must be at least 1');
@@ -353,6 +360,7 @@ class LocalRealtimeRouter {
     // ---- authz -----------------------------------------------------------
     /** Preserve synchronous decisions; rejected async decisions fail closed. */
     allows(kind, clientId, channel, scope) {
+        // Reached only under insecureAllowAll (the constructor refuses otherwise).
         if (!this.authorize)
             return true;
         const context = this.ctxOf(clientId);

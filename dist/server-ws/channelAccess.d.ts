@@ -59,7 +59,7 @@ export interface ChannelAccessOpts {
      */
     scope?: AuthorityScope;
 }
-/** The router slice a service needs to ask. Optional on every router. */
+/** The router slice a service needs to ask. 0.147.0: `checkChannel` is required (see `routerPermits`). */
 export interface ChannelAccessRouter {
     checkChannel?(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     /**
@@ -70,9 +70,10 @@ export interface ChannelAccessRouter {
     subscribeToChannel?(clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean | void> | boolean | void;
 }
 /**
- * Ask the router whether `clientId` may `kind` `channel`. A router without
- * `checkChannel` (a custom transport that enforces only at fan-out) allows.
- * A throwing check refuses.
+ * Ask the router whether `clientId` may `kind` `channel`. A throwing check
+ * refuses. 0.147.0: a router without `checkChannel` is refused too (before,
+ * it allowed and trusted the router to enforce at fan-out), unless it was
+ * accepted under `insecureAllowAll` (local development only).
  */
 export declare function routerPermits(router: ChannelAccessRouter | null | undefined, kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): Promise<boolean>;
 /**

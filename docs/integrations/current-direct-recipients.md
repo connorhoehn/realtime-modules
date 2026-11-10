@@ -21,7 +21,8 @@ read, then recheck current identity before returning the copied batch. Never
 mutate the shared frame or delete stored items just because a particular tab
 cannot read them now.
 
-`notifications({ authorize })` also supplies an async, fail-closed admission
+`notifications({ authorize, admit })` (both required since 0.147.0, or
+`insecureAllowAll: true` for local development) also supplies an async, fail-closed admission
 hook for inbound history/read-state actions. It runs before store work; it
 does not replace the last-mile recipient filter. Refusals emit
 `AUTHZ_NOTIFICATION_DENIED`. Identity still comes from the router, so a

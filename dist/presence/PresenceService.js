@@ -33,6 +33,7 @@
 const distributed_core_1 = require("distributed-core");
 const senderIdentity_1 = require("../server-ws/senderIdentity");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_PRESENCE_TIMEOUT_MS = 60_000;
 const DEFAULT_STALE_THRESHOLD_MS = 90_000;
@@ -105,6 +106,9 @@ class PresenceService {
             throw new Error('Shared presence requires fresh router identity and liveness');
         }
         this.logger = logger;
+        // 0.147.0: fail closed. Without its own hook and without a router that
+        // enforces channel access, every channel was open to every connection.
+        (0, insecureAllowAll_1.requireHook)('PresenceService', 'an authorizeChannel hook (or a router with an authorize hook)', typeof config.authorizeChannel === 'function' || (0, channelAccess_1.routerEnforcesChannelAccess)(messageRouter), config.insecureAllowAll, messageRouter);
         this.authorizeChannel = config.authorizeChannel || (() => true);
         this.hasAuthorizeChannel = typeof config.authorizeChannel === 'function';
         this.resolveSender = config.resolveSender ?? null;

@@ -364,6 +364,7 @@ function makeRouter() {
     return {
         redisAvailable: false,
         sendToClient: jest.fn(),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn(async () => undefined),
         subscribeToChannel: jest.fn(async () => true),
         unsubscribeFromChannel: jest.fn(async () => undefined),

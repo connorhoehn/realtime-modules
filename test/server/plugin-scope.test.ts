@@ -74,7 +74,7 @@ class HostAuthority implements ChatMembershipStore {
 
 async function boot(host: HostAuthority, plugins: RealtimeFeaturePlugin[]) {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features: [chat({ membershipStore: host })],
         path: '/realtime',
         plugins,
@@ -210,7 +210,7 @@ describe('plugin authority scope (0.108)', () => {
         jest.useFakeTimers();
         try {
             let captured: AuthorityScope | undefined;
-            const router = new LocalRealtimeRouter({
+            const router = new LocalRealtimeRouter({ insecureAllowAll: true,
                 plugins: [{ name: 'hung', onMessage: (info) => { captured = info.scope; return new Promise<void>(() => undefined); } }],
             });
             router._setHandle({ getClientContext: () => ({ userId: 'a' }), sendToClient: () => true, listClients: () => [] } as any);

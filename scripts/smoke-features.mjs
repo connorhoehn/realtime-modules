@@ -35,7 +35,7 @@ let failures = 0;
 for (const [name, make] of FEATURES) {
     const httpServer = http.createServer();
     try {
-        const handle = attachRealtime(httpServer, { features: [make()], path: '/realtime' });
+        const handle = attachRealtime(httpServer, { features: [make()], path: '/realtime', insecureAllowAll: true });
         const port = await listen(httpServer);
         const ws = await connect(port);
         if (handle.listClients().length !== 1) throw new Error('client not tracked');
@@ -53,7 +53,7 @@ for (const [name, make] of FEATURES) {
 // One full-depth round-trip: chat over the shipped dist.
 {
     const httpServer = http.createServer();
-    const handle = attachRealtime(httpServer, { features: [chat()], path: '/realtime' });
+    const handle = attachRealtime(httpServer, { features: [chat()], path: '/realtime', insecureAllowAll: true });
     const port = await listen(httpServer);
     const a = await connect(port);
     const joined = new Promise((res, rej) => {

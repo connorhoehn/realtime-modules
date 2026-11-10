@@ -66,8 +66,9 @@ export interface RouterLogger {
  * ```
  *
  * The per-service `authorizeChannel` hooks (`presence({ authorizeChannel })`
- * and friends) are an additional layer: both must pass. When `authorize` is
- * absent everything is allowed — the single-tenant default.
+ * and friends) are an additional layer: both must pass. Since 0.147.0
+ * `authorize` is required: a router without it throws at construction unless
+ * `insecureAllowAll: true` (local development only, refused in production).
  *
  * `scope` (0.107) names the OPERATION the check belongs to: one channel
  * fan-out (every recipient's `subscribe` check and the publisher's `publish`
@@ -208,6 +209,12 @@ export interface RealtimeRouter {
     checkChannel?(kind: ChannelAccessKind, clientId: string, channel: string, opts?: ChannelAccessOpts): boolean | Promise<boolean>;
     /** Whether an `authorize` hook is configured (services skip by-id read scoping without one). */
     hasChannelAuthorize?(): boolean;
+    /**
+     * 0.147.0: true when the router was built with `insecureAllowAll` (no
+     * `authorize`, local development only). Services attached to it accept a
+     * missing hook of their own instead of throwing.
+     */
+    readonly insecureAllowAll?: boolean;
     /** Auth context accessor — `{ userContext }` shape services expect. */
     getClientData?(clientId: string): {
         userContext?: WsAuthContext;
@@ -309,9 +316,21 @@ export declare class LocalRealtimeRouter implements RealtimeRouter {
     readonly maxChannelsPerClient: number;
     readonly redisAvailable = false;
     readonly nodeId = "local";
+    /** 0.147.0: built without `authorize` under the local-development opt-out. */
+    readonly insecureAllowAll: boolean;
     constructor(opts?: {
         plugins?: FeaturePlugin[];
+        /**
+         * Channel authz. 0.147.0: required — the constructor throws without
+         * it unless `insecureAllowAll` is true (local development only).
+         */
         authorize?: ChannelAuthorize;
+        /**
+         * 0.147.0: start without `authorize`; every channel is open to every
+         * connection. Local development only: logs one warning and throws
+         * when NODE_ENV=production.
+         */
+        insecureAllowAll?: boolean;
         /** 0.119 (lane R6): one host call per fan-out for every recipient's subscribe check. */
         authorizeBatch?: ChannelAuthorizeBatch;
         filterClientMessage?: ClientMessageFilter;

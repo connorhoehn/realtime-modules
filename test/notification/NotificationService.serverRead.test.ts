@@ -25,7 +25,7 @@ describe('NotificationService server-side read', () => {
             sendToClient: jest.fn((clientId: string, frame: any) => { sent.push({ clientId, frame }); return true; }),
             getClientsByUserId: jest.fn(async (ids: string[]) => ids.includes('u-eve') ? [{ clientId: 'tab-1', userId: 'u-eve' }, { clientId: 'tab-2', userId: 'u-eve' }] : []),
         };
-        const svc = new NotificationService({ messageRouter: router, logger: new NoopLogger() as any, store: fakeStore() as any });
+        const svc = new NotificationService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any, store: fakeStore() as any });
         await svc.notifyUser('u-eve', { id: 'unread:a', title: 'New messages', type: 'message' });
         await svc.notifyUser('u-eve', { id: 'other', title: 'Something else', type: 'system' });
         expect((await svc.listForUser('u-eve')).map((n) => n.id)).toEqual(['unread:a', 'other']);

@@ -233,7 +233,7 @@ describe('createWsHandler — frame ordering', () => {
 
     it('finishes a slow frame before starting the next one', async () => {
         const log: string[] = [];
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { probe: slowService(log) },
             pingIntervalMs: 0,
@@ -254,7 +254,7 @@ describe('createWsHandler — frame ordering', () => {
 
     it('keeps a burst in order', async () => {
         const log: string[] = [];
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { probe: slowService(log) },
             pingIntervalMs: 0,
@@ -284,7 +284,7 @@ describe('createWsHandler — frame ordering', () => {
                 log.push(action);
             },
         };
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { probe: service },
             pingIntervalMs: 0,
@@ -322,7 +322,7 @@ describe('createWsHandler — independent service lanes', () => {
 
     it('a slow presence frame does not hold a later chat frame', async () => {
         const log: string[] = [];
-        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0 });
         const qc = connect(); await qc.open(); await qc.nextMessage();
         qc.ws.send(JSON.stringify({ service: 'presence', action: 'set', ms: 150 }));
         qc.ws.send(JSON.stringify({ service: 'chat', action: 'send', ms: 0 }));
@@ -332,7 +332,7 @@ describe('createWsHandler — independent service lanes', () => {
 
     it('keeps order within the presence lane and within the shared lane', async () => {
         const log: string[] = [];
-        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log), call: recorder('call', log) }, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log), call: recorder('call', log) }, pingIntervalMs: 0 });
         const qc = connect(); await qc.open(); await qc.nextMessage();
         for (const [service, action, ms] of [['presence', 'subscribe', 60], ['chat', 'join', 50], ['presence', 'set', 0], ['call', 'accepted', 0], ['chat', 'send', 0]] as const) {
             qc.ws.send(JSON.stringify({ service, action, ms }));
@@ -346,7 +346,7 @@ describe('createWsHandler — independent service lanes', () => {
 
     it('independentServices: [] restores one shared lane', async () => {
         const log: string[] = [];
-        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0, independentServices: [] });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0, independentServices: [] });
         const qc = connect(); await qc.open(); await qc.nextMessage();
         qc.ws.send(JSON.stringify({ service: 'presence', action: 'set', ms: 80 }));
         qc.ws.send(JSON.stringify({ service: 'chat', action: 'send', ms: 0 }));
@@ -356,7 +356,7 @@ describe('createWsHandler — independent service lanes', () => {
 
     it('cleanup still waits for an in-flight presence frame', async () => {
         const log: string[] = [];
-        handle = createWsHandler({ server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: { presence: recorder('presence', log), chat: recorder('chat', log) }, pingIntervalMs: 0 });
         const qc = connect(); await qc.open(); await qc.nextMessage();
         qc.ws.send(JSON.stringify({ service: 'presence', action: 'set', ms: 120 }));
         qc.ws.send(JSON.stringify({ service: 'chat', action: 'send', ms: 0 }));
@@ -372,7 +372,7 @@ describe('createWsHandler — independent service lanes', () => {
         const presence: WsService = {
             async handleAction(_clientId: string, action: string) { if (action === 'boom') throw new Error('nope'); log.push(action); },
         };
-        handle = createWsHandler({ server: httpServer, services: { presence }, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: { presence }, pingIntervalMs: 0 });
         const qc = connect(); await qc.open(); await qc.nextMessage();
         qc.ws.send(JSON.stringify({ service: 'presence', action: 'boom' }));
         qc.ws.send(JSON.stringify({ service: 'presence', action: 'after' }));
@@ -403,7 +403,7 @@ describe('createWsHandler — cleanup waits for in-flight frames', () => {
                 log.push('cleanup');
             },
         };
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { probe: service },
             pingIntervalMs: 0,
@@ -432,7 +432,7 @@ describe('createWsHandler — cleanup waits for in-flight frames', () => {
                 log.push('cleanup');
             },
         };
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { probe: service },
             pingIntervalMs: 0,
@@ -452,7 +452,7 @@ describe('createWsHandler — cleanup waits for in-flight frames', () => {
 
     it('cleans up promptly when nothing is in flight', async () => {
         const log: string[] = [];
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { probe: { handleAction: () => undefined, onClientDisconnect: () => { log.push('cleanup'); } } },
             pingIntervalMs: 0,
@@ -472,7 +472,7 @@ describe('createWsHandler — cleanup waits for in-flight frames', () => {
 
 describe('createWsHandler — path filtering', () => {
     it('claims every upgrade when no path is given', async () => {
-        handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: {}, pingIntervalMs: 0 });
 
         for (const p of ['/', '/realtime', '/something/else/entirely']) {
             const qc = connectPath(p);
@@ -496,7 +496,7 @@ describe('createWsHandler — path filtering', () => {
             socket.destroy();
         };
 
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -528,7 +528,7 @@ describe('createWsHandler — path filtering', () => {
     });
 
     it('also serves paths nested under the configured one', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -543,7 +543,7 @@ describe('createWsHandler — path filtering', () => {
 
 describe('createWsHandler', () => {
     it('sends a session frame with clientId on connect', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -563,7 +563,7 @@ describe('createWsHandler', () => {
         const onConnect = jest.fn();
         const auth = jest.fn(async (_req: any) => ({ userId: 'u-1' }));
 
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             auth,
@@ -583,7 +583,7 @@ describe('createWsHandler', () => {
     });
 
     it('rejects upgrade with 401 when auth throws', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             auth: async () => {
@@ -599,7 +599,7 @@ describe('createWsHandler', () => {
 
     it('routes inbound frames to the named service.handleAction', async () => {
         const chat = new StubService();
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { chat },
             pingIntervalMs: 0,
@@ -622,7 +622,7 @@ describe('createWsHandler', () => {
     });
 
     it('returns SERVICE_NOT_AVAILABLE for unknown service', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -641,7 +641,7 @@ describe('createWsHandler', () => {
 
     it('returns SERVICE_ERROR when service.handleAction throws', async () => {
         const chat = new StubService();
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { chat },
             pingIntervalMs: 0,
@@ -659,7 +659,7 @@ describe('createWsHandler', () => {
     });
 
     it('returns INVALID_JSON for unparseable frames', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -678,7 +678,7 @@ describe('createWsHandler', () => {
     it('fires service onClientConnect/onClientDisconnect + onDisconnect hook', async () => {
         const chat = new StubService();
         const onDisconnect = jest.fn();
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: { chat },
             onDisconnect,
@@ -700,7 +700,7 @@ describe('createWsHandler', () => {
     });
 
     it('sendToClient + listClients work after connection', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -727,7 +727,7 @@ describe('createWsHandler', () => {
     });
 
     it('dispose() tears down the wss without delivering a session frame to new connects', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,
@@ -771,7 +771,7 @@ describe('createWsHandler — maxPayload', () => {
     const connectAndSend = async (bytes: number) => {
         const seen: string[] = [];
         const svc: WsService = { handleAction: async (_c, action) => { seen.push(action); } };
-        handle = createWsHandler({ server, services: { echo: svc }, maxPayload: 1024, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server, services: { echo: svc }, maxPayload: 1024, pingIntervalMs: 0 });
         const ws = new WebSocket(`ws://127.0.0.1:${port}`);
         await new Promise<void>((r, j) => { ws.on('open', () => r()); ws.on('error', j); });
         const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
@@ -795,9 +795,9 @@ describe('createWsHandler — maxPayload', () => {
     });
 
     it('defaults to 1 MiB (0.146.0) and rejects a nonsense limit', () => {
-        handle = createWsHandler({ server, services: {}, pingIntervalMs: 0 });
+        handle = createWsHandler({ insecureAllowAll: true, server, services: {}, pingIntervalMs: 0 });
         expect(handle.wss.options.maxPayload).toBe(1024 * 1024);
-        expect(() => createWsHandler({ server, services: {}, maxPayload: 0 })).toThrow(/maxPayload/);
+        expect(() => createWsHandler({ server, services: {}, maxPayload: 0, insecureAllowAll: true })).toThrow(/maxPayload/);
     });
 });
 
@@ -814,19 +814,19 @@ describe('createWsHandler — rejectUnmatched and session order (0.143.0)', () =
     }
 
     it('answers an upgrade on another path with 404 when rejectUnmatched is set', async () => {
-        handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0, path: '/events', rejectUnmatched: true });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: {}, pingIntervalMs: 0, path: '/events', rejectUnmatched: true });
         expect(await upgradeStatus('/elsewhere')).toBe(404);
         expect(await upgradeStatus('/events')).toBe(101);
         expect(await upgradeStatus('/events/nested')).toBe(101);
     });
 
     it('still leaves another path alone by default', async () => {
-        handle = createWsHandler({ server: httpServer, services: {}, pingIntervalMs: 0, path: '/events' });
+        handle = createWsHandler({ insecureAllowAll: true, server: httpServer, services: {}, pingIntervalMs: 0, path: '/events' });
         expect(await upgradeStatus('/elsewhere', 400)).toBe('hung');
     });
 
     it('sends the session frame before onConnect runs, so frames onConnect sends follow it', async () => {
-        handle = createWsHandler({
+        handle = createWsHandler({ insecureAllowAll: true,
             server: httpServer,
             services: {},
             pingIntervalMs: 0,

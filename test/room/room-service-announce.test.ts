@@ -40,7 +40,7 @@ const ROOM = {
 describe('RoomService — lifecycle announce', () => {
   test('created fans to index subscribers except the announcer, room passthrough intact', async () => {
     const router = makeRouter();
-    const svc = new RoomService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new RoomService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any });
 
     await svc.handleAction('c-alice', 'subscribe-index', {});
     await svc.handleAction('c-bob', 'subscribe-index', {});
@@ -62,7 +62,7 @@ describe('RoomService — lifecycle announce', () => {
 
   test('invalid event / missing slug error to sender only', async () => {
     const router = makeRouter();
-    const svc = new RoomService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new RoomService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any });
     await svc.handleAction('c-bob', 'subscribe-index', {});
     router.sent.length = 0;
 
@@ -89,7 +89,7 @@ describe('RoomService — lifecycle announce', () => {
     };
 
     const router = makeRouter();
-    const svc = new RoomService({
+    const svc = new RoomService({ insecureAllowAll: true,
       messageRouter: router,
       logger: new NoopLogger() as any,
       crossNodePubSub: pubsub as any,

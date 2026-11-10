@@ -41,6 +41,8 @@ const crypto_1 = require("crypto");
 const FileBlobStore_1 = require("./FileBlobStore");
 const FileBlobStore_2 = require("./FileBlobStore");
 const uploadUrl_1 = require("./uploadUrl");
+const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 // Wire error code kept as a local constant — the value is part of the WS
 // protocol, not of any one app's error-code table.
 const AUTHZ_CHANNEL_DENIED = 'AUTHZ_CHANNEL_DENIED';
@@ -117,7 +119,10 @@ class FileUploadService {
         this.metricsCollector = opts.metricsCollector;
         this.blobStore = opts.blobStore ?? new FileBlobStore_1.FileBlobStore();
         this.metadataRepo = opts.metadataRepo ?? new InMemoryFileUploadMetadataStore();
-        this.authz = opts.authz ?? (() => true);
+        // 0.147.0: fail closed. No authz used to allow every channel.
+        const router = opts.messageRouter;
+        (0, insecureAllowAll_1.requireHook)('FileUploadService', 'an authz hook (or a router with an authorize hook)', typeof opts.authz === 'function' || (0, channelAccess_1.routerEnforcesChannelAccess)(router), opts.insecureAllowAll, router);
+        this.authz = opts.authz ?? ((_svc, clientId, channel) => (0, channelAccess_1.routerPermits)(router, 'publish', clientId, channel));
         this.publicBaseUrl = opts.publicBaseUrl !== undefined ? (0, uploadUrl_1.normalizeUploadBase)(opts.publicBaseUrl) : (0, uploadUrl_1.defaultUploadBase)();
         this.maxBytes = opts.maxBytes ?? (0, FileBlobStore_1.resolveMaxBytes)();
         this.mintUploadId = opts.mintUploadId ?? (() => (0, crypto_1.randomUUID)());

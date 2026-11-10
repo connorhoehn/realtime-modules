@@ -30,7 +30,7 @@ npm install @connorhoehn/realtime-modules
 
 You can also install from git (`github:connorhoehn/realtime-modules#<tag>`). Pin an exact version or tag, because the API can change between minor releases. Every peer dependency (`react`, `express`, `ws`, `yjs`, `y-protocols`, the Tiptap packages, `pptxgenjs`, the DynamoDB client) is optional: install only what the subpaths you import need. Your `tsconfig.json` needs `skipLibCheck: true` and `moduleResolution` set to `bundler`, `node16` or `nodenext` so subpath imports resolve.
 
-On the server, attach features to your HTTP server. The token is checked in your `auth` function, and `authorize` decides who may read or write each channel:
+On the server, attach features to your HTTP server. The token is checked in your `auth` function, `authorize` decides who may read or write each channel, and `allowedOrigins` lists the web origins that may open a socket. All three are required: since 0.147.0 the library refuses to start without its authorization hooks, and `auth` must return the token's `exp` (seconds). For local development only, `insecureAllowAll: true` skips them; it is refused when `NODE_ENV=production`.
 
 ```ts
 import http from 'http';
@@ -40,8 +40,10 @@ const httpServer = http.createServer(app);
 attachRealtime(httpServer, {
     features: [chat(), presence()],
     path: '/realtime',
-    auth: bearerSubprotocolAuth({ verify: async (token) => ({ userId: await userIdFor(token) }) }),
+    // verifyToken returns the claims: { userId, exp, … }
+    auth: bearerSubprotocolAuth({ verify: async (token) => verifyToken(token) }),
     authorize: ({ channel, ctx }) => !!ctx && channelAllowed(ctx.userId, channel),
+    allowedOrigins: ['https://app.example.com'],
 });
 httpServer.listen(3000);
 ```

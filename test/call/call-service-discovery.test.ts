@@ -59,7 +59,7 @@ const users = {
 };
 
 async function activeGroupCall(router: ReturnType<typeof makeRouter>, store?: InMemoryCallStateStore) {
-  const svc = new CallService({
+  const svc = new CallService({ insecureAllowAll: true,
     messageRouter: router,
     logger: new NoopLogger() as any,
     ...(store ? { stateStore: store } : {}),
@@ -115,7 +115,7 @@ describe('CallService — status query (F3)', () => {
 
   test('status without lobbyName is an error to sender', async () => {
     const router = makeRouter(users);
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any });
     await svc.handleCallEvent('c-zed', 'status', {});
     expect(router.sent).toHaveLength(1);
     expect(router.sent[0]!.clientId).toBe('c-zed');
@@ -147,7 +147,7 @@ describe('CallService — status query (F3)', () => {
     await store.registerLobbyCall!('peer-lobby', 'call-9', 3600);
 
     const router = makeRouter(users);
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: router, logger: new NoopLogger() as any, stateStore: store,
     });
     await svc.handleCallEvent('c-zed', 'status', { lobbyName: 'peer-lobby' });
@@ -214,7 +214,7 @@ describe('CallService — terminal verbs beat the rejoin grace (J2)', () => {
   const users = { 'c-alice': 'u-alice', 'c-bob': 'u-bob' };
 
   async function twoPersonCall(router: ReturnType<typeof makeRouter>, store?: InMemoryCallStateStore) {
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: router,
       logger: new NoopLogger() as any,
       rejoinGraceMs: 30_000,

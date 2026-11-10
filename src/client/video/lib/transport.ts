@@ -3,7 +3,7 @@
 // localStorage). Auth is injected via a Bearer-token resolver so consumers
 // own credential management.
 //
-// Lifted from /Users/connorhoehn/Projects/live-video-streaming/ui/src/lib/api.ts
+// Lifted from the live-video-streaming app's ui/src/lib/api.ts
 // (whipPublish / whipTeardown / whepPublish / whepTeardown / fetchIceServers).
 
 export class LVSApiError extends Error {

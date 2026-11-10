@@ -5,7 +5,7 @@ const channel = 'doc:11111111-1111-4111-8111-111111111111';
 const logger = { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() };
 function setup(authz: CRDTServiceOpts['authz']) {
   const store = new MemorySnapshotStore();
-  const router = { sendToClient: jest.fn(), sendToChannel: jest.fn(), broadcastToAll: jest.fn(), onRemoteChannelMessage: jest.fn(), getClientData: () => ({ userId: 'alice', userContext: { userId: 'alice' } }) };
+  const router = { checkChannel: () => true, sendToClient: jest.fn(), sendToChannel: jest.fn(), broadcastToAll: jest.fn(), onRemoteChannelMessage: jest.fn(), getClientData: () => ({ userId: 'alice', userContext: { userId: 'alice' } }) };
   return { store, router, service: new CRDTService({ authz, messageRouter: router, snapshotStore: store, metadataStore: new MemoryMetadataStore(), logger }) };
 }
 function seed() { const doc = new Y.Doc(); doc.getMap('meta').set('schemaVersion', 2); doc.getXmlFragment('body').insert(0, [new Y.XmlElement('paragraph')]); const snapshot = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64'); doc.destroy(); return { channel, snapshot, sourceRevision: 'v1' }; }

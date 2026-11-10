@@ -61,7 +61,7 @@ function harness(opts: { presenceOpts?: Parameters<typeof presence>[0]; authoriz
     beforeAll(async () => {
         h.server = http.createServer();
         const rule = opts.authorize ?? tenantRule;
-        h.handle = attachRealtime(h.server, {
+        h.handle = attachRealtime(h.server, { insecureAllowAll: true,
             features: [
                 chat(),
                 presence({ heartbeatIntervalMs: 60_000, cleanupIntervalMs: 60_000, ...(opts.presenceOpts ?? {}) }),
@@ -267,7 +267,7 @@ describe('presence get by targetClientId: per-service authorizeChannel alone', (
     const open: WebSocket[] = [];
     beforeAll(async () => {
         server = http.createServer();
-        handle = attachRealtime(server, {
+        handle = attachRealtime(server, { insecureAllowAll: true,
             features: [presence({
                 heartbeatIntervalMs: 60_000,
                 cleanupIntervalMs: 60_000,
@@ -321,7 +321,7 @@ describe('presence get by targetClientId: no auth, no authorize', () => {
     const open: WebSocket[] = [];
     beforeAll(async () => {
         server = http.createServer();
-        handle = attachRealtime(server, {
+        handle = attachRealtime(server, { insecureAllowAll: true,
             features: [presence({ heartbeatIntervalMs: 60_000, cleanupIntervalMs: 60_000 })],
             path: '/realtime',
         });

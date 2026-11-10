@@ -87,7 +87,7 @@ class HostAuthority implements ChatMembershipStore {
 
 async function boot(host: HostAuthority, chatOpts: Record<string, unknown> = {}) {
     const server = http.createServer();
-    const handle: RealtimeHandle = attachRealtime(server, {
+    const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true,
         features: [chat({ membershipStore: host, ...chatOpts })],
         path: '/realtime',
         auth: async (req: http.IncomingMessage) => ({ userId: new URL(req.url ?? '', 'http://x').searchParams.get('user') ?? 'anon' }),

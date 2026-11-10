@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.147.0 — 2026-11-09
+
+Breaking default: every authorization hook is required. A constructor or attach point whose hook is missing throws at startup instead of allowing everything. The one shared opt-out is `insecureAllowAll: true`, for local development only: it logs one warning the first time it is accepted and throws when `NODE_ENV=production`.
+
+- **Routers** (lane: fail-closed). `LocalRealtimeRouter`, `RedisRealtimeRouter` and `attachRealtime` (local router) throw without `authorize`. A router built under the opt-out reports `insecureAllowAll: true`, and services attached to it inherit the opt-out.
+- **Sockets** (lane: fail-closed). `createWsHandler` (and so `attachRealtime`) throws without `auth`. New `allowedOrigins`: exact origins; an upgrade whose `Origin` header is not listed gets 403, and a missing or empty list refuses every browser origin (requests without an `Origin` header are not affected). A predicate `(origin, req) => boolean` is accepted for rules that depend on the request (a throw refuses). A context without a numeric `exp` is now treated as expired (401 at upgrade); closing at `exp` stays. Under the opt-out, no `auth`, any origin when no list is given, and no `exp` are accepted.
+- **Calls** (lane: fail-closed). `CallService` throws without `config.authorize`; `calls()` throws unless it has a `lobbyGuard` or `config.authorize`.
+- **Presence, cursor, reactions, uploads** (lane: fail-closed). `PresenceService`, `CursorService`, `ReactionService` (`authorizeChannel`) and `FileUploadService` (`authz`) throw unless they have their own hook or a router whose channel check enforces (a router with `authorize`). Without its own `authz`, `FileUploadService` now asks the router's `checkChannel('publish', …)` instead of allowing.
+- **Notifications** (lane: fail-closed). `NotificationService` and `notifications()` throw without `authorize` and without `admit`. A router without `getUserIdForClient` no longer lets the frame's `userId` pick the inbox (except under the opt-out).
+- **Routers without `checkChannel`** (lane: fail-closed). `RoomService` and `MeetingService` throw instead of warning; the shared channel check (`routerPermits`, used by chat, cursor, reactions, presence, activity, documents and uploads) refuses instead of allowing, unless a service accepted that router under the opt-out. `createMeetingLoopback`'s in-memory router now has a `checkChannel` (it admits: one process, no tenants).
+- **Chat sender** (lane: fail-closed). The sender is always the authenticated principal (router auth context or `identityResolver`); a send from a connection without one is refused with `CHAT_UNAUTHENTICATED` and nothing is stored or broadcast. The frame's `userId` / `displayName` / `avatarUrl` are always replaced on send and dropped on edit; `trustFrameSender` is deprecated and ignored.
+- **Documents** (lane: fail-closed). `CRDTService`'s existing `insecureAllowAll` follows the shared rule (one warning, refused in production) and is inherited from `attachRealtime({ insecureAllowAll })`.
+- **`createRealtimeServer`** (lane: fail-closed) has no authorization seam, so it runs only with `insecureAllowAll: true`; production hosts use `attachRealtime`.
+- New test `test/server-ws/fail-closed-hooks.test.ts`: per hook, construction throws without it and the opt-out is refused in production; plus origins, `exp`, the router check and the chat sender. Existing tests, the demo and the smoke scripts pass real hooks or the opt-out. `RELEASE.md` pushes to `origin` only.
+
+**MIGRATION.** Newly required, each with `insecureAllowAll: true` as the development-only opt-out:
+1. `attachRealtime({ authorize })` / `new LocalRealtimeRouter({ authorize })` / `new RedisRealtimeRouter({ authorize })`.
+2. `attachRealtime({ auth })` / `createWsHandler({ auth })`, returning the token's `exp` in seconds since the epoch; plus `allowedOrigins: ['https://your.app']` (or a predicate) for browser clients; a host that checks origins inside `auth` (for example `bearerSubprotocolAuth({ allowOrigin })`) must pass the same rule here, or every browser upgrade gets 403.
+3. `calls({ lobbyGuard })` or `calls({ config: { authorize } })`; `new CallService({ config: { authorize } })`.
+4. `presence` / `cursor` / `reactions` `authorizeChannel` and `fileUploads({ authz })` — only when the router has no `authorize`.
+5. `notifications({ authorize, admit })` / `new NotificationService({ authorize, admit })`.
+6. A custom router passed to `RoomService`, `MeetingService` or any service using the shared channel check needs `checkChannel`.
+7. Chat clients must connect with an authenticated user to send; a sender name belongs in the auth context (`displayName` / `name`), not the frame.
+8. `createRealtimeServer(..., { insecureAllowAll: true })`, or move to `attachRealtime`.
+
 ## 0.146.6 — 2026-11-08
 
 - event-catalog pin moves from 0.8.7 to 0.10.7 (a045aca3), whose client signs audience-bound service auth. No code change.

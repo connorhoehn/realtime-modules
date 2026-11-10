@@ -28,6 +28,7 @@ class NoopLogger {
 function makeService(stored: any[] = []) {
     const router: any = {
         sendToLocalClient: jest.fn(),
+        checkChannel: () => true, // 0.147.0: services refuse a router without a channel check
         sendToChannel: jest.fn(async () => {}),
         subscribeToChannel: jest.fn(async () => {}),
         unsubscribeFromChannel: jest.fn(async () => {}),

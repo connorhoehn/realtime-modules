@@ -44,7 +44,7 @@ function makeRouter(userByClient: Record<string, string>) {
 async function threePersonCall(router: ReturnType<typeof makeRouter>) {
   // rejoinGraceMs: 0 → legacy immediate-teardown semantics; the grace
   // behavior has its own suite below.
-  const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0 });
+  const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0 });
   await svc.handleCallEvent('c-alice', 'invite', {
     callId: 'call-1', lobbyName: 'global-hangout', callerId: 'u-alice',
     targetUserIds: ['u-bob', 'u-carol'],
@@ -91,7 +91,7 @@ describe('CallService — participant-grain departure (F1)', () => {
 
   test('2-person call still ends on disconnect (legacy UX preserved)', async () => {
     const router = makeRouter(users);
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0 });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: 0 });
     await svc.handleCallEvent('c-alice', 'invite', {
       callId: 'call-2', lobbyName: 'dm:u-alice:u-bob', callerId: 'u-alice',
       targetUserIds: ['u-bob'],
@@ -114,7 +114,7 @@ describe('CallService — participant-grain departure (F1)', () => {
 describe('CallService — nested envelope tolerance', () => {
   test('invite with payload nested under data still registers and routes', async () => {
     const router = makeRouter({ 'c-hank': 'u-hank', 'c-bob': 'u-bob' });
-    const svc = new CallService({ messageRouter: router, logger: new NoopLogger() as any });
+    const svc = new CallService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any });
     await svc.handleCallEvent('c-hank', 'invite', {
       data: {
         callId: 'nested-1', lobbyName: 'dm:u-hank:u-bob', callerId: 'u-hank',
@@ -135,7 +135,7 @@ describe('CallService — rejoin grace (F2, 2026-08-22)', () => {
   const users = { 'c-alice': 'u-alice', 'c-bob': 'u-bob', 'c-bob2': 'u-bob' };
 
   async function twoPersonCall(router: ReturnType<typeof makeRouter>, graceMs: number) {
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: router, logger: new NoopLogger() as any, rejoinGraceMs: graceMs,
     });
     await svc.handleCallEvent('c-alice', 'invite', {

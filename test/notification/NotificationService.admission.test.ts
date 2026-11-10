@@ -25,7 +25,7 @@ function setup(extra: Record<string, unknown> = {}) {
         getClientsByUserId: jest.fn(async (ids: string[]) => ids.includes('u-eve') ? [{ clientId: 'tab-1', userId: 'u-eve' }] : []),
         getUserIdForClient: (c: string) => (c === 'tab-1' || c === 'tab-2' ? 'u-eve' : null),
     };
-    const svc = new NotificationService({ messageRouter: router, logger: new NoopLogger() as any, store: fakeStore() as any, ...extra } as any);
+    const svc = new NotificationService({ insecureAllowAll: true, messageRouter: router, logger: new NoopLogger() as any, store: fakeStore() as any, ...extra } as any);
     return { svc, sent };
 }
 const bulks = (sent: any[], clientId: string) => sent.filter((s) => s.clientId === clientId && s.frame.type === 'notification:bulk-update');

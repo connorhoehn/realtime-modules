@@ -31,6 +31,7 @@ exports.RoomService = void 0;
 exports.roomChannel = roomChannel;
 const types_1 = require("./types");
 const channelAccess_1 = require("../server-ws/channelAccess");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 /** The router channel a room's actions are judged on (0.146.0). */
 function roomChannel(slug) {
     return `room:${slug}`;
@@ -116,11 +117,9 @@ class RoomService {
         this.crossNodePubSub = opts.crossNodePubSub ?? null;
         this.nodeId = opts.nodeId ?? null;
         this.metricsHooks = opts.metrics ?? {};
-        // 0.146.0: every room action asks the router's checkChannel. A router
-        // without one is trusted to enforce itself; say so once.
-        if (typeof this.messageRouter.checkChannel !== 'function') {
-            this.logger.warn('[RoomService] the router has no checkChannel: room actions and the index are not scoped by channel; the router is trusted to enforce access itself');
-        }
+        // 0.146.0: every room action asks the router's checkChannel. 0.147.0:
+        // a router without one is refused (it used to be trusted with a warning).
+        (0, insecureAllowAll_1.requireHook)('RoomService', 'a router with checkChannel', typeof this.messageRouter.checkChannel === 'function', opts.insecureAllowAll, this.messageRouter);
         const config = opts.config ?? {};
         this.occupancyDebounceMs = config.occupancyDebounceMs ?? DEFAULT_DEBOUNCE_MS;
         this.maxMembersPerDelta = config.maxMembersPerDelta ?? DEFAULT_MAX_MEMBERS_PER_DELTA;

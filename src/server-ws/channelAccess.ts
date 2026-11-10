@@ -14,6 +14,7 @@
 
 import { lobbyForChatLobbyChannel } from '../call/lobbyChannel';
 import type { AuthorityScope } from './authorityScope';
+import { routerAllowsAll } from './insecureAllowAll';
 
 /**
  * Services that wrap the consumer's channel name in a prefix of their own
@@ -89,7 +90,7 @@ export interface ChannelAccessOpts {
     scope?: AuthorityScope;
 }
 
-/** The router slice a service needs to ask. Optional on every router. */
+/** The router slice a service needs to ask. 0.147.0: `checkChannel` is required (see `routerPermits`). */
 export interface ChannelAccessRouter {
     checkChannel?(
         kind: ChannelAccessKind,
@@ -110,9 +111,10 @@ export interface ChannelAccessRouter {
 }
 
 /**
- * Ask the router whether `clientId` may `kind` `channel`. A router without
- * `checkChannel` (a custom transport that enforces only at fan-out) allows.
- * A throwing check refuses.
+ * Ask the router whether `clientId` may `kind` `channel`. A throwing check
+ * refuses. 0.147.0: a router without `checkChannel` is refused too (before,
+ * it allowed and trusted the router to enforce at fan-out), unless it was
+ * accepted under `insecureAllowAll` (local development only).
  */
 export async function routerPermits(
     router: ChannelAccessRouter | null | undefined,
@@ -121,7 +123,9 @@ export async function routerPermits(
     channel: string,
     opts?: ChannelAccessOpts,
 ): Promise<boolean> {
-    if (!router || typeof router.checkChannel !== 'function') return true;
+    // No router at all: no transport, nothing to gate (unit-level services).
+    if (!router) return true;
+    if (typeof router.checkChannel !== 'function') return routerAllowsAll(router);
     try {
         return (await router.checkChannel(kind, clientId, channel, opts)) !== false;
     } catch {

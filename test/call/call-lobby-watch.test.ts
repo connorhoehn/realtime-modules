@@ -57,7 +57,7 @@ describe('CallService watch / lobby-occupancy', () => {
   afterAll(() => { CallService.LOBBY_OCCUPANCY_DEBOUNCE_MS = realDebounce; });
   afterEach(async () => { await svc?.dispose(); svc = null; });
 
-  const make = (r: ReturnType<typeof makeRouter>) => (svc = new CallService({ messageRouter: r.router, logger, rejoinGraceMs: 0 }));
+  const make = (r: ReturnType<typeof makeRouter>) => (svc = new CallService({ insecureAllowAll: true, messageRouter: r.router, logger, rejoinGraceMs: 0 }));
   const settle = () => sleep(DEBOUNCE * 3);
 
   it('watch subscribes the authorised channel and answers the sender alone with a snapshot', async () => {
@@ -183,7 +183,7 @@ describe('CallService watch / lobby-occupancy', () => {
 
   it('publishes when the rejoin grace runs out', async () => {
     const r = makeRouter(users);
-    svc = new CallService({ messageRouter: r.router, logger, rejoinGraceMs: 400 });
+    svc = new CallService({ insecureAllowAll: true, messageRouter: r.router, logger, rejoinGraceMs: 400 });
     await svc.handleAction('c-ana', 'invite', { callId: 'g1', lobbyName: LOBBY, callerId: 'u-ana', targetUserIds: ['u-bea'] });
     await svc.handleAction('c-bea', 'accepted', { callId: 'g1', lobbyName: LOBBY, callerId: 'u-bea', userId: 'u-bea', targetUserIds: ['u-ana'] });
     await settle();

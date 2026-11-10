@@ -9,7 +9,9 @@
 //   const httpServer = http.createServer(app);   // your EXISTING app
 //   const realtime = attachRealtime(httpServer, {
 //       features: [chat(), presence(), rooms()],
-//       auth: async (req) => ({ userId: await verify(req) }),
+//       auth: async (req) => verify(req),            // { userId, exp, … } — exp is required (0.147.0)
+//       authorize: ({ channel, ctx }) => mayUse(ctx, channel),
+//       allowedOrigins: ['https://app.example.com'],
 //   });
 //   httpServer.listen(3000);
 //
@@ -58,6 +60,7 @@ exports.attachRealtime = attachRealtime;
 const composition_1 = require("./composition");
 const compositionLifecycle_1 = require("./compositionLifecycle");
 const createWsHandler_1 = require("../server-ws/createWsHandler");
+const insecureAllowAll_1 = require("../server-ws/insecureAllowAll");
 const router_1 = require("./router");
 const node_perf_hooks_1 = require("node:perf_hooks");
 const subscribeService_1 = require("./subscribeService");
@@ -113,7 +116,7 @@ function chat(opts = {}) {
 function presence(opts = {}) {
     return defineFeature({
         manifest: require('../presence/manifest').PresenceManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const PresenceService = require('../presence/PresenceService');
             const Svc = PresenceService.default ?? PresenceService;
             // Forward the full config — including `authorizeChannel`, which
@@ -123,16 +126,17 @@ function presence(opts = {}) {
             // factory hardcoded 30_000/30_000/5_000 for the three fields it
             // did pass, which shadowed the env-var fallback for anyone not
             // explicitly setting them.
-            return new Svc(router, logger, opts);
+            return new Svc(router, logger, insecureAllowAll && opts.insecureAllowAll === undefined ? { ...opts, insecureAllowAll } : opts);
         },
     });
 }
 function cursor(opts = {}) {
     return defineFeature({
         manifest: require('../cursor/manifest').CursorManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { CursorService } = require('../cursor/CursorService');
-            return new CursorService({ messageRouter: router, logger: logger, config: opts });
+            return new CursorService({ messageRouter: router, logger: logger,
+                config: insecureAllowAll && opts.insecureAllowAll === undefined ? { ...opts, insecureAllowAll } : opts });
         },
     });
 }
@@ -146,9 +150,11 @@ function reactions(opts = {}) {
         // SERVICE_NOT_AVAILABLE, so reactions did not work through
         // attachRealtime at all.
         serviceName: 'reaction',
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { ReactionService } = require('../reactions/ReactionService');
             const { identityResolver, ...rest } = opts;
+            if (insecureAllowAll && rest.insecureAllowAll === undefined)
+                rest.insecureAllowAll = true;
             return new ReactionService({
                 messageRouter: router,
                 logger: logger,
@@ -206,9 +212,12 @@ function social(opts = {}) {
 function calls(opts = {}) {
     return defineFeature({
         manifest: require('../call/manifest').CallManifest,
-        create: ({ router, logger, principal }) => {
+        create: ({ router, logger, principal, insecureAllowAll }) => {
             const { CallService } = require('../call/CallService');
             const { lobbyGuard } = opts;
+            // 0.147.0: fail closed. Without a lobby rule any socket could ring
+            // into, watch or join any lobby, another tenant's included.
+            (0, insecureAllowAll_1.requireHook)('calls()', 'a lobbyGuard or config.authorize hook', typeof lobbyGuard === 'function' || typeof opts.config?.authorize === 'function', insecureAllowAll, router);
             const allowUntargetedInvites = opts.allowUntargetedInvites ?? opts.config?.allowUntargetedInvites ?? false;
             let config = {
                 ...(opts.config ?? {}),
@@ -275,6 +284,7 @@ function calls(opts = {}) {
                 logger: logger,
                 stateStore: opts.stateStore,
                 config,
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 ...(typeof opts.rejoinGraceMs === 'number' ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
                 ...(opts.crossNodePubSub ? { crossNodePubSub: opts.crossNodePubSub } : {}),
                 ...(router.isClientAlive ? { isClientAlive: router.isClientAlive.bind(router) } : {}),
@@ -341,9 +351,10 @@ function typedDocuments(opts = {}) {
 function rooms(opts = {}) {
     return defineFeature({
         manifest: require('../room/manifest').RoomManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { RoomService } = require('../room/RoomService');
             return new RoomService({
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 messageRouter: router,
                 logger: logger,
                 stateStore: opts.stateStore,
@@ -356,8 +367,10 @@ function rooms(opts = {}) {
 function notifications(opts = {}) {
     return defineFeature({
         manifest: require('../notification/manifest').NotificationManifest,
-        create: ({ router, logger, principal }) => {
+        create: ({ router, logger, principal, insecureAllowAll }) => {
             const { NotificationService } = require('../notification/NotificationService');
+            // 0.147.0: judged on the host's own hook, before the principal wraps it.
+            (0, insecureAllowAll_1.requireHook)('notifications()', 'an authorize hook', typeof opts.authorize === 'function', insecureAllowAll, router);
             return new NotificationService({
                 messageRouter: router,
                 logger: logger,
@@ -369,6 +382,7 @@ function notifications(opts = {}) {
                 authorize: principal ? (0, principal_1.gateOnPrincipal)(principal, opts.authorize) : opts.authorize,
                 admit: opts.admit,
                 replayOnConnect: opts.replayOnConnect,
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                 ...(principal ? { principal } : {}),
             });
         },
@@ -377,7 +391,7 @@ function notifications(opts = {}) {
 function fileUploads(opts = {}) {
     return defineFeature({
         manifest: require('../fileupload/manifest').FileUploadManifest,
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll }) => {
             const { FileUploadService } = require('../fileupload/FileUploadService');
             return new FileUploadService({
                 messageRouter: router,
@@ -387,6 +401,7 @@ function fileUploads(opts = {}) {
                 publicBaseUrl: opts.publicBaseUrl,
                 maxBytes: opts.maxBytes,
                 authz: opts.authz,
+                ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
             });
         },
     });
@@ -402,7 +417,7 @@ function collabDocs(opts = {}) {
     return defineFeature({
         manifest: require('./manifest').crdtManifest,
         serviceName: 'crdt', // wire key clients address; manifest identity is 'document-sharing'
-        create: ({ router, logger }) => {
+        create: ({ router, logger, insecureAllowAll: attachInsecure }) => {
             const { CRDTService } = require('./CRDTService');
             const { MemorySnapshotStore, MemoryHotCache, MemoryMetadataStore } = require('./stores/MemoryStore');
             return new CRDTService({
@@ -412,7 +427,7 @@ function collabDocs(opts = {}) {
                 metadataStore: opts.metadataStore ?? new MemoryMetadataStore(),
                 hotCache: opts.hotCache === undefined ? new MemoryHotCache() : opts.hotCache,
                 authz: opts.authz,
-                insecureAllowAll: opts.insecureAllowAll,
+                insecureAllowAll: opts.insecureAllowAll ?? attachInsecure,
                 activityChannelFor: opts.activityChannelFor,
             });
         },
@@ -427,6 +442,9 @@ function collabDocs(opts = {}) {
  */
 function attachRealtime(server, opts) {
     const { features, capabilityProviders, authorize, filterClientMessage, plugins, logger, router: customRouter, publishProofMaxAgeMs, principal, authorizeBatch, authorityCache: cacheOpts, maxChannelsPerSocket, ...wsOpts } = opts;
+    // 0.147.0: one opt-out for the whole attachment (router, socket handler,
+    // features); refused in production, warned about once.
+    const insecureAllowAll = (0, insecureAllowAll_1.acceptInsecureAllowAll)('attachRealtime', opts.insecureAllowAll);
     const plan = (0, composition_1.planRealtimeComposition)(features, capabilityProviders);
     for (const feature of plan.features) {
         if (typeof feature.create !== 'function')
@@ -444,7 +462,7 @@ function attachRealtime(server, opts) {
         ? (0, principal_1.withPrincipalRevalidation)(inner, principal, verdictCache ? { onStale: (id) => verdictCache.invalidateConnection(id) } : {})
         : inner;
     const router = customRouter ?? new router_1.LocalRealtimeRouter({
-        plugins, authorize: hooks.authorize, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
+        plugins, authorize: hooks.authorize, insecureAllowAll, authorizeBatch: hooks.authorize ? hooks.authorizeBatch : undefined,
         filterClientMessage: hooks.filterClientMessage, logger: log, publishProofMaxAgeMs,
         ...(maxChannelsPerSocket !== undefined ? { maxChannelsPerClient: maxChannelsPerSocket } : {})
     });
@@ -489,6 +507,7 @@ function attachRealtime(server, opts) {
                             throw new Error(`'${name}' must register cleanup during create()`);
                         lifecycle.add(`${name} resource`, cleanup);
                     },
+                    ...(insecureAllowAll ? { insecureAllowAll: true } : {}),
                     ...(featurePrincipal ? { principal: featurePrincipal } : {}) });
             }
             finally {

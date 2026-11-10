@@ -42,7 +42,7 @@ function makeStateStore() {
 describe('RoomService.handleMemberJoined — identity survives the call bridge', () => {
   test('a later identity-less signal does not blank the name the join supplied', async () => {
     const stateStore = makeStateStore();
-    const svc = new RoomService({
+    const svc = new RoomService({ insecureAllowAll: true,
       messageRouter: makeRouter(),
       logger: new NoopLogger() as any,
       stateStore,
@@ -64,7 +64,7 @@ describe('RoomService.handleMemberJoined — identity survives the call bridge',
 
   test('a later signal that DOES carry a name is allowed to fill one in', async () => {
     const stateStore = makeStateStore();
-    const svc = new RoomService({
+    const svc = new RoomService({ insecureAllowAll: true,
       messageRouter: makeRouter(),
       logger: new NoopLogger() as any,
       stateStore,
@@ -85,7 +85,7 @@ describe('RoomService.handleMemberJoined — identity survives the call bridge',
 
   test('two members in one room keep their own identities', async () => {
     const stateStore = makeStateStore();
-    const svc = new RoomService({
+    const svc = new RoomService({ insecureAllowAll: true,
       messageRouter: makeRouter(),
       logger: new NoopLogger() as any,
       stateStore,

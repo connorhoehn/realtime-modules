@@ -68,10 +68,32 @@ export interface WsHandlerOptions {
      */
     services: Record<string, WsService>;
     /**
-     * Optional auth callback. Runs during the HTTP upgrade. If it
-     * throws or rejects, the upgrade is denied with 401.
+     * Auth callback. Runs during the HTTP upgrade. If it throws or rejects,
+     * the upgrade is denied with 401. 0.147.0: required — the handler throws
+     * at construction without it unless `insecureAllowAll` is true — and the
+     * context it returns must carry a numeric `exp` (seconds since the
+     * epoch): a context without one is treated as expired (401).
      */
     auth?: WsAuthFn;
+    /**
+     * 0.147.0: the browser origins allowed to open a socket, compared exactly
+     * against the upgrade's `Origin` header (`https://app.example.com`, no
+     * trailing slash). An upgrade whose `Origin` is not listed is refused
+     * with 403. Missing or empty: every request carrying an `Origin` header
+     * is refused (non-browser clients send none and are not affected),
+     * unless `insecureAllowAll` is true. A host whose rule depends on the
+     * request (same host as the upgrade, behind a proxy) passes a predicate
+     * `(origin, req) => boolean` instead; a throw refuses.
+     */
+    allowedOrigins?: readonly string[] | ((origin: string, req: IncomingMessage) => boolean);
+    /**
+     * 0.147.0: local development only. Start without `auth`, accept any
+     * browser origin when `allowedOrigins` is not given, and accept a context
+     * without `exp` (never timed out). Logs one warning; throws when
+     * NODE_ENV=production. `attachRealtime` passes it to its local router
+     * and to every built-in feature too.
+     */
+    insecureAllowAll?: boolean;
     /** Mandatory registration before service hooks/session readiness.
      * A rejection closes the connection without admitting client actions. */
     beforeConnect?: (clientId: string, ctx: WsAuthContext) => void | Promise<void>;
@@ -164,7 +186,8 @@ export interface WsHandlerOptions {
      * returned; at `exp` plus this grace it sends `{ type: 'error', code:
      * 'TOKEN_EXPIRED' }` and closes the socket with 4001, and an upgrade whose
      * token is already past it is refused with 401. The client reconnects with
-     * a fresh token. A context with no numeric `exp` is never timed out.
+     * a fresh token. 0.147.0: a context with no numeric `exp` is refused like
+     * an expired one, except under `insecureAllowAll` (never timed out).
      * Default {@link DEFAULT_TOKEN_EXPIRY_GRACE_MS} (1000 ms) for clock skew.
      */
     tokenExpiryGraceMs?: number;

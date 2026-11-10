@@ -22,7 +22,7 @@ afterEach(async () => { for (const router of routers.splice(0)) await router.shu
 function node(redis: FakeClusterRedis, nodeId: string, extra: Partial<RedisRealtimeRouterOptions> = {}, port = redis.port()): Node {
     const clients = new Map<string, WsAuthContext>();
     const inbox: Node['inbox'] = [];
-    const router = new RedisRealtimeRouter({ redis: port, namespace: 'ns', nodeId, leaseMs: LEASE, requestTimeoutMs: 150, ...extra });
+    const router = new RedisRealtimeRouter({ insecureAllowAll: true, redis: port, namespace: 'ns', nodeId, leaseMs: LEASE, requestTimeoutMs: 150, ...extra });
     router._setHandle({ wss: null, dispose: async () => undefined, listClients: () => [...clients.keys()],
         getClientContext: id => clients.get(id) ?? null,
         sendToClient: (clientId, frame) => { if (!clients.has(clientId)) return false; inbox.push({ clientId, frame }); return true; } });

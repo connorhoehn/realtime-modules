@@ -81,7 +81,7 @@ export function makeCluster(opts: Partial<CallServiceOptions> & { leader?: 'A' |
   const leader = opts.leader ?? 'both';
   const make = (node: 'A' | 'B') => {
     const router = makeNodeRouter(node, dir, wire);
-    const svc = new CallService({
+    const svc = new CallService({ insecureAllowAll: true,
       messageRouter: router,
       logger: new NoopLogger() as any,
       stateStore: new RedisCallStateStore(redis as any),

@@ -114,7 +114,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
         };
         const state = new RedisCallStateStore(callRedis);
         const server = http.createServer((_req, res) => res.end('existing route'));
-        const handle: RealtimeHandle = attachRealtime(server, { router, path: '/realtime', pingIntervalMs: 0,
+        const handle: RealtimeHandle = attachRealtime(server, { insecureAllowAll: true, router, path: '/realtime', pingIntervalMs: 0,
             logger: process.env.REAL_ROUTER_TEST_DEBUG === '1' ? console : undefined,
             generateClientId: () => options.fixedClientId ?? `${nodeId}-${randomUUID()}`,
             onDisconnect: async () => { options.disconnected?.resolve(); await options.disconnectGate?.promise; },
@@ -412,8 +412,8 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
     });
 
     it('P6 ignores a forged or malformed op and rejects an out-of-range linger', async () => {
-        expect(() => new RedisRealtimeRouter({ redis: {} as any, namespace, nodeId: 'x', peerOperationLingerMs: 2001 })).toThrow('Invalid peer operation linger');
-        expect(() => new RedisRealtimeRouter({ redis: {} as any, namespace, nodeId: 'x', peerOperationLingerMs: -1 })).toThrow('Invalid peer operation linger');
+        expect(() => new RedisRealtimeRouter({ redis: {} as any, namespace, nodeId: 'x', insecureAllowAll: true, peerOperationLingerMs: 2001 })).toThrow('Invalid peer operation linger');
+        expect(() => new RedisRealtimeRouter({ redis: {} as any, namespace, nodeId: 'x', insecureAllowAll: true, peerOperationLingerMs: -1 })).toThrow('Invalid peer operation linger');
         const a = await boot('a', namespace, { peerOperationLingerMs: 500 }), b = await boot('b', namespace, { peerOperationLingerMs: 500 });
         const bob = await connect(b, 'bob'); await b.router.subscribeToChannel(bob.id, 'orgiq:room');
         asks.length = 0;
@@ -463,7 +463,7 @@ type NativeNode = { router: RedisRealtimeRouter; handle: RealtimeHandle; server:
 
     it('keeps live directory entries through renewals and rejects another live node owner', async () => {
         const a = await boot('a'), b = await boot('b'), bob = await connect(b, 'bob');
-        const duplicate = new RedisRealtimeRouter({ redis: a.port, namespace, nodeId: 'b' });
+        const duplicate = new RedisRealtimeRouter({ insecureAllowAll: true, redis: a.port, namespace, nodeId: 'b' });
         await expect(duplicate.start()).rejects.toThrow('live owner');
         await delay(1200);
         expect(await a.router.isClientAlive(bob.id)).toBe(true);

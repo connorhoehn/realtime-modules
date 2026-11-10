@@ -28,7 +28,7 @@ describe('typed seams (0.119)', () => {
     const plugin: RealtimeFeaturePlugin = { name: 'p', onMessage: (info) => { seen.push(info); } };
     beforeAll(async () => {
         server = http.createServer();
-        handle = attachRealtime(server, {
+        handle = attachRealtime(server, { insecureAllowAll: true,
             features: [chat({})], path: '/realtime', plugins: [plugin],
             auth: async (req: http.IncomingMessage) => ({ userId: new URL(req.url ?? '', 'http://x').searchParams.get('user') ?? 'anon' }),
         } as any);

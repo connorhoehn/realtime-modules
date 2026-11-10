@@ -53,7 +53,7 @@ a client's reducer only ever overwrites (the same rule as rooms' occupancy).
 
 ### Authority
 
-- Channel admission is the router's `checkChannel`, as for every other feature.
+- Channel admission is the router's `checkChannel`, as for every other feature; since 0.147.0 a custom router without it is refused unless `insecureAllowAll: true`.
 - Organizer authority is `meeting({ isOrganizer(ctx) })`. Without the hook the
   user who created the meeting's state (its first subscriber) is the organizer,
   which is right for a local demo and wrong for a product: a host should

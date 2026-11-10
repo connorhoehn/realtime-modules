@@ -1,4 +1,5 @@
-// 0.146.0 — the socket layer fails closed by default (package 8):
+// 0.146.0 — the socket layer fails closed by default (package 8). The rig runs
+// under insecureAllowAll unless a test overrides it (0.147.0 requires auth):
 //   - a connection whose token carries `exp` is closed when it passes;
 //   - the inbound frame budget is on unless switched off;
 //   - the default maxPayload is 1 MiB;
@@ -21,7 +22,7 @@ async function eventually(predicate: () => boolean, ms = 3000) {
 
 async function rig(opts: Partial<WsHandlerOptions>, service: WsService = { handleAction: () => undefined }) {
     const server = http.createServer();
-    const handle: WsHandlerHandle = createWsHandler({ server, services: { echo: service }, pingIntervalMs: 0, ...opts });
+    const handle: WsHandlerHandle = createWsHandler({ insecureAllowAll: true, server, services: { echo: service }, pingIntervalMs: 0, ...opts });
     await new Promise<void>(res => server.listen(0, '127.0.0.1', () => res()));
     const port = (server.address() as AddressInfo).port;
     const sockets: WebSocket[] = [];
@@ -77,8 +78,15 @@ describe('token expiry', () => {
         } finally { await r.stop(); }
     });
 
-    it('leaves a connection without exp alone', async () => {
-        const r = await rig({ auth: () => ({ userId: 'u1' }) });
+    it('0.147.0: refuses a token without exp as expired', async () => {
+        const r = await rig({ auth: () => ({ userId: 'u1' }), insecureAllowAll: false });
+        try {
+            await expect(r.connect()).rejects.toThrow(/401/);
+        } finally { await r.stop(); }
+    });
+
+    it('leaves a connection without exp alone under insecureAllowAll (local development)', async () => {
+        const r = await rig({ auth: () => ({ userId: 'u1' }), insecureAllowAll: true });
         try {
             const c = await r.connect();
             await delay(300);
@@ -137,7 +145,7 @@ describe('inbound limits on by default', () => {
 describe('channels per socket', () => {
     it('refuses a subscribe past maxChannelsPerSocket', async () => {
         const server = http.createServer();
-        const handle = attachRealtime(server, { features: [chat()], path: '/realtime', pingIntervalMs: 0, maxChannelsPerSocket: 3 });
+        const handle = attachRealtime(server, { insecureAllowAll: true, features: [chat()], path: '/realtime', pingIntervalMs: 0, maxChannelsPerSocket: 3 });
         await new Promise<void>(res => server.listen(0, '127.0.0.1', () => res()));
         const port = (server.address() as AddressInfo).port;
         const ws = new WebSocket(`ws://127.0.0.1:${port}/realtime`);

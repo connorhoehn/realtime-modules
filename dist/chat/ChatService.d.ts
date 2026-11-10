@@ -114,7 +114,8 @@ export interface ChatServiceOpts {
      * `message.metadata` in place of the frame's copies (see
      * `trustFrameSender`). The router's auth context
      * (`getClientData(clientId).userContext`) fills whatever this leaves
-     * out. Neither ⇒ no userId stamped and the frame's metadata kept.
+     * out. Neither ⇒ 0.147.0: the send is refused with `CHAT_UNAUTHENTICATED`
+     * (before, it went out with the frame's metadata as the sender).
      *
      * Also the identity source for dm-membership enforcement — see
      * `enforceDmMembership`.
@@ -155,12 +156,10 @@ export interface ChatServiceOpts {
      */
     resolveSender?: ResolveSender;
     /**
-     * Let the frame name the sender. Default false: once a connection is
-     * identified (auth context with a userId, or an `identityResolver`
-     * userId), the frame's `metadata.userId` / `displayName` / `avatarUrl`
-     * are dropped and the server's identity stamped instead, on send and on
-     * edit. True restores the pre-0.98.5 rule (frame metadata wins, the
-     * server fills gaps). `message.userId` is always the server's.
+     * @deprecated 0.147.0: ignored. The frame never names the sender: the
+     * frame's `metadata.userId` / `displayName` / `avatarUrl` are always
+     * dropped and the authenticated identity stamped instead, on send and on
+     * edit. (It used to restore the pre-0.98.5 rule, frame metadata wins.)
      */
     trustFrameSender?: boolean;
     /**
