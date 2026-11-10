@@ -34,9 +34,9 @@ Since 0.98.5, for an authenticated connection the presence entry carries
 `userId` and its `metadata.userId` / `displayName` / `avatarUrl` come from
 the auth context; the `set` frame's copies are dropped, so nobody can appear
 online as somebody else. `presence({ resolveSender })` maps a differently
-shaped context, and `presence({ trustFrameSender })` no longer has an effect. A connection with no
-`userId` is only reachable through `insecureAllowAll: true` (local development
-only).
+shaped context, and `presence({ trustFrameSender: true })` lets the frame's
+metadata stand. Anonymous connections are unaffected. (Only chat ignores
+`trustFrameSender` since 0.147.0.)
 
 ## 2 — Client (React hook)
 

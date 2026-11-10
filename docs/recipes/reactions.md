@@ -34,7 +34,8 @@ Since 0.98.5 a reaction's `userId` / `displayName` come from the connection's
 auth context (or `identityResolver`), and for an identified sender the
 frame's `metadata.userId` / `displayName` / `avatarUrl` are replaced with the
 server's. `reactions({ resolveSender })` maps a differently shaped context;
-`reactions({ trustFrameSender })` no longer has an effect.
+`reactions({ trustFrameSender: true })` lets the frame's metadata stand.
+(Only chat ignores `trustFrameSender` since 0.147.0.)
 
 ## 2 — Client (React hook)
 
