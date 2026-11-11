@@ -193,7 +193,30 @@ function useConversationCall(opts) {
     const lvsCtx = (0, LVSProvider_1.useSafeLVSContext)();
     const stageTokenRef = (0, react_1.useRef)(null);
     stageTokenRef.current = active?.stageToken ?? null;
-    const getAuthToken = (0, react_1.useCallback)(() => stageTokenRef.current ?? '', []);
+    // A token platform-api re-minted for this participant (after a publish
+    // grant), served instead of the join token from then on.
+    const refreshedTokenRef = (0, react_1.useRef)(null);
+    const getAuthToken = (0, react_1.useCallback)((request) => {
+        const a = activeRef.current;
+        const refreshed = a?.participantId && refreshedTokenRef.current?.participantId === a.participantId
+            ? refreshedTokenRef.current.token : null;
+        const current = refreshed ?? stageTokenRef.current ?? '';
+        if (!request?.forceRefresh || !a?.sessionId || !a.participantId)
+            return current;
+        // The first publish after a grant: LVS records the grant against this
+        // session participant, so only a token minted now carries the publisher
+        // role. A refusal rejects, which fails that publish.
+        const { sessionId, participantId, mediaLobby } = a;
+        return api(`/api/video/sessions/${encodeURIComponent(sessionId)}/refresh-token`, { lobbyName: mediaLobby, participantId })
+            .then((out) => {
+            const token = str(out.token);
+            if (!token)
+                throw new Error('No token from the server');
+            if (activeRef.current?.participantId === participantId)
+                refreshedTokenRef.current = { participantId, token };
+            return token;
+        });
+    }, [api]);
     const media = useMedia({
         cameraEffects,
         stageToken: active?.stageToken ?? null,
@@ -637,10 +660,18 @@ function useConversationCall(opts) {
     // ---- self controls -----------------------------------------------------------------
     const micToggleInFlight = (0, react_1.useRef)(false);
     const cameraToggleInFlight = (0, react_1.useRef)(false);
+    // Publish control: LVS refuses our publishing (revoked, or a subscriber
+    // token before a grant), so nothing turns on.
+    const publishRevoked = media.publishRevoked === true;
+    const canPublish = media.canPublish ?? !publishRevoked;
+    const publishBlockedRef = (0, react_1.useRef)(false);
+    publishBlockedRef.current = !canPublish;
     const toggleMic = (0, react_1.useCallback)(() => {
         if (micToggleInFlight.current)
             return;
         const on = !selfRef.current.audioOn;
+        if (on && publishBlockedRef.current)
+            return;
         const m = mediaRef.current;
         const a = activeRef.current;
         // Older injectable media hooks retain their existing mute contract.
@@ -668,6 +699,8 @@ function useConversationCall(opts) {
         if (cameraToggleInFlight.current)
             return;
         const on = !selfRef.current.cameraOn;
+        if (on && publishBlockedRef.current)
+            return;
         const m = mediaRef.current;
         const a = activeRef.current;
         if (!on) {
@@ -696,7 +729,33 @@ function useConversationCall(opts) {
             announceSelf();
             return;
         }
+        if (publishBlockedRef.current)
+            return;
         void Promise.resolve(m.startScreenShare()).then(() => { setSelf({ screenSharing: true }); announceSelf(); }, () => { });
+    }, [announceSelf, setSelf]);
+    // View-only: the media session already stopped our mic, camera and share,
+    // so our state (and what the others see) follows.
+    (0, react_1.useEffect)(() => {
+        if (canPublish || !active?.stageToken)
+            return;
+        const s = selfRef.current;
+        if (!s.audioOn && !s.cameraOn && !s.screenSharing)
+            return;
+        setSelf({ audioOn: false, cameraOn: false, screenSharing: false });
+        announceSelf();
+    }, [canPublish, active?.stageToken, announceSelf, setSelf]);
+    const startPublishing = (0, react_1.useCallback)(async () => {
+        const a = activeRef.current;
+        const m = mediaRef.current;
+        if (!a?.stageToken || !m.startPublishing)
+            return false;
+        const ok = await m.startPublishing();
+        if (!ok || activeRef.current?.callId !== a.callId || activeRef.current?.participantId !== a.participantId)
+            return false;
+        // It publishes the call's join media: camera too unless audio-only.
+        setSelf({ audioOn: true, cameraOn: !a.audioOnly });
+        announceSelf();
+        return true;
     }, [announceSelf, setSelf]);
     // The transport's own view of screen share (the browser's "Stop sharing" bar).
     (0, react_1.useEffect)(() => {
@@ -1191,6 +1250,8 @@ function useConversationCall(opts) {
                 participantId: active.participantId,
                 stream: local?.streams[0] ?? null,
                 screenStream: local?.screenStream ?? null,
+                publishRevoked,
+                ...(local?.attributes ? { attributes: local.attributes } : {}),
             });
         }
         const directory = (uid) => { try {
@@ -1243,6 +1304,8 @@ function useConversationCall(opts) {
                 participantId: m.participantId,
                 stream: m.streams[0] ?? null,
                 screenStream: m.screenStream ?? null,
+                publishRevoked: m.publishRevoked === true,
+                ...(m.attributes ? { attributes: m.attributes } : {}),
             });
         }
         const person = (uid, state, r) => ({
@@ -1290,7 +1353,7 @@ function useConversationCall(opts) {
         }
         return out;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [active, lobbyName, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, opts.nameFor, invitationRequests]);
+    }, [active, lobbyName, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, opts.nameFor, invitationRequests, publishRevoked]);
     const participantCount = participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length;
     const call = (0, react_1.useMemo)(() => {
         if (active) {
@@ -1351,6 +1414,10 @@ function useConversationCall(opts) {
         // start never shows negative time.
         elapsedMs: startedAt ? Math.max(0, Math.max(now, Date.now()) - startedAt) : null,
         activeSpeakerId: null,
+        canPublish,
+        publishRevoked,
+        publishRevokedReason: publishRevoked ? media.publishRevokedReason ?? null : null,
+        startPublishing,
     };
 }
 //# sourceMappingURL=useConversationCall.js.map

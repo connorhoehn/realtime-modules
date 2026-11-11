@@ -17,6 +17,7 @@ exports.whepPublish = whepPublish;
 exports.whepTeardown = whepTeardown;
 exports.fetchIceConfig = fetchIceConfig;
 exports.fetchIceServers = fetchIceServers;
+const publishPermission_1 = require("../publishPermission");
 class LVSApiError extends Error {
     status;
     url;
@@ -24,15 +25,34 @@ class LVSApiError extends Error {
      *  (typically on 503). Supports both delta-seconds and HTTP-date
      *  formats per RFC 7231 §7.1.3. `null` when absent or unparseable. */
     retryAfterSec;
-    constructor(message, status, url, retryAfterSec = null) {
+    /** The server's `reason` when its error body was JSON (`publish_revoked`), else null. */
+    reason;
+    /** `'LVS_PUBLISH_REVOKED'` for a WHIP refused because publishing is revoked, else null. */
+    code;
+    /** Repeating the same request cannot succeed (a revoked participant's WHIP). */
+    final;
+    constructor(message, status, url, retryAfterSec = null, detail = {}) {
         super(message);
         this.name = 'LVSApiError';
         this.status = status;
         this.url = url;
         this.retryAfterSec = retryAfterSec;
+        this.reason = detail.reason ?? null;
+        this.code = detail.code ?? null;
+        this.final = detail.final === true;
     }
 }
 exports.LVSApiError = LVSApiError;
+/** The `reason` field of a JSON error body, or null. */
+function bodyReason(body) {
+    try {
+        const parsed = JSON.parse(body);
+        return parsed && typeof parsed.reason === 'string' && parsed.reason ? parsed.reason : null;
+    }
+    catch {
+        return null;
+    }
+}
 /** Parse a `Retry-After` header value into a delay in seconds. Accepts
  *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").
  *  Returns null for absent/malformed/past-date inputs.
@@ -166,7 +186,11 @@ async function whipPublish(opts) {
     const r = await postSdpWith425Retry(url, opts.offerSdp, opts.authToken, f, 'WHIP', opts.log, opts.__tooEarlyDeps ?? {});
     if (!r.ok) {
         const body = await r.text().catch(() => '');
-        throw new LVSApiError(`${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url, parseRetryAfter(r.headers.get('Retry-After')));
+        const reason = bodyReason(body);
+        // LVS refuses a revoked participant's publish with 403 publish_revoked
+        // until a grant: final, so callers stop instead of retrying.
+        const revoked = r.status === 403 && reason === 'publish_revoked';
+        throw new LVSApiError(`${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`, r.status, url, parseRetryAfter(r.headers.get('Retry-After')), { reason, ...(revoked ? { code: publishPermission_1.LVS_PUBLISH_REVOKED, final: true } : {}) });
     }
     return {
         answerSdp: await r.text(),

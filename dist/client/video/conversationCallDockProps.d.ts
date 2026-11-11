@@ -29,6 +29,11 @@ export interface ConversationCallDockState {
     toggleScreenShare(): void;
     leave(): void | Promise<void>;
     rejoin(): void | Promise<void>;
+    /** False while you may not publish (view-only or a viewer token): the mic,
+     *  camera and share controls are disabled. Absent = may publish. */
+    canPublish?: boolean;
+    /** The host made you view-only (the disabled controls say so). */
+    publishRevoked?: boolean;
 }
 export interface ConversationCallDockUi {
     /** The conversation's name (`#general`, `Alice Chen`). */
@@ -84,6 +89,8 @@ interface DockDeviceControl {
         label: string;
         onSelect: () => void;
     }[];
+    /** Disables the toggle with this as its title. */
+    disabledReason?: string;
 }
 /** Structural mirror of the ui-components `CallDockProps` this mapping sets. */
 export interface ConversationCallDockProps {

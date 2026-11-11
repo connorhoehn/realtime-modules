@@ -459,6 +459,7 @@ function useDocumentCall(opts) {
                         screenSharing: typeof d.screenSharing === 'boolean' ? d.screenSharing : prev?.screenSharing ?? false,
                         status: status === 'left' || status === 'reconnecting' ? status : 'in-call',
                         at: Date.now(),
+                        ...(str(d.participantId) ?? prev?.participantId ? { participantId: str(d.participantId) ?? prev?.participantId } : {}),
                         ...(str(d.displayName) ?? prev?.displayName ? { displayName: str(d.displayName) ?? prev?.displayName } : {}),
                         ...(str(d.avatarUrl) ?? prev?.avatarUrl ? { avatarUrl: str(d.avatarUrl) ?? prev?.avatarUrl } : {}),
                     };
@@ -595,9 +596,16 @@ function useDocumentCall(opts) {
     // ---- media binding -------------------------------------------------------
     const media = opts.media ?? null;
     const mediaConnected = media?.connectionState === 'connected';
+    // Publish control: what the media session says about our own publishing.
+    const publishRevoked = media?.publishRevoked === true;
+    const canPublish = media?.canPublish ?? !publishRevoked;
+    const publishBlockedRef = (0, react_1.useRef)(false);
+    publishBlockedRef.current = !canPublish;
     // Apply the chosen join state once the media session is up.
     (0, react_1.useEffect)(() => {
         if (!mediaConnected || !joinedCallId)
+            return;
+        if (publishBlockedRef.current)
             return;
         void media?.setMicEnabled?.(selfRef.current.audioOn);
         void media?.setCameraEnabled?.(selfRef.current.cameraOn);
@@ -886,6 +894,9 @@ function useDocumentCall(opts) {
     }, [announceSelf]);
     const toggleMic = (0, react_1.useCallback)(() => {
         const on = !selfRef.current.audioOn;
+        // View-only: LVS refuses our publishing, so nothing turns on.
+        if (on && publishBlockedRef.current)
+            return;
         void optsRef.current.media?.setMicEnabled?.(on);
         setSelfAndAnnounce({ audioOn: on });
     }, [setSelfAndAnnounce]);
@@ -897,16 +908,86 @@ function useDocumentCall(opts) {
     };
     const toggleCamera = (0, react_1.useCallback)(() => {
         const on = !selfRef.current.cameraOn;
+        if (on && publishBlockedRef.current)
+            return;
         void optsRef.current.media?.setCameraEnabled?.(on);
         setSelfAndAnnounce({ cameraOn: on });
     }, [setSelfAndAnnounce]);
     const startScreenShare = (0, react_1.useCallback)(() => {
+        if (publishBlockedRef.current)
+            return;
         void Promise.resolve(optsRef.current.media?.startScreenShare?.()).then(() => setSelfAndAnnounce({ screenSharing: true }), () => { });
     }, [setSelfAndAnnounce]);
     const stopScreenShare = (0, react_1.useCallback)(() => {
         void optsRef.current.media?.stopScreenShare?.();
         setSelfAndAnnounce({ screenSharing: false });
     }, [setSelfAndAnnounce]);
+    // ---- publish control -----------------------------------------------------
+    // The host made us view-only: the media session has already stopped our
+    // mic, camera and share, so our state (and what the others see) follows.
+    // The same for a subscriber token that has not been granted publishing.
+    (0, react_1.useEffect)(() => {
+        if (canPublish || !joinedCallId)
+            return;
+        const s = selfRef.current;
+        if (!s.audioOn && !s.cameraOn && !s.screenSharing)
+            return;
+        setSelfAndAnnounce({ audioOn: false, cameraOn: false, screenSharing: false });
+    }, [canPublish, joinedCallId, setSelfAndAnnounce]);
+    const startPublishing = (0, react_1.useCallback)(async () => {
+        const m = optsRef.current.media;
+        if (!joinedRef.current || !m?.startPublishing)
+            return false;
+        const ok = await m.startPublishing();
+        if (!ok || !joinedRef.current)
+            return false;
+        // It publishes mic and camera; an audio call keeps the camera off.
+        const cameraOn = callRef.current?.media !== 'audio';
+        if (!cameraOn)
+            void m.setCameraEnabled?.(false);
+        setSelfAndAnnounce({ audioOn: true, cameraOn });
+        return true;
+    }, [setSelfAndAnnounce]);
+    // What the host last set for a person, until their media member agrees.
+    const [publishOverrides, setPublishOverrides] = (0, react_1.useState)({});
+    const publishParticipantId = (0, react_1.useCallback)((userId) => {
+        const member = (optsRef.current.media?.members ?? []).find((mm) => mm.userId === userId);
+        return member?.participantId ?? rosterRef.current[userId]?.participantId;
+    }, []);
+    const changePublish = (0, react_1.useCallback)(async (action, userId, reason) => {
+        const callId = joinedRef.current;
+        const c = callRef.current;
+        if (!callId || !c)
+            throw new Error('Join the call first');
+        if (userId === optsRef.current.identity.userId)
+            throw new Error('You cannot make yourself view-only or grant yourself publishing');
+        if (c.hostUserId !== optsRef.current.identity.userId)
+            throw new Error('Only the host can change who may publish');
+        const participantId = publishParticipantId(userId);
+        if (!participantId)
+            throw new Error('That person is not in this call');
+        const trimmed = reason?.trim();
+        const body = await api(`/api/video/sessions/${encodeURIComponent(callId)}/participants/${encodeURIComponent(participantId)}/${action}`, { method: 'POST', body: { lobbyName: c.documentId, documentId: c.documentId, ...(trimmed ? { reason: trimmed } : {}) } });
+        setPublishOverrides((o) => ({ ...o, [userId]: action === 'revoke-publish' }));
+        return { changed: body.changed === true };
+    }, [api, publishParticipantId]);
+    const revokePublish = (0, react_1.useCallback)((userId, o) => changePublish('revoke-publish', userId, o?.reason), [changePublish]);
+    const grantPublish = (0, react_1.useCallback)((userId, o) => changePublish('grant-publish', userId, o?.reason), [changePublish]);
+    // Drop an override once the member's own flag (LVS's frame) says the same.
+    (0, react_1.useEffect)(() => {
+        const members = media?.members ?? [];
+        const settled = members.filter((mm) => mm.userId in publishOverrides && publishOverrides[mm.userId] === (mm.publishRevoked === true));
+        if (settled.length === 0)
+            return;
+        setPublishOverrides((o) => {
+            const next = { ...o };
+            for (const mm of settled)
+                delete next[mm.userId];
+            return next;
+        });
+    }, [media?.members, publishOverrides]);
+    (0, react_1.useEffect)(() => { if (!joinedCallId)
+        setPublishOverrides({}); }, [joinedCallId]);
     // ---- derived state ------------------------------------------------------
     const joined = !!joinedCallId;
     const gatewayDown = connectionState !== undefined && connectionState !== 'connected';
@@ -942,7 +1023,11 @@ function useDocumentCall(opts) {
                 isHost: call.hostUserId === uid,
                 isSelf: uid === selfId,
                 mutedForMe: !!mutedForMe[uid],
+                publishRevoked: publishOverrides[uid] ?? (m?.publishRevoked === true),
             };
+            const pid = m?.participantId ?? roster[uid]?.participantId;
+            if (pid)
+                p.participantId = pid;
             const avatar = avatarOf(uid);
             if (avatar)
                 p.avatarUrl = avatar;
@@ -992,11 +1077,14 @@ function useDocumentCall(opts) {
             me.audioOn = self.audioOn;
             me.cameraOn = self.cameraOn;
             me.screenSharing = self.screenSharing;
+            me.publishRevoked = publishRevoked;
+            if (lvs.participantId)
+                me.participantId = lvs.participantId;
             list.unshift(me);
         }
         return list;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [call, roster, mutedForMe, media?.members, opts.awareness?.participants, opts.people, joined, self, selfId, identity.displayName, identity.avatarUrl]);
+    }, [call, roster, mutedForMe, media?.members, opts.awareness?.participants, opts.people, joined, self, selfId, identity.displayName, identity.avatarUrl, publishOverrides, publishRevoked, lvs.participantId]);
     const inCallCount = joined
         ? participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length
         : discovered && discovered.callId === (call?.callId ?? discovered.callId)
@@ -1057,6 +1145,12 @@ function useDocumentCall(opts) {
         transferHost,
         setMutedForMe,
         moderation,
+        canPublish,
+        publishRevoked,
+        publishRevokedReason: publishRevoked ? media?.publishRevokedReason ?? null : null,
+        startPublishing,
+        revokePublish,
+        grantPublish,
     };
 }
 //# sourceMappingURL=useDocumentCall.js.map

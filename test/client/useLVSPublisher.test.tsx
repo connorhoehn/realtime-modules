@@ -637,3 +637,87 @@ describe('useLVSPublisher — authenticated ICE config', () => {
     expect(pcInstances[0]!.iceTransportPolicy).toBe('all');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Publishing revoked — LVS answers WHIP with 403 publish_revoked until a grant.
+// That refusal is state (publishRevoked), not an error, and nothing retries it.
+// ---------------------------------------------------------------------------
+
+describe('useLVSPublisher — publishing revoked', () => {
+  function refuseWhip(): { posts: () => number } {
+    const previousFetch = globalThis.fetch;
+    let posts = 0;
+    globalThis.fetch = jest.fn(async (url: any, init?: RequestInit) => {
+      if (String(url).includes('/whip') && (init?.method ?? 'POST') === 'POST') {
+        posts += 1;
+        return makeResponse(JSON.stringify({ error: 'publishing revoked', reason: 'publish_revoked' }), {
+          status: 403, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return previousFetch(url, init);
+    }) as typeof fetch;
+    return { posts: () => posts };
+  }
+
+  it('a refused publish is publishRevoked with no error, and is not retried', async () => {
+    const refused = refuseWhip();
+    const handle: PubHandle = { result: null };
+    await act(async () => { render(<PublisherHarness stream={makeStream()} handle={handle} />); });
+    await act(async () => { await flush(); });
+    expect(refused.posts()).toBe(1);
+    expect(handle.result!.publishRevoked).toBe(true);
+    expect(handle.result!.phase).toBe('idle');
+    expect(handle.result!.error).toBeNull();
+    expect(pcInstances[0]!.closed).toBe(true);
+    await act(async () => { await new Promise((done) => setTimeout(done, 1_200)); await flush(); });
+    expect(refused.posts()).toBe(1);
+  });
+
+  it('a mid-call failure whose re-publish is refused stops reconnecting', async () => {
+    jest.useFakeTimers({ doNotFake: ['queueMicrotask'] });
+    try {
+      const handle: PubHandle = { result: null };
+      await act(async () => { render(<PublisherHarness stream={makeStream()} handle={handle} />); });
+      const drain = async () => {
+        for (let i = 0; i < 20; i += 1) { await Promise.resolve(); jest.advanceTimersByTime(0); }
+      };
+      await act(drain);
+      await act(async () => { pcInstances[0]!.setConnectionState('connected'); });
+      const refused = refuseWhip();
+      // LVS closed the publisher transport when it revoked.
+      await act(async () => { pcInstances[0]!.setConnectionState('failed'); });
+      await act(async () => { jest.advanceTimersByTime(1_100); await drain(); });
+      expect(refused.posts()).toBe(1);
+      expect(handle.result!.publishRevoked).toBe(true);
+      expect(handle.result!.phase).toBe('idle');
+      await act(async () => { jest.advanceTimersByTime(60_000); await drain(); });
+      expect(refused.posts()).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('stop({ notifyServer: false }) releases locally without a WHIP DELETE', async () => {
+    const handle: PubHandle = { result: null };
+    await act(async () => { render(<PublisherHarness stream={makeStream()} handle={handle} autoStart={false} />); });
+    await act(async () => { await handle.result!.start(); await flush(); });
+    expect(handle.result!.whipResource).toMatch(/\/whip\/x$/);
+    await act(async () => { await handle.result!.stop({ notifyServer: false }); await flush(); });
+    expect(pcInstances[0]!.closed).toBe(true);
+    expect(handle.result!.phase).toBe('idle');
+    expect(fetchHandle.whipCalls.filter((c) => c.method === 'DELETE')).toEqual([]);
+  });
+
+  it('a successful publish clears publishRevoked', async () => {
+    const handle: PubHandle = { result: null };
+    const previousFetch = globalThis.fetch;
+    refuseWhip();
+    await act(async () => { render(<PublisherHarness stream={null} handle={handle} autoStart={false} />); });
+    await act(async () => { await expect(handle.result!.republish(makeStream())).rejects.toMatchObject({ code: 'LVS_PUBLISH_REVOKED' }); await flush(); });
+    expect(handle.result!.publishRevoked).toBe(true);
+    globalThis.fetch = previousFetch;
+    installFetchMock();
+    await act(async () => { await handle.result!.republish(makeStream()); await flush(); });
+    expect(handle.result!.publishRevoked).toBe(false);
+  });
+});

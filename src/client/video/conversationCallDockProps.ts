@@ -37,6 +37,11 @@ export interface ConversationCallDockState {
   toggleScreenShare(): void;
   leave(): void | Promise<void>;
   rejoin(): void | Promise<void>;
+  /** False while you may not publish (view-only or a viewer token): the mic,
+   *  camera and share controls are disabled. Absent = may publish. */
+  canPublish?: boolean;
+  /** The host made you view-only (the disabled controls say so). */
+  publishRevoked?: boolean;
 }
 
 export interface ConversationCallDockUi {
@@ -86,6 +91,8 @@ interface DockDeviceControl {
   onSelectDevice: (deviceId: string) => void;
   permission: 'prompt' | 'granted' | 'denied' | 'unavailable';
   extraItems?: { label: string; onSelect: () => void }[];
+  /** Disables the toggle with this as its title. */
+  disabledReason?: string;
 }
 
 /** Structural mirror of the ui-components `CallDockProps` this mapping sets. */
@@ -176,6 +183,10 @@ export function conversationCallDockProps(
   const otherSpeaker = activeSpeaker && activeSpeaker !== local?.id ? activeSpeaker : null;
   const { prefs, set, list } = s.devices;
   const timed = phase === 'active' || phase === 'reconnecting';
+  // LVS refuses your publishing: the controls say why instead of doing nothing.
+  const publishBlocked = s.publishRevoked === true
+    ? 'The host made you view-only'
+    : s.canPublish === false ? 'You joined as a viewer' : null;
 
   return {
     title: ui.title,
@@ -194,6 +205,7 @@ export function conversationCallDockProps(
       // Saved for the next join; a live microphone swap is the host's call.
       onSelectDevice: (id: string) => set({ ...prefs, microphoneId: id }),
       permission: list.permission.microphone,
+      ...(publishBlocked ? { disabledReason: publishBlocked } : {}),
     },
     camera: {
       on: s.self.cameraOn,
@@ -203,10 +215,12 @@ export function conversationCallDockProps(
       onSelectDevice: (id: string) => set({ ...prefs, cameraId: id }),
       permission: list.permission.camera,
       ...(ui.cameraMenuItems && ui.cameraMenuItems.length > 0 ? { extraItems: ui.cameraMenuItems } : {}),
+      ...(publishBlocked ? { disabledReason: publishBlocked } : {}),
     },
     screenShare: {
       on: s.self.screenSharing,
-      ...(remoteSharer && !s.self.screenSharing ? { disabledReason: `${remoteSharer.displayName} is sharing` } : {}),
+      ...(publishBlocked && !s.self.screenSharing ? { disabledReason: publishBlocked }
+        : remoteSharer && !s.self.screenSharing ? { disabledReason: `${remoteSharer.displayName} is sharing` } : {}),
       onToggle: s.toggleScreenShare,
     },
     onOpenPeople: ui.onOpenPeople,

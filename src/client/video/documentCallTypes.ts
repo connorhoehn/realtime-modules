@@ -84,6 +84,11 @@ export interface DocumentCallMediaMember {
   audioOn?: boolean;
   cameraOn?: boolean;
   screenSharing?: boolean;
+  /** LVS revoked their publishing (lvs-react `SessionMember.publishRevoked`,
+   *  RM `HangoutParticipant.publishRevoked`): they are in the call view-only. */
+  publishRevoked?: boolean;
+  /** Their participant token's attributes. */
+  attributes?: Record<string, string>;
   /** The consumer's own member object (tracks, video element, …), passed through. */
   [k: string]: unknown;
 }
@@ -110,6 +115,13 @@ export interface DocumentCallParticipant {
   /** Silenced locally with "Mute for me" (never sent anywhere). The consumer
    *  applies it to the person's audio element. */
   mutedForMe: boolean;
+  /** View only: LVS revoked their publishing (from their media member, or the
+   *  host's own revoke / grant until the member agrees). For yourself, the
+   *  hook's `publishRevoked`. */
+  publishRevoked?: boolean;
+  /** Their LVS participant id (media member, else call signalling) — what
+   *  revoke / grant act on. */
+  participantId?: string;
   /** Media member from the consumer's LVS session, when joined. */
   media?: DocumentCallMediaMember;
   /** Where they are in the document, from Y awareness (same document only). */

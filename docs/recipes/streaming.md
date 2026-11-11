@@ -144,15 +144,57 @@ deployment, not to `attachRealtime`.
 | `useLVSContext()` | `LVSConfig` — the `{ baseUrl, getAuthToken, log }` the provider holds, for a caller that needs it directly |
 | `useLVSPublisher(opts)` | the WHIP publish loop — `phase`, ICE and retry owned by the hook, capture owned by you |
 | `useLVSSubscriber(opts)` | the WHEP side of the same |
-| `useLVSHangout(opts)` / `useLVSHangoutShared()` | `{ participants, isJoined, isScreenSharing, isCameraEnabled, connectionState, error, videoUnavailable, toggleMute, toggleCamera, enableCamera, disableCamera, setCameraEnabled, startScreenShare, stopScreenShare, leave }`. The `Shared` form reads one hangout from context instead of opening its own |
+| `useLVSHangout(opts)` / `useLVSHangoutShared()` | `{ participants, isJoined, isScreenSharing, isCameraEnabled, connectionState, error, videoUnavailable, toggleMute, toggleCamera, enableCamera, disableCamera, setCameraEnabled, startScreenShare, stopScreenShare, leave, canPublish, publishRevoked, publishRevokedReason, startPublishing, terminated }`. The `Shared` form reads one hangout from context instead of opening its own. See [publish control](#publish-control) |
 | `useLVSViewerCount(opts)` | `{ viewerCount, error }` — polled |
 | `useLVSRecordings(opts)` | `{ recordings, isLoading, error, refetch }` |
 | `useLVSHlsPlayer(opts)` | `{ playlistUrl, tokenExpiresInSec, ready }` — near-realtime HLS playback |
 | `useLiveCaptions(opts)` | `CaptionLine[]` |
 | `useMediaDevices(opts?)` | `{ microphones, cameras, speakers, permission: { microphone, camera }, speakerSelectionSupported, loading, refresh, requestPermission }` — device lists and browser permission for call surfaces |
 | `useAudioVideoSettings(opts?)` | `{ settings, update, constraints, previewStream, previewError, micLevel, testMic, testSound, testMicState }` — per-browser mic/speaker/camera settings under `call-device-preferences` |
-| `useDocumentCall(opts)` | `{ call, phase, joined, isHost, elapsedMs, error, ended, participants, inCallCount, inCallUserIds, activeSpeakerId, self, start, join, leave, endForEveryone, invite, ringAgain, setDocuments, setTitle, present, following, follow, toggleMic, toggleCamera, startScreenShare, stopScreenShare, lvs, inviteLink, refresh, muteParticipant, removeParticipant, transferHost, setMutedForMe, moderation }` — a call that belongs to a document review; see [the calls recipe](./calls.md#document-calls) |
+| `useDocumentCall(opts)` | `{ call, phase, joined, isHost, elapsedMs, error, ended, participants, inCallCount, inCallUserIds, activeSpeakerId, self, start, join, leave, endForEveryone, invite, ringAgain, setDocuments, setTitle, present, following, follow, toggleMic, toggleCamera, startScreenShare, stopScreenShare, lvs, inviteLink, refresh, muteParticipant, removeParticipant, transferHost, setMutedForMe, moderation, canPublish, publishRevoked, publishRevokedReason, startPublishing, revokePublish, grantPublish }` — a call that belongs to a document review; see [the calls recipe](./calls.md#document-calls) and [publish control](#publish-control) |
 | `useIncomingDocumentCalls(opts)` | `{ current, queue, queueLength, accept, decline, dismiss }` — rings for `kind:'document-review'` invites |
 | `useConversationCall(opts)` | One conversation's call: ring, accept, decline, leave and rejoin over the gateway's `call` frames, the video session and the media session. See [conversation](./conversation.md) |
 | `useIncomingConversationCalls(opts)` | Every ring addressed to the signed-in user, for an app-wide toast or a row badge |
 | `useDevicePreferences(storage?)` | `[prefs, set]` - the microphone, camera and speaker this browser remembers, stored under `call-device-preferences` |
+
+### Publish control
+
+A call's host can revoke a participant's publishing (camera, microphone and
+screen) and grant it back; the participant stays in the call as a viewer. LVS
+tells the participant's own stage socket (`participant.publish-revoked` /
+`participant.publish-granted`) and refuses their WHIP with `403
+publish_revoked` until a grant (live-video-streaming `docs/adopting-lvs.md`,
+"Participants and publish control").
+
+- **`useLVSHangout`** (and so `useLVSHangoutShared`). On a revocation it
+  stops and releases the camera, microphone and screen it captured, closes its
+  publishers without a WHIP DELETE (LVS already closed them), and stays joined
+  as a viewer: `publishRevoked` true, `canPublish` false,
+  `publishRevokedReason` the host's reason. Device actions do nothing while it
+  holds, and nothing republishes. A WHIP refused as revoked (joining while
+  revoked, or a reconnect that raced the revocation) is the same state, never
+  an error and never retried. A grant sets `canPublish` and starts nothing:
+  `startPublishing()` captures and publishes again, and its first WHIP calls
+  `getAuthToken({ forceRefresh: true, reason: 'publish-granted' })`, which
+  must return a token minted after the grant (a rejection fails that publish).
+  A subscriber token joins as a viewer without capture until a grant. Remote
+  `participants[]` carry `publishRevoked` and their token `attributes`.
+- **Final stage closes.** Close 4410 (kicked) and 4403 (refused) end the
+  session: no reconnect, media released, `terminated` `{ outcome, code,
+  reason }`, `connectionState` `failed` and `error` set. Every other close
+  reconnects as before.
+- **`useDocumentCall`.** The consumer's media binding reports `canPublish`,
+  `publishRevoked`, `publishRevokedReason`, `startPublishing` and per-member
+  `publishRevoked` / `attributes`; the hook returns the same, turns `self` off
+  (and tells the call) when you are made view-only, ignores turning devices on
+  meanwhile, and marks each participant `publishRevoked` with their
+  `participantId`. The host's `revokePublish(userId, { reason })` /
+  `grantPublish(userId)` call platform-api `POST
+  /api/video/sessions/:id/participants/:participantId/revoke-publish |
+  grant-publish`.
+- **`useConversationCall`.** Returns the media session's `canPublish`,
+  `publishRevoked`, `publishRevokedReason` and `startPublishing`; its token
+  resolver answers the forced refresh with platform-api `POST
+  /api/video/sessions/:id/refresh-token`. `conversationCallDockProps` disables
+  the mic, camera and share controls with a `disabledReason` while you may not
+  publish.

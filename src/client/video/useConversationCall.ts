@@ -33,6 +33,7 @@ import type { GatewayMessage } from '../types';
 import { asCallFrame, gatewaySend, useDocumentCallGateway } from './documentCallGateway';
 import { useSafeLVSContext } from './LVSProvider';
 import { useLVSHangout, type UseLVSHangoutOptions, type UseLVSHangoutResult } from './useLVSHangout';
+import type { LVSAuthTokenRequest } from './publishPermission';
 import { useMediaDevices, type UseMediaDevicesResult } from './useMediaDevices';
 import { useCallMediaEffects } from './useCallMediaEffects';
 import { deviceConstraints, useDevicePreferences } from './useDevicePreferences';
@@ -179,6 +180,19 @@ export interface ConversationCallResult {
    * not analyse audio; ConversationCallDock (ui-components) does.
    */
   activeSpeakerId: string | null;
+  /** Whether you may publish now (the media session's `canPublish`): false
+   *  while the host has you view-only, and for a subscriber token until a grant. */
+  canPublish?: boolean;
+  /** The host made you view-only: mic, camera and share are off and the
+   *  toggles do nothing until a grant. You stay in the call. */
+  publishRevoked?: boolean;
+  /** The host's reason, or null. */
+  publishRevokedReason?: string | null;
+  /** After a grant: publish mic and camera again (a grant never starts them).
+   *  The media session first refreshes the stage token through platform-api.
+   *  Resolves true when publishing, false when there is nothing to start or
+   *  LVS still refuses; rejects when capture or the publish fails. */
+  startPublishing?(): Promise<boolean>;
 }
 
 interface ActiveCall {
@@ -363,7 +377,27 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   const lvsCtx = useSafeLVSContext();
   const stageTokenRef = useRef<string | null>(null);
   stageTokenRef.current = active?.stageToken ?? null;
-  const getAuthToken = useCallback(() => stageTokenRef.current ?? '', []);
+  // A token platform-api re-minted for this participant (after a publish
+  // grant), served instead of the join token from then on.
+  const refreshedTokenRef = useRef<{ participantId: string; token: string } | null>(null);
+  const getAuthToken = useCallback((request?: LVSAuthTokenRequest): string | Promise<string> => {
+    const a = activeRef.current;
+    const refreshed = a?.participantId && refreshedTokenRef.current?.participantId === a.participantId
+      ? refreshedTokenRef.current.token : null;
+    const current = refreshed ?? stageTokenRef.current ?? '';
+    if (!request?.forceRefresh || !a?.sessionId || !a.participantId) return current;
+    // The first publish after a grant: LVS records the grant against this
+    // session participant, so only a token minted now carries the publisher
+    // role. A refusal rejects, which fails that publish.
+    const { sessionId, participantId, mediaLobby } = a;
+    return api(`/api/video/sessions/${encodeURIComponent(sessionId)}/refresh-token`, { lobbyName: mediaLobby, participantId })
+      .then((out) => {
+        const token = str(out.token);
+        if (!token) throw new Error('No token from the server');
+        if (activeRef.current?.participantId === participantId) refreshedTokenRef.current = { participantId, token };
+        return token;
+      });
+  }, [api]);
   const media = useMedia({
     cameraEffects,
     stageToken: active?.stageToken ?? null,
@@ -775,9 +809,16 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   // ---- self controls -----------------------------------------------------------------
   const micToggleInFlight = useRef(false);
   const cameraToggleInFlight = useRef(false);
+  // Publish control: LVS refuses our publishing (revoked, or a subscriber
+  // token before a grant), so nothing turns on.
+  const publishRevoked = media.publishRevoked === true;
+  const canPublish = media.canPublish ?? !publishRevoked;
+  const publishBlockedRef = useRef(false);
+  publishBlockedRef.current = !canPublish;
   const toggleMic = useCallback(() => {
     if (micToggleInFlight.current) return;
     const on = !selfRef.current.audioOn;
+    if (on && publishBlockedRef.current) return;
     const m = mediaRef.current;
     const a = activeRef.current;
     // Older injectable media hooks retain their existing mute contract.
@@ -796,6 +837,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   const toggleCamera = useCallback(() => {
     if (cameraToggleInFlight.current) return;
     const on = !selfRef.current.cameraOn;
+    if (on && publishBlockedRef.current) return;
     const m = mediaRef.current;
     const a = activeRef.current;
     if (!on) {
@@ -818,10 +860,33 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       announceSelf();
       return;
     }
+    if (publishBlockedRef.current) return;
     void Promise.resolve(m.startScreenShare()).then(
       () => { setSelf({ screenSharing: true }); announceSelf(); },
       () => { /* picker cancelled */ },
     );
+  }, [announceSelf, setSelf]);
+
+  // View-only: the media session already stopped our mic, camera and share,
+  // so our state (and what the others see) follows.
+  useEffect(() => {
+    if (canPublish || !active?.stageToken) return;
+    const s = selfRef.current;
+    if (!s.audioOn && !s.cameraOn && !s.screenSharing) return;
+    setSelf({ audioOn: false, cameraOn: false, screenSharing: false });
+    announceSelf();
+  }, [canPublish, active?.stageToken, announceSelf, setSelf]);
+
+  const startPublishing = useCallback(async (): Promise<boolean> => {
+    const a = activeRef.current;
+    const m = mediaRef.current;
+    if (!a?.stageToken || !m.startPublishing) return false;
+    const ok = await m.startPublishing();
+    if (!ok || activeRef.current?.callId !== a.callId || activeRef.current?.participantId !== a.participantId) return false;
+    // It publishes the call's join media: camera too unless audio-only.
+    setSelf({ audioOn: true, cameraOn: !a.audioOnly });
+    announceSelf();
+    return true;
   }, [announceSelf, setSelf]);
 
   // The transport's own view of screen share (the browser's "Stop sharing" bar).
@@ -1233,6 +1298,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         participantId: active.participantId,
         stream: local?.streams[0] ?? null,
         screenStream: local?.screenStream ?? null,
+        publishRevoked,
+        ...(local?.attributes ? { attributes: local.attributes } : {}),
       });
     }
     const directory = (uid: string) => { try { return o.nameFor?.(uid) ?? null; } catch { return null; } };
@@ -1276,6 +1343,8 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
         participantId: m.participantId,
         stream: m.streams[0] ?? null,
         screenStream: m.screenStream ?? null,
+        publishRevoked: m.publishRevoked === true,
+        ...(m.attributes ? { attributes: m.attributes } : {}),
       });
     }
     const person = (uid: string, state: ConversationCallParticipant['state'], r?: RosterEntry): ConversationCallParticipant => ({
@@ -1317,7 +1386,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, lobbyName, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, opts.nameFor, invitationRequests]);
+  }, [active, lobbyName, media.participants, roster, accepted, outcomes, discovered, incoming, self, opts.self.userId, opts.self.displayName, opts.self.avatarUrl, opts.nameFor, invitationRequests, publishRevoked]);
 
   const participantCount = participants.filter((p) => p.state === 'in-call' || p.state === 'reconnecting').length;
 
@@ -1383,5 +1452,9 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
     // start never shows negative time.
     elapsedMs: startedAt ? Math.max(0, Math.max(now, Date.now()) - startedAt) : null,
     activeSpeakerId: null,
+    canPublish,
+    publishRevoked,
+    publishRevokedReason: publishRevoked ? media.publishRevokedReason ?? null : null,
+    startPublishing,
   };
 }

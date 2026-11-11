@@ -33,8 +33,21 @@ export interface UseLVSPublisherResult {
     stats: LVSPublisherStats | null;
     sfuNode: string | null;
     whipResource: string | null;
+    /**
+     * The last publish was refused because LVS revoked this participant's
+     * publishing (403 `publish_revoked`). Not an error: `phase` is `idle` and
+     * nothing retries, since LVS refuses every publish until a grant. Cleared
+     * when a publish succeeds.
+     */
+    publishRevoked: boolean;
     start: () => Promise<void>;
-    stop: () => Promise<void>;
+    /**
+     * Stop publishing. `notifyServer: false` skips the WHIP DELETE, for a
+     * transport LVS already closed (a revocation); default true.
+     */
+    stop: (opts?: {
+        notifyServer?: boolean;
+    }) => Promise<void>;
     /** Replace tracks on existing senders without renegotiating. Useful
      *  for cam <-> screen-share swap. New tracks must match the existing
      *  transceivers' kind (audio/video). */

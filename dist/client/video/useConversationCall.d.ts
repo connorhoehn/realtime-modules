@@ -180,6 +180,19 @@ export interface ConversationCallResult {
      * not analyse audio; ConversationCallDock (ui-components) does.
      */
     activeSpeakerId: string | null;
+    /** Whether you may publish now (the media session's `canPublish`): false
+     *  while the host has you view-only, and for a subscriber token until a grant. */
+    canPublish?: boolean;
+    /** The host made you view-only: mic, camera and share are off and the
+     *  toggles do nothing until a grant. You stay in the call. */
+    publishRevoked?: boolean;
+    /** The host's reason, or null. */
+    publishRevokedReason?: string | null;
+    /** After a grant: publish mic and camera again (a grant never starts them).
+     *  The media session first refreshes the stage token through platform-api.
+     *  Resolves true when publishing, false when there is nothing to start or
+     *  LVS still refuses; rejects when capture or the publish fails. */
+    startPublishing?(): Promise<boolean>;
 }
 /** "Alice", "Alice & Bob", "Alice, Bob & 2 others". */
 export declare function callingLabel(names: string[]): string;

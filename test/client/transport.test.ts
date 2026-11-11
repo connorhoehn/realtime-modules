@@ -312,6 +312,34 @@ describe('whipPublish 425 Too Early retry (consistency with WHEP)', () => {
   });
 });
 
+describe('whipPublish refused because publishing is revoked', () => {
+  const baseArgs = {
+    channelArn: 'arn:local:ivs:channel/test',
+    offerSdp: 'v=0\r\n',
+    authToken: 'tok',
+    baseUrl: 'http://sfu',
+  } as const;
+
+  it('403 publish_revoked rejects with code LVS_PUBLISH_REVOKED, final, once', async () => {
+    const fetchImpl = scriptedFetch([
+      { status: 403, body: JSON.stringify({ error: 'publishing revoked', reason: 'publish_revoked' }), headers: { 'Content-Type': 'application/json' } },
+    ]);
+    await expect(whipPublish({ ...baseArgs, fetchImpl: fetchImpl as unknown as typeof fetch }))
+      .rejects.toMatchObject({ name: 'LVSApiError', status: 403, code: 'LVS_PUBLISH_REVOKED', reason: 'publish_revoked', final: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('any other 403 keeps the plain shape (no code, not final)', async () => {
+    const fetchImpl = scriptedFetch([{ status: 403, body: JSON.stringify({ error: 'wrong channel' }) }]);
+    const err = await whipPublish({ ...baseArgs, fetchImpl: fetchImpl as unknown as typeof fetch }).catch((e: unknown) => e) as LVSApiError;
+    expect(err).toBeInstanceOf(LVSApiError);
+    expect(err.status).toBe(403);
+    expect(err.code).toBeNull();
+    expect(err.reason).toBeNull();
+    expect(err.final).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Location resolution — the SFU answers with a RELATIVE Location. Handed to
 // fetch as-is, the teardown DELETE resolved against the page's origin (404

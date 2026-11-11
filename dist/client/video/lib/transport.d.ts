@@ -5,7 +5,17 @@ export declare class LVSApiError extends Error {
      *  (typically on 503). Supports both delta-seconds and HTTP-date
      *  formats per RFC 7231 §7.1.3. `null` when absent or unparseable. */
     retryAfterSec: number | null;
-    constructor(message: string, status: number, url: string, retryAfterSec?: number | null);
+    /** The server's `reason` when its error body was JSON (`publish_revoked`), else null. */
+    reason: string | null;
+    /** `'LVS_PUBLISH_REVOKED'` for a WHIP refused because publishing is revoked, else null. */
+    code: string | null;
+    /** Repeating the same request cannot succeed (a revoked participant's WHIP). */
+    final: boolean;
+    constructor(message: string, status: number, url: string, retryAfterSec?: number | null, detail?: {
+        reason?: string | null;
+        code?: string | null;
+        final?: boolean;
+    });
 }
 /** Parse a `Retry-After` header value into a delay in seconds. Accepts
  *  delta-seconds ("120") or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT").

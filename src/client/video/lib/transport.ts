@@ -6,6 +6,8 @@
 // Lifted from the live-video-streaming app's ui/src/lib/api.ts
 // (whipPublish / whipTeardown / whepPublish / whepTeardown / fetchIceServers).
 
+import { LVS_PUBLISH_REVOKED } from '../publishPermission';
+
 export class LVSApiError extends Error {
   status: number;
   url: string;
@@ -13,17 +15,37 @@ export class LVSApiError extends Error {
    *  (typically on 503). Supports both delta-seconds and HTTP-date
    *  formats per RFC 7231 §7.1.3. `null` when absent or unparseable. */
   retryAfterSec: number | null;
+  /** The server's `reason` when its error body was JSON (`publish_revoked`), else null. */
+  reason: string | null;
+  /** `'LVS_PUBLISH_REVOKED'` for a WHIP refused because publishing is revoked, else null. */
+  code: string | null;
+  /** Repeating the same request cannot succeed (a revoked participant's WHIP). */
+  final: boolean;
   constructor(
     message: string,
     status: number,
     url: string,
     retryAfterSec: number | null = null,
+    detail: { reason?: string | null; code?: string | null; final?: boolean } = {},
   ) {
     super(message);
     this.name = 'LVSApiError';
     this.status = status;
     this.url = url;
     this.retryAfterSec = retryAfterSec;
+    this.reason = detail.reason ?? null;
+    this.code = detail.code ?? null;
+    this.final = detail.final === true;
+  }
+}
+
+/** The `reason` field of a JSON error body, or null. */
+function bodyReason(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body) as { reason?: unknown } | null;
+    return parsed && typeof parsed.reason === 'string' && parsed.reason ? parsed.reason : null;
+  } catch {
+    return null;
   }
 }
 
@@ -236,11 +258,16 @@ export async function whipPublish(opts: WhipPublishOptions): Promise<WhipPublish
   );
   if (!r.ok) {
     const body = await r.text().catch(() => '');
+    const reason = bodyReason(body);
+    // LVS refuses a revoked participant's publish with 403 publish_revoked
+    // until a grant: final, so callers stop instead of retrying.
+    const revoked = r.status === 403 && reason === 'publish_revoked';
     throw new LVSApiError(
       `${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`,
       r.status,
       url,
       parseRetryAfter(r.headers.get('Retry-After')),
+      { reason, ...(revoked ? { code: LVS_PUBLISH_REVOKED, final: true } : {}) },
     );
   }
   return {

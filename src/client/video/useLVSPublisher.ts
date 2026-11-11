@@ -21,6 +21,7 @@ import {
 } from './lib/sdp';
 import { jwtSecondsRemaining } from './lib/jwt';
 import { useSafeLVSContext, type LVSConfig } from './LVSProvider';
+import { isPublishRevokedError } from './publishPermission';
 
 const MEDIA_WATCHDOG_MS = 20000;
 const STATS_POLL_MS = 1000;
@@ -74,8 +75,19 @@ export interface UseLVSPublisherResult {
   stats: LVSPublisherStats | null;
   sfuNode: string | null;
   whipResource: string | null;
+  /**
+   * The last publish was refused because LVS revoked this participant's
+   * publishing (403 `publish_revoked`). Not an error: `phase` is `idle` and
+   * nothing retries, since LVS refuses every publish until a grant. Cleared
+   * when a publish succeeds.
+   */
+  publishRevoked: boolean;
   start: () => Promise<void>;
-  stop: () => Promise<void>;
+  /**
+   * Stop publishing. `notifyServer: false` skips the WHIP DELETE, for a
+   * transport LVS already closed (a revocation); default true.
+   */
+  stop: (opts?: { notifyServer?: boolean }) => Promise<void>;
   /** Replace tracks on existing senders without renegotiating. Useful
    *  for cam <-> screen-share swap. New tracks must match the existing
    *  transceivers' kind (audio/video). */
@@ -198,6 +210,7 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
   const [stats, setStats] = useState<LVSPublisherStats | null>(null);
   const [whipResource, setWhipResource] = useState<string | null>(null);
   const [sfuNode, setSfuNode] = useState<string | null>(null);
+  const [publishRevoked, setPublishRevoked] = useState(false);
 
   const stopStatsPolling = useCallback(() => {
     if (statsTimerRef.current != null) {
@@ -294,7 +307,7 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
     }
   }, []);
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(async (stopOpts: { notifyServer?: boolean } = {}) => {
     publishEpochRef.current += 1;
     streamOverrideRef.current = null;
     cancelReconnect();
@@ -317,7 +330,7 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
     teardownLocal();
     setPhase('idle');
     setError(null);
-    if (resource && token) await whipTeardown(resource, token).catch(() => { /* ignore */ });
+    if (resource && token && stopOpts.notifyServer !== false) await whipTeardown(resource, token).catch(() => { /* ignore */ });
   }, [teardownLocal, cancelReconnect]);
 
   // Forward-declared via ref so scheduleReconnect (referenced by
@@ -526,11 +539,21 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
       // actually establishes. Stats polling starts immediately so the
       // first tick lands within ~1s of the answer.
       startStatsPolling();
+      setPublishRevoked(false);
     } catch (e) {
       const msg = errMessage(e);
       const ownsCurrent = ownedPc !== null && pcRef.current === ownedPc;
       const retireResource = valid() || !resourceAdopted || ownsCurrent;
-      if (valid()) {
+      if (valid() && isPublishRevokedError(e)) {
+        // LVS refuses every publish until a grant: state, not an error, and
+        // no retry. A reconnect that hit this ends here too.
+        resolved.log('publish refused: publishing is revoked for this participant', 'warn');
+        cancelReconnect();
+        reconnectAttemptsRef.current = { count: 0, windowStart: 0 };
+        teardownLocal();
+        setError(null); setPhase('idle');
+        setPublishRevoked(true);
+      } else if (valid()) {
         resolved.log(`publish failed: ${msg}`, 'err');
         setError(msg); setPhase('error');
         teardownLocal();
@@ -548,7 +571,7 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
     }
   }, [
     resolved, stream, channelArn, participantId,
-    startStatsPolling, teardownLocal, scheduleReconnect,
+    startStatsPolling, teardownLocal, scheduleReconnect, cancelReconnect,
   ]);
 
   // Keep startRef pointing at the latest start() so scheduleReconnect's
@@ -710,6 +733,7 @@ export function useLVSPublisher(opts: UseLVSPublisherOptions): UseLVSPublisherRe
     stats,
     sfuNode,
     whipResource,
+    publishRevoked,
     start,
     stop,
     replaceStream,

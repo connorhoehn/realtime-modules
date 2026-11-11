@@ -43,6 +43,10 @@ export interface ConversationCallParticipant {
     stream: MediaStream | null;
     /** Their screen, while sharing. */
     screenStream: MediaStream | null;
+    /** View only: LVS revoked their publishing (for you, the call's `publishRevoked`). */
+    publishRevoked?: boolean;
+    /** Their participant token's attributes, when the media layer reports them. */
+    attributes?: Record<string, string>;
 }
 /** The call this conversation is in. */
 export interface ConversationCall {

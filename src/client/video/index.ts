@@ -37,6 +37,27 @@ export {
   type HangoutConnectionState,
 } from './useLVSHangout';
 
+// Publish control (LVS revoke / grant) and final stage closes, as the hooks
+// apply them.
+export {
+  EMPTY_PUBLISH_STATE,
+  LVS_PUBLISH_REVOKED,
+  STAGE_CLOSE_FORBIDDEN,
+  STAGE_CLOSE_KICKED,
+  isPublishRevokedError,
+  parsePublishControlFrame,
+  reducePublishState,
+  stageTermination,
+  terminationMessage,
+  tokenAttributes,
+  type HangoutTermination,
+  type LVSAuthTokenRequest,
+  type LVSAuthTokenResolver,
+  type PublishControlFrame,
+  type PublishPermissionAction,
+  type PublishPermissionState,
+} from './publishPermission';
+
 export {
   LVSHangoutSessionContext,
   LVSHangoutSessionProvider,

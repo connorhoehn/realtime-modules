@@ -4,7 +4,7 @@ import type { UseLVSHangoutOptions, UseLVSHangoutResult, HangoutParticipant } fr
 export { makeFakeGateway } from '../document-calls/fakeGateway';
 
 /** Fake platform-api for the conversation hook (getIdToken, not headers). */
-export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { enabled: boolean; reason: string } } = {}) {
+export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { enabled: boolean; reason: string }; refreshStatus?: number } = {}) {
   const calls: Array<{ method: string; path: string; body: any; headers: Record<string, string> }> = [];
   let n = 0;
   const fetchImpl = (async (url: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}) => {
@@ -18,6 +18,10 @@ export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { e
       return json(200, { token: 'stage-token', participantId: `p-self-${n}`, userId: 'u' });
     }
     if (method === 'POST' && /\/end$/.test(path)) return json(200, { ended: false });
+    if (method === 'POST' && /\/refresh-token$/.test(path)) {
+      if (opts.refreshStatus && opts.refreshStatus >= 400) return json(opts.refreshStatus, { error: 'refused' });
+      return json(200, { token: `refreshed-${calls.filter((c) => /\/refresh-token$/.test(c.path)).length}` });
+    }
     return json(404, { error: 'no route' });
   }) as unknown as typeof fetch;
   return { fetchImpl, calls, platformApi: { baseUrl: 'http://pa', getIdToken: async () => 'id-token' } };
@@ -25,7 +29,10 @@ export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { e
 
 /** A media layer the test drives: joined flag, remote members, calls made. */
 export function makeFakeMedia() {
-  let state = { isJoined: false, remotes: [] as HangoutParticipant[], connectionState: 'idle' as UseLVSHangoutResult['connectionState'], error: null as string | null };
+  let state = {
+    isJoined: false, remotes: [] as HangoutParticipant[], connectionState: 'idle' as UseLVSHangoutResult['connectionState'], error: null as string | null,
+    canPublish: true, publishRevoked: false, publishRevokedReason: null as string | null, startPublishingResult: true,
+  };
   const listeners = new Set<() => void>();
   const calls: string[] = [];
   const lastOpts: { current: UseLVSHangoutOptions | null } = { current: null };
@@ -52,6 +59,10 @@ export function makeFakeMedia() {
       startScreenShare: async () => { calls.push('share'); },
       stopScreenShare: () => { calls.push('unshare'); },
       leave: () => { calls.push('leave'); },
+      canPublish: s.canPublish,
+      publishRevoked: s.publishRevoked,
+      publishRevokedReason: s.publishRevokedReason,
+      startPublishing: async () => { calls.push('startPublishing'); return state.startPublishingResult; },
     };
   }
   const remote = (pid: string): HangoutParticipant => ({ participantId: pid, displayName: pid, userId: pid, isLocal: false, streams: [], hasAudio: true, hasVideo: true });

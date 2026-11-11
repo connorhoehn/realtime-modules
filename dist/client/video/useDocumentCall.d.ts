@@ -11,6 +11,14 @@ export interface DocumentCallMediaBinding {
     setCameraEnabled?(on: boolean): void | Promise<void>;
     startScreenShare?(): void | Promise<void>;
     stopScreenShare?(): void | Promise<void>;
+    /** The session's `canPublish`: false while revoked, and for a subscriber token until a grant. */
+    canPublish?: boolean;
+    /** The session's `publishRevoked`: LVS revoked our publishing; we stay in the call as a viewer. */
+    publishRevoked?: boolean;
+    /** The session's `publishRevokedReason`. */
+    publishRevokedReason?: string | null;
+    /** The session's `startPublishing()`: publish again after a grant (never automatic). */
+    startPublishing?(): Promise<boolean>;
 }
 export interface UseDocumentCallOptions {
     /**
@@ -155,6 +163,32 @@ export interface UseDocumentCallResult {
         by: string;
         at: number;
     } | null;
+    /** Whether you may publish now (from `media`): false while the host has you
+     *  view-only, and for a subscriber token until a grant. */
+    canPublish?: boolean;
+    /** The host made you view-only: your mic, camera and share are off and
+     *  turning them on does nothing until a grant. */
+    publishRevoked?: boolean;
+    /** The host's reason, or null. */
+    publishRevokedReason?: string | null;
+    /** After a grant: publish mic and camera again through `media` (a grant
+     *  never starts them). Resolves true when publishing; false without a media
+     *  session that can, or when LVS still refuses. */
+    startPublishing?(): Promise<boolean>;
+    /** Host only: make this person view-only (platform-api revoke-publish). They
+     *  stay in the call. Rejects (with `status`) when platform-api refuses. */
+    revokePublish?(userId: string, opts?: {
+        reason?: string;
+    }): Promise<{
+        changed: boolean;
+    }>;
+    /** Host only: let this person publish again (platform-api grant-publish).
+     *  Nothing starts on their side until they choose to. */
+    grantPublish?(userId: string, opts?: {
+        reason?: string;
+    }): Promise<{
+        changed: boolean;
+    }>;
 }
 /** A platform-api video-session row → DocumentCallSession (lenient: rows from
  *  before `kind` existed still parse, as the host document's call). */

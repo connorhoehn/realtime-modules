@@ -1,3 +1,4 @@
+import { type HangoutTermination, type LVSAuthTokenResolver } from './publishPermission';
 export interface UseLVSHangoutOptions {
     /** Optional camera processing; screen sharing and microphone tracks stay separate. */
     cameraEffects?: {
@@ -16,8 +17,15 @@ export interface UseLVSHangoutOptions {
     media?: MediaStreamConstraints;
     /** Override base URL (else read from LVSProvider). */
     baseUrl?: string;
-    /** Override token resolver. The default resolver returns `stageToken` itself. */
-    getAuthToken?: () => string | Promise<string>;
+    /**
+     * Override token resolver. The default resolver returns `stageToken` itself.
+     * Before the first publish after a publish grant it is called with
+     * `{ forceRefresh: true, reason: 'publish-granted' }` and must return a
+     * token minted after the grant (for a session participant, the result of
+     * the platform's refresh-token call), not a cached one. A rejection fails
+     * that publish (`startPublishing` rejects) and the next publish asks again.
+     */
+    getAuthToken?: LVSAuthTokenResolver;
 }
 export interface HangoutParticipant {
     /** Stable per-tab id (the publisher's WHIP participantId or, for remotes,
@@ -68,6 +76,14 @@ export interface HangoutParticipant {
      *  a media tile to a person without an app-level broadcast. Undefined
      *  until the SFU sends one (older SFUs never do). */
     appUserId?: string;
+    /** LVS revoked this participant's publishing: they stay in the call as a
+     *  viewer (view only). For the local participant, the same as the hook's
+     *  `publishRevoked`. */
+    publishRevoked?: boolean;
+    /** The participant token's attributes (string values): for remotes as LVS
+     *  sends them on their producers, for the local participant from the token.
+     *  Absent when there are none. */
+    attributes?: Record<string, string>;
 }
 /** Convenience alias — every entry in `participants` where `isLocal=false`
  *  is structurally a `RemoteParticipant`. Same shape as `HangoutParticipant`;
@@ -165,6 +181,37 @@ export interface UseLVSHangoutResult {
     startScreenShare: () => Promise<void>;
     stopScreenShare: () => void;
     leave: () => void;
+    /**
+     * Whether the local participant may publish now: false while publishing is
+     * revoked, and for a subscriber token until a grant.
+     */
+    canPublish?: boolean;
+    /**
+     * LVS revoked the local participant's publishing. The call stays up as a
+     * viewer: camera, microphone and screen share were stopped and released,
+     * and nothing republishes. Device actions (setCameraEnabled,
+     * setMicrophoneEnabled, enableCamera, startScreenShare) do nothing while it
+     * holds. Joining while revoked joins as a viewer instead of failing.
+     */
+    publishRevoked?: boolean;
+    /** The host's reason for the revocation, or null. */
+    publishRevokedReason?: string | null;
+    /**
+     * Publish camera and microphone again — after a grant, or after joining as
+     * a viewer. A grant never publishes by itself; this is the one way back.
+     * Resolves true when publishing (or already publishing), false when there
+     * is no session or publishing is still revoked (LVS refusing it again
+     * included); rejects for capture or other publish failures.
+     */
+    startPublishing?: (opts?: {
+        media?: MediaStreamConstraints;
+    }) => Promise<boolean>;
+    /**
+     * LVS ended the stage for this participant: kicked (close 4410) or refused
+     * (4403). Final — the hook does not reconnect, media is released,
+     * `connectionState` is `failed` and `error` says why. Null otherwise.
+     */
+    terminated?: HangoutTermination | null;
 }
 /**
  * Composite hangout hook. Wires WHIP (useLVSPublisher) + per-remote

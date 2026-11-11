@@ -23,7 +23,7 @@ export function makeFakeGateway() {
 }
 
 /** Fake platform-api: records requests, answers the video-session routes. */
-export function makeFakePlatformApi(opts: { sessions?: Record<string, unknown>[]; endResult?: { ended: boolean } } = {}) {
+export function makeFakePlatformApi(opts: { sessions?: Record<string, unknown>[]; endResult?: { ended: boolean }; publishControl?: { status: number; body: unknown } } = {}) {
   const calls: Array<{ method: string; path: string; body: any }> = [];
   let n = 0;
   const fetchImpl = (async (url: string, init: { method?: string; body?: string } = {}) => {
@@ -35,6 +35,9 @@ export function makeFakePlatformApi(opts: { sessions?: Record<string, unknown>[]
     if (method === 'POST' && path === '/api/video/sessions') return json(201, { sessionId: `sess-${++n}`, recording: { enabled: true, reason: 'default-on' } });
     if (method === 'POST' && /\/join$/.test(path)) return json(200, { token: 'stage-token', participantId: 'p-1', userId: 'u-host' });
     if (method === 'POST' && /\/end$/.test(path)) return json(200, opts.endResult ?? { remaining: 1, ended: false });
+    if (method === 'POST' && /\/participants\/[^/]+\/(grant|revoke)-publish$/.test(path)) {
+      return json(opts.publishControl?.status ?? 200, opts.publishControl?.body ?? { changed: true, publishPermission: null });
+    }
     if (method === 'GET' && path.startsWith('/api/video/sessions/document/')) return json(200, { sessions: opts.sessions ?? [] });
     if (method === 'GET') return json(404, { error: 'not found' });
     if (method === 'PATCH') return json(200, {});

@@ -209,6 +209,10 @@ class FakeWebSocket {
     this.readyState = FakeWebSocket.CLOSED;
     for (const cb of this.listeners.close ?? []) cb({});
   }
+  triggerClose(code: number, reason = '') {
+    this.readyState = FakeWebSocket.CLOSED;
+    for (const cb of this.listeners.close ?? []) cb({ code, reason });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +250,9 @@ interface FetchHandle {
   whepDeleteCalls: Array<{ url: string }>;
 }
 
+/** When set, every WHIP POST is refused with 403 publish_revoked. */
+let whipRefused = false;
+
 function installFetchMock(): FetchHandle {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const whepCalls: Array<{ url: string }> = [];
@@ -260,6 +267,12 @@ function installFetchMock(): FetchHandle {
       });
     }
     if (url.includes('/whip')) {
+      if (whipRefused && (init?.method ?? 'POST') === 'POST') {
+        return makeResponse(JSON.stringify({ error: 'publishing revoked', reason: 'publish_revoked' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       return makeResponse('v=0\r\n', {
         status: 201,
         headers: {
@@ -340,6 +353,7 @@ let fetchHandle: FetchHandle;
 beforeEach(() => {
   pcInstances = [];
   wsInstances = [];
+  whipRefused = false;
   (globalThis as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = FakePeerConnection;
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeWebSocket;
   fetchHandle = installFetchMock();
@@ -1344,5 +1358,284 @@ describe('useLVSHangout — authenticated ICE config', () => {
     for (const [, init] of iceCalls()) {
       expect(new Headers((init as RequestInit | undefined)?.headers).get('Authorization')).toBe(`Bearer ${TOKEN}`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Publish control and final stage closes (LVS docs/adopting-lvs.md,
+// "Participants and publish control" and "Stage socket close codes").
+// ---------------------------------------------------------------------------
+
+function claimsToken(claims: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify({ arn: 'arn:test:channel/abc', ...claims })).toString('base64url');
+  return `${header}.${body}.`;
+}
+
+interface CaptureTrack { id: string; kind: 'audio' | 'video'; readyState: 'live' | 'ended'; enabled: boolean; stop: jest.Mock; addEventListener: jest.Mock }
+
+/** getUserMedia hands out a fresh camera + microphone stream per call. */
+function installCapture() {
+  const issued: CaptureTrack[] = [];
+  const getUserMedia = jest.fn(async () => {
+    const stream = new (globalThis as unknown as { MediaStream: new () => MediaStream }).MediaStream();
+    for (const kind of ['audio', 'video'] as const) {
+      const track: CaptureTrack = {
+        id: `${kind}-${issued.length}`, kind, readyState: 'live', enabled: true,
+        stop: jest.fn(() => { track.readyState = 'ended'; }), addEventListener: jest.fn(),
+      };
+      issued.push(track);
+      (stream as unknown as { addTrack: (t: CaptureTrack) => void }).addTrack(track);
+    }
+    return stream;
+  });
+  const getDisplayMedia = jest.fn(async () => new (globalThis as unknown as { MediaStream: new () => MediaStream }).MediaStream());
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia, getDisplayMedia } });
+  return { issued, getUserMedia, getDisplayMedia };
+}
+
+type AuthResolver = NonNullable<Parameters<typeof useLVSHangout>[0]['getAuthToken']>;
+
+function ControlHarness({ token, handle, getAuthToken }: { token: string; handle: HarnessHandle; getAuthToken?: AuthResolver }) {
+  handle.result = useLVSHangout({
+    stageToken: token,
+    participantId: PID,
+    userId: 'me',
+    baseUrl: 'http://localhost:3901',
+    ...(getAuthToken ? { getAuthToken } : {}),
+  });
+  return null;
+}
+
+function whipPosts() {
+  return fetchHandle.calls.filter((c) => c.url.includes('/whip') && (c.init?.method ?? 'POST') === 'POST');
+}
+function whipDeletes() {
+  return fetchHandle.calls.filter((c) => c.url.includes('/whip') && c.init?.method === 'DELETE');
+}
+function publisherPc() {
+  return pcInstances.find((p) => !p.isRecvOnly);
+}
+
+/** Joined and publishing: the WHIP is up and the stage socket has acked. */
+async function joinedCall(opts: { token?: string; getAuthToken?: AuthResolver } = {}) {
+  const capture = installCapture();
+  const handle: HarnessHandle = { result: null };
+  await act(async () => {
+    render(<ControlHarness token={opts.token ?? TOKEN} handle={handle} {...(opts.getAuthToken ? { getAuthToken: opts.getAuthToken } : {})} />);
+    await flush();
+  });
+  const ws = wsInstances[wsInstances.length - 1]!;
+  await act(async () => {
+    publisherPc()?.emitConnectionState('connected');
+    ws.triggerOpen();
+    ws.triggerMessage({ type: 'subscribed', producers: [] });
+    await flush();
+  });
+  return { handle, ws, capture };
+}
+
+describe('useLVSHangout — publish control', () => {
+  it('a revocation for us releases capture and publishing, keeps us joined as a viewer, and never republishes', async () => {
+    const { handle, ws, capture } = await joinedCall();
+    expect(handle.result!.isJoined).toBe(true);
+    expect(handle.result!.canPublish).toBe(true);
+    expect(whipPosts()).toHaveLength(1);
+
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: PID, reason: 'too loud' });
+      await flush();
+    });
+    const r = handle.result!;
+    expect(r.publishRevoked).toBe(true);
+    expect(r.canPublish).toBe(false);
+    expect(r.publishRevokedReason).toBe('too loud');
+    expect(capture.issued.every((t) => t.stop.mock.calls.length > 0)).toBe(true);
+    expect(publisherPc()!.closed).toBe(true);
+    // LVS already closed the transport: no DELETE.
+    expect(whipDeletes()).toHaveLength(0);
+    expect(r.isJoined).toBe(true);
+    expect(r.connectionState).toBe('connected');
+    expect(r.error).toBeNull();
+    expect(r.isCameraEnabled).toBe(false);
+    const local = r.participants.find((p) => p.isLocal)!;
+    expect(local.publishRevoked).toBe(true);
+    expect(local.streams).toEqual([]);
+
+    // Device actions do nothing while revoked, and nothing retries.
+    await act(async () => {
+      await handle.result!.setCameraEnabled(true);
+      await handle.result!.setMicrophoneEnabled!(true);
+      await handle.result!.startScreenShare();
+      await new Promise((done) => setTimeout(done, 1_200));
+      await flush();
+    });
+    expect(capture.getUserMedia).toHaveBeenCalledTimes(1);
+    expect(capture.getDisplayMedia).not.toHaveBeenCalled();
+    expect(whipPosts()).toHaveLength(1);
+    await expect(handle.result!.startPublishing!()).resolves.toBe(false);
+    expect(whipPosts()).toHaveLength(1);
+  });
+
+  it('a grant only offers publishing; startPublishing refreshes the token first and publishes once', async () => {
+    const getAuthToken = jest.fn<AuthResolver>((req) => (req?.forceRefresh ? 'fresh-token' : TOKEN));
+    const { handle, ws, capture } = await joinedCall({ getAuthToken });
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: PID });
+      await flush();
+      ws.triggerMessage({ type: 'participant.publish-granted', participantId: PID });
+      await flush();
+    });
+    expect(handle.result!.canPublish).toBe(true);
+    expect(handle.result!.publishRevoked).toBe(false);
+    expect(handle.result!.publishRevokedReason).toBeNull();
+    // Never auto-start.
+    expect(capture.getUserMedia).toHaveBeenCalledTimes(1);
+    expect(whipPosts()).toHaveLength(1);
+    expect(handle.result!.isJoined).toBe(true);
+
+    let started: boolean | undefined;
+    await act(async () => { started = await handle.result!.startPublishing!(); await flush(); });
+    expect(started).toBe(true);
+    expect(getAuthToken).toHaveBeenCalledWith({ forceRefresh: true, reason: 'publish-granted' });
+    expect(getAuthToken.mock.calls.filter(([req]) => req?.forceRefresh)).toHaveLength(1);
+    expect(whipPosts()).toHaveLength(2);
+    expect(new Headers(whipPosts()[1]!.init?.headers).get('Authorization')).toBe('Bearer fresh-token');
+    expect(capture.getUserMedia).toHaveBeenCalledTimes(2);
+    expect(handle.result!.participants.find((p) => p.isLocal)!.streams).toHaveLength(1);
+  });
+
+  it('joining while revoked: the refused WHIP is final and the call is up as a viewer', async () => {
+    whipRefused = true;
+    const { handle, capture } = await joinedCall();
+    expect(whipPosts()).toHaveLength(1);
+    const r = handle.result!;
+    expect(r.publishRevoked).toBe(true);
+    expect(r.canPublish).toBe(false);
+    expect(r.error).toBeNull();
+    expect(r.isJoined).toBe(true);
+    expect(r.connectionState).toBe('connected');
+    expect(capture.issued.every((t) => t.stop.mock.calls.length > 0)).toBe(true);
+    await act(async () => { await new Promise((done) => setTimeout(done, 1_200)); await flush(); });
+    expect(whipPosts()).toHaveLength(1);
+  });
+
+  it('a publish refused again after a grant resolves false and stays a viewer', async () => {
+    const { handle, ws, capture } = await joinedCall();
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: PID });
+      await flush();
+      ws.triggerMessage({ type: 'participant.publish-granted', participantId: PID });
+      await flush();
+    });
+    whipRefused = true;
+    let started: boolean | undefined;
+    await act(async () => { started = await handle.result!.startPublishing!(); await flush(); });
+    expect(started).toBe(false);
+    expect(handle.result!.publishRevoked).toBe(true);
+    expect(handle.result!.error).toBeNull();
+    expect(capture.issued.every((t) => t.stop.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('a revocation while startPublishing is capturing resolves false and releases what it captured', async () => {
+    const { handle, ws, capture } = await joinedCall();
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: PID });
+      await flush();
+      ws.triggerMessage({ type: 'participant.publish-granted', participantId: PID });
+      await flush();
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((done) => { release = done; });
+    const real = capture.getUserMedia.getMockImplementation()!;
+    capture.getUserMedia.mockImplementationOnce(async () => { await gate; return real(); });
+    let pending!: Promise<boolean>;
+    act(() => { pending = handle.result!.startPublishing!(); });
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: PID });
+      await flush();
+      release();
+      await flush();
+    });
+    await expect(pending).resolves.toBe(false);
+    expect(whipPosts()).toHaveLength(1);
+    expect(capture.issued.every((t) => t.stop.mock.calls.length > 0)).toBe(true);
+    expect(handle.result!.publishRevoked).toBe(true);
+  });
+
+  it('a frame naming our user id (the token sub) is about us', async () => {
+    const { handle, ws } = await joinedCall({ token: claimsToken({ sub: 'user-me' }) });
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: 'other-tab-pid', userId: 'user-me' });
+      await flush();
+    });
+    expect(handle.result!.publishRevoked).toBe(true);
+  });
+
+  it('remote members carry their token attributes and their publishRevoked', async () => {
+    const { handle, ws } = await joinedCall();
+    await act(async () => {
+      ws.triggerMessage({ type: 'producer.added', participantId: REMOTE_PID, kind: 'video', userId: 'u-hank', displayName: 'Hank', attributes: { seat: 'guest', n: 3 } });
+      await flush();
+    });
+    await act(async () => { whepPcs()[0]!.emitTrack('video', 'hank-video', 'hank-stream'); await flush(); });
+    const hank = () => handle.result!.participants.find((p) => p.participantId === REMOTE_PID)!;
+    expect(hank().attributes).toEqual({ seat: 'guest' });
+    expect(hank().publishRevoked).toBe(false);
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-revoked', participantId: REMOTE_PID, userId: 'u-hank' });
+      await flush();
+    });
+    expect(hank().publishRevoked).toBe(true);
+    expect(handle.result!.publishRevoked).toBe(false);
+    // A frame naming only their user id (another of their identities).
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-granted', participantId: 'hank-token-pid', userId: 'u-hank' });
+      await flush();
+    });
+    expect(hank().publishRevoked).toBe(false);
+  });
+
+  it('a subscriber token joins as a viewer without capture until a grant', async () => {
+    const { handle, ws, capture } = await joinedCall({ token: claimsToken({ role: 'subscriber' }) });
+    expect(capture.getUserMedia).not.toHaveBeenCalled();
+    expect(whipPosts()).toHaveLength(0);
+    expect(handle.result!.canPublish).toBe(false);
+    expect(handle.result!.publishRevoked).toBe(false);
+    expect(handle.result!.isJoined).toBe(true);
+    await act(async () => {
+      ws.triggerMessage({ type: 'participant.publish-granted', participantId: PID });
+      await flush();
+    });
+    expect(handle.result!.canPublish).toBe(true);
+    expect(capture.getUserMedia).not.toHaveBeenCalled();
+  });
+});
+
+describe('useLVSHangout — final stage closes', () => {
+  it.each([
+    [4410, 'kicked'],
+    [4403, 'forbidden'],
+  ] as const)('close %i ends the session as %s: no reconnect, media released', async (code, outcome) => {
+    const { handle, ws, capture } = await joinedCall();
+    const sockets = wsInstances.length;
+    await act(async () => { ws.triggerClose(code, 'by host'); await flush(); });
+    await act(async () => { await new Promise((done) => setTimeout(done, 1_500)); await flush(); });
+    expect(wsInstances.length).toBe(sockets);
+    const r = handle.result!;
+    expect(r.terminated).toEqual({ outcome, code, reason: 'by host' });
+    expect(r.connectionState).toBe('failed');
+    expect(r.isJoined).toBe(false);
+    expect(r.error).toMatch(outcome === 'kicked' ? /removed/i : /refused/i);
+    expect(capture.issued.every((t) => t.stop.mock.calls.length > 0)).toBe(true);
+    expect(publisherPc()!.closed).toBe(true);
+  });
+
+  it('any other close still reconnects', async () => {
+    const { ws, handle } = await joinedCall();
+    const sockets = wsInstances.length;
+    await act(async () => { ws.triggerClose(1006); await new Promise((done) => setTimeout(done, 400)); await flush(); });
+    expect(wsInstances.length).toBe(sockets + 1);
+    expect(handle.result!.terminated).toBeNull();
   });
 });

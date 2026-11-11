@@ -19,6 +19,7 @@ const transport_1 = require("./lib/transport");
 const sdp_1 = require("./lib/sdp");
 const jwt_1 = require("./lib/jwt");
 const LVSProvider_1 = require("./LVSProvider");
+const publishPermission_1 = require("./publishPermission");
 const MEDIA_WATCHDOG_MS = 20000;
 const STATS_POLL_MS = 1000;
 const ICE_GATHER_TIMEOUT_MS = 3000;
@@ -123,6 +124,7 @@ function useLVSPublisher(opts) {
     const [stats, setStats] = (0, react_1.useState)(null);
     const [whipResource, setWhipResource] = (0, react_1.useState)(null);
     const [sfuNode, setSfuNode] = (0, react_1.useState)(null);
+    const [publishRevoked, setPublishRevoked] = (0, react_1.useState)(false);
     const stopStatsPolling = (0, react_1.useCallback)(() => {
         if (statsTimerRef.current != null) {
             clearInterval(statsTimerRef.current);
@@ -215,7 +217,7 @@ function useLVSPublisher(opts) {
             reconnectTimerRef.current = null;
         }
     }, []);
-    const stop = (0, react_1.useCallback)(async () => {
+    const stop = (0, react_1.useCallback)(async (stopOpts = {}) => {
         publishEpochRef.current += 1;
         streamOverrideRef.current = null;
         cancelReconnect();
@@ -238,7 +240,7 @@ function useLVSPublisher(opts) {
         teardownLocal();
         setPhase('idle');
         setError(null);
-        if (resource && token)
+        if (resource && token && stopOpts.notifyServer !== false)
             await (0, transport_1.whipTeardown)(resource, token).catch(() => { });
     }, [teardownLocal, cancelReconnect]);
     // Forward-declared via ref so scheduleReconnect (referenced by
@@ -446,12 +448,24 @@ function useLVSPublisher(opts) {
             // actually establishes. Stats polling starts immediately so the
             // first tick lands within ~1s of the answer.
             startStatsPolling();
+            setPublishRevoked(false);
         }
         catch (e) {
             const msg = errMessage(e);
             const ownsCurrent = ownedPc !== null && pcRef.current === ownedPc;
             const retireResource = valid() || !resourceAdopted || ownsCurrent;
-            if (valid()) {
+            if (valid() && (0, publishPermission_1.isPublishRevokedError)(e)) {
+                // LVS refuses every publish until a grant: state, not an error, and
+                // no retry. A reconnect that hit this ends here too.
+                resolved.log('publish refused: publishing is revoked for this participant', 'warn');
+                cancelReconnect();
+                reconnectAttemptsRef.current = { count: 0, windowStart: 0 };
+                teardownLocal();
+                setError(null);
+                setPhase('idle');
+                setPublishRevoked(true);
+            }
+            else if (valid()) {
                 resolved.log(`publish failed: ${msg}`, 'err');
                 setError(msg);
                 setPhase('error');
@@ -479,7 +493,7 @@ function useLVSPublisher(opts) {
         }
     }, [
         resolved, stream, channelArn, participantId,
-        startStatsPolling, teardownLocal, scheduleReconnect,
+        startStatsPolling, teardownLocal, scheduleReconnect, cancelReconnect,
     ]);
     // Keep startRef pointing at the latest start() so scheduleReconnect's
     // deferred setTimeout callback (which captured the OLD start identity)
@@ -644,6 +658,7 @@ function useLVSPublisher(opts) {
         stats,
         sfuNode,
         whipResource,
+        publishRevoked,
         start,
         stop,
         replaceStream,

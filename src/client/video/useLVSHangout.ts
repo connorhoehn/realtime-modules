@@ -29,11 +29,26 @@
 // the main subscriber is gone.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { decodeArn } from './lib/jwt';
-import { useLVSPublisher } from './useLVSPublisher';
+import { decodeArn, decodeJwt } from './lib/jwt';
+import { useLVSPublisher, type UseLVSPublisherResult } from './useLVSPublisher';
 import { whepPublish, whepTeardown, fetchIceConfig } from './lib/transport';
 import { useSafeLVSContext, type LVSConfig } from './LVSProvider';
 import { waitForIceGather } from './lib/sdp';
+import {
+  EMPTY_PUBLISH_STATE,
+  isPublishRevokedError,
+  parsePublishControlFrame,
+  reducePublishState,
+  stageTermination,
+  terminationMessage,
+  tokenAttributes,
+  type HangoutTermination,
+  type LVSAuthTokenRequest,
+  type LVSAuthTokenResolver,
+  type PublishControlFrame,
+  type PublishPermissionAction,
+  type PublishPermissionState,
+} from './publishPermission';
 
 /** Default capture constraints — 720p video + audio. Matches the IVS
  *  Stage-based useHangoutEmbed defaults so swap is visually identical. */
@@ -72,8 +87,15 @@ export interface UseLVSHangoutOptions {
   media?: MediaStreamConstraints;
   /** Override base URL (else read from LVSProvider). */
   baseUrl?: string;
-  /** Override token resolver. The default resolver returns `stageToken` itself. */
-  getAuthToken?: () => string | Promise<string>;
+  /**
+   * Override token resolver. The default resolver returns `stageToken` itself.
+   * Before the first publish after a publish grant it is called with
+   * `{ forceRefresh: true, reason: 'publish-granted' }` and must return a
+   * token minted after the grant (for a session participant, the result of
+   * the platform's refresh-token call), not a cached one. A rejection fails
+   * that publish (`startPublishing` rejects) and the next publish asks again.
+   */
+  getAuthToken?: LVSAuthTokenResolver;
 }
 
 export interface HangoutParticipant {
@@ -125,6 +147,14 @@ export interface HangoutParticipant {
    *  a media tile to a person without an app-level broadcast. Undefined
    *  until the SFU sends one (older SFUs never do). */
   appUserId?: string;
+  /** LVS revoked this participant's publishing: they stay in the call as a
+   *  viewer (view only). For the local participant, the same as the hook's
+   *  `publishRevoked`. */
+  publishRevoked?: boolean;
+  /** The participant token's attributes (string values): for remotes as LVS
+   *  sends them on their producers, for the local participant from the token.
+   *  Absent when there are none. */
+  attributes?: Record<string, string>;
 }
 
 /** Convenience alias — every entry in `participants` where `isLocal=false`
@@ -256,6 +286,35 @@ export interface UseLVSHangoutResult {
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => void;
   leave: () => void;
+  /**
+   * Whether the local participant may publish now: false while publishing is
+   * revoked, and for a subscriber token until a grant.
+   */
+  canPublish?: boolean;
+  /**
+   * LVS revoked the local participant's publishing. The call stays up as a
+   * viewer: camera, microphone and screen share were stopped and released,
+   * and nothing republishes. Device actions (setCameraEnabled,
+   * setMicrophoneEnabled, enableCamera, startScreenShare) do nothing while it
+   * holds. Joining while revoked joins as a viewer instead of failing.
+   */
+  publishRevoked?: boolean;
+  /** The host's reason for the revocation, or null. */
+  publishRevokedReason?: string | null;
+  /**
+   * Publish camera and microphone again — after a grant, or after joining as
+   * a viewer. A grant never publishes by itself; this is the one way back.
+   * Resolves true when publishing (or already publishing), false when there
+   * is no session or publishing is still revoked (LVS refusing it again
+   * included); rejects for capture or other publish failures.
+   */
+  startPublishing?: (opts?: { media?: MediaStreamConstraints }) => Promise<boolean>;
+  /**
+   * LVS ended the stage for this participant: kicked (close 4410) or refused
+   * (4403). Final — the hook does not reconnect, media is released,
+   * `connectionState` is `failed` and `error` says why. Null otherwise.
+   */
+  terminated?: HangoutTermination | null;
 }
 
 /** Recompute hasAudio/hasVideo flags by inspecting each stream's enabled
@@ -309,6 +368,48 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // parallel-WHEP effect uses ctx?.baseUrl as the fallback when opts.baseUrl
   // is unset.
   const ctx: LVSConfig | null = useSafeLVSContext();
+  // The token's own claims: its role (a subscriber token cannot publish until
+  // a grant), its user id and participant id (a publish-control frame naming
+  // either is about us), and its attributes.
+  const claims = useMemo(() => decodeJwt(stageToken), [stageToken]);
+  const tokenAttrs = useMemo(() => tokenAttributes(claims?.attributes), [claims]);
+  const selfIdentityRef = useRef({ participantId, tokenParticipantId: null as string | null, sub: null as string | null });
+  selfIdentityRef.current = {
+    participantId,
+    tokenParticipantId: typeof claims?.participantId === 'string' && claims.participantId ? claims.participantId : null,
+    sub: typeof claims?.sub === 'string' && claims.sub ? claims.sub : null,
+  };
+
+  // Publish permission (LVS publish control). The ref is the synchronous
+  // copy the callbacks read.
+  const [publishState, setPublishState] = useState<PublishPermissionState>(EMPTY_PUBLISH_STATE);
+  const publishStateRef = useRef(publishState);
+  const dispatchPublish = useCallback((action: PublishPermissionAction) => {
+    const next = reducePublishState(publishStateRef.current, action);
+    if (next === publishStateRef.current) return;
+    publishStateRef.current = next;
+    setPublishState(next);
+  }, []);
+  // In the call without publishing: revoked, a subscriber token, or granted
+  // back and not started yet. Cleared once a publish is live.
+  const [viewerMode, setViewerMode] = useState(false);
+  // The first publish after a local grant asks the token resolver for a
+  // fresh token (see `getAuthToken`).
+  const forceTokenRef = useRef(false);
+  // A final stage close (kicked / refused).
+  const [terminated, setTerminated] = useState<HangoutTermination | null>(null);
+  const terminatedRef = useRef<HangoutTermination | null>(null);
+  // Remote participants' publish permission, by participant id and by user id
+  // (a revocation covers every identity of the person). `seq` orders them so
+  // the latest frame about a person wins whichever key it named.
+  const publishSeqRef = useRef(0);
+  // Set further down; the discovery socket's handlers reach them through these.
+  const publishControlRef = useRef<(control: PublishControlFrame) => void>(() => undefined);
+  const terminateRef = useRef<(t: HangoutTermination) => void>(() => undefined);
+  const [remotePublish, setRemotePublish] = useState<{
+    byPid: Record<string, { revoked: boolean; seq: number }>;
+    byUser: Record<string, { revoked: boolean; seq: number }>;
+  }>({ byPid: {}, byUser: {} });
 
   // Local capture state. The publisher hook is headless (caller-owned
   // capture), so this layer owns getUserMedia + screen-share swap.
@@ -466,17 +567,25 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // dropped it. State (not a ref) so a name arriving on a later producer
   // re-renders the tile.
   const [remoteIdentities, setRemoteIdentities] = useState<
-    Record<string, { displayName?: string; userId?: string }>
+    Record<string, { displayName?: string; userId?: string; attributes?: Record<string, string> }>
   >({});
-  const noteRemoteIdentity = useCallback((rawPid: string, frame: { displayName?: unknown; userId?: unknown }) => {
+  const noteRemoteIdentity = useCallback((rawPid: string, frame: { displayName?: unknown; userId?: unknown; attributes?: unknown }) => {
     const base = rawPid.endsWith(':screen') ? rawPid.slice(0, -':screen'.length) : rawPid;
     const displayName = typeof frame.displayName === 'string' && frame.displayName.trim() ? frame.displayName.trim() : undefined;
     const uid = typeof frame.userId === 'string' && frame.userId ? frame.userId : undefined;
-    if (!displayName && !uid) return;
+    // The publisher's token attributes ride its producer frames.
+    const attributes = tokenAttributes(frame.attributes) ?? undefined;
+    if (!displayName && !uid && !attributes) return;
     setRemoteIdentities((prev) => {
       const cur = prev[base];
-      const next = { ...cur, ...(displayName ? { displayName } : {}), ...(uid ? { userId: uid } : {}) };
-      if (cur && cur.displayName === next.displayName && cur.userId === next.userId) return prev;
+      const next = {
+        ...cur,
+        ...(displayName ? { displayName } : {}),
+        ...(uid ? { userId: uid } : {}),
+        ...(attributes ? { attributes: { ...(cur?.attributes ?? {}), ...attributes } } : {}),
+      };
+      const sameAttributes = !attributes || Object.entries(attributes).every(([k, v]) => cur?.attributes?.[k] === v);
+      if (cur && cur.displayName === next.displayName && cur.userId === next.userId && sameAttributes) return prev;
       return { ...prev, [base]: next };
     });
   }, []);
@@ -541,11 +650,28 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   const customGetAuthRef = useRef(getAuthToken);
   customGetAuthRef.current = getAuthToken;
 
-  const resolveAuthToken = useCallback(async () => {
+  const requestAuthToken = useCallback(async (request?: LVSAuthTokenRequest) => {
     const custom = customGetAuthRef.current;
-    if (custom) return custom();
+    if (custom) return request ? custom(request) : custom();
     return stageTokenRef.current ?? '';
   }, []);
+  const resolveAuthToken = useCallback(() => requestAuthToken(), [requestAuthToken]);
+  // The publishers' resolver: the first WHIP after a local grant asks for a
+  // fresh token (LVS records the grant against the participant, so only a
+  // token minted after it carries the publisher role). A failed refresh fails
+  // that publish and leaves the request for the next one.
+  const publishAuthToken = useCallback(async () => {
+    if (forceTokenRef.current) {
+      forceTokenRef.current = false;
+      try {
+        return await requestAuthToken({ forceRefresh: true, reason: 'publish-granted' });
+      } catch (e) {
+        forceTokenRef.current = true;
+        throw e;
+      }
+    }
+    return requestAuthToken();
+  }, [requestAuthToken]);
 
   // Capture camera+mic when token+participantId become valid. Re-runs
   // only when those primary inputs change (not media constraints — that
@@ -559,6 +685,15 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     const epoch = ++captureEpochRef.current;
     setError(null);
     setCaptureError(null);
+    // A new session: what its token allows, nothing revoked yet, not ended.
+    const canPublishNow = claims?.role !== 'subscriber';
+    publishStateRef.current = reducePublishState(EMPTY_PUBLISH_STATE, { type: 'reset', canPublish: canPublishNow });
+    setPublishState(publishStateRef.current);
+    setViewerMode(!canPublishNow);
+    forceTokenRef.current = false;
+    terminatedRef.current = null;
+    setTerminated(null);
+    setRemotePublish({ byPid: {}, byUser: {} });
     const constraints = media ?? DEFAULT_MEDIA;
     setCaptureIntent({ channelArn, participantId, receiveOnly: !constraints.audio && !constraints.video });
 
@@ -573,7 +708,9 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     };
 
     setVideoUnavailable(null);
-    if (!constraints.audio && !constraints.video) {
+    // A subscriber token cannot publish until a grant: join as a viewer
+    // without opening the camera or microphone.
+    if (!canPublishNow || (!constraints.audio && !constraints.video)) {
       localStreamRef.current = null;
       cameraStreamRef.current = null;
       setLocalStream(null);
@@ -607,8 +744,10 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     participantId: participantId ?? undefined,
     autoStart: true,
     baseUrl,
-    getAuthToken: resolveAuthToken,
+    getAuthToken: publishAuthToken,
   });
+  const publisherRef = useRef<UseLVSPublisherResult>(publisher);
+  publisherRef.current = publisher;
   useEffect(() => {
     if (!opts.cameraEffects || !outgoingCamera || publisher.phase !== 'live') return;
     void publisher.replaceStream(outgoingCamera).catch(error => {
@@ -635,11 +774,10 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     participantId: screenParticipantId,
     autoStart: true,
     baseUrl,
-    getAuthToken: resolveAuthToken,
+    getAuthToken: publishAuthToken,
   });
-  // Silence "declared but never read" — the hook is consumed for its
-  // side effects (WHIP transport lifecycle), not its return value.
-  void screenPublisher;
+  const screenPublisherRef = useRef<UseLVSPublisherResult>(screenPublisher);
+  screenPublisherRef.current = screenPublisher;
 
   // Parallel WHEP for EVERY remote producer (camera + screen).
   //
@@ -1388,6 +1526,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
             return;
           }
 
+          // Publish control, ours or someone else's. LVS sends these to
+          // the affected participant's own socket too, so they are read
+          // before the self-filter below.
+          const control = parsePublishControlFrame(msg);
+          if (control) {
+            if (leftRef.current || ws !== socket) return;
+            publishControlRef.current(control);
+            return;
+          }
+
           const pid = msg?.participantId;
           if (typeof pid !== 'string') return;
           // Skip self — our own producers get echoed back here.
@@ -1493,8 +1641,16 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
           }
         } catch { /* malformed frame — ignore */ }
       });
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (ev) => {
         if (cancelled || ws !== socket) return;
+        // 4410 (kicked) and 4403 (refused) are final: LVS would refuse
+        // the re-subscribe, so end the session instead of reconnecting.
+        const closeEvent = ev as { code?: unknown; reason?: unknown } | undefined;
+        const final = stageTermination(closeEvent?.code, closeEvent?.reason);
+        if (final) {
+          terminateRef.current(final);
+          return;
+        }
         setDiscoveryReceipt(previous => previous?.channelArn === channelArn && previous.participantId === participantId ? { ...previous, joined: false } : previous);
         // Unexpected close — reconnect. We don't try to dedupe vs.
         // intentional close because cancelled-guard above covers that.
@@ -1672,6 +1828,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   }, []);
 
   const startScreenShare = useCallback(async () => {
+    // Nothing to share while LVS refuses this participant's publishing.
+    if (!publishStateRef.current.canPublish) return;
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const videoTrack = display.getVideoTracks()[0];
@@ -1743,6 +1901,9 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // lose a track. Denied permission is nonfatal and never tears down receiving.
   const setDeviceEnabled = useCallback(async (kind: 'audio' | 'video', on: boolean, constraints?: MediaTrackConstraints) => {
     const flight = kind === 'audio' ? microphoneToggleInFlightRef : cameraToggleInFlightRef;
+    // Revoked (or a subscriber before a grant): LVS would refuse the publish,
+    // so turning a device on does nothing. startPublishing() is the way back.
+    if (on && !publishStateRef.current.canPublish) return;
     if (flight.current) throw new Error('A device change is already in progress.');
     const existing = localStreamRef.current;
     const tracks = existing?.getTracks().filter(t => t.kind === kind) ?? [];
@@ -1884,6 +2045,156 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     }
   }, [publisher]);
 
+  // ---- publish control --------------------------------------------------
+  //
+  // Stop and release what this participant publishes after LVS revoked it:
+  // the camera and screen publishers (their transports are already closed
+  // server-side, so no WHIP DELETE) and the camera, microphone and screen
+  // tracks this hook captured. Bumping the capture epoch discards a capture
+  // or device change still in flight. Remote media is untouched: the call
+  // stays up as a viewer.
+  const releaseLocalPublish = useCallback(() => {
+    captureEpochRef.current += 1;
+    const screen = screenShareTrackRef.current;
+    if (screen) {
+      try { screen.stop(); } catch { /* ignore */ }
+      screenShareTrackRef.current = null;
+    }
+    setLocalScreenStream(null);
+    setIsScreenSharing(false);
+    void screenPublisherRef.current.stop({ notifyServer: false });
+    void publisherRef.current.stop({ notifyServer: false });
+    const s = localStreamRef.current;
+    if (s) {
+      s.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+    }
+    localStreamRef.current = null;
+    cameraStreamRef.current = null;
+    effectsRef.current?.detach();
+    setLocalStream(null);
+    setLocalFlagsTick((n) => n + 1);
+  }, []);
+
+  const onLocalRevoked = useCallback((reason: string | null) => {
+    dispatchPublish({ type: 'revoked', reason });
+    forceTokenRef.current = false;
+    setViewerMode(true);
+    releaseLocalPublish();
+  }, [dispatchPublish, releaseLocalPublish]);
+
+  publishControlRef.current = (control: PublishControlFrame) => {
+    const self = selfIdentityRef.current;
+    const base = control.participantId.endsWith(':screen')
+      ? control.participantId.slice(0, -':screen'.length)
+      : control.participantId;
+    const isSelf = (!!self.participantId && base === self.participantId)
+      || (!!self.tokenParticipantId && base === self.tokenParticipantId)
+      || (!!self.sub && control.userId === self.sub);
+    if (isSelf) {
+      if (control.revoked) {
+        onLocalRevoked(control.reason);
+      } else {
+        // A grant offers publishing; it never starts it. The next publish
+        // asks for a token minted after the grant.
+        dispatchPublish({ type: 'granted' });
+        forceTokenRef.current = true;
+      }
+      return;
+    }
+    const entry = { revoked: control.revoked, seq: ++publishSeqRef.current };
+    setRemotePublish((prev) => ({
+      byPid: { ...prev.byPid, [base]: entry },
+      byUser: control.userId ? { ...prev.byUser, [control.userId]: entry } : prev.byUser,
+    }));
+  };
+
+  // A publish LVS refused as revoked (joining while revoked, or a reconnect
+  // that raced the revocation): the same as being revoked, with no reason.
+  useEffect(() => {
+    if (!publisher.publishRevoked && !screenPublisher.publishRevoked) return;
+    if (leftRef.current) return;
+    onLocalRevoked(null);
+  }, [publisher.publishRevoked, screenPublisher.publishRevoked, onLocalRevoked]);
+
+  // A live publish ends viewer mode.
+  useEffect(() => {
+    if (publisher.phase === 'live') setViewerMode(false);
+  }, [publisher.phase]);
+
+  const startPublishingFlightRef = useRef<Promise<boolean> | null>(null);
+  const startPublishing = useCallback((startOpts: { media?: MediaStreamConstraints } = {}): Promise<boolean> => {
+    if (startPublishingFlightRef.current) return startPublishingFlightRef.current;
+    const flight = (async (): Promise<boolean> => {
+      if (leftRef.current || terminatedRef.current || !channelArn || !participantId) return false;
+      if (!publishStateRef.current.canPublish) return false;
+      const current = publisherRef.current;
+      const existing = localStreamRef.current;
+      if (existing && existing.getTracks().some((t) => t.readyState === 'live')
+        && (current.phase === 'live' || current.phase === 'connecting')) return true;
+      const epoch = captureEpochRef.current;
+      const valid = () => !leftRef.current && captureEpochRef.current === epoch
+        && captureIdentityRef.current.channelArn === channelArn && captureIdentityRef.current.participantId === participantId;
+      const configured = media && (media.audio || media.video) ? media : DEFAULT_MEDIA;
+      const outcome = await acquireLocalMedia(startOpts.media ?? configured);
+      if (!valid() || !publishStateRef.current.canPublish) {
+        outcome.stream?.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+        return false;
+      }
+      if (!outcome.stream) throw new Error(`getUserMedia failed: ${outcome.error ?? 'no camera or microphone was requested'}`);
+      const stream = outcome.stream;
+      const release = () => {
+        stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+        if (localStreamRef.current === stream) {
+          localStreamRef.current = null;
+          cameraStreamRef.current = null;
+          setLocalStream(null);
+        }
+      };
+      localStreamRef.current = stream;
+      cameraStreamRef.current = stream;
+      setLocalStream(stream);
+      setVideoUnavailable(outcome.videoUnavailable);
+      try {
+        await publisherRef.current.republish(processCamera(stream));
+      } catch (e) {
+        release();
+        if (isPublishRevokedError(e)) {
+          onLocalRevoked(null);
+          return false;
+        }
+        // Revoked, left or re-keyed while publishing: that cancelled it.
+        if (!valid() || !publishStateRef.current.canPublish) return false;
+        // Leave the publisher idle (not 'error'): the call itself is fine.
+        await publisherRef.current.stop();
+        throw e;
+      }
+      if (!valid()) {
+        release();
+        return false;
+      }
+      setCaptureError(null);
+      setViewerMode(false);
+      setLocalFlagsTick((n) => n + 1);
+      return true;
+    })();
+    startPublishingFlightRef.current = flight;
+    const clear = () => { if (startPublishingFlightRef.current === flight) startPublishingFlightRef.current = null; };
+    flight.then(clear, clear);
+    return flight;
+  }, [channelArn, participantId, media, processCamera, onLocalRevoked]);
+
+  // LVS ended the stage for us (kicked / refused): final. Leave the call's
+  // media and say why; nothing reconnects.
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  terminateRef.current = (t: HangoutTermination) => {
+    if (terminatedRef.current) return;
+    terminatedRef.current = t;
+    setTerminated(t);
+    setError(terminationMessage(t));
+    leaveRef.current();
+  };
+
   // Unmount cleanup: same as leave(), but the publisher hook also runs
   // its own teardown — so we only release local tracks here to avoid
   // double-stopping the WHIP resources. The discovery WS effect handles
@@ -1932,6 +2243,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         screenStream: localScreenStream ?? undefined,
         hasAudio: flags.hasAudio,
         hasVideo: flags.hasVideo,
+        publishRevoked: publishState.publishRevoked,
+        ...(tokenAttrs ? { attributes: tokenAttrs } : {}),
       });
     }
 
@@ -1959,6 +2272,10 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       const subscriberMs = Math.max(0, nowTick - firstSeenAt);
       // The SFU's name for this pid (from the stage token), else the pid.
       const identity = remoteIdentities[pid];
+      // The latest publish-control frame about them, by pid or user id.
+      const byPid = remotePublish.byPid[pid];
+      const byUser = identity?.userId ? remotePublish.byUser[identity.userId] : undefined;
+      const control = byPid && byUser ? (byPid.seq > byUser.seq ? byPid : byUser) : byPid ?? byUser;
       list.push({
         participantId: pid,
         displayName: identity?.displayName ?? pid,
@@ -1973,6 +2290,8 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         hasVideo: flags.hasVideo,
         firstSeenAt,
         subscriberMs,
+        publishRevoked: control?.revoked ?? false,
+        ...(identity?.attributes ? { attributes: identity.attributes } : {}),
       });
     }
 
@@ -1981,7 +2300,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     // flag changes / screen-share toggles recompute. nowTick drives the
     // ghost-producer subscriberMs recomputation every 1s.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantId, userId, remoteParticipants, remoteIdentities, outgoingCamera, localScreenStream, localFlagsTick, nowTick]);
+  }, [participantId, userId, remoteParticipants, remoteIdentities, remotePublish, publishState.publishRevoked, tokenAttrs, outgoingCamera, localScreenStream, localFlagsTick, nowTick]);
 
   // isJoined: a both-off receiver joins only after authenticated discovery ack.
   // Otherwise publisher live is the primary signal — we've successfully
@@ -1990,7 +2309,11 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // on them. This matches the legacy useHangoutEmbed UX where the UI
   // mounts as soon as Stage joined, regardless of who was already there.
   const receiveOnly = !!channelArn && !!participantId && (receiveOnlyReady || !!localStream && localStream.getTracks().length === 0) && !localStream?.getTracks().length;
-  const isJoined = publisher.phase === 'live' || (receiveOnly && discoveryJoined);
+  // In the call without publishing (revoked, a subscriber token, granted and
+  // not started): joined once the stage socket acks, like a receive-only call.
+  const viewing = !!channelArn && !!participantId && (publishState.publishRevoked || viewerMode) && publisher.phase !== 'live';
+  const listening = receiveOnly || viewing;
+  const isJoined = !terminated && (publisher.phase === 'live' || (listening && discoveryJoined));
 
   // Aggregate transport health. Order of precedence (worst → best):
   //   1. publisher.phase='error' → 'failed' (retry budget exhausted)
@@ -2002,7 +2325,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
   // whepHealthTick is in deps so the memo re-evaluates whenever a WHEP
   // PC's connectionState changes.
   const connectionState = useMemo<HangoutConnectionState>(() => {
-    if (publisher.phase === 'error') return 'failed';
+    if (terminated || publisher.phase === 'error') return 'failed';
     let anyWhepUnhealthy = false;
     for (const s of whepConnStatesRef.current.values()) {
       if (s === 'disconnected' || s === 'failed') {
@@ -2010,14 +2333,14 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         break;
       }
     }
-    if (publisher.phase === 'reconnecting' || anyWhepUnhealthy || (receiveOnly && discoverySeenBefore && !discoveryJoined)) return 'reconnecting';
-    if (publisher.phase === 'live' || (receiveOnly && discoveryJoined)) return 'connected';
-    if (publisher.phase === 'connecting' || (receiveOnly && channelArn && !leftRef.current)) return 'connecting';
+    if (publisher.phase === 'reconnecting' || anyWhepUnhealthy || (listening && discoverySeenBefore && !discoveryJoined)) return 'reconnecting';
+    if (publisher.phase === 'live' || (listening && discoveryJoined)) return 'connected';
+    if (publisher.phase === 'connecting' || (listening && channelArn && !leftRef.current)) return 'connecting';
     return 'idle';
     // whepHealthTick is the re-render trigger; the ref read above
     // captures the latest map values when it does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [publisher.phase, whepHealthTick, receiveOnly, discoveryJoined, discoverySeenBefore, channelArn]);
+  }, [publisher.phase, whepHealthTick, listening, discoveryJoined, discoverySeenBefore, channelArn, terminated]);
 
   // Camera state: did the local participant actually publish a live
   // video track? Drives the in-call "Turn on camera" button visibility.
@@ -2069,5 +2392,10 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     startScreenShare,
     stopScreenShare,
     leave,
+    canPublish: publishState.canPublish && !publishState.publishRevoked,
+    publishRevoked: publishState.publishRevoked,
+    publishRevokedReason: publishState.reason,
+    startPublishing,
+    terminated,
   };
 }

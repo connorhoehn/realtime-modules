@@ -71,6 +71,10 @@ function conversationCallDockProps(s, ui) {
     const otherSpeaker = activeSpeaker && activeSpeaker !== local?.id ? activeSpeaker : null;
     const { prefs, set, list } = s.devices;
     const timed = phase === 'active' || phase === 'reconnecting';
+    // LVS refuses your publishing: the controls say why instead of doing nothing.
+    const publishBlocked = s.publishRevoked === true
+        ? 'The host made you view-only'
+        : s.canPublish === false ? 'You joined as a viewer' : null;
     return {
         title: ui.title,
         participantCount: s.call?.participantCount ?? inCall.length,
@@ -88,6 +92,7 @@ function conversationCallDockProps(s, ui) {
             // Saved for the next join; a live microphone swap is the host's call.
             onSelectDevice: (id) => set({ ...prefs, microphoneId: id }),
             permission: list.permission.microphone,
+            ...(publishBlocked ? { disabledReason: publishBlocked } : {}),
         },
         camera: {
             on: s.self.cameraOn,
@@ -97,10 +102,12 @@ function conversationCallDockProps(s, ui) {
             onSelectDevice: (id) => set({ ...prefs, cameraId: id }),
             permission: list.permission.camera,
             ...(ui.cameraMenuItems && ui.cameraMenuItems.length > 0 ? { extraItems: ui.cameraMenuItems } : {}),
+            ...(publishBlocked ? { disabledReason: publishBlocked } : {}),
         },
         screenShare: {
             on: s.self.screenSharing,
-            ...(remoteSharer && !s.self.screenSharing ? { disabledReason: `${remoteSharer.displayName} is sharing` } : {}),
+            ...(publishBlocked && !s.self.screenSharing ? { disabledReason: publishBlocked }
+                : remoteSharer && !s.self.screenSharing ? { disabledReason: `${remoteSharer.displayName} is sharing` } : {}),
             onToggle: s.toggleScreenShare,
         },
         onOpenPeople: ui.onOpenPeople,
