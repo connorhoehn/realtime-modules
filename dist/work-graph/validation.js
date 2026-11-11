@@ -19,8 +19,10 @@ const sourceKinds = new Set([
     'cloud-compute', 'local-compute', 'document', 'pipeline', 'conversation', 'meeting',
 ]);
 const nodeKinds = new Set([
-    'project', 'terminal', 'agent', 'run', 'document', 'change', 'conversation', 'meeting', 'transcript', 'task',
+    'project', 'terminal', 'agent', 'run', 'document', 'change', 'conversation', 'meeting', 'transcript', 'task', 'subject',
 ]);
+/** 0.147: a host's label for a `subject` node. */
+const SUBJECT_KIND = /^[a-z][a-z0-9-]{0,63}$/;
 const relations = new Set([
     'works-on', 'runs-in', 'operates-on', 'produced', 'edited', 'attended', 'discussed', 'derived-from',
 ]);
@@ -88,6 +90,15 @@ function isCalendarDate(value) {
     const [year, month, day] = value.split('-').map(Number);
     const date = new Date(Date.UTC(year, month - 1, day));
     return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+/**
+ * A person-day scope has a calendar day and an IANA zone; a subject scope
+ * (0.147) has neither (`''`) and repeats its subject in `personId`.
+ */
+function isScopeWindow(scope) {
+    if (scope.subject === undefined)
+        return isCalendarDate(scope.day) && isTimezone(scope.timezone);
+    return isId(scope.subject) && scope.personId === scope.subject && scope.day === '' && scope.timezone === '';
 }
 function isTimezone(value) {
     if (typeof value !== 'string' || value.length === 0 || value.length > contracts_1.WORK_GRAPH_LIMITS.timezoneLength)
@@ -186,8 +197,12 @@ function isEventPayload(value, source) {
     }
 }
 function isViewerNode(value) {
-    return hasExactKeys(value, ['id', 'kind', 'title', 'status', 'disclosure', 'updatedAt', 'capabilities'], ['description', 'startedAt', 'endedAt', 'locked'])
+    return hasExactKeys(value, ['id', 'kind', 'title', 'status', 'disclosure', 'updatedAt', 'capabilities'], ['description', 'startedAt', 'endedAt', 'locked', 'subjectKind'])
         && isId(value.id) && nodeKinds.has(value.kind)
+        // A subject node says what it is; no other kind carries the label.
+        && (value.kind === 'subject'
+            ? typeof value.subjectKind === 'string' && SUBJECT_KIND.test(value.subjectKind)
+            : value.subjectKind === undefined)
         && stringWithin(value.title, contracts_1.WORK_GRAPH_LIMITS.labelLength)
         && (value.description === undefined || stringWithin(value.description, contracts_1.WORK_GRAPH_LIMITS.descriptionLength))
         && statuses.has(value.status) && disclosures.has(value.disclosure)
@@ -288,8 +303,8 @@ function validateWorkGraphSnapshot(value) {
     let valid = hasExactKeys(value, ['schemaVersion', 'scope', 'revision', 'watermark', 'cursor', 'nodes', 'edges', 'sources', 'partial'], ['nextPageCursor'])
         && isSchemaVersion(value.schemaVersion) && isNonNegativeInteger(value.revision) && isNonNegativeInteger(value.watermark)
         && isCursor(value.cursor) && typeof value.partial === 'boolean'
-        && hasExactKeys(value.scope, ['personId', 'day', 'timezone', 'policyRevision'])
-        && isId(value.scope.personId) && isCalendarDate(value.scope.day) && isTimezone(value.scope.timezone) && isId(value.scope.policyRevision)
+        && hasExactKeys(value.scope, ['personId', 'day', 'timezone', 'policyRevision'], ['subject'])
+        && isId(value.scope.personId) && isScopeWindow(value.scope) && isId(value.scope.policyRevision)
         && (value.nextPageCursor === undefined || isCursor(value.nextPageCursor))
         && Array.isArray(value.nodes) && value.nodes.length <= contracts_1.WORK_GRAPH_LIMITS.snapshotNodes && value.nodes.every(isViewerNode)
         && Array.isArray(value.edges) && value.edges.length <= contracts_1.WORK_GRAPH_LIMITS.snapshotEdges && value.edges.every(isViewerEdge)

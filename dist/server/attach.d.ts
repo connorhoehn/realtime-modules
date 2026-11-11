@@ -157,7 +157,8 @@ export declare function rooms(opts?: {
     metrics?: import('../room/types').RoomMetricsHooks;
 }): RealtimeFeature;
 export declare function notifications(opts?: {
-    store?: import('../notification/RedisNotificationStore').RedisNotificationStore;
+    /** Any `NotificationStore` (0.147): `RedisNotificationStore`, `InMemoryNotificationStore`, or your own. */
+    store?: import('../notification/NotificationStore').NotificationStore;
     redisClient?: import('../notification/RedisNotificationStore').NotificationRedisClient | null;
     authorize?: import('../notification/NotificationService').NotificationServiceOpts['authorize'];
     /** 0.118: fresh per-delivery read admission (see NotificationServiceOpts.admit). */

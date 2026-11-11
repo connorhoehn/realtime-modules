@@ -38,7 +38,13 @@ export type IsoTimestamp = string;
 export type CalendarDate = string;
 export type IanaTimezone = string;
 export type WorkSourceKind = 'cloud-compute' | 'local-compute' | 'document' | 'pipeline' | 'conversation' | 'meeting';
-export type WorkNodeKind = 'project' | 'terminal' | 'agent' | 'run' | 'document' | 'change' | 'conversation' | 'meeting' | 'transcript' | 'task';
+export type WorkNodeKind = 'project' | 'terminal' | 'agent' | 'run' | 'document' | 'change' | 'conversation' | 'meeting' | 'transcript' | 'task'
+/**
+ * 0.147: a long-lived thing the work is about — a character, a location, an
+ * episode — rather than work itself. The host names what it is in
+ * `ViewerWorkNode.subjectKind`, so a character is never drawn as a `task`.
+ */
+ | 'subject';
 export type WorkRelation = 'works-on' | 'runs-in' | 'operates-on' | 'produced' | 'edited' | 'attended' | 'discussed' | 'derived-from';
 /** Work state and sharing freshness are intentionally independent. */
 export type WorkStatus = 'idle' | 'running' | 'waiting' | 'completed' | 'error' | 'stopped' | 'stale';
@@ -282,6 +288,12 @@ export interface WorkHistoryGrant extends Omit<WorkSharingGrant, 'historyGrantId
 export interface ViewerWorkNode {
     id: OpaqueWorkId;
     kind: WorkNodeKind;
+    /**
+     * 0.147: the host's label for a `subject` node (`character`, `location`,
+     * `episode`, …; lowercase, digits and `-`, at most 64). Required on a
+     * `subject` node and absent on every other kind.
+     */
+    subjectKind?: string;
     title: string;
     description?: string;
     status: WorkStatus;
@@ -311,6 +323,15 @@ export interface WorkSourceStatus {
     checkedAt: IsoTimestamp;
     message?: string;
 }
+/**
+ * A person-day (`personId` + `day` + `timezone`) or, since 0.147, a SUBJECT:
+ * a graph about one thing (`show:<id>`, `initiative:<id>`) with no day
+ * window. A subject scope sets `subject`, repeats it in `personId` (so every
+ * keyed path — channel mapping, cursors, reader state — stays keyed by one
+ * field) and carries `WORK_GRAPH_NO_DAY` (`''`) in `day` and `timezone`.
+ * Build one with `workGraphSubjectScope(subject)`; test with
+ * `isWorkGraphSubjectScope`. Validators enforce exactly that shape.
+ */
 export interface WorkGraphQueryScope {
     organizationId: string;
     viewerId: string;
@@ -318,7 +339,22 @@ export interface WorkGraphQueryScope {
     day: CalendarDate;
     timezone: IanaTimezone;
     policyRevision: string;
+    /** 0.147: the subject this scope reads, when it is not a person-day. */
+    subject?: string;
 }
+/** `day` and `timezone` of a subject scope: it has no day window. */
+export declare const WORK_GRAPH_NO_DAY: "";
+/** The scope fields that say what a graph reads (person-day or subject). */
+export interface WorkGraphScopeKey {
+    personId: string;
+    day: string;
+    timezone: string;
+    subject?: string;
+}
+/** The person-day fields of a subject scope: `{ personId: subject, subject, day: '', timezone: '' }`. */
+export declare function workGraphSubjectScope(subject: string): Required<WorkGraphScopeKey>;
+/** True when `scope` names a subject (and is shaped as one: no day window, `personId === subject`). */
+export declare function isWorkGraphSubjectScope(scope: Partial<WorkGraphScopeKey> | null | undefined): scope is Required<WorkGraphScopeKey>;
 /** Opaque encoded cursors carry these server-verified claims. */
 export interface WorkGraphCursorClaims extends WorkGraphQueryScope {
     schemaVersion: WorkGraphSchemaVersion;

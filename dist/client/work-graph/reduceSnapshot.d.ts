@@ -9,6 +9,8 @@ export interface ClientWorkGraphScope {
     personId: string;
     day: string;
     timezone: string;
+    /** 0.147: a subject scope (`personId` repeats it, `day`/`timezone` are `''`). */
+    subject?: string;
 }
 export interface ClientWorkGraphState {
     scope: ClientWorkGraphScope;

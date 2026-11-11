@@ -75,7 +75,15 @@ export interface NotificationBulkUpdateFrame {
         notifications: NotificationRecord[];
     };
 }
-export type NotificationFrame = NotificationNewFrame | NotificationReadFrame | NotificationBulkUpdateFrame;
+/** 0.147: the notification was answered; every tab drops it (`NotificationService.resolve`). */
+export interface NotificationResolvedFrame {
+    type: 'notification:resolved';
+    service: 'notification';
+    payload: {
+        id: string;
+    };
+}
+export type NotificationFrame = NotificationNewFrame | NotificationReadFrame | NotificationBulkUpdateFrame | NotificationResolvedFrame;
 /**
  * The slice of MessageRouter the notification service needs. Mirrors the
  * seam CallService uses: resolve a user's connected clientIds, then send to

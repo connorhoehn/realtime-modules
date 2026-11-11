@@ -107,13 +107,22 @@ function buildWorkGraphSnapshotV2(input) {
 /**
  * Buckets observation instants across the query's real local day. Bounds come
  * from the IANA calendar day, so a DST transition shortens or lengthens the
- * day instead of silently dropping or duplicating an hour.
+ * day instead of silently dropping or duplicating an hour. A subject query
+ * (0.147) has no day: pass its window and the buckets are bounded by it.
  */
 function bucketWorkEvents(query, observations, options = {}) {
     const bucketMs = options.bucketMs ?? 60_000;
     if (!Number.isSafeInteger(bucketMs) || bucketMs <= 0)
         throw new RangeError('bucketMs must be a positive integer');
-    const day = (0, dayWindow_1.workDayWindow)(query.day, query.timezone);
+    let day;
+    if (query.subject !== undefined) {
+        if (typeof query.windowStart !== 'string' || typeof query.windowEnd !== 'string')
+            throw new RangeError('a subject query buckets across its window: windowStart and windowEnd are required');
+        day = { start: query.windowStart, end: query.windowEnd };
+    }
+    else {
+        day = (0, dayWindow_1.workDayWindow)(query.day, query.timezone);
+    }
     const start = Date.parse(day.start);
     const end = Date.parse(day.end);
     const ceiling = options.observedAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(options.observedAt);

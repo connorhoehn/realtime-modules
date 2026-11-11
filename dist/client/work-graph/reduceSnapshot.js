@@ -16,7 +16,8 @@ function createClientWorkGraphState(scope, subscriptionGeneration) {
     };
 }
 function sameScope(left, right) {
-    return left.personId === right.personId && left.day === right.day && left.timezone === right.timezone;
+    return left.personId === right.personId && left.day === right.day && left.timezone === right.timezone
+        && left.subject === right.subject;
 }
 /** Apply an HTTP snapshot only to the request generation and scope that started it. */
 function applyWorkGraphSnapshot(state, snapshot, request) {
