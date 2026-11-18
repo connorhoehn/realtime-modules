@@ -98,6 +98,12 @@ export interface UseConversationCallOptions {
   recordingProfile?: 'hangout' | 'broadcast' | 'dm' | 'none';
   /** Opt in when platform-api supports verified participant-to-call recording bindings. */
   bindRecordingCall?: boolean;
+  /**
+   * While platform-api says the recording decision is still open
+   * (`recording.pending`, e.g. an interview whose candidate has not answered
+   * consent yet), how often to look again (ms). Default 10000.
+   */
+  recordingRecheckMs?: number;
   /** Untrusted source hint for document lobbies. Native authority validates the
    * source and canonical lobby before acknowledging its durable association. */
   documentSourceId?: string;
@@ -136,8 +142,11 @@ export interface ConversationCallResult {
    * Whether the media session this client sits in records (platform-api's
    * decision when the session was found or created; 0.137.0). Null outside a
    * call or before the session answers. A consent notice keys on `sessionId`.
+   * `pending: true` while the decision may still change mid-call; the hook
+   * then reads it again (GET /api/video/sessions/:id/recording) until it is
+   * settled, so a recording that starts mid-call turns the notice on.
    */
-  recording?: { enabled: boolean; reason: string | null; sessionId: string } | null;
+  recording?: { enabled: boolean; reason: string | null; sessionId: string; pending?: true } | null;
   recordingBinding?: { status: 'disabled' | 'pending' | 'bound' | 'unavailable'; callId?: string; error?: string;
     documentContext?: { tenant: 'assessment'; sourceId: string; lobbyName: string } };
   /** The call you are in — or, while idle, a live call in this lobby you could join (`rejoin()`). */
@@ -213,8 +222,17 @@ interface ActiveCall {
   media: MediaStreamConstraints;
   /** The lobby `sessionId` belongs to: `lobbyName`, or a breakout's (0.134.0). */
   mediaLobby: string;
-  /** platform-api's recording decision for `sessionId` (0.137.0). */
-  recording?: { enabled: boolean; reason: string | null } | null;
+  /** platform-api's recording decision for `sessionId` (0.137.0); `pending` while it may still change. */
+  recording?: RecordingState | null;
+}
+
+type RecordingState = { enabled: boolean; reason: string | null; pending?: true };
+
+/** platform-api's `recording` (or `decision`) object as the hook keeps it; null when absent. */
+function recordingStateOf(raw: unknown): RecordingState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const d = raw as { enabled?: unknown; reason?: unknown; pending?: unknown };
+  return { enabled: d.enabled === true, reason: typeof d.reason === 'string' ? d.reason : null, ...(d.pending === true ? { pending: true as const } : {}) };
 }
 
 interface RosterEntry {
@@ -544,9 +562,7 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       const sessionId = str(created.sessionId);
       if (!sessionId) throw new Error('No session id from the server');
       if (activeRef.current?.callId !== a.callId) return false; // hung up meanwhile
-      const decided = created.recording && typeof created.recording === 'object'
-        ? created.recording as { enabled?: unknown; reason?: unknown } : null;
-      const recordingState = decided ? { enabled: decided.enabled === true, reason: typeof decided.reason === 'string' ? decided.reason : null } : null;
+      const recordingState = recordingStateOf(created.recording);
       setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId, recording: recordingState } : cur));
       const gatewayClientId = str(gwRef.current?.clientId);
       const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
@@ -719,6 +735,42 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
       ...(reason ? { reason } : {}),
     });
   }, [send, setIncoming]);
+
+  // ---- a recording decision still open -------------------------------------------
+  // platform-api answers `recording.pending` while the session's decision may
+  // still change mid-call (an interview started before the candidate answered
+  // consent). Look again until it settles, so a recording that starts later
+  // turns the consent notice on for everyone already in the call. A refusal
+  // (e.g. a guest, who may not read this route) ends the looking.
+  const pendingRecordingSession = active?.recording?.pending === true && active.sessionId ? active.sessionId : null;
+  useEffect(() => {
+    if (!pendingRecordingSession) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const every = Math.max(1000, optsRef.current.recordingRecheckMs ?? 10_000);
+    const look = async () => {
+      timer = null;
+      const f = fetchRef.current;
+      const a = activeRef.current;
+      if (!f || !a || a.sessionId !== pendingRecordingSession) return;
+      const lobby = a.mediaLobby || optsRef.current.lobbyName;
+      try {
+        const headers = await authHeaders();
+        const res = await f(`${optsRef.current.platformApi.baseUrl.replace(/\/$/, '')}/api/video/sessions/${encodeURIComponent(pendingRecordingSession)}/recording?lobbyName=${encodeURIComponent(lobby)}`,
+          { method: 'GET', headers });
+        if (stopped) return;
+        if (!res.ok) return;
+        const next = recordingStateOf(((await res.json().catch(() => ({}))) as { decision?: unknown }).decision);
+        if (stopped || !next) return;
+        setActive((cur) => (cur && cur.sessionId === pendingRecordingSession ? { ...cur, recording: next } : cur));
+        if (next.pending) timer = setTimeout(() => { void look(); }, every);
+      } catch {
+        if (!stopped) timer = setTimeout(() => { void look(); }, every);
+      }
+    };
+    timer = setTimeout(() => { void look(); }, every);
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [pendingRecordingSession, authHeaders, setActive]);
 
   // ---- media-lobby moves (0.134.0, lane L1) -------------------------------------
   // The call stays; only the media changes lobby. One loop at a time: it reads

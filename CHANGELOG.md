@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **`useConversationCall` follows a recording decision that is still open.** platform-api now answers `recording.pending: true` while a session's decision may change mid-call (an interview started before the candidate answered consent). The hook keeps `pending` on `recording` and, while it is set, reads `GET /api/video/sessions/:id/recording` every `recordingRecheckMs` (default 10000) and takes its `decision`, so a recording platform-api starts mid-call turns the consent notice on for everyone already in the call. A refusal (a guest may not read that route) ends the looking; a settled decision is never looked at again. Additive: a server that never says `pending` behaves exactly as before.
 - **`useLVSHangout` keeps a remote participant id that holds a colon whole.** Remote media was keyed by `fullPid.split(':')[0]`, so an interview guest's media id (`guest:<inviteId>-<stamp>`) became `guest`: two guests shared one entry and the tile lost its name and app user id. The hook now strips only the known `:screen` suffix (`basePidOf`, `src/client/video/lib/basePid.ts`), so a guest keeps its own tile and its screen share joins it. Hank's `hank` and `hank:screen` behave as before.
 
 ## 0.150.0 — 2026-11-19
