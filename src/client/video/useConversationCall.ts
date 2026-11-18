@@ -143,8 +143,8 @@ export interface ConversationCallResult {
    * decision when the session was found or created; 0.137.0). Null outside a
    * call or before the session answers. A consent notice keys on `sessionId`.
    * `pending: true` while the decision may still change mid-call; the hook
-   * then reads it again (GET /api/video/sessions/:id/recording) until it is
-   * settled, so a recording that starts mid-call turns the notice on.
+   * then reads it again (POST /api/video/sessions/:id/recording-state) until
+   * it is settled, so a recording that starts mid-call turns the notice on.
    */
   recording?: { enabled: boolean; reason: string | null; sessionId: string; pending?: true } | null;
   recordingBinding?: { status: 'disabled' | 'pending' | 'bound' | 'unavailable'; callId?: string; error?: string;
@@ -739,38 +739,41 @@ export function useConversationCall(opts: UseConversationCallOptions): Conversat
   // ---- a recording decision still open -------------------------------------------
   // platform-api answers `recording.pending` while the session's decision may
   // still change mid-call (an interview started before the candidate answered
-  // consent). Look again until it settles, so a recording that starts later
-  // turns the consent notice on for everyone already in the call. A refusal
-  // (e.g. a guest, who may not read this route) ends the looking.
+  // consent). Look again (POST /api/video/sessions/:id/recording-state, which
+  // an interview guest may read for its own call) until it settles, so a
+  // recording that starts later turns the consent notice on for everyone in
+  // the call. 401/403/404 end the looking (no access, or the session is gone);
+  // any other failure backs off and tries again.
   const pendingRecordingSession = active?.recording?.pending === true && active.sessionId ? active.sessionId : null;
   useEffect(() => {
     if (!pendingRecordingSession) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const every = Math.max(1000, optsRef.current.recordingRecheckMs ?? 10_000);
+    let wait = every;
+    const later = () => { if (!stopped) timer = setTimeout(() => { void look(); }, wait); };
     const look = async () => {
       timer = null;
-      const f = fetchRef.current;
       const a = activeRef.current;
-      if (!f || !a || a.sessionId !== pendingRecordingSession) return;
-      const lobby = a.mediaLobby || optsRef.current.lobbyName;
+      if (!a || a.sessionId !== pendingRecordingSession) return;
       try {
-        const headers = await authHeaders();
-        const res = await f(`${optsRef.current.platformApi.baseUrl.replace(/\/$/, '')}/api/video/sessions/${encodeURIComponent(pendingRecordingSession)}/recording?lobbyName=${encodeURIComponent(lobby)}`,
-          { method: 'GET', headers });
+        const body = await api(`/api/video/sessions/${encodeURIComponent(pendingRecordingSession)}/recording-state`,
+          { lobbyName: a.mediaLobby || optsRef.current.lobbyName });
         if (stopped) return;
-        if (!res.ok) return;
-        const next = recordingStateOf(((await res.json().catch(() => ({}))) as { decision?: unknown }).decision);
-        if (stopped || !next) return;
-        setActive((cur) => (cur && cur.sessionId === pendingRecordingSession ? { ...cur, recording: next } : cur));
-        if (next.pending) timer = setTimeout(() => { void look(); }, every);
-      } catch {
-        if (!stopped) timer = setTimeout(() => { void look(); }, every);
+        const next = recordingStateOf(body.recording);
+        wait = every;
+        if (next) setActive((cur) => (cur && cur.sessionId === pendingRecordingSession ? { ...cur, recording: next } : cur));
+        if (!next || next.pending) later();
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        if (stopped || status === 401 || status === 403 || status === 404) return;
+        wait = Math.min(wait * 2, 60_000);
+        later();
       }
     };
-    timer = setTimeout(() => { void look(); }, every);
+    later();
     return () => { stopped = true; if (timer) clearTimeout(timer); };
-  }, [pendingRecordingSession, authHeaders, setActive]);
+  }, [pendingRecordingSession, api, setActive]);
 
   // ---- media-lobby moves (0.134.0, lane L1) -------------------------------------
   // The call stays; only the media changes lobby. One loop at a time: it reads

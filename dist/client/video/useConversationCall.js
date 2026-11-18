@@ -41,6 +41,13 @@ const useDevicePreferences_1 = require("./useDevicePreferences");
 const useIncomingConversationCalls_1 = require("./useIncomingConversationCalls");
 const conversationLobby_1 = require("./conversationLobby");
 const useLobbyCall_1 = require("./useLobbyCall");
+/** platform-api's `recording` (or `decision`) object as the hook keeps it; null when absent. */
+function recordingStateOf(raw) {
+    if (!raw || typeof raw !== 'object')
+        return null;
+    const d = raw;
+    return { enabled: d.enabled === true, reason: typeof d.reason === 'string' ? d.reason : null, ...(d.pending === true ? { pending: true } : {}) };
+}
 const str = (v) => (typeof v === 'string' && v ? v : undefined);
 const mintCallId = () => `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 /** "Alice", "Alice & Bob", "Alice, Bob & 2 others". */
@@ -375,9 +382,7 @@ function useConversationCall(opts) {
                 throw new Error('No session id from the server');
             if (activeRef.current?.callId !== a.callId)
                 return false; // hung up meanwhile
-            const decided = created.recording && typeof created.recording === 'object'
-                ? created.recording : null;
-            const recordingState = decided ? { enabled: decided.enabled === true, reason: typeof decided.reason === 'string' ? decided.reason : null } : null;
+            const recordingState = recordingStateOf(created.recording);
             setActive((cur) => (cur && cur.callId === a.callId ? { ...cur, sessionId, recording: recordingState } : cur));
             const gatewayClientId = str(gwRef.current?.clientId);
             const joined = await api(`/api/video/sessions/${encodeURIComponent(sessionId)}/join`, {
@@ -560,6 +565,52 @@ function useConversationCall(opts) {
             ...(reason ? { reason } : {}),
         });
     }, [send, setIncoming]);
+    // ---- a recording decision still open -------------------------------------------
+    // platform-api answers `recording.pending` while the session's decision may
+    // still change mid-call (an interview started before the candidate answered
+    // consent). Look again (POST /api/video/sessions/:id/recording-state, which
+    // an interview guest may read for its own call) until it settles, so a
+    // recording that starts later turns the consent notice on for everyone in
+    // the call. 401/403/404 end the looking (no access, or the session is gone);
+    // any other failure backs off and tries again.
+    const pendingRecordingSession = active?.recording?.pending === true && active.sessionId ? active.sessionId : null;
+    (0, react_1.useEffect)(() => {
+        if (!pendingRecordingSession)
+            return;
+        let stopped = false;
+        let timer = null;
+        const every = Math.max(1000, optsRef.current.recordingRecheckMs ?? 10_000);
+        let wait = every;
+        const later = () => { if (!stopped)
+            timer = setTimeout(() => { void look(); }, wait); };
+        const look = async () => {
+            timer = null;
+            const a = activeRef.current;
+            if (!a || a.sessionId !== pendingRecordingSession)
+                return;
+            try {
+                const body = await api(`/api/video/sessions/${encodeURIComponent(pendingRecordingSession)}/recording-state`, { lobbyName: a.mediaLobby || optsRef.current.lobbyName });
+                if (stopped)
+                    return;
+                const next = recordingStateOf(body.recording);
+                wait = every;
+                if (next)
+                    setActive((cur) => (cur && cur.sessionId === pendingRecordingSession ? { ...cur, recording: next } : cur));
+                if (!next || next.pending)
+                    later();
+            }
+            catch (err) {
+                const status = err.status;
+                if (stopped || status === 401 || status === 403 || status === 404)
+                    return;
+                wait = Math.min(wait * 2, 60_000);
+                later();
+            }
+        };
+        later();
+        return () => { stopped = true; if (timer)
+            clearTimeout(timer); };
+    }, [pendingRecordingSession, api, setActive]);
     // ---- media-lobby moves (0.134.0, lane L1) -------------------------------------
     // The call stays; only the media changes lobby. One loop at a time: it reads
     // the latest target after every step, so rapid changes end in the last one

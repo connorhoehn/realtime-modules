@@ -5,7 +5,7 @@ export { makeFakeGateway } from '../document-calls/fakeGateway';
 
 /** Fake platform-api for the conversation hook (getIdToken, not headers). */
 export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { enabled: boolean; reason: string; pending?: true }; refreshStatus?: number;
-  /** GET /api/video/sessions/:id/recording answers, in turn (the last repeats). */
+  /** POST /api/video/sessions/:id/recording-state answers, in turn (the last repeats). */
   recordingChecks?: Array<{ status: number; body: unknown }> } = {}) {
   const calls: Array<{ method: string; path: string; body: any; headers: Record<string, string> }> = [];
   let n = 0;
@@ -20,8 +20,8 @@ export function makeFakePlatformApi(opts: { joinStatus?: number; recording?: { e
       return json(200, { token: 'stage-token', participantId: `p-self-${n}`, userId: 'u' });
     }
     if (method === 'POST' && /\/end$/.test(path)) return json(200, { ended: false });
-    if (method === 'GET' && /\/recording\?lobbyName=/.test(path) && opts.recordingChecks?.length) {
-      const seen = calls.filter((c) => c.method === 'GET' && /\/recording\?/.test(c.path)).length;
+    if (method === 'POST' && /\/recording-state$/.test(path) && opts.recordingChecks?.length) {
+      const seen = calls.filter((c) => c.method === 'POST' && /\/recording-state$/.test(c.path)).length;
       const answer = opts.recordingChecks[Math.min(seen, opts.recordingChecks.length) - 1];
       return json(answer.status, answer.body);
     }

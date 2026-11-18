@@ -20,7 +20,7 @@ function live(recording?: { enabled: boolean; reason: string; pending?: true }, 
   return { hook, m, pa };
 }
 
-const checks = (pa: ReturnType<typeof live>['pa']) => pa.calls.filter((c) => c.method === 'GET' && /\/recording\?/.test(c.path));
+const checks = (pa: ReturnType<typeof live>['pa']) => pa.calls.filter((c) => c.method === 'POST' && /\/recording-state$/.test(c.path));
 
 describe('useConversationCall recording (0.137.0)', () => {
   it('null before a call; the server decision once the session answers, keyed by its session id', async () => {
@@ -45,29 +45,45 @@ describe('useConversationCall recording (0.137.0)', () => {
 
     it('looks again until it settles, and a recording that starts mid-call turns on', async () => {
       const { hook, m, pa } = live(waiting, [
-        { status: 200, body: { isRecording: false, decision: waiting } },
-        { status: 200, body: { isRecording: true, decision: { enabled: true, reason: 'interview-consented' } } },
+        { status: 200, body: { isRecording: false, recording: waiting } },
+        { status: 200, body: { isRecording: true, recording: { enabled: true, reason: 'interview-consented' } } },
       ]);
       await act(async () => { await hook.result.current.start([]); });
       act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
       await waitFor(() => expect(hook.result.current.phase).toBe('live'));
       expect(hook.result.current.recording).toEqual({ ...waiting, sessionId: 'sess-1' });
       await waitFor(() => expect(hook.result.current.recording).toEqual({ enabled: true, reason: 'interview-consented', sessionId: 'sess-1' }), { timeout: 4000 });
-      expect(checks(pa)[0].path).toBe(`/api/video/sessions/sess-1/recording?lobbyName=${encodeURIComponent(LOBBY)}`);
+      expect(checks(pa)[0].path).toBe('/api/video/sessions/sess-1/recording-state');
+      expect(checks(pa)[0].body).toEqual({ lobbyName: LOBBY });
       expect(checks(pa)[0].headers).toMatchObject({ Authorization: 'Bearer id-token' });
       const looked = checks(pa).length;
       await new Promise((r) => setTimeout(r, 1300));
       expect(checks(pa)).toHaveLength(looked); // settled: no more looking
     });
 
-    it('stops looking when the route refuses (a guest may not read it), keeping what it knew', async () => {
-      const { hook, m, pa } = live(waiting, [{ status: 404, body: { error: 'guest_out_of_scope' } }]);
+    it.each([401, 403, 404])('stops looking on a %i (no access, or the session is gone), keeping what it knew', async (status) => {
+      const { hook, m, pa } = live(waiting, [{ status, body: { error: 'refused' } }]);
       await act(async () => { await hook.result.current.start([]); });
       act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
       await waitFor(() => expect(checks(pa)).toHaveLength(1), { timeout: 3000 });
       await new Promise((r) => setTimeout(r, 1300));
       expect(checks(pa)).toHaveLength(1);
       expect(hook.result.current.recording).toEqual({ ...waiting, sessionId: 'sess-1' });
+    });
+
+    it('a server failure backs off and tries again, then settles', async () => {
+      const { hook, m, pa } = live(waiting, [
+        { status: 503, body: { error: 'unavailable' } },
+        { status: 200, body: { isRecording: true, recording: { enabled: true, reason: 'interview-consented' } } },
+      ]);
+      await act(async () => { await hook.result.current.start([]); });
+      act(() => { m.set({ isJoined: true, connectionState: 'connected' }); });
+      await waitFor(() => expect(checks(pa)).toHaveLength(1), { timeout: 3000 });
+      // Backed off to twice the interval: nothing at 1.5 s after the failure, the retry by 2.5 s.
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(checks(pa)).toHaveLength(1);
+      await waitFor(() => expect(hook.result.current.recording).toMatchObject({ enabled: true }), { timeout: 2000 });
+      expect(checks(pa)).toHaveLength(2);
     });
 
     it('a settled decision is never looked at again', async () => {

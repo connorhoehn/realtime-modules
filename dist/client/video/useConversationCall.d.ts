@@ -54,6 +54,12 @@ export interface UseConversationCallOptions {
     recordingProfile?: 'hangout' | 'broadcast' | 'dm' | 'none';
     /** Opt in when platform-api supports verified participant-to-call recording bindings. */
     bindRecordingCall?: boolean;
+    /**
+     * While platform-api says the recording decision is still open
+     * (`recording.pending`, e.g. an interview whose candidate has not answered
+     * consent yet), how often to look again (ms). Default 10000.
+     */
+    recordingRecheckMs?: number;
     /** Untrusted source hint for document lobbies. Native authority validates the
      * source and canonical lobby before acknowledging its durable association. */
     documentSourceId?: string;
@@ -98,11 +104,15 @@ export interface ConversationCallResult {
      * Whether the media session this client sits in records (platform-api's
      * decision when the session was found or created; 0.137.0). Null outside a
      * call or before the session answers. A consent notice keys on `sessionId`.
+     * `pending: true` while the decision may still change mid-call; the hook
+     * then reads it again (POST /api/video/sessions/:id/recording-state) until
+     * it is settled, so a recording that starts mid-call turns the notice on.
      */
     recording?: {
         enabled: boolean;
         reason: string | null;
         sessionId: string;
+        pending?: true;
     } | null;
     recordingBinding?: {
         status: 'disabled' | 'pending' | 'bound' | 'unavailable';
