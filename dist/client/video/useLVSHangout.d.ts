@@ -235,7 +235,8 @@ export interface UseLVSHangoutResult {
  *
  * Track routing: each parallel PC's onTrack carries that remote's
  * camera (or screen) tracks. We attach them to the participant entry
- * keyed by the remote's BASE pid (`fullPid.split(':')[0]`); a peer's
+ * keyed by the remote's BASE pid (`basePidOf`: only the `:screen` suffix is
+ * stripped, so an id that holds a colon, a guest's, stays whole); a peer's
  * camera + screen end up on the same participant entry — camera in
  * `streams[]`, screen in `screenStream` — so a single peer never
  * appears as two tiles.
