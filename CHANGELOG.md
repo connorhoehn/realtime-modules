@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`useLVSHangout` keeps a remote participant id that holds a colon whole.** Remote media was keyed by `fullPid.split(':')[0]`, so an interview guest's media id (`guest:<inviteId>-<stamp>`) became `guest`: two guests shared one entry and the tile lost its name and app user id. The hook now strips only the known `:screen` suffix (`basePidOf`, `src/client/video/lib/basePid.ts`), so a guest keeps its own tile and its screen share joins it. Hank's `hank` and `hank:screen` behave as before.
+
 ## 0.149.0 — 2026-11-11
 
 Local notifications and the subject-scoped work graph (ai-3d-storymaker T22 gaps G3a–G3c). Additive; existing scopes, stores and frames behave as before.

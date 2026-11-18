@@ -1639,3 +1639,32 @@ describe('useLVSHangout — final stage closes', () => {
     expect(handle.result!.terminated).toBeNull();
   });
 });
+
+// A participant id may hold a colon: an interview guest's media id is `guest:<inviteId>-<stamp>`. The hook strips only the
+// known `:screen` suffix, so the guest keeps its own entry, its name and its app user id, and its screen joins that entry.
+describe('a remote participant id that holds a colon', () => {
+  const GUEST_PID = 'guest:inv-0001-k3j2';
+  it('keeps the whole id as the tile, with its name and app user id, and its screen on the same tile', async () => {
+    const handle: HarnessHandle = { result: null };
+    await act(async () => { render(<Harness token={TOKEN} pid={PID} handle={handle} />); });
+    const ws = wsInstances[wsInstances.length - 1]!;
+    await act(async () => {
+      ws.triggerOpen();
+      ws.triggerMessage({ type: 'producer.added', participantId: GUEST_PID, kind: 'video', producerId: 'p-g-v', displayName: 'Candidate', userId: 'guest:inv-0001' });
+      await flush();
+    });
+    const camera = whepPcs()[whepPcs().length - 1]!;
+    await act(async () => { camera.emitTrack('video', 'g-v-1', 'g-stream-1'); await flush(); });
+    await act(async () => {
+      ws.triggerMessage({ type: 'producer.added', participantId: `${GUEST_PID}:screen`, kind: 'video', producerId: 'p-g-s' });
+      await flush();
+    });
+    const screen = whepPcs()[whepPcs().length - 1]!;
+    await act(async () => { screen.emitTrack('video', 'g-s-1', 'g-screen-1'); await flush(); });
+    const remotes = handle.result!.participants.filter((p) => !p.isLocal);
+    expect(remotes.map((p) => p.participantId)).toEqual([GUEST_PID]);
+    expect(remotes[0]!.displayName).toBe('Candidate');
+    expect(remotes[0]!.appUserId).toBe('guest:inv-0001');
+    expect(remotes.some((p) => p.participantId === 'guest')).toBe(false);
+  });
+});
