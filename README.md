@@ -144,6 +144,7 @@ The hooks exported from `./client`. Hooks that take a channel subscribe and unsu
 | `useLiveRefresh(read, opts)` | Re-reads a record when a frame says it moved, and polls when not live |
 | `useDocumentHidden()` | Whether the browser tab is hidden |
 | `useChannel(channel)` | Chat, presence, reactions and activity for one channel together |
+| `useAssistantFloor({ channel, read })` | Who has a hands-free call assistant's ear: one read, then pushed `assistant-floor` frames; reads again after a reconnect |
 | `useChat(channel)` | Messages, send, edit, delete, history and typing |
 | `useChatMembers(channel)` | Members of a conversation and add or remove actions |
 | `useChatReadReceipts(channel)` | Who has read what |

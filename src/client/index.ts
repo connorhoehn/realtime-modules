@@ -206,6 +206,18 @@ export type {
   UseChannelResult,
 } from './useChannel';
 
+// v0.150.0 — useAssistantFloor: who has a hands-free call assistant's ear,
+// pushed as `assistant-floor` frames on the call's chat channel; one read on
+// mount and after a reconnect, no polling.
+export {
+  useAssistantFloor, parseAssistantFloor, assistantFloorFrame, floorFromFrame,
+  ASSISTANT_FLOOR_FRAME, NO_ASSISTANT_FLOOR,
+} from './useAssistantFloor';
+export type {
+  AssistantFloor, AssistantFloorView, AssistantFloorFrame, AssistantFloorVia, AssistantFloorPhase,
+  AssistantFloorGateway, UseAssistantFloorOptions, UseAssistantFloorResult,
+} from './useAssistantFloor';
+
 // v0.32.0 — useCanvasDocument: the Y.Doc ⇄ canvas binding. Gates on
 // meta.schemaVersion >= 2, exposes the single `body` XmlFragment that holds the
 // whole page, exports markdown straight from the CRDT, and materialises a

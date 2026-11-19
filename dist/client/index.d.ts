@@ -53,6 +53,8 @@ export { useFeatureFlag } from './useFeatureFlag';
 export type { UseFeatureFlagResult } from './useFeatureFlag';
 export { useChannel } from './useChannel';
 export type { UseChannelOptions, UseChannelFeatures, UseChannelResult, } from './useChannel';
+export { useAssistantFloor, parseAssistantFloor, assistantFloorFrame, floorFromFrame, ASSISTANT_FLOOR_FRAME, NO_ASSISTANT_FLOOR, } from './useAssistantFloor';
+export type { AssistantFloor, AssistantFloorView, AssistantFloorFrame, AssistantFloorVia, AssistantFloorPhase, AssistantFloorGateway, UseAssistantFloorOptions, UseAssistantFloorResult, } from './useAssistantFloor';
 export { useCanvasDocument, canvasToDocModel, canvasToMarkdown, CANVAS_BODY_KEY, } from './useCanvasDocument';
 export type { CanvasDocument, UseCanvasDocumentOptions, MaterializeResult, PmSchemaLike, UnsupportedForm, } from './useCanvasDocument';
 export { useDictation } from './useDictation';

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.150.0 — 2026-11-19
+
+Who has a hands-free call assistant's ear, pushed instead of polled. Additive.
+
+- **`useAssistantFloor({ channel, read?, gateway?, enabled? })`** (`./client`). Reads the floor once with `read` (the app's REST read; per-viewer fields such as `mayHold` ride it), then applies every `assistant-floor` frame for `channel`, and reads again after the socket reconnects. It never polls. Returns `{ view, refresh, apply }`: `view` is `{ handsfree, floor: { userId, name, via, phase } | null, mayHold? }`; `apply(body)` takes a floor body the app already holds (a hold action's answer). The socket is the `gateway` option or the nearest `GatewayContext`.
+- **Frame.** `{ type: 'assistant-floor', channel, handsfree, floor }`, sent by the server on the call's chat channel whenever the floor changes; it reaches only sockets the channel guard admitted. Helpers: `assistantFloorFrame(channel, view)` (build), `floorFromFrame(frame, channel)`, `parseAssistantFloor(body)`, `ASSISTANT_FLOOR_FRAME`, `NO_ASSISTANT_FLOOR`.
+
 ## 0.149.0 — 2026-11-11
 
 Local notifications and the subject-scoped work graph (ai-3d-storymaker T22 gaps G3a–G3c). Additive; existing scopes, stores and frames behave as before.
