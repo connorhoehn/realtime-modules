@@ -28,6 +28,7 @@
 // `:screen` pids — we now do the same uniformly for cameras too, and
 // the main subscriber is gone.
 
+import { basePidOf } from './lib/basePid';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decodeArn, decodeJwt } from './lib/jwt';
 import { useLVSPublisher, type UseLVSPublisherResult } from './useLVSPublisher';
@@ -353,7 +354,8 @@ function computeMediaFlags(streams: MediaStream[]): { hasAudio: boolean; hasVide
  *
  * Track routing: each parallel PC's onTrack carries that remote's
  * camera (or screen) tracks. We attach them to the participant entry
- * keyed by the remote's BASE pid (`fullPid.split(':')[0]`); a peer's
+ * keyed by the remote's BASE pid (`basePidOf`: only the `:screen` suffix is
+ * stripped, so an id that holds a colon, a guest's, stays whole); a peer's
  * camera + screen end up on the same participant entry — camera in
  * `streams[]`, screen in `screenStream` — so a single peer never
  * appears as two tiles.
@@ -570,7 +572,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
     Record<string, { displayName?: string; userId?: string; attributes?: Record<string, string> }>
   >({});
   const noteRemoteIdentity = useCallback((rawPid: string, frame: { displayName?: unknown; userId?: unknown; attributes?: unknown }) => {
-    const base = rawPid.endsWith(':screen') ? rawPid.slice(0, -':screen'.length) : rawPid;
+    const base = basePidOf(rawPid);
     const displayName = typeof frame.displayName === 'string' && frame.displayName.trim() ? frame.displayName.trim() : undefined;
     const uid = typeof frame.userId === 'string' && frame.userId ? frame.userId : undefined;
     // The publisher's token attributes ride its producer frames.
@@ -862,7 +864,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       // keep reporting 'reconnecting' for a PC that no longer exists.
       whepConnStatesRef.current.delete(fullPid);
       setWhepHealthTick((n) => n + 1);
-      const basePid = fullPid.split(':')[0] ?? fullPid;
+      const basePid = basePidOf(fullPid);
       const isScreen = entry.kind === 'screen';
       setRemoteParticipants((prev) => {
         const next = new Map(prev);
@@ -1035,7 +1037,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
       // the same publisher share one timestamp — the moment we first
       // committed to subscribing to ANY producer for that peer). Set
       // once per basePid; later kinds for the same peer don't reset it.
-      const basePidForSeen = fullPid.split(':')[0] ?? fullPid;
+      const basePidForSeen = basePidOf(fullPid);
       if (!firstSeenAtRef.current.has(basePidForSeen)) {
         firstSeenAtRef.current.set(basePidForSeen, Date.now());
       }
@@ -1153,7 +1155,7 @@ export function useLVSHangout(opts: UseLVSHangoutOptions): UseLVSHangoutResult {
         pc.addEventListener('track', (ev) => {
           if (cancelled || remoteSubscribersRef.current.get(fullPid)?.pc !== pc) return;
           const track = ev.track;
-          const basePid = fullPid.split(':')[0] ?? fullPid;
+          const basePid = basePidOf(fullPid);
           console.info('[remote-pc] track', {
             fullPid,
             basePid,

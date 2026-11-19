@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`useLVSHangout` keeps a remote participant id that holds a colon whole.** Remote media was keyed by `fullPid.split(':')[0]`, so an interview guest's media id (`guest:<inviteId>-<stamp>`) became `guest`: two guests shared one entry and the tile lost its name and app user id. The hook now strips only the known `:screen` suffix (`basePidOf`, `src/client/video/lib/basePid.ts`), so a guest keeps its own tile and its screen share joins it. Hank's `hank` and `hank:screen` behave as before.
+
 ## 0.150.0 — 2026-11-19
 
 Who has a hands-free call assistant's ear, pushed instead of polled. Additive.
